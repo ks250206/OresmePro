@@ -8,6 +8,12 @@ interface UndoEntry {
 }
 
 const UNDO_LIMIT = 100;
+/**
+ * How much wave data the undo history may keep alive beyond what the
+ * document itself holds. Editing a large wave leaves a copy behind with every
+ * step; past this, the oldest steps are forgotten.
+ */
+const UNDO_BYTES = 512 * 1024 * 1024;
 
 export interface DispatchOptions {
   group?: string;
@@ -19,6 +25,12 @@ export interface DispatchOptions {
  * between snapshots and cost nothing.
  */
 export class Doc {
+  private readonly undoBytes: number;
+
+  constructor(options: { undoBytes?: number } = {}) {
+    this.undoBytes = options.undoBytes ?? UNDO_BYTES;
+  }
+
   private state: DocState = emptyDoc();
   private readonly listeners = new Set<() => void>();
   private undoStack: UndoEntry[] = [];
@@ -44,6 +56,7 @@ export class Doc {
       if (!(group !== null && last?.group === group)) {
         this.undoStack.push({ state: before, group });
         if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+        this.trimUndo(state);
       }
       this.redoStack = [];
       this.state = state;
@@ -84,6 +97,36 @@ export class Doc {
     this.undoStack = [];
     this.redoStack = [];
     this.emit();
+  }
+
+  /**
+   * Forgets the oldest undo steps while the wave data that only they keep
+   * alive is more than the limit. Arrays are shared between snapshots, so
+   * each is counted once, and those of the current document not at all.
+   */
+  private trimUndo(current: DocState): void {
+    const live = new Set<unknown>();
+    for (const wave of Object.values(current.waves)) {
+      live.add(wave.data);
+      if (wave.imag) live.add(wave.imag);
+    }
+    // Newest first: an array is charged to the most recent step that needs it.
+    const seen = new Set<unknown>(live);
+    let bytes = 0;
+    for (let index = this.undoStack.length - 1; index >= 0; index -= 1) {
+      for (const wave of Object.values(this.undoStack[index]!.state.waves)) {
+        for (const array of [wave.data, wave.imag]) {
+          if (!array || seen.has(array)) continue;
+          seen.add(array);
+          bytes += array.byteLength;
+        }
+      }
+      // The latest step is always kept: one undo must always be possible.
+      if (bytes > this.undoBytes && index < this.undoStack.length - 1) {
+        this.undoStack.splice(0, index + 1);
+        return;
+      }
+    }
   }
 
   /**

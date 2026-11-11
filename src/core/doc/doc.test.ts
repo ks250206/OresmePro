@@ -677,3 +677,42 @@ describe("page layouts", () => {
     ).toBe('op.layout("L").set(width=842, height=595)');
   });
 });
+
+describe("memory held by undo", () => {
+  it("forgets the oldest steps when they hold too much wave data", () => {
+    // Room for about three old copies of an 8000-byte wave.
+    const doc = new Doc({ undoBytes: 30_000 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    for (let step = 1; step <= 10; step += 1) {
+      doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [step] });
+    }
+    let undone = 0;
+    while (doc.undo()) undone += 1;
+    // The last few edits can be undone; the earlier copies were let go.
+    expect(undone).toBeGreaterThanOrEqual(3);
+    expect(undone).toBeLessThanOrEqual(4);
+    expect(doc.getState().waves.big!.data[0]).toBe(10 - undone);
+  });
+
+  it("does not count data that the steps share", () => {
+    const doc = new Doc({ undoBytes: 30_000 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    // Twenty steps that leave the wave alone: its array is in every snapshot, once.
+    for (let step = 0; step < 20; step += 1) {
+      doc.dispatch({ op: "setWaveMeta", name: "big", note: `note ${step}` });
+    }
+    let undone = 0;
+    while (doc.undo()) undone += 1;
+    expect(undone).toBe(21);
+  });
+
+  it("always allows one undo, however large the wave", () => {
+    const doc = new Doc({ undoBytes: 10 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [1] });
+    doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [2] });
+    expect(doc.undo()).toBe(true);
+    expect(doc.getState().waves.big!.data[0]).toBe(1);
+    expect(doc.undo()).toBe(false);
+  });
+});

@@ -355,6 +355,133 @@ describe("decimation", () => {
   });
 });
 
+describe("decimation of long waves", () => {
+  /** What a set of runs covers: for each run and pixel column, the lowest and highest Y. */
+  const coverage = (runs: Float32Array[]) =>
+    runs.map((run) => {
+      const columns = new Map<number, [number, number]>();
+      for (let index = 0; index < run.length; index += 2) {
+        const column = Math.floor(run[index]!);
+        const y = run[index + 1]!;
+        const seen = columns.get(column);
+        if (!seen) columns.set(column, [y, y]);
+        else columns.set(column, [Math.min(seen[0], y), Math.max(seen[1], y)]);
+      }
+      return {
+        start: [run[0], run[1]],
+        end: [run.at(-2), run.at(-1)],
+        columns: [...columns].sort(([a], [b]) => a - b),
+      };
+    });
+
+  const noisy = (count: number, seed: number) => {
+    const data = new Float64Array(count);
+    let state = seed;
+    for (let index = 0; index < count; index += 1) {
+      // A small generator, so the test does not depend on Math.random.
+      state = (state * 1664525 + 1013904223) >>> 0;
+      data[index] = Math.sin(index / 5000) * 3 + state / 2 ** 32;
+    }
+    return data;
+  };
+
+  it("draws the same picture whether or not blocks stand for their points", () => {
+    const data = noisy(300_000, 7);
+    // Gaps: single points, a whole block, and one that straddles blocks.
+    data[1000] = NaN;
+    data.fill(NaN, 64 * 300, 64 * 301);
+    data.fill(Infinity, 64 * 900 + 30, 64 * 902 + 10);
+    const cases: [
+      string,
+      Wave,
+      Wave | null,
+      ReturnType<typeof makeScale>,
+      ReturnType<typeof makeScale>,
+    ][] = [
+      [
+        "whole wave",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "zoomed in",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(700.3, 1900.7, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "reversed axis",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 840, 40),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "falling X",
+        makeWave([], { data, shape: [data.length], x0: 3000, dx: -0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "log Y",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(0.01, 10, true, 400, 20),
+      ],
+      [
+        "log X",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0.01, 3000, true, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+    ];
+    const xData = new Float64Array(data.length).map((_, index) => (index / data.length) ** 2 * 100);
+    cases.push([
+      "X wave",
+      makeWave([], { data, shape: [data.length] }),
+      makeWave([], { data: xData, shape: [data.length] }),
+      makeScale(0, 100, false, 40, 840),
+      makeScale(-4, 5, false, 400, 20),
+    ]);
+    for (const [label, y, x, xs, ys] of cases) {
+      const fast = tracePixels(y, x, xs, ys);
+      const plain = tracePixels(y, x, xs, ys, false);
+      expect(fast.decimated, label).toBe(true);
+      expect(coverage(fast.runs), label).toEqual(coverage(plain.runs));
+    }
+  });
+
+  it("follows the data when it changes", () => {
+    const data = noisy(200_000, 3);
+    const xs = makeScale(0, 200_000, false, 0, 500);
+    const ys = makeScale(-10, 10, false, 300, 0);
+    const before = tracePixels(makeWave([], { data, shape: [data.length] }), null, xs, ys);
+    // A wave that changes gets a new array, as the document makes one: a spike shows.
+    const changed = data.slice();
+    changed[123_456] = 9;
+    const after = tracePixels(
+      makeWave([], { data: changed, shape: [changed.length] }),
+      null,
+      xs,
+      ys,
+    );
+    const highest = (runs: Float32Array[]) => {
+      let top = Infinity;
+      for (const run of runs)
+        for (let index = 1; index < run.length; index += 2) top = Math.min(top, run[index]!);
+      return top;
+    };
+    expect(highest(after.runs)).toBeCloseTo(ys.toPixel(9), 3);
+    expect(highest(before.runs)).toBeGreaterThan(ys.toPixel(5));
+  });
+});
+
 describe("axisRange", () => {
   const axis = defaultAxis("left");
   it("autoscales to the data exactly", () => {
