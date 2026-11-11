@@ -75,6 +75,13 @@ for (const [key, entry] of Object.entries(lock.packages)) {
   if (!bundled.has(key)) entry.file_name = cdn + entry.file_name;
 }
 await writeFile(join(target, "pyodide-lock.json"), JSON.stringify(lock));
+// What the app needs to start Python without a network; the service worker keeps these.
+const files = [
+  ...RUNTIME_FILES,
+  "pyodide-lock.json",
+  ...[...bundled].map((key) => lock.packages[key].file_name),
+];
+await writeFile(join(target, "files.json"), JSON.stringify([...new Set(files)]));
 
 console.log(
   `Pyodide ${version} in public/pyodide: ${bundled.size} packages bundled` +

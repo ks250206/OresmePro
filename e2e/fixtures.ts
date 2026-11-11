@@ -7,7 +7,14 @@ import type { KernelClient } from "../src/kernel/client";
 
 declare global {
   /** The debugging handle the app puts on the page (see src/App.tsx). */
-  var oresme: { doc: Doc; history: History; kernel: KernelClient; files: FileStore };
+  var oresme: {
+    doc: Doc;
+    history: History;
+    kernel: KernelClient;
+    files: FileStore;
+    /** How many files the service worker holds for starting offline, once it has them. */
+    offlineFiles?: number;
+  };
 }
 
 export interface Entry {

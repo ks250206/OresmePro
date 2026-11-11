@@ -11,7 +11,7 @@ import {
   openExperiment,
   saveExperiment,
 } from "./app/actions";
-import { ensureIsolated } from "./app/isolate";
+import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
 import { autosave, restore } from "./app/persist";
 import {
   activeWindow,
@@ -19,6 +19,7 @@ import {
   files,
   history,
   kernel,
+  PYODIDE_URL,
   requestCommandLine,
   runGui,
   ui,
@@ -339,6 +340,15 @@ export function App() {
       if (cancelled) return;
       stopSaving = autosave(doc, history, files);
       kernel.start();
+      openLaunchedFiles((launched) => void loadFiles(launched));
+      // Once Python is up, everything a start needs has been loaded: keep it for offline use.
+      const stop = kernel.subscribe(() => {
+        if (kernel.getState().status !== "ready") return;
+        stop();
+        void keepForOffline(PYODIDE_URL).then((count) => {
+          Object.assign(debug, { offlineFiles: count });
+        });
+      });
     });
     window.addEventListener("keydown", onGlobalKey);
     return () => {
@@ -413,4 +423,5 @@ export function App() {
 }
 
 // Exposed for debugging from the browser console.
-Object.assign(globalThis, { oresme: { doc, history, kernel, files, activeWindow } });
+const debug = { doc, history, kernel, files, activeWindow };
+Object.assign(globalThis, { oresme: debug });

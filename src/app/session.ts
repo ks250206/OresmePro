@@ -154,7 +154,7 @@ export function setExportHandler(handler: typeof exportHandler): void {
 
 // Pyodide is served with the app (see scripts/fetch-pyodide.mjs). The worker
 // imports it by URL, so the URL has to be absolute.
-const PYODIDE_URL =
+export const PYODIDE_URL =
   (import.meta.env.VITE_PYODIDE_URL as string | undefined) ??
   new URL(`${import.meta.env.BASE_URL}pyodide/`, globalThis.location?.href ?? "http://localhost/")
     .href;

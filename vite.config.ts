@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -18,7 +19,15 @@ const GENERATED = [
   "playwright-report/**",
 ];
 
+const require = createRequire(import.meta.url);
+const pyodideVersion = (require("pyodide/package.json") as { version: string }).version;
+
 export default defineConfig({
+  define: {
+    // Names the service worker's caches: a new build lets go of the old one's files.
+    __BUILD_ID__: JSON.stringify(Date.now().toString(36)),
+    __PYODIDE_VERSION__: JSON.stringify(pyodideVersion),
+  },
   staged: {
     "*": "vp check --fix",
   },
