@@ -9,13 +9,22 @@ const isolationHeaders = {
   "Cross-Origin-Embedder-Policy": "require-corp",
 };
 
+/** Build output, downloaded packages and test reports: not ours to format or lint. */
+const GENERATED = [
+  "dist/**",
+  "coverage/**",
+  "public/pyodide/**",
+  "test-results/**",
+  "playwright-report/**",
+];
+
 export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  fmt: { ignorePatterns: ["dist/**", "coverage/**"] },
+  fmt: { ignorePatterns: [...GENERATED] },
   lint: {
-    ignorePatterns: ["dist/**", "coverage/**"],
+    ignorePatterns: [...GENERATED],
     options: { typeAware: true, typeCheck: true },
   },
   server: { headers: isolationHeaders },

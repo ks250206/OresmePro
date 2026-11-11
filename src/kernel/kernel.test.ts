@@ -27,7 +27,7 @@ async function run(code: string): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  const pyodide = await loadPyodide({ packageCacheDir: "node_modules/.cache/pyodide" });
+  const pyodide = await loadPyodide({ packageCacheDir: "public/pyodide" });
   kernel = await bootPython(pyodide, {
     rpc: (method, paramsJson, data) =>
       answerRpc(
