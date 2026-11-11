@@ -106,3 +106,77 @@ export function tableEditCommands(
   }
   return commands;
 }
+
+/** A cell of a table: a row and the index of a column. */
+export interface Cell {
+  row: number;
+  column: number;
+}
+
+/** What a table column shows: a 1-D wave, or one column of a matrix. */
+export interface TableColumn {
+  wave: string;
+  j: number | null;
+}
+
+/** A rectangle of cells; all four edges are inside it. */
+export interface CellRange {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** The rectangle of cells between two corners, whichever way it was dragged. */
+export function selectionRange(a: Cell, b: Cell): CellRange {
+  return {
+    top: Math.min(a.row, b.row),
+    bottom: Math.max(a.row, b.row),
+    left: Math.min(a.column, b.column),
+    right: Math.max(a.column, b.column),
+  };
+}
+
+/** The commands that blank a range of cells: NaN in numeric waves, "" in text waves. */
+export function clearCommands(
+  waves: Readonly<Record<string, Wave>>,
+  columns: readonly TableColumn[],
+  range: CellRange,
+  plane: TablePlane,
+): Command[] {
+  const edits: CellEdit[] = [];
+  for (const { wave, j } of columns.slice(range.left, range.right + 1)) {
+    // Only points that exist: clearing must not grow a wave.
+    const last = Math.min(range.bottom, (waves[wave]?.shape[0] ?? 0) - 1);
+    for (let row = range.top; row <= last; row += 1) edits.push({ wave, j, row, text: "" });
+  }
+  return tableEditCommands(waves, edits, plane) ?? [];
+}
+
+/**
+ * The commands that insert or delete the rows of a range in every 1-D wave
+ * the range touches. Matrices keep their shape, so they are left alone.
+ */
+export function pointCommands(
+  waves: Readonly<Record<string, Wave>>,
+  columns: readonly TableColumn[],
+  range: CellRange,
+  action: "insert" | "delete",
+): Command[] {
+  const commands: Command[] = [];
+  const seen = new Set<string>();
+  for (const { wave: name } of columns.slice(range.left, range.right + 1)) {
+    const wave = waves[name];
+    if (!wave || wave.shape.length !== 1 || seen.has(name)) continue;
+    seen.add(name);
+    const length = wave.shape[0]!;
+    const count = range.bottom - range.top + 1;
+    if (action === "insert") {
+      if (range.top <= length) commands.push({ op: "insertPoints", name, at: range.top, count });
+    } else if (range.top < length) {
+      const kept = Math.min(count, length - range.top);
+      commands.push({ op: "deletePoints", name, at: range.top, count: kept });
+    }
+  }
+  return commands;
+}

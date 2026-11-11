@@ -168,6 +168,17 @@ export class App {
     }, text);
   }
 
+  /** What copying (or cutting) in the focused table puts on the clipboard. */
+  copy(kind: "copy" | "cut" = "copy"): Promise<string> {
+    return this.page.evaluate((type) => {
+      const data = new DataTransfer();
+      document.activeElement!.dispatchEvent(
+        new ClipboardEvent(type, { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+      return data.getData("text/plain");
+    }, kind);
+  }
+
   /** Performs an action that downloads a file and returns the file's bytes. */
   async download(action: () => Promise<unknown>): Promise<{ file: Download; bytes: Buffer }> {
     const [file] = await Promise.all([this.page.waitForEvent("download"), action()]);

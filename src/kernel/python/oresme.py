@@ -211,6 +211,24 @@ def _plain(value):
     return value
 
 
+class _Flat:
+    """A wave's points as one row, for reading and writing by position in memory."""
+
+    def __init__(self, wave):
+        self._wave = wave
+
+    def __len__(self):
+        return self._wave.data.size
+
+    def __getitem__(self, key):
+        return self._wave.data.reshape(-1)[key]
+
+    def __setitem__(self, key, value):
+        values = self._wave.data.copy()
+        values.reshape(-1)[key] = value
+        self._wave.data = values
+
+
 class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     """A named array with scaling, stored in the application.
 
@@ -391,18 +409,21 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             values[key] = value
             self.data = values
             return
+        # Writing just past the end grows a 1-D wave, as typing below its last point in a table does.
         if isinstance(key, (int, np.integer)):
             index = int(key) + count if key < 0 else int(key)
-            if not 0 <= index < count:
+            if not 0 <= index <= count:
                 raise IndexError(f"Point {key} is out of range for a wave of {count} points.")
             _dispatch(
                 {"op": "setWavePoints", "name": self._name, "start": index},
                 np.array([value], dtype=np.float64),
             )
             return
-        if isinstance(key, slice):
-            start, stop, step = key.indices(count)
-            if step == 1 and stop > start:
+        if isinstance(key, slice) and key.step in (None, 1):
+            start, stop, _ = key.indices(count)
+            if key.stop is not None and key.stop > count and (key.start or 0) <= count:
+                stop = int(key.stop)
+            if stop > start:
                 values = np.empty(stop - start, dtype=np.float64)
                 values[:] = value
                 _dispatch({"op": "setWavePoints", "name": self._name, "start": start}, values)
@@ -410,6 +431,11 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         values = self.data.copy()
         values[key] = value
         self.data = values
+
+    @property
+    def flat(self):
+        """The points in storage order, whatever the shape: ``w.flat[6:9] = 0``."""
+        return _Flat(self)
 
     def __array__(self, dtype=None, copy=None):
         array = self.data
@@ -939,8 +965,10 @@ class Graph(_Props):
         return f"Graph({self._name!r})"
 
 
-class Table:
+class Table(_Props):
     """A table window showing waves as columns."""
+
+    _props = ("digits",)
 
     def __init__(self, name):
         self._name = name
@@ -948,6 +976,12 @@ class Table:
     @property
     def name(self):
         return self._name
+
+    def _get(self):
+        return _call("tableInfo", {"name": self._name})[0]
+
+    def _set(self, props):
+        _dispatch({"op": "modifyTable", "table": self._name, "props": props})
 
     @property
     def columns(self):

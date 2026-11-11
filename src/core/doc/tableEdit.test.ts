@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "./doc";
-import { tableEditCommands, type CellEdit } from "./tableEdit";
+import {
+  clearCommands,
+  pointCommands,
+  selectionRange,
+  tableEditCommands,
+  type CellEdit,
+  type TableColumn,
+} from "./tableEdit";
 
 const plane = { layer: 0, chunk: 0 };
 
@@ -88,5 +95,94 @@ describe("tableEditCommands", () => {
         plane,
       ),
     ).toBeNull();
+  });
+});
+
+describe("ranges of cells", () => {
+  const setup = () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2, 3, 4, 5) });
+    doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(10, 20, 30) });
+    doc.dispatch({
+      op: "makeWave",
+      name: "m",
+      data: Float64Array.of(1, 2, 3, 4, 5, 6),
+      shape: [3, 2],
+    });
+    doc.dispatch({ op: "makeWave", name: "s", data: new Float64Array(0), text: ["x", "y", "z"] });
+    const columns: TableColumn[] = [
+      { wave: "a", j: null },
+      { wave: "b", j: null },
+      { wave: "m", j: 0 },
+      { wave: "m", j: 1 },
+      { wave: "s", j: null },
+    ];
+    return { doc, columns };
+  };
+  const run = (doc: Doc, commands: ReturnType<typeof clearCommands>) => {
+    for (const command of commands) doc.dispatch(command);
+  };
+
+  it("orders the corners of a selection", () => {
+    expect(selectionRange({ row: 4, column: 1 }, { row: 2, column: 3 })).toEqual({
+      top: 2,
+      bottom: 4,
+      left: 1,
+      right: 3,
+    });
+  });
+
+  it("clears a range without growing the waves", () => {
+    const { doc, columns } = setup();
+    const range = { top: 1, bottom: 7, left: 0, right: 4 };
+    run(doc, clearCommands(doc.getState().waves, columns, range, plane));
+    const { a, b, m, s } = doc.getState().waves;
+    expect(Array.from(a!.data)).toEqual([1, NaN, NaN, NaN, NaN]);
+    expect(Array.from(b!.data)).toEqual([10, NaN, NaN]);
+    expect(Array.from(m!.data)).toEqual([1, 2, NaN, NaN, NaN, NaN]);
+    expect(s!.text).toEqual(["x", "", ""]);
+  });
+
+  it("clears one column of a matrix and leaves the other", () => {
+    const { doc, columns } = setup();
+    const range = { top: 0, bottom: 2, left: 3, right: 3 };
+    run(doc, clearCommands(doc.getState().waves, columns, range, plane));
+    expect(Array.from(doc.getState().waves.m!.data)).toEqual([1, NaN, 3, NaN, 5, NaN]);
+  });
+
+  it("clears nothing below the end of the waves", () => {
+    const { doc, columns } = setup();
+    const range = { top: 5, bottom: 9, left: 0, right: 1 };
+    expect(clearCommands(doc.getState().waves, columns, range, plane)).toEqual([]);
+  });
+
+  it("deletes the selected rows from each 1-D wave that has them", () => {
+    const { doc, columns } = setup();
+    const range = { top: 2, bottom: 3, left: 0, right: 4 };
+    run(doc, pointCommands(doc.getState().waves, columns, range, "delete"));
+    const { a, b, m, s } = doc.getState().waves;
+    expect(Array.from(a!.data)).toEqual([1, 2, 5]);
+    expect(Array.from(b!.data)).toEqual([10, 20]);
+    expect(m!.shape).toEqual([3, 2]);
+    expect(s!.text).toEqual(["x", "y"]);
+  });
+
+  it("inserts as many rows as are selected", () => {
+    const { doc, columns } = setup();
+    const range = { top: 1, bottom: 2, left: 0, right: 0 };
+    run(doc, pointCommands(doc.getState().waves, columns, range, "insert"));
+    expect(Array.from(doc.getState().waves.a!.data)).toEqual([1, NaN, NaN, 2, 3, 4, 5]);
+    expect(doc.getState().waves.b!.shape).toEqual([3]);
+  });
+
+  it("offers nothing for a matrix or for rows past the end", () => {
+    const { doc, columns } = setup();
+    const waves = doc.getState().waves;
+    expect(
+      pointCommands(waves, columns, { top: 0, bottom: 0, left: 2, right: 3 }, "delete"),
+    ).toEqual([]);
+    expect(
+      pointCommands(waves, columns, { top: 8, bottom: 8, left: 0, right: 1 }, "insert"),
+    ).toEqual([]);
   });
 });

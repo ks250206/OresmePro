@@ -204,8 +204,15 @@ export interface GraphSpec extends GraphStyle {
 
 export interface TableSpec {
   name: string;
+  /** The waves shown, as columns. */
   columns: readonly string[];
+  /** Significant digits numbers are shown with. */
+  digits: number;
+  /** Column widths in pixels, by wave, for columns the user has resized. */
+  widths: Readonly<Record<string, number>>;
 }
+
+export const DEFAULT_TABLE_DIGITS = 8;
 
 export interface WindowState {
   /** Same as the graph or table name. */

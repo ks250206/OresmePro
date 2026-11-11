@@ -6,6 +6,7 @@ import {
   COLOR_TABLES,
   CURSOR_NAMES,
   DEFAULT_FONT_FAMILY,
+  DEFAULT_TABLE_DIGITS,
   DocError,
   GRID_MODES,
   LINE_STYLES,
@@ -138,13 +139,15 @@ export type Command =
   | { op: "edit"; waves: readonly string[]; name?: string }
   | { op: "appendToTable"; table: string; waves: readonly string[] }
   | { op: "removeFromTable"; table: string; waves: readonly string[] }
+  | { op: "modifyTable"; table: string; props: Props }
+  | { op: "resizeColumn"; table: string; wave: string; width: number }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
 
-/** Window geometry and focus are view state: not undoable and not echoed. */
+/** Window geometry, focus and column widths are view state: not undoable and not echoed. */
 export const isTransient = (command: Command): boolean =>
-  command.op === "moveWindow" || command.op === "activateWindow";
+  command.op === "moveWindow" || command.op === "activateWindow" || command.op === "resizeColumn";
 
 export interface CommandOutcome {
   state: DocState;
@@ -575,7 +578,13 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
   }
   const tables: Record<string, TableSpec> = {};
   for (const table of Object.values(state.tables)) {
-    tables[table.name] = { ...table, columns: table.columns.map(rename) };
+    tables[table.name] = {
+      ...table,
+      columns: table.columns.map(rename),
+      widths: Object.fromEntries(
+        Object.entries(table.widths).map(([wave, width]) => [rename(wave), width]),
+      ),
+    };
   }
   return { ...state, graphs, tables };
 }
@@ -1143,7 +1152,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
         state: {
-          ...putTable(state, { name, columns }),
+          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: {} }),
           windows: [...state.windows, placeWindow(state, name, "table")],
         },
         result: name,
@@ -1158,7 +1167,35 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeFromTable": {
       const table = requireTable(state, command.table);
       const columns = table.columns.filter((column) => !command.waves.includes(column));
-      return { state: putTable(state, { ...table, columns }), result: null };
+      const widths = Object.fromEntries(
+        Object.entries(table.widths).filter(([wave]) => columns.includes(wave)),
+      );
+      return { state: putTable(state, { ...table, columns, widths }), result: null };
+    }
+    case "modifyTable": {
+      const table = requireTable(state, command.table);
+      const props = validateProps<Pick<TableSpec, "digits">>(
+        command.props,
+        {
+          digits: (value) => {
+            if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 17) {
+              throw new DocError("digits must be a whole number from 1 to 17.");
+            }
+            return value;
+          },
+        },
+        "table",
+      );
+      return { state: putTable(state, { ...table, ...props }), result: null };
+    }
+    case "resizeColumn": {
+      const table = requireTable(state, command.table);
+      if (!table.columns.includes(command.wave)) return { state, result: null };
+      const width = Math.round(Math.max(32, Math.min(800, command.width)));
+      return {
+        state: putTable(state, { ...table, widths: { ...table.widths, [command.wave]: width } }),
+        result: null,
+      };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {

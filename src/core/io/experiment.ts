@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand } from "../doc/commands";
 import {
   AXIS_SIDES,
+  DEFAULT_TABLE_DIGITS,
   defaultAxis,
   defaultTraceStyle,
   emptyDoc,
@@ -133,7 +134,15 @@ export function buildState(
   }
   const graphs: Record<string, GraphSpec> = {};
   for (const [name, graph] of Object.entries(saved.graphs)) graphs[name] = upgradeGraph(graph);
-  return { ...state, graphs, tables: saved.tables, windows: saved.windows };
+  const tables: Record<string, TableSpec> = {};
+  for (const [name, table] of Object.entries(saved.tables)) {
+    tables[name] = {
+      ...table,
+      digits: table.digits ?? DEFAULT_TABLE_DIGITS,
+      widths: table.widths ?? {},
+    };
+  }
+  return { ...state, graphs, tables, windows: saved.windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

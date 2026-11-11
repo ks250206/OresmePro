@@ -30,6 +30,17 @@ function keywords(props: Readonly<Record<string, unknown>>): string {
     .join(", ");
 }
 
+/** The indices along each dimension of a position in C-order data. */
+function unravel(position: number, shape: readonly number[]): number[] {
+  const indices: number[] = [];
+  let rest = position;
+  for (let dim = shape.length - 1; dim >= 0; dim -= 1) {
+    indices.unshift(rest % shape[dim]!);
+    rest = Math.floor(rest / shape[dim]!);
+  }
+  return indices;
+}
+
 const joinArgs = (...parts: string[]): string => parts.filter(Boolean).join(", ");
 
 /** The `axis=` / `haxis=` arguments, left out when they are the defaults. */
@@ -43,20 +54,35 @@ const axisKeywords = (command: { vAxis?: string; hAxis?: string }) => ({
  * actions into the command history. Returns null for commands that cannot be
  * replayed from text (bulk data) or that are only view state.
  */
-export function echoPython(command: Command): string | null {
+export function echoPython(
+  command: Command,
+  shapeOf?: (wave: string) => readonly number[] | undefined,
+): string | null {
   switch (command.op) {
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
     case "activateWindow":
+    case "resizeColumn":
       return null;
+    case "modifyTable":
+      return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
     case "setWavePoints": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
-      if (command.values.length === 1) {
-        return `${wave}[${command.start}] = ${pyLiteral(command.values[0])}`;
+      const { start, values } = command;
+      const shape = shapeOf?.(command.name) ?? [];
+      if (values.length === 1) {
+        // A cell of a matrix is written by its indices, not its place in memory.
+        const index = shape.length > 1 ? unravel(start, shape).join(", ") : String(start);
+        return `${wave}[${index}] = ${pyLiteral(values[0])}`;
       }
-      const end = command.start + command.values.length;
-      return `${wave}[${command.start}:${end}] = ${pyLiteral(Array.from(command.values))}`;
+      const target = `${shape.length > 1 ? `${wave}.flat` : wave}[${start}:${start + values.length}]`;
+      const list = Array.from(values);
+      // A run of one value (clearing a range to NaN) is written once, not per point.
+      if (list.every((value) => Object.is(value, list[0]))) {
+        return `${target} = ${pyLiteral(list[0])}`;
+      }
+      return `${target} = ${pyLiteral(list)}`;
     }
     case "setWaveText": {
       const wave = `op.wave(${pyLiteral(command.name)})`;

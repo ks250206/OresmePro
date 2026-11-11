@@ -130,7 +130,7 @@ test.describe("graph interaction", () => {
     expect(graph.cursors.A!.point).toBe(start + 11);
 
     // The cursor's cross is a short black horizontal line; grab it and drag.
-    const cross = (await app.findInGraph("Graph0", { color: "black", minRun: 15, maxRun: 19 }))!;
+    const cross = (await app.findInGraph("Graph0", { color: "black", minRun: 15, maxRun: 21 }))!;
     await page.mouse.move(box.x + cross.x, box.y + cross.y);
     await page.mouse.down();
     await page.mouse.move(box.x + cross.x + 100, box.y + cross.y + 5, { steps: 8 });

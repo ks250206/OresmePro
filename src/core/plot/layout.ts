@@ -1285,6 +1285,8 @@ export function layoutGraph(
           points: [x - 9, y, x + 9, y, x, y - 9, x, y + 9],
           stroke: INK,
           width: 1,
+          // On whole pixels, so the cross is sharp wherever the point falls.
+          crisp: true,
         },
       ];
       emitText(mark, layoutText(name, 10, family, measure), x + 7, y - 7, { family, fill: INK });

@@ -164,6 +164,27 @@ describe("oresme Python API", () => {
     );
   });
 
+  it("sets table digits and writes cells the way the table echoes them", async () => {
+    expect(
+      await run("t.digits = 5; print(t.digits, op.table('Table0').set(digits=6).digits)"),
+    ).toBe(true);
+    expect(stdout).toBe("5 6\n");
+    expect(
+      await run(
+        [
+          "gw = op.make('grow', [1.0, 2.0])",
+          "gw[2] = 3; gw[3:5] = [4, 5]; gw[0:2] = float('nan')",
+          "mm = op.make('mm', np.zeros((3, 4)))",
+          "mm[1, 2] = 9; mm.flat[2:5] = [1, 2, 3]",
+          "print(gw.data.tolist(), mm.data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "[nan, nan, 3.0, 4.0, 5.0] [[0.0, 0.0, 1.0, 2.0], [3.0, 0.0, 9.0, 0.0], [0.0, 0.0, 0.0, 0.0]]\n",
+    );
+  });
+
   it("undoes a whole execution as one step", async () => {
     const before = Object.keys(doc.getState().waves).length;
     await run('op.make("a1", [1]); op.make("a2", [2])');

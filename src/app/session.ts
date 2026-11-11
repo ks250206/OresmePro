@@ -161,7 +161,9 @@ export function runGui(commands: Command | readonly Command[]): string | null | 
   try {
     for (const command of list) {
       result = doc.dispatch(command, { group });
-      const echo = isTransient(command) ? null : echoPython(command);
+      const echo = isTransient(command)
+        ? null
+        : echoPython(command, (wave) => doc.getState().waves[wave]?.shape);
       if (echo) echoes.push(echo);
     }
   } catch (error) {

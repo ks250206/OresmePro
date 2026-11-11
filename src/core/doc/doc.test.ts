@@ -337,3 +337,59 @@ describe("echoPython for new commands", () => {
     );
   });
 });
+
+describe("tables", () => {
+  const setup = () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(3, 4) });
+    doc.dispatch({ op: "edit", waves: ["a", "b"] });
+    return doc;
+  };
+
+  it("sets how many digits a table shows", () => {
+    const doc = setup();
+    expect(doc.getState().tables.Table0!.digits).toBe(8);
+    doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 12 } });
+    expect(doc.getState().tables.Table0!.digits).toBe(12);
+    expect(() =>
+      doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 0 } }),
+    ).toThrow();
+    expect(() =>
+      doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 2.5 } }),
+    ).toThrow();
+    doc.undo();
+    expect(doc.getState().tables.Table0!.digits).toBe(8);
+    expect(echoPython({ op: "modifyTable", table: "Table0", props: { digits: 12 } })).toBe(
+      'op.table("Table0").set(digits=12)',
+    );
+  });
+
+  it("keeps column widths with the waves they belong to", () => {
+    const doc = setup();
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "a", width: 150.4 });
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "b", width: 5 });
+    expect(doc.getState().tables.Table0!.widths).toEqual({ a: 150, b: 32 });
+    doc.dispatch({ op: "removeFromTable", table: "Table0", waves: ["b"] });
+    doc.dispatch({ op: "renameWave", name: "a", newName: "run:a" });
+    expect(doc.getState().tables.Table0!.widths).toEqual({ "run:a": 150 });
+    doc.dispatch({ op: "removeFromTable", table: "Table0", waves: ["run:a"] });
+    expect(doc.getState().tables.Table0!.widths).toEqual({});
+    // A width for a wave the table does not show is dropped.
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "zz", width: 90 });
+    expect(doc.getState().tables.Table0!.widths).toEqual({});
+  });
+
+  it("writes matrix cells by their indices in the history", () => {
+    const shape = () => [3, 4];
+    expect(echoPython({ op: "setWavePoints", name: "m", start: 6, values: [9] }, shape)).toBe(
+      'op.wave("m")[1, 2] = 9',
+    );
+    expect(echoPython({ op: "setWavePoints", name: "m", start: 2, values: [1, 2, 3] }, shape)).toBe(
+      'op.wave("m").flat[2:5] = [1, 2, 3]',
+    );
+    expect(echoPython({ op: "setWavePoints", name: "a", start: 1, values: [NaN, NaN, NaN] })).toBe(
+      'op.wave("a")[1:4] = float("nan")',
+    );
+  });
+});
