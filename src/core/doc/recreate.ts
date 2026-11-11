@@ -1,6 +1,13 @@
 import { applyCommand, type Command } from "./commands";
 import { echoPython } from "./echo";
-import { AXIS_SIDES, CURSOR_NAMES, emptyDoc, type DocState, type GraphSpec } from "./types";
+import {
+  AXIS_SIDES,
+  CURSOR_NAMES,
+  TAG_OFFSET,
+  emptyDoc,
+  type DocState,
+  type GraphSpec,
+} from "./types";
 
 type Props = Record<string, unknown>;
 
@@ -110,10 +117,23 @@ export function recreationCommands(
     if (hasKeys(props)) run({ op: "modifyAxis", graph: name, axis, props });
   }
   for (const annotation of target.annotations) {
-    const { kind, text, anchor, frame } = annotation;
-    const made = run({ op: "addAnnotation", graph: name, kind, text, anchor, frame });
+    const { kind, text, anchor, frame, x, y, point } = annotation;
+    const tag = kind === "tag";
+    // A tag whose trace is gone has nothing to point at.
+    const trace = annotation.trace === null ? undefined : traceNames.get(annotation.trace);
+    if (tag && trace === undefined) continue;
+    const made = run({
+      op: "addAnnotation",
+      graph: name,
+      kind,
+      text,
+      ...(tag ? { trace, point } : { anchor }),
+      frame,
+      // Where it sits is written only if it was moved.
+      ...(x !== (tag ? TAG_OFFSET.x : 0) || y !== (tag ? TAG_OFFSET.y : 0) ? { x, y } : {}),
+    });
     const now = built().annotations.find((item) => item.name === made);
-    const props = now ? difference(now, annotation, ["name", "kind"]) : {};
+    const props = now ? difference(now, annotation, ["name", "kind", "trace"]) : {};
     if (made && hasKeys(props)) {
       run({ op: "modifyAnnotation", graph: name, annotation: made, props });
     }

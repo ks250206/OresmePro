@@ -15,10 +15,12 @@ import {
   formatNumber,
   formatTick,
   isTickFormat,
+  isTimeZone,
   linearTicks,
   logTicks,
   niceStep,
   parseDate,
+  timeZone,
 } from "./ticks";
 
 const measure: MeasureText = (text, size) => text.length * size * 0.55;
@@ -204,6 +206,67 @@ describe("dates", () => {
 
   it("leaves very short ranges to ordinary ticks", () => {
     expect(dateTicks(100, 101, 5)).toBeNull();
+  });
+});
+
+describe("dates in a time zone", () => {
+  const tokyo = timeZone("Asia/Tokyo");
+  const newYork = timeZone("America/New_York");
+  const noonUtc = Date.UTC(2026, 0, 15, 12) / 1000;
+
+  it("shows a moment on the clock of the zone", () => {
+    expect(formatDate(noonUtc)).toBe("2026-01-15 12:00:00");
+    expect(formatDate(noonUtc, tokyo)).toBe("2026-01-15 21:00:00");
+    expect(formatDate(noonUtc, newYork)).toBe("2026-01-15 07:00:00");
+    // Summer time: four hours behind UTC instead of five.
+    expect(formatDate(Date.UTC(2026, 6, 15, 12) / 1000, newYork)).toBe("2026-07-15 08:00:00");
+    // Midnight in the zone is written as the day alone.
+    expect(formatDate(Date.UTC(2026, 0, 14, 15) / 1000, tokyo)).toBe("2026-01-15");
+  });
+
+  it("reads a time without an offset on the clock of the zone", () => {
+    expect(parseDate("2026-01-15 21:00", tokyo)).toBe(noonUtc);
+    expect(parseDate("2026-01-15 07:00", newYork)).toBe(noonUtc);
+    expect(parseDate("2026-07-15 08:00", newYork)).toBe(Date.UTC(2026, 6, 15, 12) / 1000);
+    // An offset in the text wins over the zone.
+    expect(parseDate("2026-01-15T12:00:00Z", tokyo)).toBe(noonUtc);
+    expect(parseDate("2026-01-15 13:00+01:00", tokyo)).toBe(noonUtc);
+    // What is shown reads back as the same moment.
+    for (const zone of [tokyo, newYork]) {
+      expect(parseDate(formatDate(noonUtc + 1234, zone), zone)).toBe(noonUtc + 1234);
+    }
+  });
+
+  it("puts ticks on round times of the zone's clock", () => {
+    const start = Date.UTC(2026, 0, 15, 0) / 1000;
+    const ticks = dateTicks(start, start + 86400, 6, tokyo)!;
+    // 00:00 UTC is 09:00 in Tokyo: the first round time after it is 12:00 there.
+    expect(ticks.major[0]).toEqual({ value: start + 3 * 3600, label: "01-15 12:00" });
+    expect(ticks.major.map((tick) => tick.label)).toContain("01-16 00:00");
+    expect(ticks.context).toBe("2026 Asia/Tokyo");
+    for (const tick of ticks.major) {
+      expect(formatDate(tick.value, tokyo)).toMatch(/(00:00|:00:00)$|^\d{4}-\d{2}-\d{2}$/);
+    }
+    // Days begin at the zone's midnight, also across the change to summer time.
+    const march = Date.UTC(2026, 2, 6) / 1000;
+    const days = dateTicks(march, march + 6 * 86400, 6, newYork)!;
+    expect(days.major.map((tick) => formatDate(tick.value, newYork))).toEqual([
+      "2026-03-06",
+      "2026-03-07",
+      "2026-03-08",
+      "2026-03-09",
+      "2026-03-10",
+      "2026-03-11",
+    ]);
+    expect(days.major[3]!.value - days.major[2]!.value).toBe(23 * 3600);
+  });
+
+  it("knows which names are zones", () => {
+    expect(isTimeZone("UTC")).toBe(true);
+    expect(isTimeZone("local")).toBe(true);
+    expect(isTimeZone("Europe/Paris")).toBe(true);
+    expect(isTimeZone("Mars/Olympus")).toBe(false);
+    expect(isTimeZone(5)).toBe(false);
   });
 });
 
@@ -546,6 +609,115 @@ describe("layoutGraph", () => {
     const decade = scale.toPixel(10) - scale.toPixel(1);
     for (const bar of bars) expect(bar.w).toBeCloseTo(decade * 0.8, 3);
     expect(bars[1]!.x + bars[1]!.w / 2).toBeCloseTo(scale.toPixel(10), 3);
+  });
+
+  it("moves annotations by their offsets and keeps them inside the graph", () => {
+    const doc = pairDoc();
+    doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "legend" });
+    const home = lay(doc);
+    const [start] = home.annotations;
+    expect(start!.name).toBe("legend0");
+    // Top right of the plot area by default.
+    expect(start!.box.x + start!.box.w).toBe(home.plot.x + home.plot.w - 8);
+
+    doc.dispatch({
+      op: "modifyAnnotation",
+      graph: "Graph0",
+      annotation: "legend0",
+      props: { x: -0.5, y: 0.25 },
+    });
+    const moved = lay(doc).annotations[0]!.box;
+    expect(moved.x).toBe(Math.round(start!.box.x - 0.5 * home.plot.w));
+    expect(moved.y).toBe(Math.round(start!.box.y + 0.25 * home.plot.h));
+    expect([moved.w, moved.h]).toEqual([start!.box.w, start!.box.h]);
+
+    doc.dispatch({
+      op: "modifyAnnotation",
+      graph: "Graph0",
+      annotation: "legend0",
+      props: { x: 5, y: -5 },
+    });
+    const pinned = lay(doc).annotations[0]!.box;
+    expect(pinned.x + pinned.w).toBe(400);
+    expect(pinned.y).toBe(0);
+  });
+
+  it("attaches a tag to a point, with its values in the text", () => {
+    const doc = pairDoc();
+    doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "hi", point: 2 });
+    doc.dispatch({
+      op: "addAnnotation",
+      graph: "Graph0",
+      kind: "tag",
+      trace: "lo",
+      point: 1,
+      text: "p{point}: {y} at {x}",
+      x: 0.2,
+      y: 0.1,
+    });
+    let layout = lay(doc);
+    expect(texts(layout.prims)).toContain("2, 4");
+    expect(texts(layout.prims)).toContain("p1: 1 at 1");
+    const [first] = layout.annotations;
+    const px = layout.axes.bottom!.scale.toPixel(2);
+    const py = layout.axes.left!.scale.toPixel(4);
+    // The middle of the box is offset from the point by the tag's fractions of the plot.
+    expect(first!.box.x + first!.box.w / 2).toBeCloseTo(px + 0.08 * layout.plot.w, 0);
+    // An arrowhead points at the data point.
+    const head = find(layout.prims, "polygon")[0]!;
+    expect(Math.hypot(head.points[0]! - px, head.points[1]! - py)).toBeLessThan(4);
+
+    // The tag follows the point when the data changes or the view is zoomed.
+    doc.dispatch({ op: "setWavePoints", name: "hi", start: 2, values: [2.5] });
+    layout = lay(doc);
+    expect(texts(layout.prims)).toContain("2, 2.5");
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { min: 0, max: 1.5 },
+    });
+    // Out of view: the tag for point 2 is not drawn, the one for point 1 is.
+    expect(lay(doc).annotations.map((item) => item.name)).toEqual(["tag1"]);
+
+    expect(() =>
+      doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "hi", point: 9 }),
+    ).toThrow(/past the end/);
+    expect(() =>
+      doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "nope", point: 0 }),
+    ).toThrow();
+    // Tags go with their trace, and follow it through a rename of its wave.
+    doc.dispatch({ op: "renameWave", name: "lo", newName: "low" });
+    expect(doc.getState().graphs.Graph0!.annotations[1]!.trace).toBe("low");
+    doc.dispatch({ op: "removeTraces", graph: "Graph0", traces: ["hi"] });
+    expect(doc.getState().graphs.Graph0!.annotations.map((item) => item.name)).toEqual(["tag1"]);
+  });
+
+  it("labels each contour line, and long lines more than once", () => {
+    const doc = new Doc();
+    const n = 60;
+    const data = new Float64Array(n * n);
+    for (let i = 0; i < n; i += 1) {
+      for (let j = 0; j < n; j += 1) {
+        // Two hills, so one level makes two separate rings.
+        const hill = (cx: number, cy: number) => Math.exp(-((i - cx) ** 2 + (j - cy) ** 2) / 60);
+        data[i * n + j] = hill(15, 30) + hill(45, 30);
+      }
+    }
+    doc.dispatch({ op: "makeWave", name: "m", data, shape: [n, n] });
+    doc.dispatch({ op: "display", y: [] });
+    doc.dispatch({
+      op: "appendContour",
+      graph: "Graph0",
+      wave: "m",
+      props: { levels: [0.5], labels: true },
+    });
+    const state = doc.getState();
+    const small = layoutGraph(state.graphs.Graph0!, state.waves, 500, 400, measure);
+    expect(texts(small.prims).filter((text) => text === "0.5")).toHaveLength(2);
+    // Twice the size: each ring is long enough for more than one label.
+    const large = layoutGraph(state.graphs.Graph0!, state.waves, 1400, 1100, measure);
+    expect(texts(large.prims).filter((text) => text === "0.5").length).toBeGreaterThan(2);
   });
 
   it("reports missing waves instead of failing", () => {

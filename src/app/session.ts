@@ -23,6 +23,7 @@ export type DialogRequest =
   | { kind: "addAxis"; graph: string }
   | { kind: "modifyGraph"; graph: string }
   | { kind: "addText"; graph: string }
+  | { kind: "editAnnotation"; graph: string; annotation: string }
   | { kind: "renameWave"; wave: string }
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
@@ -31,6 +32,7 @@ export type DialogRequest =
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
   | { kind: "graphScript"; graph: string }
+  | { kind: "timeZone" }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -109,6 +111,7 @@ export function exportLayout(
   const size = graphSize(state, name);
   return layoutGraph(graph, state.waves, width ?? size.width, height ?? size.height, measureText, {
     cursors,
+    timeZone: state.timeZone,
   });
 }
 

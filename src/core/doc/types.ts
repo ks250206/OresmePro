@@ -193,7 +193,7 @@ export interface AxisSpec {
 export const ANCHORS = ["LT", "MT", "RT", "LC", "MC", "RC", "LB", "MB", "RB"] as const;
 export type Anchor = (typeof ANCHORS)[number];
 
-export const ANNOTATION_KINDS = ["legend", "text", "colorscale"] as const;
+export const ANNOTATION_KINDS = ["legend", "text", "colorscale", "tag"] as const;
 export type AnnotationKind = (typeof ANNOTATION_KINDS)[number];
 
 export interface AnnotationSpec {
@@ -202,11 +202,26 @@ export interface AnnotationSpec {
   /**
    * legend: empty lists every trace. text: the text itself.
    * colorscale: the image it describes (empty for the first image).
+   * tag: the text, in which {x}, {y} and {point} stand for the point's
+   * values; empty shows "x, y".
    */
   text: string;
   anchor: Anchor;
   frame: boolean;
+  /**
+   * How far the box has been moved from where it would sit, as fractions of
+   * the plot area's width and height. For a tag this is the way from its
+   * point to the middle of its box.
+   */
+  x: number;
+  y: number;
+  /** For a tag: the trace and the point on it that the tag is attached to. */
+  trace: string | null;
+  point: number;
 }
+
+/** Where a new tag's box sits relative to its point, in plot fractions. */
+export const TAG_OFFSET = { x: 0.08, y: -0.14 } as const;
 
 export const CURSOR_NAMES = ["A", "B"] as const;
 export type CursorName = (typeof CURSOR_NAMES)[number];
@@ -278,6 +293,11 @@ export interface DocState {
   readonly graphs: Readonly<Record<string, GraphSpec>>;
   readonly tables: Readonly<Record<string, TableSpec>>;
   readonly procedures: Readonly<Record<string, ProcedureSpec>>;
+  /**
+   * The time zone dates are shown and typed in: "UTC", "local" (the zone of
+   * the computer the experiment is open on) or an IANA name.
+   */
+  readonly timeZone: string;
   /** Back-to-front z-order; the last window is the active one. */
   readonly windows: readonly WindowState[];
 }
@@ -289,6 +309,7 @@ export const emptyDoc = (): DocState => ({
   graphs: {},
   tables: {},
   procedures: {},
+  timeZone: "UTC",
   windows: [],
 });
 

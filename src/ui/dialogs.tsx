@@ -33,7 +33,7 @@ import {
   type ImageSpec,
   type TraceStyle,
 } from "../core/doc/types";
-import { formatNumber } from "../core/plot/ticks";
+import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
 
 const close = () => ui.set({ dialog: null });
@@ -1123,42 +1123,87 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
   );
 }
 
-function AddTextDialog({ graph }: { graph: string }) {
-  const [text, setText] = useState("");
-  const [anchor, setAnchor] = useState("RT");
-  const [frame, setFrame] = useState(true);
+/** Adds a text box, or changes a legend, text box, color scale or tag that is there. */
+function AddTextDialog({ graph, annotation }: { graph: string; annotation?: string }) {
+  const existing = useDoc((state) =>
+    state.graphs[graph]?.annotations.find((item) => item.name === annotation),
+  );
+  const [text, setText] = useState(existing?.text ?? "");
+  const [anchor, setAnchor] = useState<string>(existing?.anchor ?? "RT");
+  const [frame, setFrame] = useState(existing?.frame ?? true);
+  if (annotation && !existing) return null;
+  const kind = existing?.kind ?? "text";
+  const hint =
+    kind === "legend"
+      ? "Leave empty to list every trace. \\s(traceName) draws a trace's symbol."
+      : kind === "tag"
+        ? "{x}, {y} and {point} stand for the point's values. Leave empty to show x, y."
+        : kind === "colorscale"
+          ? ""
+          : "^{...} is a superscript and _{...} a subscript.";
+  const props: Record<string, unknown> = {};
+  if (existing) {
+    if (text !== existing.text) props.text = text;
+    if (anchor !== existing.anchor) {
+      // A new anchor is a new home: start from there, not from where it was dragged to.
+      Object.assign(props, { anchor, x: 0, y: 0 });
+    }
+    if (frame !== existing.frame) props.frame = frame;
+  }
   return (
     <Dialog
-      title={`Add Text — ${graph}`}
+      title={existing ? `Modify ${existing.name} — ${graph}` : `Add Text — ${graph}`}
       onClose={close}
-      submitDisabled={text.trim() === ""}
-      onSubmit={() => submit({ op: "addAnnotation", graph, kind: "text", text, anchor, frame })}
+      submitDisabled={existing ? Object.keys(props).length === 0 : text.trim() === ""}
+      onSubmit={() =>
+        submit(
+          existing
+            ? { op: "modifyAnnotation", graph, annotation: existing.name, props }
+            : { op: "addAnnotation", graph, kind: "text", text, anchor, frame },
+        )
+      }
     >
-      <textarea
-        aria-label="Text"
-        autoFocus
-        rows={4}
-        spellCheck={false}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-      />
-      <Field label="Position">
-        <Select
-          aria-label="Position"
-          value={anchor}
-          onChange={(event) => setAnchor(event.target.value)}
-        >
-          {ANCHORS.map((value) => (
-            <option key={value}>{value}</option>
-          ))}
-        </Select>
+      {kind === "colorscale" ? null : (
+        <textarea
+          aria-label="Text"
+          autoFocus
+          rows={4}
+          spellCheck={false}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+        />
+      )}
+      {hint ? <div className="text-[11px] text-muted">{hint}</div> : null}
+      <Field label={kind === "tag" ? "Box" : "Position"}>
+        {kind === "tag" ? null : (
+          <Select
+            aria-label="Position"
+            value={anchor}
+            onChange={(event) => setAnchor(event.target.value)}
+          >
+            {ANCHORS.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </Select>
+        )}
         <Checkbox
           label="Frame"
           checked={frame}
           onChange={(event) => setFrame(event.target.checked)}
         />
+        {existing ? (
+          <Button
+            onClick={() => {
+              close();
+              runGui({ op: "removeAnnotation", graph, annotation: existing.name });
+            }}
+          >
+            Remove
+          </Button>
+        ) : null}
       </Field>
+      <div className="text-[11px] text-muted">Drag it in the graph to move it.</div>
     </Dialog>
   );
 }
@@ -1338,6 +1383,55 @@ function GraphScriptDialog({ graph }: { graph: string }) {
         </Button>
         <Button onClick={toProcedure}>Add to Procedure as a Function</Button>
       </div>
+    </Dialog>
+  );
+}
+
+/** Chooses the time zone dates are shown and typed in. */
+function TimeZoneDialog() {
+  const current = useDoc((state) => state.timeZone);
+  const [choice, setChoice] = useState(
+    current === "UTC" || current === "local" ? current : "other",
+  );
+  const [name, setName] = useState(current === "UTC" || current === "local" ? "" : current);
+  const zone = choice === "other" ? name.trim() : choice;
+  const valid = isTimeZone(zone);
+  const here = timeZone("local").label;
+  return (
+    <Dialog
+      title="Time Zone for Dates"
+      width={400}
+      onClose={close}
+      submitDisabled={!valid || zone === current}
+      onSubmit={() => submit({ op: "setTimeZone", zone })}
+    >
+      <p className="m-0 leading-relaxed text-muted">
+        Date waves hold moments in time. This sets the clock they are read on: on graph axes, in
+        tables, and for dates typed or loaded without an offset.
+      </p>
+      <Field label="Show dates in">
+        <Select
+          aria-label="Time zone"
+          value={choice}
+          onChange={(event) => setChoice(event.target.value)}
+        >
+          <option value="UTC">UTC</option>
+          <option value="local">This computer's zone ({here})</option>
+          <option value="other">Another zone…</option>
+        </Select>
+      </Field>
+      {choice === "other" ? (
+        <Field label="Zone name">
+          <TextInput
+            aria-label="Zone name"
+            aria-invalid={name.trim() !== "" && !valid}
+            className="flex-1"
+            placeholder="Asia/Tokyo"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+      ) : null}
     </Dialog>
   );
 }
@@ -1598,6 +1692,8 @@ function renderDialog(dialog: DialogRequest) {
       return <ModifyGraphDialog graph={dialog.graph} />;
     case "addText":
       return <AddTextDialog graph={dialog.graph} />;
+    case "editAnnotation":
+      return <AddTextDialog graph={dialog.graph} annotation={dialog.annotation} />;
     case "renameWave":
       return <NameDialog target={dialog.wave} mode="rename" />;
     case "duplicateWave":
@@ -1614,6 +1710,8 @@ function renderDialog(dialog: DialogRequest) {
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
     case "graphScript":
       return <GraphScriptDialog graph={dialog.graph} />;
+    case "timeZone":
+      return <TimeZoneDialog />;
     case "about":
       return <AboutDialog />;
   }

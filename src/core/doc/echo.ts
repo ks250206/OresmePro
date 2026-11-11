@@ -66,6 +66,8 @@ export function echoPython(
     case "resizeColumn":
     case "setProcedure":
       return null;
+    case "setTimeZone":
+      return `op.set_time_zone(${pyLiteral(command.zone)})`;
     case "newProcedure":
       return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
     case "modifyTable":
@@ -185,7 +187,17 @@ export function echoPython(
       return `op.graph(${pyLiteral(command.graph)}).set(${keywords(command.props)})`;
     case "addAnnotation": {
       const graph = `op.graph(${pyLiteral(command.graph)})`;
-      const options = keywords({ anchor: command.anchor, frame: command.frame });
+      const place = keywords({ x: command.x, y: command.y });
+      if (command.kind === "tag") {
+        return `${graph}.tag(${joinArgs(
+          pyLiteral(command.trace),
+          String(command.point),
+          command.text ? pyLiteral(command.text) : "",
+          keywords({ frame: command.frame }),
+          place,
+        )})`;
+      }
+      const options = joinArgs(keywords({ anchor: command.anchor, frame: command.frame }), place);
       const text = command.text ? pyLiteral(command.text) : "";
       if (command.kind === "legend") return `${graph}.legend(${joinArgs(text, options)})`;
       if (command.kind === "colorscale") return `${graph}.colorscale(${joinArgs(text, options)})`;

@@ -81,6 +81,8 @@ export function handleRpc(
     }
     case "listWaves":
       return { result: state.waveOrder };
+    case "timeZone":
+      return { result: state.timeZone };
     case "listFolders":
       return { result: state.folders };
     case "uniqueName": {

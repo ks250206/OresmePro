@@ -1,4 +1,4 @@
-import { isTickFormat } from "../plot/ticks";
+import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import {
   ANCHORS,
@@ -14,6 +14,7 @@ import {
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
+  TAG_OFFSET,
   TICK_MODES,
   TRACE_MODES,
   defaultAxis,
@@ -136,6 +137,11 @@ export type Command =
       text?: string;
       anchor?: string;
       frame?: boolean;
+      x?: number;
+      y?: number;
+      /** For a tag: what it points at. */
+      trace?: string;
+      point?: number;
     }
   | { op: "modifyAnnotation"; graph: string; annotation: string; props: Props }
   | { op: "removeAnnotation"; graph: string; annotation: string }
@@ -144,6 +150,7 @@ export type Command =
   | { op: "removeFromTable"; table: string; waves: readonly string[] }
   | { op: "modifyTable"; table: string; props: Props }
   | { op: "resizeColumn"; table: string; wave: string; width: number }
+  | { op: "setTimeZone"; zone: string }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   | { op: "killWindow"; name: string }
@@ -553,7 +560,7 @@ const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => Conto
   chunk: (value) => index(value, "chunk"),
 };
 
-type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame">;
+type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame" | "x" | "y" | "point">;
 const ANNOTATION_VALIDATORS: {
   [K in keyof AnnotationProps]: (value: unknown) => AnnotationProps[K];
 } = {
@@ -563,6 +570,9 @@ const ANNOTATION_VALIDATORS: {
   },
   anchor: (value) => oneOf(value, ANCHORS, "anchor"),
   frame: (value) => bool(value, "frame"),
+  x: (value) => finite(value, "x"),
+  y: (value) => finite(value, "y"),
+  point: (value) => index(value, "point"),
 };
 
 function validateProps<T>(
@@ -614,6 +624,9 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
       ...graph,
       traces,
       cursors,
+      annotations: graph.annotations.map((item) =>
+        item.trace === null ? item : { ...item, trace: traceNames.get(item.trace) ?? item.trace },
+      ),
       images: graph.images.map((image) => ({ ...image, wave: rename(image.wave) })),
       contours: graph.contours.map((contour) => ({ ...contour, wave: rename(contour.wave) })),
     };
@@ -970,7 +983,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ([, cursor]) => !command.traces.includes(cursor.trace),
         ),
       );
-      return { state: putGraph(state, { ...graph, traces, cursors }), result: null };
+      // A tag goes with the trace it points at.
+      const annotations = graph.annotations.filter(
+        (item) => item.trace === null || !command.traces.includes(item.trace),
+      );
+      return { state: putGraph(state, { ...graph, traces, cursors, annotations }), result: null };
     }
     case "modifyTrace": {
       const graph = requireGraph(state, command.graph);
@@ -1163,6 +1180,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         if (graph.images.length === 0) throw new DocError(`${graph.name} has no image.`);
         if (text !== "") requireItem(graph.images, text, graph.name, "image");
       }
+      const tag = kind === "tag";
+      if (tag) {
+        const trace = requireItem(graph.traces, command.trace ?? "", graph.name, "trace");
+        const length = state.waves[trace.y]?.data.length ?? 0;
+        if (index(command.point, "point") >= length) {
+          throw new DocError(`Point ${command.point} is past the end of ${trace.name}.`);
+        }
+      }
       const annotation: AnnotationSpec = {
         name: uniqueName(kind, (name) => graph.annotations.some((item) => item.name === name)),
         kind,
@@ -1171,6 +1196,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           command.anchor ?? (kind === "colorscale" ? "RC" : "RT"),
         ),
         frame: ANNOTATION_VALIDATORS.frame(command.frame ?? true),
+        x: ANNOTATION_VALIDATORS.x(command.x ?? (tag ? TAG_OFFSET.x : 0)),
+        y: ANNOTATION_VALIDATORS.y(command.y ?? (tag ? TAG_OFFSET.y : 0)),
+        trace: tag ? command.trace! : null,
+        point: tag ? command.point! : 0,
       };
       return {
         state: putGraph(state, { ...graph, annotations: [...graph.annotations, annotation] }),
@@ -1251,6 +1280,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         state: putTable(state, { ...table, widths: { ...table.widths, [command.wave]: width } }),
         result: null,
       };
+    }
+    case "setTimeZone": {
+      if (!isTimeZone(command.zone)) {
+        throw new DocError(
+          `${JSON.stringify(command.zone)} is not a time zone. Use "UTC", "local" or a name such as "Asia/Tokyo".`,
+        );
+      }
+      return { state: { ...state, timeZone: command.zone }, result: null };
     }
     case "newProcedure": {
       let name = "Procedure";

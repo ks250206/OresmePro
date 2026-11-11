@@ -20,7 +20,7 @@ import {
   type TableColumn,
 } from "../core/doc/tableEdit";
 import { DATE_UNIT, leafName } from "../core/doc/types";
-import { formatDate, formatNumber } from "../core/plot/ticks";
+import { formatDate, formatNumber, timeZone } from "../core/plot/ticks";
 import { openContextMenu } from "./Menu";
 
 const features = tableFeatures({ columnSizingFeature, columnResizingFeature });
@@ -43,6 +43,7 @@ interface ColumnInfo extends TableColumn {
 export function TableWindow({ name }: { name: string }) {
   const table = useDoc((state) => state.tables[name]);
   const waves = useDoc((state) => state.waves);
+  const zone = timeZone(useDoc((state) => state.timeZone));
   const scrollRef = useRef<HTMLDivElement>(null);
   /** The active cell, where typing goes, and the opposite corner of the selection. */
   const [anchor, setAnchor] = useState<Cell>({ row: 0, column: 0 });
@@ -170,7 +171,7 @@ export function TableWindow({ name }: { name: string }) {
     if (!wave || index >= (wave.shape[0] ?? 0)) return "";
     if (wave.text) return wave.text[index] ?? "";
     const value = wave.data[cellIndex(wave, index, info!.j, plane)]!;
-    return wave.unit === DATE_UNIT ? formatDate(value) : formatNumber(value, precision);
+    return wave.unit === DATE_UNIT ? formatDate(value, zone) : formatNumber(value, precision);
   };
 
   /** A cell can be edited if it is an existing point or, in a 1-D wave, the first empty one. */
@@ -194,7 +195,7 @@ export function TableWindow({ name }: { name: string }) {
     const unchanged = !appending && editing.text === cellText(activeInfo, active.row, 17);
     if (!unchanged && !(appending && editing.text.trim() === "")) {
       const edit = { wave: activeInfo.wave, j: activeInfo.j, row: active.row, text: editing.text };
-      const commands = tableEditCommands(waves, [edit], plane);
+      const commands = tableEditCommands(waves, [edit], plane, zone);
       if (!commands) {
         setEditing({ ...editing, invalid: true });
         return;
@@ -296,7 +297,7 @@ export function TableWindow({ name }: { name: string }) {
         edits.push({ wave: info.wave, j: info.j, row: start + down, text: value });
       });
     });
-    const commands = tableEditCommands(waves, edits, plane);
+    const commands = tableEditCommands(waves, edits, plane, zone);
     if (commands) runGui(commands);
     else showError("Could not paste", "Some of the pasted cells are not numbers.");
   };

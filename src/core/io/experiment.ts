@@ -17,6 +17,7 @@ import {
   type WindowState,
 } from "../doc/types";
 import type { HistoryEntry } from "../history/history";
+import { isTimeZone } from "../plot/ticks";
 import { decodeNpy, encodeNpy } from "./npy";
 
 /**
@@ -47,6 +48,7 @@ export interface SavedExperiment {
   graphs: Record<string, GraphSpec>;
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
+  timeZone?: string;
   windows: WindowState[];
 }
 
@@ -74,6 +76,7 @@ export function describeExperiment(
     graphs: { ...state.graphs },
     tables: { ...state.tables },
     procedures: { ...state.procedures },
+    timeZone: state.timeZone,
     windows: [...state.windows],
   };
 }
@@ -103,7 +106,13 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       chunk: contour.chunk ?? 0,
       labels: contour.labels ?? false,
     })),
-    annotations: saved.annotations ?? [],
+    annotations: (saved.annotations ?? []).map((annotation) => ({
+      ...annotation,
+      x: annotation.x ?? 0,
+      y: annotation.y ?? 0,
+      trace: annotation.trace ?? null,
+      point: annotation.point ?? 0,
+    })),
     cursors: saved.cursors ?? {},
     showInfo: saved.showInfo ?? false,
     axes,
@@ -156,7 +165,8 @@ export function buildState(
   const windows = saved.windows.filter(
     (window) => window.name in graphs || window.name in tables || window.name in procedures,
   );
-  return { ...state, graphs, tables, procedures, windows };
+  const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
+  return { ...state, graphs, tables, procedures, timeZone, windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

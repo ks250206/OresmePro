@@ -1,4 +1,4 @@
-import { parseDate } from "../plot/ticks";
+import { parseDate, UTC, type TimeZone } from "../plot/ticks";
 import type { Command } from "./commands";
 import { DATE_UNIT, type Wave } from "./types";
 
@@ -48,6 +48,7 @@ export function tableEditCommands(
   waves: Readonly<Record<string, Wave>>,
   edits: readonly CellEdit[],
   plane: TablePlane,
+  zone: TimeZone = UTC,
 ): Command[] | null {
   const byWave = new Map<string, CellEdit[]>();
   for (const edit of edits) {
@@ -88,7 +89,7 @@ export function tableEditCommands(
       // Dates are typed as dates and stored as seconds.
       const value =
         wave.unit === DATE_UNIT && cell.text.trim() !== ""
-          ? parseDate(cell.text)
+          ? parseDate(cell.text, zone)
           : parseCell(cell.text);
       if (value === null) return null;
       const at = flat ? cell.row : cellIndex(wave, cell.row, cell.j, plane);

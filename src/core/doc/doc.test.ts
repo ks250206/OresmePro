@@ -448,3 +448,16 @@ describe("procedures", () => {
     expect(doc.getState().tables.Table0).toMatchObject({ digits: 8, widths: { a: 200 } });
   });
 });
+
+describe("time zone", () => {
+  it("is a setting of the experiment", () => {
+    const doc = new Doc();
+    expect(doc.getState().timeZone).toBe("UTC");
+    doc.dispatch({ op: "setTimeZone", zone: "Asia/Tokyo" });
+    expect(doc.getState().timeZone).toBe("Asia/Tokyo");
+    expect(() => doc.dispatch({ op: "setTimeZone", zone: "Nowhere/Land" })).toThrow(/time zone/);
+    doc.undo();
+    expect(doc.getState().timeZone).toBe("UTC");
+    expect(echoPython({ op: "setTimeZone", zone: "local" })).toBe('op.set_time_zone("local")');
+  });
+});

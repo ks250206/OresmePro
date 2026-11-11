@@ -4,6 +4,7 @@ import { parseDelimited } from "../core/io/delimited";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { drawPrims } from "../core/plot/canvas";
 import { toPdf, type RasterText } from "../core/plot/pdf";
+import { timeZone } from "../core/plot/ticks";
 import {
   activeWindow,
   doc,
@@ -134,8 +135,8 @@ async function loadTextFile(file: File): Promise<void> {
   try {
     const text = await file.text();
     // Look at the waves only now: others may have been made while the file was read.
-    const waves = doc.getState().waves;
-    const result = parseDelimited(text, (name) => name in waves);
+    const { waves, timeZone: zone } = doc.getState();
+    const result = parseDelimited(text, (name) => name in waves, timeZone(zone));
     if (result.names.length === 0) {
       showError("Nothing to load", `${file.name} has no columns.`);
       return;

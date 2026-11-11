@@ -59,6 +59,8 @@ __all__ = [
     "new_procedure",
     "procedure",
     "procedures",
+    "time_zone",
+    "set_time_zone",
 ]
 
 
@@ -626,9 +628,13 @@ class Axis(_Props):
 
 
 class Annotation(_Props):
-    """A legend or text box in a graph."""
+    """A legend, text box, color scale or tag in a graph.
 
-    _props = ("text", "anchor", "frame")
+    ``x`` and ``y`` are how far it has been moved from its anchor (for a tag:
+    from its point), as fractions of the plot area.
+    """
+
+    _props = ("text", "anchor", "frame", "x", "y", "point")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -963,30 +969,56 @@ class Graph(_Props):
             Axis(self, name).autoscale()
         return self
 
-    def legend(self, text="", *, anchor="RT", frame=True):
+    def legend(self, text="", *, anchor="RT", frame=True, x=0, y=0):
         """Add a legend. With no text it lists every trace.
 
         In custom text, ``\\s(traceName)`` draws that trace's symbol.
-        ``anchor`` is two letters: L/M/R then T/C/B.
+        ``anchor`` is two letters: L/M/R then T/C/B. ``x`` and ``y`` move
+        it from there, as fractions of the plot area (dragging it with the
+        mouse sets them).
         """
-        return self._annotate("legend", text, anchor, frame)
+        return self._annotate("legend", text, anchor, frame, x, y)
 
-    def textbox(self, text, *, anchor="RT", frame=True):
+    def textbox(self, text, *, anchor="RT", frame=True, x=0, y=0):
         """Add a text box. ``^{...}`` and ``_{...}`` give super- and subscripts."""
-        return self._annotate("text", text, anchor, frame)
+        return self._annotate("text", text, anchor, frame, x, y)
 
-    def _annotate(self, kind, text, anchor, frame):
-        name = _dispatch(
-            {
-                "op": "addAnnotation",
-                "graph": self._name,
-                "kind": kind,
-                "text": text,
-                "anchor": anchor,
-                "frame": frame,
-            }
-        )
-        return Annotation(self, name)
+    def tag(self, trace, point, text="", *, frame=True, x=None, y=None):
+        """Attach a label to one point of a trace; it follows the point.
+
+        In the text, ``{x}``, ``{y}`` and ``{point}`` stand for the point's
+        values; with no text the tag shows ``x, y``. ``x`` and ``y`` say where
+        the box sits relative to the point, as fractions of the plot area.
+        """
+        if isinstance(trace, (Trace, Wave)):
+            trace = trace.name.rsplit(":", 1)[-1] if isinstance(trace, Wave) else trace.name
+        command = {
+            "op": "addAnnotation",
+            "graph": self._name,
+            "kind": "tag",
+            "text": text,
+            "frame": frame,
+            "trace": trace,
+            "point": int(point),
+        }
+        if x is not None:
+            command["x"] = float(x)
+        if y is not None:
+            command["y"] = float(y)
+        return Annotation(self, _dispatch(command))
+
+    def _annotate(self, kind, text, anchor, frame, x=0, y=0):
+        command = {
+            "op": "addAnnotation",
+            "graph": self._name,
+            "kind": kind,
+            "text": text,
+            "anchor": anchor,
+            "frame": frame,
+        }
+        if x or y:
+            command.update(x=float(x), y=float(y))
+        return Annotation(self, _dispatch(command))
 
     @property
     def annotations(self):
@@ -1333,6 +1365,22 @@ def procedure(name=None):
     if name not in names:
         raise OresmeError(f"No procedure named {name!r}.")
     return Procedure(name)
+
+
+def time_zone():
+    """The time zone dates are shown and typed in: "UTC", "local" or a name such as "Asia/Tokyo"."""
+    return _call("timeZone")[0]
+
+
+def set_time_zone(zone):
+    """Show dates on axes and in tables in a time zone.
+
+    ``"UTC"`` (the default), ``"local"`` for this computer's zone, or an IANA
+    name such as ``"Asia/Tokyo"``. Date waves hold seconds since 1970 UTC and
+    are not changed; dates typed or loaded without an offset are read in
+    this zone.
+    """
+    _dispatch({"op": "setTimeZone", "zone": str(zone)})
 
 
 def kill_window(name):

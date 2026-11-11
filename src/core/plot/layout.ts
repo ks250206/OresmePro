@@ -29,10 +29,15 @@ import {
   axisLabelText,
   categoryTicks,
   dateTicks,
+  formatDate,
   formatNumber,
+  isTimeZone,
   linearTicks,
   logTicks,
+  timeZone,
+  UTC,
   type TickSet,
+  type TimeZone,
 } from "./ticks";
 
 const INK = "#000000";
@@ -82,10 +87,17 @@ export interface CursorGeometry {
   y: number;
 }
 
+export interface AnnotationGeometry {
+  name: string;
+  /** The box as drawn, for hit-testing and dragging. */
+  box: Rect;
+}
+
 export interface GraphLayout {
   width: number;
   height: number;
   prims: Prim[];
+  annotations: AnnotationGeometry[];
   /** The data area. */
   plot: Rect;
   /** The axes that carry something, by name. */
@@ -99,6 +111,8 @@ export interface GraphLayout {
 export interface LayoutOptions {
   /** Draw cursors. Off for exported files, as in Igor. */
   cursors?: boolean;
+  /** The time zone date axes are labelled in (see DocState.timeZone); UTC if left out. */
+  timeZone?: string;
 }
 
 const OPPOSITE: Record<AxisSide, AxisSide> = {
@@ -184,12 +198,17 @@ function commonUnit(units: string[]): string {
 }
 
 /** Ticks for an axis, and for a date axis what its labels leave unsaid. */
-function ticksFor(axis: AxisInfo, scale: Scale, maxCount: number): TickSet & { context?: string } {
+function ticksFor(
+  axis: AxisInfo,
+  scale: Scale,
+  maxCount: number,
+  zone: TimeZone,
+): TickSet & { context?: string } {
   if (axis.kind === "category") {
     return categoryTicks(scale.min, scale.max, maxCount, axis.categories ?? []);
   }
   if (axis.kind === "date") {
-    const ticks = dateTicks(scale.min, scale.max, maxCount);
+    const ticks = dateTicks(scale.min, scale.max, maxCount, zone);
     if (ticks) return ticks;
   }
   const { tickFormat: format, tickStep: step } = axis.spec;
@@ -381,17 +400,21 @@ function cachedContour(data: Float64Array, nx: number, ny: number, level: number
   return chains;
 }
 
+/** A contour line gets one label for about this many pixels of its length, up to four. */
+const LABEL_EVERY = 260;
+
 /**
- * Makes room for a label in the middle of a line. Returns the two parts of
- * the line either side of the gap, and where and at what angle (degrees,
- * kept upright) the label goes; or null if the line is too short, or its
- * middle is out of view.
+ * Makes room for labels along a line: one in the middle of a short line,
+ * several spread evenly along a long one. Returns the pieces of the line
+ * between the gaps, and where and at what angle (degrees, kept upright) each
+ * label goes; or null if the line is too short for any, or the places for
+ * them are all out of view.
  */
-function breakForLabel(
+function breakForLabels(
   points: Float32Array,
   labelWidth: number,
   area: Rect,
-): { parts: Float32Array[]; x: number; y: number; angle: number } | null {
+): { parts: Float32Array[]; labels: { x: number; y: number; angle: number }[] } | null {
   const count = points.length / 2;
   if (count < 2) return null;
   const along = new Float64Array(count);
@@ -418,29 +441,57 @@ function breakForLabel(
       y: points[index * 2 - 1]! + (points[index * 2 + 1]! - points[index * 2 - 1]!) * t,
     };
   };
-  const middle = at(total / 2);
+  /** The stretch of the line between two distances along it. */
+  const piece = (from: number, to: number): Float32Array => {
+    const start = at(from);
+    const end = at(to);
+    const inner = Math.max(0, end.before - start.before);
+    const part = new Float32Array((inner + 2) * 2);
+    part.set([start.x, start.y]);
+    part.set(points.subarray((start.before + 1) * 2, (start.before + 1 + inner) * 2), 2);
+    part.set([end.x, end.y], (inner + 1) * 2);
+    return part;
+  };
+
+  const wanted = Math.max(1, Math.min(4, Math.floor(total / LABEL_EVERY)));
   const inset = labelWidth / 2;
-  if (
-    middle.x < area.x + inset ||
-    middle.x > area.x + area.w - inset ||
-    middle.y < area.y + inset ||
-    middle.y > area.y + area.h - inset
-  ) {
-    return null;
+  const parts: Float32Array[] = [];
+  const labels: { x: number; y: number; angle: number }[] = [];
+  let from = 0;
+  for (let index = 0; index < wanted; index += 1) {
+    const centre = (total * (index + 0.5)) / wanted;
+    const middle = at(centre);
+    if (
+      middle.x < area.x + inset ||
+      middle.x > area.x + area.w - inset ||
+      middle.y < area.y + inset ||
+      middle.y > area.y + area.h - inset
+    ) {
+      continue;
+    }
+    const start = at(centre - gap);
+    const end = at(centre + gap);
+    let angle = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
+    if (angle > 90) angle -= 180;
+    else if (angle < -90) angle += 180;
+    parts.push(piece(from, centre - gap));
+    labels.push({ x: middle.x, y: middle.y, angle });
+    from = centre + gap;
   }
-  const start = at(total / 2 - gap);
-  const end = at(total / 2 + gap);
-  let angle = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
-  if (angle > 90) angle -= 180;
-  else if (angle < -90) angle += 180;
-  const first = new Float32Array((start.before + 2) * 2);
-  first.set(points.subarray(0, (start.before + 1) * 2));
-  first.set([start.x, start.y], (start.before + 1) * 2);
-  const rest = points.subarray((end.before + 1) * 2);
-  const second = new Float32Array(rest.length + 2);
-  second.set([end.x, end.y]);
-  second.set(rest, 2);
-  return { parts: [first, second], x: middle.x, y: middle.y, angle };
+  if (labels.length === 0) return null;
+  parts.push(piece(from, total));
+  return { parts, labels };
+}
+
+/** Moves a box by an annotation's offset, keeping it inside the graph. */
+function placeBox(box: Rect, annotation: AnnotationSpec, plot: Rect, bounds: Rect): Rect {
+  const x = box.x + annotation.x * plot.w;
+  const y = box.y + annotation.y * plot.h;
+  return {
+    ...box,
+    x: Math.round(Math.max(bounds.x, Math.min(bounds.x + bounds.w - box.w, x))),
+    y: Math.round(Math.max(bounds.y, Math.min(bounds.y + bounds.h - box.h, y))),
+  };
 }
 
 function emitColorScale(
@@ -449,10 +500,11 @@ function emitColorScale(
   graph: GraphSpec,
   images: readonly ImageInfo[],
   plot: Rect,
+  bounds: Rect,
   measure: MeasureText,
-): void {
+): Rect | null {
   const image = images.find((item) => annotation.text === "" || item.spec.name === annotation.text);
-  if (!image) return;
+  if (!image) return null;
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const barWidth = 14;
@@ -466,7 +518,12 @@ function emitColorScale(
   const top = padding + (suffix.width > 0 ? size * 1.3 : size * 0.4);
   const width = Math.ceil(padding * 2 + barWidth + 4 + TICK_LABEL_GAP + labelWidth);
   const height = Math.ceil(top + barHeight + padding + size * 0.4);
-  const box = anchorBox(annotation.anchor, plot, width, height, 8);
+  const box = placeBox(
+    anchorBox(annotation.anchor, plot, width, height, 8),
+    annotation,
+    plot,
+    bounds,
+  );
   out.push({
     kind: "rect",
     ...box,
@@ -532,6 +589,31 @@ function emitColorScale(
   if (suffix.width > 0) {
     emitText(out, suffix, barX, box.y + padding + size * CAP_HEIGHT, { family, fill: INK });
   }
+  return box;
+}
+
+/** What a tag points at: where it is drawn, and its values for the text. */
+interface TagTarget {
+  px: number;
+  py: number;
+  x: number;
+  y: number;
+  /** Whether the X value is a date, for writing it out. */
+  date: boolean;
+}
+
+/** The point where the line from a box's middle towards (px, py) leaves the box. */
+function boxExit(box: Rect, px: number, py: number): [number, number] {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const dx = px - cx;
+  const dy = py - cy;
+  if (dx === 0 && dy === 0) return [cx, cy];
+  const t = Math.min(
+    dx === 0 ? Infinity : box.w / 2 / Math.abs(dx),
+    dy === 0 ? Infinity : box.h / 2 / Math.abs(dy),
+  );
+  return [cx + dx * t, cy + dy * t];
 }
 
 function emitAnnotation(
@@ -539,36 +621,93 @@ function emitAnnotation(
   annotation: AnnotationSpec,
   graph: GraphSpec,
   plot: Rect,
+  bounds: Rect,
   measure: MeasureText,
-): void {
+  target: TagTarget | null,
+  zone: TimeZone,
+): Rect | null {
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const visible = graph.traces.filter((trace) => !trace.hidden);
   const byName = new Map(graph.traces.map((trace) => [trace.name, trace]));
+  const tag = annotation.kind === "tag";
+  if (tag && !target) return null;
 
+  let text = annotation.text;
+  if (tag && target) {
+    const x = target.date ? formatDate(target.x, zone) : formatNumber(target.x);
+    const y = formatNumber(target.y);
+    text = (text === "" ? "{x}, {y}" : text)
+      .replaceAll("{x}", x)
+      .replaceAll("{y}", y)
+      .replaceAll("{point}", String(annotation.point));
+  }
   // A legend line is `\s(traceName) text`; with no text at all it lists every trace.
   const source =
-    annotation.kind === "legend" && annotation.text === ""
+    annotation.kind === "legend" && text === ""
       ? visible.map((trace) => `\\s(${trace.name}) ${trace.name}`)
-      : annotation.text.split("\n");
+      : text.split("\n");
   const rows = source.map((line) => {
     const match = /^\\s\(([^)]*)\)\s?/.exec(line);
     const trace = match ? (byName.get(match[1]!) ?? null) : null;
     const block = layoutText(match ? line.slice(match[0].length) : line, size, family, measure);
     return { trace, block };
   });
-  if (rows.length === 0) return;
+  if (rows.length === 0) return null;
 
   const symbolWidth = 26;
   const symbolGap = 6;
-  const padding = 6;
+  const padding = tag ? 4 : 6;
   const rowHeight = Math.round(size * 1.35);
   const hasSymbols = rows.some((row) => row.trace);
   const textX = hasSymbols ? symbolWidth + symbolGap : 0;
   const width = Math.ceil(padding * 2 + textX + Math.max(...rows.map((row) => row.block.width)));
   const height = padding * 2 + rowHeight * rows.length;
-  const box = anchorBox(annotation.anchor, plot, width, height, 8);
+  // A tag's box is centred on its point before it is moved; the others sit at their anchor.
+  const home: Rect =
+    tag && target
+      ? { x: target.px - width / 2, y: target.py - height / 2, w: width, h: height }
+      : anchorBox(annotation.anchor, plot, width, height, 8);
+  const box = placeBox(home, annotation, plot, bounds);
 
+  if (tag && target) {
+    // A line from the box to the point, ending in an arrowhead.
+    const [fromX, fromY] = boxExit(box, target.px, target.py);
+    const length = Math.hypot(target.px - fromX, target.py - fromY);
+    const inside =
+      target.px >= box.x &&
+      target.px <= box.x + box.w &&
+      target.py >= box.y &&
+      target.py <= box.y + box.h;
+    if (!inside && length > 6) {
+      const ux = (target.px - fromX) / length;
+      const uy = (target.py - fromY) / length;
+      const head = Math.min(7, length / 2);
+      // Stop short of the point itself, so its marker stays visible.
+      const tipX = target.px - ux * 3;
+      const tipY = target.py - uy * 3;
+      const baseX = tipX - ux * head;
+      const baseY = tipY - uy * head;
+      out.push({
+        kind: "segments",
+        points: [fromX, fromY, baseX, baseY],
+        stroke: INK,
+        width: 1,
+      });
+      out.push({
+        kind: "polygon",
+        points: [
+          tipX,
+          tipY,
+          baseX - uy * head * 0.4,
+          baseY + ux * head * 0.4,
+          baseX + uy * head * 0.4,
+          baseY - ux * head * 0.4,
+        ],
+        fill: INK,
+      });
+    }
+  }
   out.push({
     kind: "rect",
     ...box,
@@ -583,6 +722,7 @@ function emitAnnotation(
       fill: INK,
     });
   });
+  return box;
 }
 
 /** The size of an error bar at one point: from a wave, or constant. */
@@ -631,6 +771,7 @@ export function layoutGraph(
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const cap = size * CAP_HEIGHT;
+  const zone = isTimeZone(options.timeZone) ? timeZone(options.timeZone) : UTC;
 
   // Resolve what can be drawn; anything else is reported as missing.
   const missing = new Set<string>();
@@ -830,7 +971,7 @@ export function layoutGraph(
       if (axis.kind === "category" && axis.vertical) {
         maxCount = Math.min(maxCount, Math.max(1, Math.floor(length / (size * 1.3))));
       }
-      let ticks = ticksFor(axis, scale, maxCount);
+      let ticks = ticksFor(axis, scale, maxCount, zone);
       let labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
       if (!axis.vertical) {
         // Thin the ticks out until neighbouring labels clear each other.
@@ -845,7 +986,7 @@ export function layoutGraph(
           // Ticks at a step the user chose stay where they are.
           if (axis.kind === "number" && !axis.spec.log && axis.spec.tickStep !== null) break;
           maxCount = axis.kind === "category" ? Math.floor(maxCount * 0.7) : maxCount - 1;
-          ticks = ticksFor(axis, scale, Math.max(1, maxCount));
+          ticks = ticksFor(axis, scale, Math.max(1, maxCount), zone);
           labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
         }
       }
@@ -1019,25 +1160,23 @@ export function layoutGraph(
           return points;
         })
         .sort((one, other) => other.length - one.length);
-      // The level is written once, on the longest line with room for it.
+      // The level is written on every line long enough to take it, more than once on long ones.
       const text = spec.labels
         ? layoutText(formatNumber(Number(level.toPrecision(6))), labelSize, family, measure)
         : null;
-      let labelled = false;
       for (const points of lines) {
-        const label = text && !labelled ? breakForLabel(points, text.width, area) : null;
-        for (const part of label ? label.parts : [points]) {
+        const broken = text ? breakForLabels(points, text.width, area) : null;
+        for (const part of broken ? broken.parts : [points]) {
           if (part.length >= 4) {
             children.push({ kind: "polyline", points: part, stroke, width: spec.lineSize });
           }
         }
-        if (label && text) {
-          labelled = true;
+        for (const label of text && broken ? broken.labels : []) {
           const angle = (label.angle * Math.PI) / 180;
           const drop = (labelSize * CAP_HEIGHT) / 2;
           emitText(
             children,
-            text,
+            text!,
             label.x - Math.sin(angle) * drop,
             label.y + Math.cos(angle) * drop,
             {
@@ -1482,15 +1621,43 @@ export function layoutGraph(
     }
   }
 
+  const bounds: Rect = { x: 0, y: 0, w: width, h: height };
+  const annotations: AnnotationGeometry[] = [];
   for (const annotation of graph.annotations) {
+    let box: Rect | null;
     if (annotation.kind === "colorscale") {
-      emitColorScale(prims, annotation, graph, imageInfos, plot, measure);
+      box = emitColorScale(prims, annotation, graph, imageInfos, plot, bounds, measure);
     } else {
-      emitAnnotation(prims, annotation, graph, plot, measure);
+      let target: TagTarget | null = null;
+      const trace = traces.find((item) => item.spec.name === annotation.trace);
+      if (annotation.kind === "tag" && trace && annotation.point < trace.y.data.length) {
+        const scales = scalesOf(trace.spec);
+        const x = traceX(trace.y, trace.x, annotation.point);
+        const y = trace.y.data[annotation.point]!;
+        const px = scales.xs.toPixel(x);
+        const py = scales.ys.toPixel(y);
+        const area = clipFor(trace.spec);
+        // A tag whose point is out of view is not drawn.
+        if (px >= area.x && px <= area.x + area.w && py >= area.y && py <= area.y + area.h) {
+          target = { px, py, x, y, date: info.get(trace.spec.hAxis)!.kind === "date" };
+        }
+      }
+      box = emitAnnotation(prims, annotation, graph, plot, bounds, measure, target, zone);
     }
+    if (box) annotations.push({ name: annotation.name, box });
   }
 
-  return { width, height, prims, plot, axes, traces: geometry, cursors, missing: [...missing] };
+  return {
+    width,
+    height,
+    prims,
+    annotations,
+    plot,
+    axes,
+    traces: geometry,
+    cursors,
+    missing: [...missing],
+  };
 }
 
 /** Distance from a point to the nearest part of a trace, in pixels. */

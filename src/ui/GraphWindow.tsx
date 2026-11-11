@@ -37,7 +37,7 @@ import {
   traceX,
   type GraphLayout,
 } from "../core/plot/layout";
-import { formatDate, formatNumber } from "../core/plot/ticks";
+import { formatDate, formatNumber, timeZone, type TimeZone } from "../core/plot/ticks";
 import { marqueeZoom, panBy, tidy, zoomAbout } from "../core/plot/zoom";
 import { openContextMenu } from "./Menu";
 
@@ -65,7 +65,7 @@ function nearestTrace(layout: GraphLayout, x: number, y: number, tolerance: numb
 }
 
 /** The data coordinates under the pointer, on the axes that cover that spot. */
-function readout(layout: GraphLayout, x: number, y: number): string {
+function readout(layout: GraphLayout, x: number, y: number, zone: TimeZone): string {
   const parts: string[] = [];
   for (const [name, axis] of Object.entries(layout.axes)) {
     const vertical = isVerticalSide(axis.side);
@@ -79,7 +79,7 @@ function readout(layout: GraphLayout, x: number, y: number): string {
       axis.kind === "category"
         ? (axis.categories?.[Math.round(value)] ?? "")
         : axis.kind === "date"
-          ? formatDate(Math.round(value))
+          ? formatDate(Math.round(value), zone)
           : `${formatNumber(tidy(value, perPixel * 100))}${axis.unit ? ` ${axis.unit}` : ""}`;
     parts.push(`${label} = ${text}`);
   }
@@ -111,6 +111,7 @@ function cursorValues(
   graph: GraphSpec,
   waves: Readonly<Record<string, Wave>>,
   name: CursorName,
+  zone: TimeZone,
 ): CursorValues | null {
   const cursor = graph.cursors[name];
   const trace = cursor && graph.traces.find((item) => item.name === cursor.trace);
@@ -120,7 +121,7 @@ function cursorValues(
   const y = position.y.data[cursor.point]!;
   const xUnit = position.x ? position.x.unit : position.y.xUnit;
   const show = (value: number, unit: string) =>
-    unit === DATE_UNIT ? formatDate(value) : formatNumber(value, 7);
+    unit === DATE_UNIT ? formatDate(value, zone) : formatNumber(value, 7);
   return {
     trace: cursor.trace,
     point: cursor.point,
@@ -134,8 +135,9 @@ function cursorValues(
 /** The readout under a graph: where cursors A and B are, and the difference. */
 function CursorInfo({ graph }: { graph: GraphSpec }) {
   const waves = useDoc((state) => state.waves);
-  const a = cursorValues(graph, waves, "A");
-  const b = cursorValues(graph, waves, "B");
+  const zone = timeZone(useDoc((state) => state.timeZone));
+  const a = cursorValues(graph, waves, "A", zone);
+  const b = cursorValues(graph, waves, "B", zone);
   const row = (label: string, values: CursorValues | null) => (
     <>
       <b>{label}</b>
@@ -175,6 +177,10 @@ function CursorInfo({ graph }: { graph: GraphSpec }) {
   );
 }
 
+/** The annotation whose box is under a position; the one drawn last is on top. */
+const annotationAt = (layout: GraphLayout, x: number, y: number) =>
+  layout.annotations.findLast((item) => inside(item.box, x, y)) ?? null;
+
 interface Marquee extends Rect {
   /** True once the drag has ended and the marquee menu is showing. */
   done: boolean;
@@ -183,12 +189,24 @@ interface Marquee extends Rect {
 type Gesture =
   | { kind: "marquee"; x: number; y: number }
   | { kind: "pan"; x: number; y: number; layout: GraphLayout }
-  | { kind: "cursor"; name: CursorName };
+  | { kind: "cursor"; name: CursorName }
+  | {
+      /** Dragging a legend, text box, color scale or tag to another place. */
+      kind: "annotation";
+      name: string;
+      x: number;
+      y: number;
+      box: Rect;
+      /** The annotation's offset when the drag began. */
+      from: { x: number; y: number };
+    };
 
 export function GraphWindow({ name }: { name: string }) {
   const graph = useDoc((state) => state.graphs[name]);
   const waves = useDoc((state) => state.waves);
   const menuOpen = useUi((state) => state.contextMenu !== null);
+  const zoneName = useDoc((state) => state.timeZone);
+  const zone = timeZone(zoneName);
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -229,10 +247,12 @@ export function GraphWindow({ name }: { name: string }) {
   const layout = useMemo(
     () =>
       graph && size.w > 0 && size.h > 0
-        ? layoutGraph(graph, doc.getState().waves, size.w, size.h, measureText)
+        ? layoutGraph(graph, doc.getState().waves, size.w, size.h, measureText, {
+            timeZone: zoneName,
+          })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- waveKey stands in for the wave data
-    [graph, waveKey, size.w, size.h],
+    [graph, waveKey, size.w, size.h, zoneName],
   );
 
   useEffect(() => {
@@ -324,6 +344,20 @@ export function GraphWindow({ name }: { name: string }) {
       gesture.current = { kind: "cursor", name: grabbed.name };
       return;
     }
+    const held = annotationAt(layout, x, y);
+    const spec = held && graph.annotations.find((item) => item.name === held.name);
+    if (held && spec) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      gesture.current = {
+        kind: "annotation",
+        name: held.name,
+        x,
+        y,
+        box: held.box,
+        from: { x: spec.x, y: spec.y },
+      };
+      return;
+    }
     if (!inside(layout.plot, x, y)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     gesture.current = event.altKey ? { kind: "pan", x, y, layout } : { kind: "marquee", x, y };
@@ -353,8 +387,34 @@ export function GraphWindow({ name }: { name: string }) {
       if (cursor && point !== null && point !== cursor.point) {
         setCursor(current.name, cursor.trace, point, true);
       }
+    } else if (current?.kind === "annotation") {
+      // The box follows the pointer but stays inside the graph.
+      const { box, from } = current;
+      const left = Math.max(0, Math.min(layout.width - box.w, box.x + x - current.x));
+      const top = Math.max(0, Math.min(layout.height - box.h, box.y + y - current.y));
+      const round = (value: number) => Math.round(value * 1e4) / 1e4;
+      const props = {
+        x: round(from.x + (left - box.x) / layout.plot.w),
+        y: round(from.y + (top - box.y) / layout.plot.h),
+      };
+      const command: Command = {
+        op: "modifyAnnotation",
+        graph: name,
+        annotation: current.name,
+        props,
+      };
+      runGuiCoalesced(`annotation:${name}:${current.name}`, [command], () => {
+        const now = doc
+          .getState()
+          .graphs[name]?.annotations.find((item) => item.name === current.name);
+        return now ? (echoPython({ ...command, props: { x: now.x, y: now.y } }) ?? "") : "";
+      });
     }
-    ui.set({ readout: inside(layout.plot, x, y) ? readout(layout, x, y) : "" });
+    if (hostRef.current) {
+      hostRef.current.style.cursor =
+        current?.kind === "annotation" || (!current && annotationAt(layout, x, y)) ? "move" : "";
+    }
+    ui.set({ readout: inside(layout.plot, x, y) ? readout(layout, x, y, zone) : "" });
   };
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -407,6 +467,11 @@ export function GraphWindow({ name }: { name: string }) {
     if (!layout) return;
     const { x, y } = position(event);
     setMarquee(null);
+    const held = annotationAt(layout, x, y);
+    if (held) {
+      ui.set({ dialog: { kind: "editAnnotation", graph: name, annotation: held.name } });
+      return;
+    }
     const axis = axisAt(layout, x, y);
     if (axis) {
       ui.set({ dialog: { kind: "modifyAxis", graph: name, axis } });
@@ -430,11 +495,25 @@ export function GraphWindow({ name }: { name: string }) {
     event.preventDefault();
     if (!layout) return;
     const { x, y } = position(event);
+    const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
+      ui.set({ dialog });
+    const held = annotationAt(layout, x, y);
+    if (held) {
+      openContextMenu(event, [
+        {
+          label: `Modify ${held.name}…`,
+          onSelect: open({ kind: "editAnnotation", graph: name, annotation: held.name }),
+        },
+        {
+          label: `Remove ${held.name}`,
+          onSelect: () => runGui({ op: "removeAnnotation", graph: name, annotation: held.name }),
+        },
+      ]);
+      return;
+    }
     const axis = axisAt(layout, x, y) ?? undefined;
     const trace = nearestTrace(layout, x, y, 6) ?? undefined;
     const point = trace ? pointAt(trace, x) : null;
-    const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
-      ui.set({ dialog });
     const items: MenuItem[] = [
       { label: "Autoscale Axes", shortcut: "Ctrl+A", onSelect: () => autoscaleGraph(name) },
       { separator: true },
@@ -446,6 +525,10 @@ export function GraphWindow({ name }: { name: string }) {
           onSelect: () => setCursor(cursor, trace, point, false),
         });
       }
+      items.push({
+        label: `Add Tag at ${trace}[${point}]`,
+        onSelect: () => runGui({ op: "addAnnotation", graph: name, kind: "tag", trace, point }),
+      });
     }
     for (const cursor of CURSOR_NAMES) {
       if (graph.cursors[cursor]) {

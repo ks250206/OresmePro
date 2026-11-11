@@ -294,17 +294,107 @@ const TIME_STEPS = [
   7 * DAY,
 ];
 
+/**
+ * A time zone for reading and writing dates. Dates are stored as seconds
+ * since 1970-01-01 UTC; the zone says what the clock showed at that moment.
+ */
+export interface TimeZone {
+  /** "UTC", "local" or an IANA name such as "Asia/Tokyo". */
+  readonly name: string;
+  /** What to call it on an axis. */
+  readonly label: string;
+  /** Seconds to add to UTC for the wall-clock time at a moment. */
+  offsetAt(seconds: number): number;
+}
+
+export const UTC: TimeZone = { name: "UTC", label: "UTC", offsetAt: () => 0 };
+
+const zones = new Map<string, TimeZone>([["UTC", UTC]]);
+
+/**
+ * The time zone with a name: "UTC", "local" (the zone of this computer) or
+ * an IANA name. Throws a RangeError for a name that is none of those.
+ */
+export function timeZone(name: string): TimeZone {
+  const known = zones.get(name);
+  if (known) return known;
+  const id = name === "local" ? new Intl.DateTimeFormat().resolvedOptions().timeZone : name;
+  const format = new Intl.DateTimeFormat("en-US", {
+    timeZone: id,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+  });
+  // Offsets change only at a transition, and those fall on quarter hours:
+  // one lookup serves every moment in the same quarter hour.
+  const cache = new Map<number, number>();
+  const zone: TimeZone = {
+    name,
+    label: id,
+    offsetAt: (seconds) => {
+      if (!Number.isFinite(seconds) || Math.abs(seconds) > 8.64e12) return 0;
+      const slot = Math.floor(seconds / (15 * MINUTE));
+      let offset = cache.get(slot);
+      if (offset === undefined) {
+        const at = slot * 15 * MINUTE;
+        const parts: Record<string, number> = {};
+        for (const part of format.formatToParts(new Date(at * 1000))) {
+          if (part.type !== "literal") parts[part.type] = Number(part.value);
+        }
+        const wall =
+          Date.UTC(
+            parts.year!,
+            parts.month! - 1,
+            parts.day!,
+            parts.hour!,
+            parts.minute!,
+            parts.second!,
+          ) / 1000;
+        offset = wall - at;
+        if (cache.size > 50_000) cache.clear();
+        cache.set(slot, offset);
+      }
+      return offset;
+    },
+  };
+  zones.set(name, zone);
+  return zone;
+}
+
+export function isTimeZone(name: unknown): name is string {
+  if (typeof name !== "string") return false;
+  try {
+    timeZone(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The moment at which the clock of a zone shows a wall-clock time (given in seconds as if UTC). */
+function wallToUtc(wall: number, zone: TimeZone): number {
+  if (zone === UTC) return wall;
+  // The offset at the moment itself, found from a first guess; right except
+  // inside the hour a clock change skips or repeats.
+  return wall - zone.offsetAt(wall - zone.offsetAt(wall));
+}
+
 const two = (value: number): string => String(value).padStart(2, "0");
 const dayOf = (date: Date): string =>
   `${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())}`;
 
 /**
- * Formats seconds since 1970-01-01 UTC as `YYYY-MM-DD HH:MM:SS`, leaving out
- * a time of midnight and adding milliseconds only when there are some.
+ * Formats seconds since 1970-01-01 UTC as `YYYY-MM-DD HH:MM:SS` in a time
+ * zone, leaving out a time of midnight and adding milliseconds only when
+ * there are some.
  */
-export function formatDate(seconds: number): string {
+export function formatDate(seconds: number, zone: TimeZone = UTC): string {
   if (!Number.isFinite(seconds) || Math.abs(seconds) > 8.64e12) return formatNumber(seconds);
-  const date = new Date(Math.round(seconds * 1000));
+  const date = new Date(Math.round((seconds + zone.offsetAt(seconds)) * 1000));
   const millis = date.getUTCMilliseconds();
   const time = `${two(date.getUTCHours())}:${two(date.getUTCMinutes())}:${two(date.getUTCSeconds())}`;
   if (time === "00:00:00" && millis === 0) return dayOf(date);
@@ -316,13 +406,13 @@ const DATE_PATTERN =
 
 /**
  * Parses `YYYY-MM-DD`, optionally with a time and a UTC offset, to seconds
- * since 1970-01-01 UTC. A time without an offset is taken as UTC. Returns
- * null for anything else.
+ * since 1970-01-01 UTC. A time without an offset is taken to be in the given zone.
+ * Returns null for anything else.
  */
-export function parseDate(text: string): number | null {
+export function parseDate(text: string, zone: TimeZone = UTC): number | null {
   const match = DATE_PATTERN.exec(text.trim());
   if (!match) return null;
-  const [, year, month, day, hour = "0", minute = "0", second = "0", zone] = match;
+  const [, year, month, day, hour = "0", minute = "0", second = "0", offset] = match;
   const millis = Date.UTC(
     Number(year),
     Number(month) - 1,
@@ -331,9 +421,11 @@ export function parseDate(text: string): number | null {
     Number(minute),
   );
   let seconds = millis / 1000 + Number(second);
-  if (zone && zone.toUpperCase() !== "Z") {
-    const sign = zone[0] === "-" ? -1 : 1;
-    const digits = zone.slice(1).replace(":", "");
+  if (!offset) {
+    seconds = wallToUtc(seconds, zone);
+  } else if (offset.toUpperCase() !== "Z") {
+    const sign = offset[0] === "-" ? -1 : 1;
+    const digits = offset.slice(1).replace(":", "");
     seconds -= sign * (Number(digits.slice(0, 2)) * HOUR + Number(digits.slice(2)) * MINUTE);
   }
   return Number.isFinite(seconds) ? seconds : null;
@@ -346,15 +438,29 @@ export interface DateTickSet extends TickSet {
 
 /**
  * Ticks for an axis of dates (seconds since 1970-01-01 UTC) on round clock
- * or calendar values. Returns null when the range is too short for that
- * (under a few seconds), where ordinary numeric ticks serve better.
+ * or calendar values of a time zone. Returns null when the range is too
+ * short for that (under a few seconds), where ordinary numeric ticks serve
+ * better.
  */
-export function dateTicks(lo: number, hi: number, maxCount: number): DateTickSet | null {
-  const min = Math.min(lo, hi);
-  const max = Math.max(lo, hi);
-  const target = (max - min) / Math.max(1, maxCount);
-  if (!(target >= 0.5) || !Number.isFinite(target) || Math.abs(max) > 8.64e12) return null;
+export function dateTicks(
+  lo: number,
+  hi: number,
+  maxCount: number,
+  zone: TimeZone = UTC,
+): DateTickSet | null {
+  const from = Math.min(lo, hi);
+  const to = Math.max(lo, hi);
+  const target = (to - from) / Math.max(1, maxCount);
+  if (!(target >= 0.5) || !Number.isFinite(target) || Math.abs(to) > 8.64e12) return null;
+  // Everything below works on wall-clock time: the range as the zone's clock
+  // shows it. A tick goes back to a moment only when it is stored.
+  const min = from + zone.offsetAt(from);
+  const max = to + zone.offsetAt(to);
   const major: Tick[] = [];
+  const add = (wall: number, label: string) => {
+    const value = wallToUtc(wall, zone);
+    if (value >= from && value <= to) major.push({ value, label });
+  };
   const first = new Date(min * 1000);
   const last = new Date(max * 1000);
   const sameDay = dayOf(first) === dayOf(last);
@@ -374,14 +480,16 @@ export function dateTicks(lo: number, hi: number, maxCount: number): DateTickSet
               ? clock
               : `${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())} ${clock}`
             : `${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())}`;
-      major.push({ value, label });
+      add(value, label);
     }
+    // With times of day on the axis, it matters whose clock they are.
+    const clockOf = step < DAY ? ` ${zone.label}` : "";
     context =
       step < DAY && sameDay
-        ? `${dayOf(first)} UTC`
+        ? `${dayOf(first)}${clockOf}`
         : sameYear
-          ? `${first.getUTCFullYear()}${step < DAY ? " UTC" : ""}`
-          : `${first.getUTCFullYear()}–${last.getUTCFullYear()}${step < DAY ? " UTC" : ""}`;
+          ? `${first.getUTCFullYear()}${clockOf}`
+          : `${first.getUTCFullYear()}–${last.getUTCFullYear()}${clockOf}`;
     return { major, minor: [], exponent: 0, context };
   }
 
@@ -394,7 +502,7 @@ export function dateTicks(lo: number, hi: number, maxCount: number): DateTickSet
       if (value > max) break;
       if (value >= min) {
         const date = new Date(value * 1000);
-        major.push({ value, label: `${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}` });
+        add(value, `${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}`);
       }
       month += months;
       year += Math.floor(month / 12);
@@ -407,7 +515,7 @@ export function dateTicks(lo: number, hi: number, maxCount: number): DateTickSet
   for (let year = Math.ceil(first.getUTCFullYear() / years) * years; ; year += years) {
     const value = Date.UTC(year, 0, 1) / 1000;
     if (value > max) break;
-    if (value >= min) major.push({ value, label: String(year) });
+    if (value >= min) add(value, String(year));
   }
   return { major, minor: [], exponent: 0, context };
 }

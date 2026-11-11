@@ -46,6 +46,7 @@ beforeAll(async () => {
               width ?? 400,
               height ?? 300,
               (text, size) => text.length * size * 0.55,
+              { timeZone: state.timeZone },
             );
             return toSvg(layout.prims, layout.width, layout.height);
           },
@@ -560,5 +561,61 @@ describe("oresme Python API", () => {
     expect(made).not.toBe("Styled");
     const { graphs } = doc.getState();
     expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Styled, name: "" });
+  });
+
+  it("styles traces and axes, tags points and moves annotations", async () => {
+    expect(
+      await run(
+        [
+          'ta = op.make("ta", [1.0, 4.0, 9.0, 16.0]); tz = op.make("tz", [0.0, 1.0, 2.0, 3.0])',
+          'tg = op.display(ta, name="Polish")',
+          'tr = tg.trace("ta")',
+          'tr.set(fill="zero", fill_color="green", fill_opacity=0.4, y_offset=2, color_wave=tz, color_table="viridis")',
+          'tg.bottom.set(reverse=True, tick_step=1, tick_format=".1f")',
+          "tag = tg.tag(tr, 2, 'peak {y}')",
+          "leg = tg.legend(x=-0.3, y=0.1)",
+          "tag.set(x=0.2, y=-0.2); leg.x = -0.25",
+          "print(tr.fill, tr.fill_color, tr.fill_opacity, tr.y_offset, tr.color_wave, tg.bottom.reverse, tg.bottom.tick_format)",
+          "print(tag.name, tag.point, tag.x, leg.x, 'peak 9' in tg.svg())",
+          "print(tg.script())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "zero #009900 0.4 2 tz True .1f",
+        "tag0 2 0.2 -0.25 True",
+        'g = op.display("ta")',
+        'g.trace("ta").set(fill="zero", fill_color="#009900", fill_opacity=0.4, y_offset=2, color_wave="tz", color_table="viridis")',
+        'g.axis("bottom").set(reverse=True, tick_step=1, tick_format=".1f")',
+        'g.tag("ta", 2, "peak {y}", frame=True, x=0.2, y=-0.2)',
+        'g.legend(anchor="RT", frame=True, x=-0.25, y=0.1)',
+        "",
+      ].join("\n"),
+    );
+    // The script makes the same graph.
+    expect(await run("exec(tg.script()); print(g.name)")).toBe(true);
+    const made = stdout.trim();
+    const { graphs } = doc.getState();
+    expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Polish, name: "" });
+  });
+
+  it("shows dates in the experiment's time zone", async () => {
+    expect(
+      await run(
+        [
+          'when = op.make("when", np.array(["2026-01-15T00:00", "2026-01-15T12:00"], dtype="datetime64[s]"))',
+          'zg = op.display(op.make("zv", [1.0, 2.0]), x=when, name="Zoned")',
+          'zg.tag("zv", 1, "{x}")',
+          "print(op.time_zone(), '2026-01-15 12:00:00' in zg.svg())",
+          'op.set_time_zone("Asia/Tokyo")',
+          "print(op.time_zone(), '2026-01-15 21:00:00' in zg.svg(), 'Asia/Tokyo' in zg.svg())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("UTC True\nAsia/Tokyo True True\n");
+    expect(await run('op.set_time_zone("Mars/Olympus")')).toBe(false);
+    expect(errors[0]).toContain("is not a time zone");
+    doc.dispatch({ op: "setTimeZone", zone: "UTC" });
   });
 });

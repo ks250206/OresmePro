@@ -142,6 +142,7 @@ function useMenus(): MenuDefinition[] {
       items: [
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
+        { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },
         {
           label: "Change Wave Scaling…",
