@@ -49,6 +49,16 @@ describe("contours", () => {
     }
   });
 
+  it("chains a contour with more points than a function call takes arguments", () => {
+    // A level line running the length of a long, thin matrix.
+    const nx = 200_000;
+    const data = new Float64Array(nx * 2);
+    for (let i = 0; i < nx; i += 1) data[i * 2 + 1] = 1;
+    const chains = chainSegments(contourSegments(data, nx, 2, 0.5));
+    expect(chains).toHaveLength(1);
+    expect(chains[0]!.length).toBe(nx * 2);
+  });
+
   it("skips cells that touch NaN", () => {
     const data = Float64Array.from([0, 0, 1, Number.NaN]);
     expect(contourSegments(data, 2, 2, 0.5)).toHaveLength(0);

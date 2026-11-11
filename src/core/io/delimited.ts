@@ -11,16 +11,79 @@ export interface DelimitedResult {
   rows: number;
 }
 
+/**
+ * Splits one record on a single-character delimiter, honouring double
+ * quotes: a quoted field may contain the delimiter, and `""` inside quotes
+ * is a literal quote. Returns null if a quote is left open, which means the
+ * record continues on the next line.
+ */
+export function splitQuoted(record: string, delimiter: string): string[] | null {
+  const cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  /** True once the field has had a quoted part; its spacing is then kept. */
+  let wasQuoted = false;
+  for (let index = 0; index < record.length; index += 1) {
+    const char = record[index]!;
+    if (quoted) {
+      if (char !== '"') cell += char;
+      else if (record[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else quoted = false;
+    } else if (char === '"' && cell.trim() === "") {
+      quoted = true;
+      wasQuoted = true;
+      cell = "";
+    } else if (char === delimiter) {
+      cells.push(wasQuoted ? cell : cell.trim());
+      cell = "";
+      wasQuoted = false;
+    } else if (!wasQuoted || char.trim() !== "") {
+      cell += char;
+    }
+  }
+  if (quoted) return null;
+  cells.push(wasQuoted ? cell : cell.trim());
+  return cells;
+}
+
+/**
+ * Splits lines into records of fields. A quoted field can hold a line
+ * break, so lines are joined until the quotes close.
+ */
+function splitRecords(lines: readonly string[], delimiter: string): string[][] {
+  const rows: string[][] = [];
+  let pending = "";
+  for (const line of lines) {
+    const record = pending === "" ? line : `${pending}\n${line}`;
+    const cells = splitQuoted(record, delimiter);
+    if (cells) {
+      rows.push(cells);
+      pending = "";
+    } else {
+      pending = record;
+    }
+  }
+  // An unclosed quote at the end of the file: take the rest as it stands.
+  if (pending !== "") rows.push(pending.split(delimiter).map((cell) => cell.trim()));
+  return rows;
+}
+
 function detectDelimiter(lines: string[]): string | RegExp {
-  const sample = lines.slice(0, 20);
-  for (const candidate of ["\t", ",", ";"]) {
-    const counts = sample.map((line) => line.split(candidate).length - 1);
-    if (counts[0]! > 0 && counts.every((count) => count === counts[0])) return candidate;
-  }
-  for (const candidate of ["\t", ",", ";"]) {
-    if (sample.every((line) => line.includes(candidate))) return candidate;
-  }
-  return /\s+/;
+  // Judge by records, not lines, and by delimiters outside quotes, so that
+  // "a,b" and quoted line breaks do not disguise the structure.
+  const sample = lines.slice(0, 40);
+  const candidates = ["\t", ",", ";"].map((candidate) => ({
+    candidate,
+    counts: splitRecords(sample, candidate).map((cells) => cells.length - 1),
+  }));
+  const regular = candidates.find(
+    ({ counts }) => counts[0]! > 0 && counts.every((count) => count === counts[0]),
+  );
+  if (regular) return regular.candidate;
+  const present = candidates.find(({ counts }) => counts.every((count) => count > 0));
+  return present ? present.candidate : /\s+/;
 }
 
 const toNumber = (cell: string): number => {
@@ -47,14 +110,15 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
   if (lines.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
 
   const delimiter = detectDelimiter(lines);
-  const split = (line: string): string[] => {
-    const cells = (typeof delimiter === "string" ? line : line.trim()).split(delimiter);
-    return cells.map((cell) => cell.trim().replace(/^"(.*)"$/, "$1"));
-  };
-  const rows = lines.map(split);
+  const rows =
+    typeof delimiter === "string"
+      ? splitRecords(lines, delimiter)
+      : lines.map((line) => line.trim().split(delimiter));
   const hasHeader = rows[0]!.some((cell) => cell.trim() !== "" && !isNumeric(cell));
   const header = hasHeader ? rows.shift()! : [];
-  const width = Math.max(header.length, ...rows.map((row) => row.length));
+  // A loop, not Math.max(...): a file can have more rows than a call can take arguments.
+  let width = header.length;
+  for (const row of rows) width = Math.max(width, row.length);
 
   const names: string[] = [];
   const columns: (Float64Array | string[])[] = [];

@@ -139,7 +139,9 @@ export function chainSegments(segments: Float64Array): Float64Array[] {
     const points: number[] = [];
     for (let at = backward.length - 2; at >= 0; at -= 2)
       points.push(backward[at]!, backward[at + 1]!);
-    points.push(segments[base]!, segments[base + 1]!, ...forward);
+    points.push(segments[base]!, segments[base + 1]!);
+    // Not push(...forward): a long contour has more points than a call takes arguments.
+    for (const value of forward) points.push(value);
     chains.push(Float64Array.from(points));
   }
   return chains;

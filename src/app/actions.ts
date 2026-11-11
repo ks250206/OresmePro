@@ -111,9 +111,16 @@ function pickFile(accept: string, multiple: boolean, onFiles: (files: File[]) =>
 
 /** Asks for delimited text files and loads their columns as waves. */
 export function loadDelimitedText(): void {
-  pickFile(".csv,.tsv,.txt,.dat,text/plain,text/csv", true, (files) => {
-    for (const file of files) void loadFile(file);
-  });
+  pickFile(".csv,.tsv,.txt,.dat,text/plain,text/csv", true, (files) => void loadFiles(files));
+}
+
+/**
+ * Loads several files one after another. In order, not at once: each file's
+ * waves are named to avoid the ones already there, including those the file
+ * before it just made.
+ */
+export async function loadFiles(files: Iterable<File>): Promise<void> {
+  for (const file of files) await loadFile(file);
 }
 
 /** Loads a dropped or chosen file: an experiment, or delimited text. */
@@ -124,8 +131,10 @@ export async function loadFile(file: File): Promise<void> {
 
 async function loadTextFile(file: File): Promise<void> {
   try {
+    const text = await file.text();
+    // Look at the waves only now: others may have been made while the file was read.
     const waves = doc.getState().waves;
-    const result = parseDelimited(await file.text(), (name) => name in waves);
+    const result = parseDelimited(text, (name) => name in waves);
     if (result.names.length === 0) {
       showError("Nothing to load", `${file.name} has no columns.`);
       return;

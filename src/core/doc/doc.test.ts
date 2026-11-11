@@ -254,6 +254,15 @@ describe("multi-dimensional and text waves", () => {
     expect(doc.dispatch({ op: "appendImage", graph: "Graph0", wave: "m" })).toBe("m");
   });
 
+  it("inserts a very large number of text points", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });
+    doc.dispatch({ op: "insertPoints", name: "labels", at: 1, count: 300_000 });
+    const text = doc.getState().waves.labels!.text!;
+    expect(text).toHaveLength(300_002);
+    expect([text[0], text[1], text.at(-1)]).toEqual(["a", "", "b"]);
+  });
+
   it("stores and edits text", () => {
     const doc = new Doc();
     doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });

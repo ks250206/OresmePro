@@ -5,7 +5,7 @@ import {
   EXAMPLE,
   exportGraph,
   loadDelimitedText,
-  loadFile,
+  loadFiles,
   openExperiment,
   saveExperiment,
 } from "./app/actions";
@@ -341,7 +341,7 @@ export function App() {
       }}
       onDrop={(event) => {
         event.preventDefault();
-        for (const file of event.dataTransfer.files) void loadFile(file);
+        void loadFiles(event.dataTransfer.files);
       }}
     >
       <MenuBar menus={menus} />

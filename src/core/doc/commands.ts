@@ -735,8 +735,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!Number.isInteger(count) || count < 1) throw new DocError("count must be at least 1.");
       const end = inserting ? at : Math.min(length, at + count);
       if (wave.text) {
-        const text = [...wave.text];
-        text.splice(at, end - at, ...(inserting ? Array.from({ length: count }, () => "") : []));
+        // Built by concatenation: a spread into splice() fails for very large counts.
+        const text = [
+          ...wave.text.slice(0, at),
+          ...(inserting ? Array.from({ length: count }, () => "") : []),
+          ...wave.text.slice(end),
+        ];
         return {
           state: putWave(state, changed(wave, { text, shape: [text.length] })),
           result: null,

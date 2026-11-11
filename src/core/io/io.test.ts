@@ -53,6 +53,21 @@ describe("parseDelimited", () => {
     expect(new Date(first! * 1000).toISOString()).toBe("2026-11-11T09:00:00.000Z");
   });
 
+  it("keeps delimiters, quotes and line breaks that are inside quoted fields", () => {
+    const result = parseDelimited('name,value\n"a,b",10\n"say ""hi""",20\n"two\nlines",30\n', free);
+    expect(result.names).toEqual(["name", "value"]);
+    expect(result.columns[0]).toEqual(["a,b", 'say "hi"', "two\nlines"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([10, 20, 30]);
+  });
+
+  it("loads files with more rows than a function call can take arguments", () => {
+    const rows = 200_000;
+    const text = `value\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
+    const result = parseDelimited(text, free);
+    expect(result.rows).toBe(rows);
+    expect((result.columns[0] as Float64Array)[rows - 1]).toBe(rows - 1);
+  });
+
   it("avoids names that are taken", () => {
     const result = parseDelimited("x,x\n1,2\n", (name) => name === "x");
     expect(result.names).toEqual(["x_1", "x_2"]);

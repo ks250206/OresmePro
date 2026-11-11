@@ -7,10 +7,10 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { doc, runGui, ui, useDoc } from "../app/session";
-import type { Command } from "../core/doc/commands";
-import { DATE_UNIT, leafName, type Wave } from "../core/doc/types";
-import { formatDate, formatNumber, parseDate } from "../core/plot/ticks";
+import { doc, runGui, showError, ui, useDoc } from "../app/session";
+import { DATE_UNIT, leafName } from "../core/doc/types";
+import { cellIndex, tableEditCommands, type CellEdit } from "../core/doc/tableEdit";
+import { formatDate, formatNumber } from "../core/plot/ticks";
 import { openContextMenu } from "./Menu";
 
 const features = tableFeatures({ columnSizingFeature, columnResizingFeature });
@@ -38,14 +38,6 @@ interface ColumnInfo {
 
 /** A 2-D wave shows at most this many of its columns. */
 const MAX_MATRIX_COLUMNS = 256;
-
-function parseCell(text: string): number | null {
-  const trimmed = text.trim();
-  if (trimmed === "") return Number.NaN;
-  if (/^[+-]?nan$/i.test(trimmed)) return Number.NaN;
-  const value = Number(trimmed);
-  return Number.isNaN(value) ? null : value;
-}
 
 export function TableWindow({ name }: { name: string }) {
   const table = useDoc((state) => state.tables[name]);
@@ -113,19 +105,11 @@ export function TableWindow({ name }: { name: string }) {
     virtualizer.scrollToIndex(clamped.row);
   };
 
-  /** Position in the wave's data of a table cell, on the plane being shown. */
-  const flatIndex = (wave: Wave, index: number, j: number | null): number => {
-    const [, ny = 1, nz = 1, nc = 1] = wave.shape;
-    const layer = Math.min(plane.layer, nz - 1);
-    const chunk = Math.min(plane.chunk, nc - 1);
-    return ((index * ny + (j ?? 0)) * nz + layer) * nc + chunk;
-  };
-
   const cellText = (info: ColumnInfo | undefined, index: number): string => {
     const wave = info ? waves[info.wave] : undefined;
     if (!wave || index >= (wave.shape[0] ?? 0)) return "";
     if (wave.text) return wave.text[index] ?? "";
-    const value = wave.data[flatIndex(wave, index, info!.j)]!;
+    const value = wave.data[cellIndex(wave, index, info!.j, plane)]!;
     return wave.unit === DATE_UNIT ? formatDate(value) : formatNumber(value, 8);
   };
 
@@ -135,31 +119,6 @@ export function TableWindow({ name }: { name: string }) {
     if (!wave) return false;
     const rows = wave.shape[0] ?? 0;
     return wave.shape.length === 1 ? index <= rows : index < rows;
-  };
-
-  /** The command that stores values down a column from a row, or null if they are not valid. */
-  const store = (info: ColumnInfo, start: number, texts: string[]): Command | null => {
-    const wave = waves[info.wave];
-    if (!wave) return null;
-    if (wave.text) return { op: "setWaveText", name: wave.name, start, values: texts };
-    // Dates are typed as dates and stored as seconds.
-    const values = texts.map((text) =>
-      wave.unit === DATE_UNIT && text.trim() !== "" ? parseDate(text) : parseCell(text),
-    );
-    if (values.some((value) => value === null)) return null;
-    if (wave.shape.length === 1) {
-      return { op: "setWavePoints", name: wave.name, start, values: values as number[] };
-    }
-    // A column of a matrix is not contiguous in memory: rewrite the stretch it spans.
-    const count = Math.min(values.length, wave.shape[0]! - start);
-    if (count <= 0) return null;
-    const first = flatIndex(wave, start, info.j);
-    const last = flatIndex(wave, start + count - 1, info.j);
-    const stretch = Array.from(wave.data.subarray(first, last + 1));
-    for (let offset = 0; offset < count; offset += 1) {
-      stretch[flatIndex(wave, start + offset, info.j) - first] = values[offset]!;
-    }
-    return { op: "setWavePoints", name: wave.name, start: first, values: stretch };
   };
 
   const beginEdit = (text: string) => {
@@ -172,12 +131,13 @@ export function TableWindow({ name }: { name: string }) {
     const appending = row === (wave?.shape[0] ?? 0);
     const unchanged = !appending && editing.text === cellText(selectedInfo, row);
     if (!unchanged && !(appending && editing.text.trim() === "")) {
-      const command = store(selectedInfo, row, [editing.text]);
-      if (!command) {
+      const edit = { wave: selectedInfo.wave, j: selectedInfo.j, row, text: editing.text };
+      const commands = tableEditCommands(waves, [edit], plane);
+      if (!commands) {
         setEditing({ ...editing, invalid: true });
         return;
       }
-      runGui(command);
+      runGui(commands);
     }
     setEditing(null);
     if (move) select(move);
@@ -223,22 +183,21 @@ export function TableWindow({ name }: { name: string }) {
       .replace(/\n$/, "")
       .split("\n")
       .map((line) => line.split(/\t|,/));
-    const commands: Command[] = [];
-    const width = Math.max(...rows.map((cells) => cells.length));
-    for (let offset = 0; offset < width; offset += 1) {
-      const info = columnInfos[column + offset];
-      const wave = info ? waves[info.wave] : undefined;
-      if (!info || !wave) break;
-      // A paste below the end of a wave starts at its first free point.
-      const start = Math.min(row, wave.shape[0] ?? 0);
-      const command = store(
-        info,
-        start,
-        rows.map((cells) => cells[offset] ?? ""),
-      );
-      if (command) commands.push(command);
-    }
-    runGui(commands);
+    // Collect every pasted cell first: the cells of one wave must be written together.
+    const edits: CellEdit[] = [];
+    rows.forEach((cells, down) => {
+      cells.forEach((text, across) => {
+        const info = columnInfos[column + across];
+        const wave = info ? waves[info.wave] : undefined;
+        if (!info || !wave) return;
+        // A paste below the end of a 1-D wave starts at its first free point.
+        const start = wave.shape.length === 1 ? Math.min(row, wave.shape[0] ?? 0) : row;
+        edits.push({ wave: info.wave, j: info.j, row: start + down, text });
+      });
+    });
+    const commands = tableEditCommands(waves, edits, plane);
+    if (commands) runGui(commands);
+    else showError("Could not paste", "Some of the pasted cells are not numbers.");
   };
 
   const onCopy = (event: React.ClipboardEvent<HTMLDivElement>) => {
