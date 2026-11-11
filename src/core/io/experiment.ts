@@ -1,0 +1,181 @@
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { applyCommand } from "../doc/commands";
+import {
+  AXIS_SIDES,
+  defaultAxis,
+  defaultTraceStyle,
+  emptyDoc,
+  type AxisSide,
+  type AxisSpec,
+  type DocState,
+  type GraphSpec,
+  type TableSpec,
+  type TraceSpec,
+  type Wave,
+  type WindowState,
+} from "../doc/types";
+import type { HistoryEntry } from "../history/history";
+import { decodeNpy, encodeNpy } from "./npy";
+
+/**
+ * The saved form of an experiment: `experiment.json` describes everything,
+ * numeric wave data sits beside it as .npy files (readable with NumPy), and
+ * `history.json` holds the command history. The same layout is used for the
+ * browser's private storage and, zipped, for .oresme files.
+ */
+export interface SavedWave {
+  name: string;
+  /** The .npy file with the values; null for a text wave. */
+  file: string | null;
+  text?: readonly string[];
+  x0: number;
+  dx: number;
+  xUnit: string;
+  y0?: number;
+  dy?: number;
+  yUnit?: string;
+  unit: string;
+  note: string;
+}
+
+export interface SavedExperiment {
+  version: number;
+  waves: SavedWave[];
+  folders?: string[];
+  graphs: Record<string, GraphSpec>;
+  tables: Record<string, TableSpec>;
+  windows: WindowState[];
+}
+
+const MAX_SAVED_ENTRIES = 2000;
+const MAX_SAVED_IMAGE = 300_000;
+
+export function describeExperiment(
+  state: DocState,
+  fileFor: (wave: Wave) => string,
+): SavedExperiment {
+  return {
+    version: 2,
+    waves: state.waveOrder.map((name) => {
+      const wave = state.waves[name]!;
+      const { x0, dx, xUnit, y0, dy, yUnit, unit, note } = wave;
+      const scaling = { x0, dx, xUnit, y0, dy, yUnit, unit, note };
+      return wave.text
+        ? { name, file: null, text: wave.text, ...scaling }
+        : { name, file: fileFor(wave), ...scaling };
+    }),
+    folders: [...state.folders],
+    graphs: { ...state.graphs },
+    tables: { ...state.tables },
+    windows: [...state.windows],
+  };
+}
+
+/** Fills in what graphs saved by earlier versions do not have. */
+function upgradeGraph(saved: GraphSpec): GraphSpec {
+  const axes: Record<string, AxisSpec> = {};
+  for (const side of AXIS_SIDES) axes[side] = defaultAxis(side);
+  for (const [name, axis] of Object.entries(saved.axes ?? {})) {
+    const side = (axis.side as AxisSide | undefined) ?? (name as AxisSide);
+    axes[name] = { ...defaultAxis(side), ...axis, side };
+  }
+  return {
+    ...saved,
+    traces: (saved.traces ?? []).map((trace, index): TraceSpec => ({
+      ...defaultTraceStyle(index),
+      ...trace,
+    })),
+    images: (saved.images ?? []).map((image) => ({
+      ...image,
+      layer: image.layer ?? 0,
+      chunk: image.chunk ?? 0,
+    })),
+    contours: (saved.contours ?? []).map((contour) => ({
+      ...contour,
+      layer: contour.layer ?? 0,
+      chunk: contour.chunk ?? 0,
+      labels: contour.labels ?? false,
+    })),
+    annotations: saved.annotations ?? [],
+    cursors: saved.cursors ?? {},
+    showInfo: saved.showInfo ?? false,
+    axes,
+  };
+}
+
+/** Rebuilds a document from its saved description and the files it refers to. */
+export function buildState(
+  saved: SavedExperiment,
+  files: ReadonlyMap<string, Uint8Array>,
+): DocState {
+  let state = emptyDoc();
+  for (const folder of saved.folders ?? []) {
+    if (!state.folders.includes(folder)) {
+      state = applyCommand(state, { op: "newFolder", path: folder }).state;
+    }
+  }
+  for (const item of saved.waves) {
+    const { name, x0, dx, xUnit, y0, dy, yUnit, unit, note } = item;
+    const scaling = { x0, dx, xUnit, y0, dy, yUnit, unit, note };
+    if (item.file === null) {
+      state = applyCommand(state, {
+        op: "makeWave",
+        name,
+        text: item.text ?? [],
+        ...scaling,
+      }).state;
+      continue;
+    }
+    const bytes = files.get(item.file);
+    if (!bytes) throw new Error(`The experiment is missing ${item.file}.`);
+    // Waves are rebuilt through makeWave so the document assigns their revisions.
+    state = applyCommand(state, { op: "makeWave", name, ...decodeNpy(bytes), ...scaling }).state;
+  }
+  const graphs: Record<string, GraphSpec> = {};
+  for (const [name, graph] of Object.entries(saved.graphs)) graphs[name] = upgradeGraph(graph);
+  return { ...state, graphs, tables: saved.tables, windows: saved.windows };
+}
+
+/** The history as it is saved: bounded, and without oversized inline images. */
+export function trimHistory(entries: readonly HistoryEntry[]): HistoryEntry[] {
+  return entries.slice(-MAX_SAVED_ENTRIES).map((entry) => ({
+    ...entry,
+    outputs: entry.outputs.map((output) =>
+      output.kind === "result" &&
+      (output.svg?.length ?? 0) + (output.png?.length ?? 0) > MAX_SAVED_IMAGE
+        ? { kind: "result" as const, text: output.text }
+        : output,
+    ),
+  }));
+}
+
+/** Packs an experiment into a single .oresme file (a zip archive). */
+export function zipExperiment(state: DocState, entries: readonly HistoryEntry[]): Uint8Array {
+  const files: Record<string, Uint8Array> = {};
+  let counter = 0;
+  const saved = describeExperiment(state, (wave) => {
+    counter += 1;
+    const file = `waves/${counter}.npy`;
+    files[file] = encodeNpy(wave.data, wave.shape);
+    return file;
+  });
+  files["experiment.json"] = strToU8(JSON.stringify(saved));
+  files["history.json"] = strToU8(JSON.stringify(trimHistory(entries)));
+  return zipSync(files, { level: 6 });
+}
+
+export function unzipExperiment(bytes: Uint8Array): { state: DocState; history: HistoryEntry[] } {
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(bytes);
+  } catch {
+    throw new Error("This is not an OresmePro experiment file.");
+  }
+  const index = files["experiment.json"];
+  if (!index) throw new Error("This is not an OresmePro experiment file.");
+  const saved = JSON.parse(strFromU8(index)) as SavedExperiment;
+  const history = files["history.json"]
+    ? (JSON.parse(strFromU8(files["history.json"])) as HistoryEntry[])
+    : [];
+  return { state: buildState(saved, new Map(Object.entries(files))), history };
+}
