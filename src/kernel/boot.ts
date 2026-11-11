@@ -1,4 +1,5 @@
 import type { PyodideAPI } from "pyodide";
+import analysisSource from "./python/_oresme_analysis.py?raw";
 import kernelSource from "./python/oresme_kernel.py?raw";
 import oresmeSource from "./python/oresme.py?raw";
 
@@ -46,6 +47,7 @@ export async function bootPython(
 
   pyodide.FS.mkdirTree(SITE);
   pyodide.FS.writeFile(`${SITE}/oresme.py`, oresmeSource);
+  pyodide.FS.writeFile(`${SITE}/_oresme_analysis.py`, analysisSource);
   pyodide.FS.writeFile(`${SITE}/oresme_kernel.py`, kernelSource);
 
   pyodide.registerJsModule("_oresme_js", {

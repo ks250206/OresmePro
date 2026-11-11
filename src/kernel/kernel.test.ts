@@ -16,6 +16,7 @@ let stdout = "";
 let errors: string[] = [];
 let displays: Record<string, string>[] = [];
 let runCount = 0;
+const exported: string[] = [];
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
@@ -43,6 +44,7 @@ beforeAll(async () => {
             );
             return toSvg(layout.prims, layout.width, layout.height);
           },
+          exportGraph: (name, filename) => exported.push(`${name}:${filename}`),
         },
         method,
         paramsJson,
@@ -171,5 +173,152 @@ describe("oresme Python API", () => {
   it("completes names", async () => {
     const items = kernel.complete("op.dis", 6);
     expect(items).toContainEqual({ text: "display", start: 3, end: 6, type: "attribute" });
+  });
+
+  it("keeps waves in data folders", async () => {
+    expect(
+      await run(
+        [
+          'f = op.new_folder("run1")',
+          'a = f.make("a", [1, 2, 3])',
+          'b = op.make("run1:raw:b", [4.0])',
+          "print(a.name, f.waves(), [x.path for x in f.folders()], [x.path for x in op.folders()])",
+          'a.rename("archive:a")',
+          'print(a.name, op.exists("archive:a"), op.exists("root:archive:a"), op.exists("run1:a"))',
+          'op.folder("run1").kill()',
+          "print([x.path for x in op.folders()])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "run1:a [Wave('run1:a', n=3, x0=0, dx=1)] ['run1:raw'] ['run1', 'run1:raw']\n" +
+        "archive:a True True False\n['archive']\n",
+    );
+  });
+
+  it("handles 2-D and text waves", async () => {
+    expect(
+      await run(
+        [
+          'm = op.make("m", np.arange(6.0).reshape(2, 3), dx=2, y0=10, dy=5)',
+          "print(repr(m), m.shape, m.ndim, m[1, 2], m.data.sum(axis=1).tolist(), m.y.tolist())",
+          "m[0, :] = -1",
+          "print(m.data.tolist())",
+          't = op.make("labels", ["a", "b"])',
+          't[1] = "z"; t[2] = "new"',
+          "print(repr(t), t.is_text, t.data.tolist(), len(t))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "Wave('m', shape=(2, 3), x0=0, dx=2) (2, 3) 2 5.0 [3.0, 12.0] [10.0, 15.0, 20.0]\n" +
+        "[[-1.0, -1.0, -1.0], [3.0, 4.0, 5.0]]\n" +
+        "Wave('labels', n=3, text) True ['a', 'z', 'new'] 3\n",
+    );
+    expect(doc.getState().waves.m!.shape).toEqual([2, 3]);
+  });
+
+  it("makes image and contour plots with free axes", async () => {
+    expect(
+      await run(
+        [
+          "gi = op.image(m, color_table='viridis')",
+          "gi.image().z_max = 4",
+          "c = gi.append_contour(m, levels=[1, 2], color='red')",
+          "gi.colorscale()",
+          "ax = gi.add_axis('R2', 'right')",
+          "ax.set(span=(0.5, 1), label='other')",
+          "gi.append(w, axis='R2')",
+          "print(gi.image().color_table, gi.image().z_max, c.levels, [a.name for a in gi.axes], gi.axis('R2').side)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("viridis 4 [1, 2] ['left', 'bottom', 'right', 'top', 'R2'] right\n");
+    expect(await run("op.image(w)")).toBe(false);
+    expect(errors[0]).toMatch(/not a 2-D wave/);
+    expect(Object.keys(doc.getState().graphs)).not.toContain("Graph4");
+  });
+
+  it("places cursors and reads them back", async () => {
+    expect(
+      await run(
+        [
+          'c = op.make("curve", np.arange(10.0) ** 2, x0=100, dx=0.5)',
+          "gc = op.display(c)",
+          'a = gc.cursor("A", "curve", 3)',
+          'b = gc.cursor("B", c, 5)',
+          "print(a.point, a.x, a.y, b.y - a.y, a)",
+          "a.point = 4; print(a.y); b.remove(); print(gc.cursor('B').is_set)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("3 101.5 9.0 16.0 Cursor('A' on curve[3], x=101.5, y=9)\n16.0\nFalse\n");
+  });
+
+  it("fits built-in and custom functions", async () => {
+    expect(
+      await run(
+        [
+          "rng = np.random.default_rng(3)",
+          "xs = np.linspace(-5, 5, 201)",
+          'peak = op.make("peak", 0.5 + 3 * np.exp(-((xs - 1.2) / 0.8) ** 2) + rng.normal(scale=0.01, size=xs.size), x0=xs[0], dx=xs[1] - xs[0])',
+          "gp = op.display(peak)",
+          'r = op.fit("gauss", peak, quiet=True)',
+          "print(r.names, np.round(r.coef, 2).tolist(), r.converged, bool(np.all(r.sigma < 0.01)))",
+          "print([t.name for t in gp.traces], op.wave('W_coef').data.shape, round(r['x0'], 2))",
+          'line = op.make("line", 2 * xs + 1)',
+          'r2 = op.fit("poly2", line, x=op.make("xs", xs), quiet=True)',
+          "print(np.round(r2.coef, 6).tolist())",
+          "r3 = op.fit(lambda x, a, k: a * np.exp(k * x), op.make('grow', 2 * np.exp(0.3 * xs)), x='xs', guess=[1, 0.1], quiet=True)",
+          "print(np.round(r3.coef, 4).tolist())",
+          'decay = op.make("decay", 1 + 4 * np.exp(-np.arange(100) * 0.1 / 2.5), dx=0.1)',
+          'print(np.round(op.fit("exp", decay, quiet=True).coef, 3).tolist())',
+          'wave_ = op.make("osc", 0.2 + 1.5 * np.sin(3.0 * np.arange(400) * 0.02 + 0.4), dx=0.02)',
+          'print(np.round(op.fit("sin", wave_, quiet=True).coef, 3).tolist())',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "('y0', 'A', 'x0', 'width') [0.5, 3.0, 1.2, 0.8] True True\n" +
+        "['peak', 'fit_peak'] (4,) 1.2\n" +
+        "[1.0, 2.0]\n[2.0, 0.3]\n[1.0, 4.0, 2.5]\n[0.2, 1.5, 3.0, 0.4]\n",
+    );
+  });
+
+  it("fits between cursors and reports what it did", async () => {
+    expect(
+      await run(
+        'gp.cursor("A", "peak", 100); gp.cursor("B", "peak", 160)\nr = op.fit("gauss", peak, cursors=True)',
+      ),
+    ).toBe(true);
+    expect(stdout).toMatch(/^Fit: gauss\(peak\), 61 points, chi-square = /);
+    expect(stdout).toMatch(/x0 {4}= 1\.2\d* \u00b1 /);
+    expect(await run('op.fit("nope", peak)')).toBe(false);
+    expect(errors[0]).toMatch(/Unknown fit function 'nope'/);
+  });
+
+  it("runs the analysis operations", async () => {
+    expect(
+      await run(
+        [
+          't2 = op.make("ramp", np.arange(11.0) * 2, dx=0.5, x_unit="s", unit="V")',
+          "s = op.stats(t2, quiet=True)",
+          "print(s['mean'], s['max'], s['max_x'])",
+          "print(op.differentiate(t2).data[:3].tolist(), op.integrate(t2).data[-1], op.integrate(t2).name)",
+          "print(op.smooth(t2, 3).data[1], op.fft(t2).x_unit, op.histogram(t2, bins=5).data.tolist())",
+          "print(float(np.mean(t2)), np.concatenate([t2, t2]).shape)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "10.0 20.0 5.0\n[4.0, 4.0, 4.0] 50.0 ramp_INT\n2.0 Hz [2.0, 2.0, 2.0, 2.0, 3.0]\n10.0 (22,)\n",
+    );
+  });
+
+  it("saves a graph through the application", async () => {
+    expect(await run('g.save("figure.pdf")')).toBe(true);
+    expect(exported).toEqual(["Graph0:figure.pdf"]);
+    expect(await run('g.save("figure.bmp")')).toBe(false);
+    expect(errors[0]).toMatch(/\.pdf, \.svg or \.png/);
   });
 });

@@ -7,6 +7,8 @@ export interface RpcContext {
   doc: Doc;
   /** Renders a graph as SVG at the given size (or its window's size). */
   renderSvg(graph: string, width: number | null, height: number | null): string;
+  /** Saves a graph to a file the user downloads; the format follows the extension. */
+  exportGraph(graph: string, filename: string): void;
 }
 
 export interface RpcReply {
@@ -16,17 +18,23 @@ export interface RpcReply {
 
 const waveInfo = (wave: Wave) => ({
   name: wave.name,
-  n: wave.data.length,
+  kind: wave.text ? "text" : "numeric",
+  shape: wave.shape,
   x0: wave.x0,
   dx: wave.dx,
   xUnit: wave.xUnit,
+  y0: wave.y0,
+  dy: wave.dy,
+  yUnit: wave.yUnit,
   unit: wave.unit,
   note: wave.note,
   rev: wave.rev,
 });
 
+const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
+
 function requireWave(doc: Doc, name: unknown): Wave {
-  const wave = typeof name === "string" ? doc.getState().waves[name] : undefined;
+  const wave = typeof name === "string" ? doc.getState().waves[withoutRoot(name)] : undefined;
   if (!wave) throw new DocError(`No wave named ${JSON.stringify(name)}.`);
   return wave;
 }
@@ -48,8 +56,8 @@ export function handleRpc(
     case "dispatch": {
       const command = { ...params } as Record<string, unknown>;
       if (command.op === "makeWave" || command.op === "setWaveData") {
-        if (!data) throw new DocError("Missing wave data.");
-        command.data = data;
+        // Numbers arrive as binary data; a text wave's values are in the command.
+        if (data) command.data = data;
       } else if (command.op === "setWavePoints") {
         if (!data) throw new DocError("Missing point values.");
         command.values = data;
@@ -60,6 +68,7 @@ export function handleRpc(
       return { result: waveInfo(requireWave(doc, params.name)) };
     case "waveData": {
       const wave = requireWave(doc, params.name);
+      if (wave.text) return { result: { ...waveInfo(wave), text: wave.text } };
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
         ? { result: waveInfo(wave) }
@@ -67,9 +76,40 @@ export function handleRpc(
     }
     case "listWaves":
       return { result: state.waveOrder };
+    case "listFolders":
+      return { result: state.folders };
     case "uniqueName": {
       const base = typeof params.base === "string" ? params.base : "wave";
       return { result: uniqueName(base, (name) => name in state.waves) };
+    }
+    case "cursorInfo": {
+      const graph = typeof params.graph === "string" ? state.graphs[params.graph] : undefined;
+      if (!graph) throw new DocError(`No graph named ${JSON.stringify(params.graph)}.`);
+      const cursor = graph.cursors[params.cursor as "A" | "B"];
+      if (!cursor) throw new DocError(`Cursor ${String(params.cursor)} is not on ${graph.name}.`);
+      const trace = graph.traces.find((item) => item.name === cursor.trace);
+      const y = trace ? state.waves[trace.y] : undefined;
+      const x = trace?.x ? state.waves[trace.x] : null;
+      if (!trace || !y) throw new DocError(`Cursor ${String(params.cursor)} has lost its trace.`);
+      return {
+        result: {
+          trace: cursor.trace,
+          point: cursor.point,
+          x: x ? (x.data[cursor.point] ?? null) : y.x0 + cursor.point * y.dx,
+          y: y.data[cursor.point] ?? null,
+        },
+      };
+    }
+    case "exportGraph": {
+      if (typeof params.name !== "string" || !state.graphs[params.name]) {
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+      }
+      const filename = typeof params.filename === "string" ? params.filename : "";
+      if (!/\.(pdf|svg|png)$/i.test(filename)) {
+        throw new DocError("The file name must end in .pdf, .svg or .png.");
+      }
+      context.exportGraph(params.name, filename);
+      return { result: null };
     }
     case "listWindows":
       return {

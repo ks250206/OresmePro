@@ -95,14 +95,12 @@ try:
 except (ImportError, AttributeError):
     pass
 
-def _no_input(prompt=""):
-    raise RuntimeError("input() is not available in the OresmePro command window.")
-
-
-builtins.input = _no_input
-
 sys.stdout = _Stream("stdout")
 sys.stderr = _Stream("stderr")
+
+import oresme  # noqa: E402
+
+builtins.input = oresme._input
 
 shell = _Shell.instance()
 shell.colors = "lightbg"

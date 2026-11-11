@@ -9,12 +9,17 @@ export interface KernelState {
   /** starting: loading Python. unavailable: this page cannot run it at all. */
   status: "starting" | "ready" | "busy" | "failed" | "unavailable";
   message: string;
+  /** Set while Python is waiting in input(): the prompt to show. */
+  input: string | null;
+  /** True once an interrupt was requested and the code has not stopped yet. */
+  interrupting: boolean;
 }
 
 export interface KernelOptions {
   doc: Doc;
   history: History;
   renderSvg: RpcContext["renderSvg"];
+  exportGraph: RpcContext["exportGraph"];
   indexURL: string;
 }
 
@@ -32,7 +37,15 @@ interface Running {
 export class KernelClient {
   private worker: Worker | null = null;
   private interrupt: Uint8Array | null = null;
-  private state: KernelState = { status: "starting", message: "Loading Python…" };
+  private state: KernelState = {
+    status: "starting",
+    message: "Loading Python…",
+    input: null,
+    interrupting: false,
+  };
+  /** The shared buffer Python is blocked on while it waits for input(). */
+  private inputBuffer: SharedArrayBuffer | null = null;
+  private inputHistoryId: number | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly running = new Map<number, Running>();
   private readonly completions = new Map<number, (items: CompletionItem[]) => void>();
@@ -63,7 +76,12 @@ export class KernelClient {
       return;
     }
     this.ready = false;
-    this.setState({ status: "starting", message: "Loading Python…" });
+    this.setState({
+      status: "starting",
+      message: "Loading Python…",
+      input: null,
+      interrupting: false,
+    });
     const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
     const interruptBuffer = new SharedArrayBuffer(4);
     this.worker = worker;
@@ -126,20 +144,62 @@ export class KernelClient {
    * buffer instead. Trying the message first matters: a signal delivered
    * while Python sits in its event loop would be raised there, not in the
    * user's code.
+   *
+   * Python only notices the signal between bytecodes, so a long call into
+   * compiled code (a large matrix product, say) runs to its end first. Asking
+   * again while still waiting gives up on that and restarts Python; nothing
+   * but Python's own variables is lost.
    */
   interruptExecution(): void {
     if (!this.worker || this.running.size === 0) return;
+    if (this.inputBuffer) {
+      this.answerInput(null);
+      return;
+    }
+    if (this.state.interrupting) {
+      this.restart("Python did not stop, so it was restarted.");
+      return;
+    }
     this.interruptAcked = false;
     this.send({ type: "interrupt" });
     setTimeout(() => {
       if (!this.interruptAcked && this.interrupt && this.running.size > 0) this.interrupt[0] = 2;
     }, 150);
+    // Only offer the forced restart once the polite request has had a moment.
+    setTimeout(() => {
+      if (this.running.size > 0 && !this.inputBuffer) {
+        this.setState({
+          interrupting: true,
+          message: "Still running… interrupt again to restart Python",
+        });
+      }
+    }, 1500);
   }
 
-  restart(): void {
+  /** Answers a pending input() with a line of text, or null to interrupt it. */
+  answerInput(text: string | null): void {
+    const buffer = this.inputBuffer;
+    if (!buffer) return;
+    const { history } = this.options;
+    if (this.inputHistoryId !== null && text !== null) {
+      history.appendOutput(this.inputHistoryId, {
+        kind: "stream",
+        name: "stdout",
+        text: `${text}\n`,
+      });
+    }
+    this.inputBuffer = null;
+    this.inputHistoryId = null;
+    this.setState({ input: null });
+    writeSyncReply(buffer, JSON.stringify({ ok: true, result: text }), null);
+  }
+
+  restart(reason = "Python was restarted."): void {
     this.worker?.terminate();
     this.worker = null;
-    this.failAll("Python was restarted.");
+    this.inputBuffer = null;
+    this.inputHistoryId = null;
+    this.failAll(reason);
     this.options.history.add("system", "Python restarted. Waves, graphs and tables are kept.");
     this.start();
   }
@@ -228,6 +288,19 @@ export class KernelClient {
         this.completions.delete(message.id);
         break;
       case "rpc": {
+        if (message.method === "input") {
+          // Answered later, when the user has typed a line; Python waits meanwhile.
+          const run = this.running.get(message.execId);
+          const asked = (JSON.parse(message.paramsJson) as { prompt?: unknown }).prompt;
+          const prompt = typeof asked === "string" ? asked : "";
+          this.inputBuffer = message.buffer;
+          this.inputHistoryId = run?.historyId ?? null;
+          if (run && prompt) {
+            history.appendOutput(run.historyId, { kind: "stream", name: "stdout", text: prompt });
+          }
+          this.setState({ input: prompt });
+          break;
+        }
         const reply = answerRpc(
           this.options,
           message.method,
@@ -265,15 +338,23 @@ export class KernelClient {
 
   private refreshStatus(): void {
     if (!this.ready) return;
-    this.setState(
-      this.running.size > 0
-        ? { status: "busy", message: "Running…" }
-        : { status: "ready", message: "Python ready" },
-    );
+    if (this.running.size > 0) {
+      if (this.state.status !== "busy") this.setState({ status: "busy", message: "Running…" });
+    } else {
+      this.setState({ status: "ready", message: "Python ready", interrupting: false });
+    }
   }
 
-  private setState(state: KernelState): void {
-    if (state.status === this.state.status && state.message === this.state.message) return;
+  private setState(change: Partial<KernelState>): void {
+    const state = { ...this.state, ...change };
+    if (
+      state.status === this.state.status &&
+      state.message === this.state.message &&
+      state.input === this.state.input &&
+      state.interrupting === this.state.interrupting
+    ) {
+      return;
+    }
     this.state = state;
     for (const listener of this.listeners) listener();
   }
