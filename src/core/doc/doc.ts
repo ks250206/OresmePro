@@ -64,7 +64,7 @@ export class Doc {
     const entry = this.undoStack.pop();
     if (!entry) return false;
     this.redoStack.push(this.state);
-    this.state = this.keepWindowLayout(entry.state);
+    this.state = this.keepViewState(entry.state);
     this.emit();
     return true;
   }
@@ -73,7 +73,7 @@ export class Doc {
     const state = this.redoStack.pop();
     if (!state) return false;
     this.undoStack.push({ state: this.state, group: null });
-    this.state = this.keepWindowLayout(state);
+    this.state = this.keepViewState(state);
     this.emit();
     return true;
   }
@@ -87,16 +87,32 @@ export class Doc {
   }
 
   /**
-   * Undo restores content, not where the user has since dragged windows:
-   * windows that exist in both states keep their current geometry.
+   * Undo restores content, not what is outside its reach: where the user has
+   * since dragged windows, column widths, and the text of procedures (their
+   * editors have their own undo). Whatever exists in both states keeps its
+   * current value.
    */
-  private keepWindowLayout(target: DocState): DocState {
-    const current = new Map(this.state.windows.map((window) => [window.name, window]));
+  private keepViewState(target: DocState): DocState {
+    const now = this.state;
+    const current = new Map(now.windows.map((window) => [window.name, window]));
+    const tables = { ...target.tables };
+    for (const [name, table] of Object.entries(tables)) {
+      const widths = now.tables[name]?.widths;
+      if (!widths || widths === table.widths) continue;
+      const kept = Object.entries(widths).filter(([wave]) => table.columns.includes(wave));
+      tables[name] = { ...table, widths: Object.fromEntries(kept) };
+    }
+    const procedures = { ...target.procedures };
+    for (const name of Object.keys(procedures)) {
+      if (now.procedures[name]) procedures[name] = now.procedures[name];
+    }
     return {
       ...target,
+      tables,
+      procedures,
       windows: target.windows.map((window) => {
-        const now = current.get(window.name);
-        return now ? { ...window, x: now.x, y: now.y, w: now.w, h: now.h } : window;
+        const live = current.get(window.name);
+        return live ? { ...window, x: live.x, y: live.y, w: live.w, h: live.h } : window;
       }),
     };
   }

@@ -90,10 +90,18 @@ describe("experiment files", () => {
     doc.dispatch({ op: "display", y: ["run1:signal"] });
     doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "B", trace: "signal", point: 1 });
     doc.dispatch({ op: "edit", waves: ["labels", "run1:signal"] });
+    doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 5 } });
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "labels", width: 140 });
+    doc.dispatch({ op: "newProcedure", code: "def f():\n    return 1\n" });
+    doc.dispatch({ op: "setProcedure", name: "Procedure", autoRun: false });
     const history = new History();
     history.add("user", "print(1)");
+    const stored = [
+      { path: "out/fit.csv", bytes: new TextEncoder().encode("a,b\n1,2\n") },
+      { path: "raw.bin", bytes: Uint8Array.of(0, 255, 1) },
+    ];
 
-    const file = zipExperiment(doc.getState(), history.getEntries());
+    const file = zipExperiment(doc.getState(), history.getEntries(), stored);
     expect(new TextDecoder().decode(file.subarray(0, 2))).toBe("PK");
     const restored = unzipExperiment(file);
     const before = doc.getState();
@@ -105,7 +113,12 @@ describe("experiment files", () => {
     expect(restored.state.waves.labels!.text).toEqual(["a", "b"]);
     expect(restored.state.graphs).toEqual(before.graphs);
     expect(restored.state.tables).toEqual(before.tables);
+    expect(restored.state.procedures).toEqual(before.procedures);
+    expect(restored.state.windows).toEqual(before.windows);
     expect(restored.history[0]!.code).toBe("print(1)");
+    expect(restored.files.map(([path, bytes]) => [path, Array.from(bytes)])).toEqual(
+      stored.map((item) => [item.path, Array.from(item.bytes)]),
+    );
   });
 
   it("rejects other files", () => {

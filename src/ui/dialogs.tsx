@@ -1,8 +1,17 @@
 import { useState } from "react";
 import { newMatrixPlot, pyName, runPython } from "../app/actions";
 import { parseConstraints, parseHold } from "../app/fitOptions";
-import { runGui, ui, useDoc, useUi, type DialogRequest } from "../app/session";
+import {
+  doc,
+  requestCommandLine,
+  runGui,
+  ui,
+  useDoc,
+  useUi,
+  type DialogRequest,
+} from "../app/session";
 import type { Command } from "../core/doc/commands";
+import { graphScript } from "../core/doc/recreate";
 import {
   ANCHORS,
   AXIS_SIDES,
@@ -1145,6 +1154,65 @@ function WaveScalingDialog({ wave: name }: { wave: string }) {
   );
 }
 
+/** Shows the Python that draws a graph again, to copy or to keep in a procedure. */
+function GraphScriptDialog({ graph }: { graph: string }) {
+  const state = useDoc((current) => current);
+  const [copied, setCopied] = useState(false);
+  let script = "";
+  try {
+    script = graphScript(state, graph);
+  } catch {
+    // The graph was closed while the dialog was open.
+  }
+  const body = script
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  const asFunction = `def recreate_${graph}():\n${body}\n    return g\n`;
+  const toProcedure = () => {
+    const existing = Object.values(state.procedures)[0];
+    const name = existing?.name ?? runGui({ op: "newProcedure" });
+    if (!name) return;
+    const before = existing?.code ?? "";
+    const gap = before.trim() === "" ? "" : `${before.replace(/\s+$/, "")}\n\n\n`;
+    doc.dispatch({ op: "setProcedure", name, code: `${gap}${asFunction}` });
+    doc.dispatch({ op: "activateWindow", name });
+    close();
+  };
+  return (
+    <Dialog title={`Recreation Script for ${graph}`} onClose={close} width={620}>
+      <p className="m-0 leading-relaxed text-muted">
+        Python that draws this graph again. Run as it is, it makes a new graph and leaves this one
+        alone.
+      </p>
+      <pre
+        aria-label="Script"
+        className="selectable m-0 max-h-[40vh] overflow-auto rounded border border-line bg-paper p-2 font-mono text-[11.5px] leading-[1.45]"
+      >
+        {script}
+      </pre>
+      <div className="flex gap-2">
+        <Button
+          onClick={() => {
+            void navigator.clipboard?.writeText(script).then(() => setCopied(true));
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          onClick={() => {
+            requestCommandLine(script);
+            close();
+          }}
+        >
+          To Command Line
+        </Button>
+        <Button onClick={toProcedure}>Add to Procedure as a Function</Button>
+      </div>
+    </Dialog>
+  );
+}
+
 function AboutDialog() {
   return (
     <Dialog title="About OresmePro" onClose={close} width={460}>
@@ -1415,6 +1483,8 @@ function renderDialog(dialog: DialogRequest) {
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
+    case "graphScript":
+      return <GraphScriptDialog graph={dialog.graph} />;
     case "about":
       return <AboutDialog />;
   }

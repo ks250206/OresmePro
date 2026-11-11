@@ -1,4 +1,5 @@
 import type { Doc } from "../core/doc/doc";
+import type { FileStore } from "../core/files/files";
 import type { History } from "../core/history/history";
 import type { CompletionItem } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
@@ -18,6 +19,9 @@ export interface KernelState {
 export interface KernelOptions {
   doc: Doc;
   history: History;
+  files: FileStore;
+  /** Called each time Python is (re)started, once it can be given code to run. */
+  onStart?: () => void;
   renderSvg: RpcContext["renderSvg"];
   exportGraph: RpcContext["exportGraph"];
   indexURL: string;
@@ -97,12 +101,16 @@ export class KernelClient {
       });
     };
     this.send({ type: "init", indexURL: this.options.indexURL, interrupt: interruptBuffer });
+    this.options.onStart?.();
   }
 
-  /** Queues code to run and returns its history entry id. */
-  execute(code: string): number {
+  /**
+   * Queues code to run and returns its history entry id. Code the user did
+   * not type (a procedure run when the experiment opens) is marked "gui".
+   */
+  execute(code: string, source: "user" | "gui" = "user"): number {
     const { history } = this.options;
-    const historyId = history.add("user", code, "queued");
+    const historyId = history.add(source, code, "queued");
     if (!this.worker || this.state.status === "unavailable" || this.state.status === "failed") {
       history.appendOutput(historyId, {
         kind: "error",

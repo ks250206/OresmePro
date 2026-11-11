@@ -1,6 +1,7 @@
 import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { Doc } from "../core/doc/doc";
+import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
 import { toSvg } from "../core/plot/svg";
 import { bootPython, type PythonKernel } from "./boot";
@@ -11,8 +12,10 @@ import { answerRpc } from "./rpc";
  * the thread boundary is missing: here Python calls the document directly.
  */
 const doc = new Doc();
+const files = new FileStore();
 let kernel: PythonKernel;
 let stdout = "";
+let stderr = "";
 let errors: string[] = [];
 let displays: Record<string, string>[] = [];
 let runCount = 0;
@@ -20,6 +23,7 @@ const exported: string[] = [];
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
+  stderr = "";
   errors = [];
   displays = [];
   runCount += 1;
@@ -33,6 +37,7 @@ beforeAll(async () => {
       answerRpc(
         {
           doc,
+          files,
           renderSvg: (name, width, height) => {
             const state = doc.getState();
             const layout = layoutGraph(
@@ -55,6 +60,7 @@ beforeAll(async () => {
       ),
     stream: (name, text) => {
       if (name === "stdout") stdout += text;
+      else stderr += text;
     },
     display: (json) => displays.push(JSON.parse(json) as Record<string, string>),
     error: (name, message) => errors.push(`${name}: ${message}`),
@@ -428,5 +434,131 @@ describe("oresme Python API", () => {
       await run('g.save("with.svg", cursors=True); print("clip" in g.svg(cursors=True))'),
     ).toBe(true);
     expect(exported.at(-1)).toBe("Graph0:with.svg:cursors");
+  });
+
+  it("keeps procedures as Python files that run and import", async () => {
+    expect(
+      await run(
+        [
+          'p = op.new_procedure("Proc", "def twice(x):\\n    return 2 * x\\nloaded = True\\n")',
+          "p.run()",
+          "print(p, twice(4), loaded, p.auto_run, op.procedures(), op.procedure().name)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("Procedure('Proc') 8 True True [Procedure('Proc')] Proc\n");
+    expect(doc.getState().procedures.Proc!.code).toContain("def twice");
+    expect(doc.getState().windows.at(-1)).toMatchObject({ name: "Proc", kind: "procedure" });
+
+    // Edited in its window, the file on Python's side follows before the next input.
+    doc.dispatch({
+      op: "setProcedure",
+      name: "Proc",
+      code: "def twice(x):\n    return x + x + 1\n",
+    });
+    expect(await run("p.run()\nimport Proc\nprint(twice(4), Proc.twice(1))")).toBe(true);
+    expect(stdout).toBe("9 3\n");
+    doc.dispatch({ op: "setProcedure", name: "Proc", code: "def twice(x):\n    return 2 * x\n" });
+    expect(await run("import Proc\nprint(Proc.twice(5))")).toBe(true);
+    expect(stdout).toBe("10\n");
+    // The text of a procedure lives in the document, not among the experiment's files.
+    expect(files.get("Proc.py")).toBeUndefined();
+
+    expect(await run("p.code = 'raise ValueError(\"from the procedure\")'\np.run()")).toBe(false);
+    expect(errors[0]).toBe("ValueError: from the procedure");
+    expect(await run("p.kill(); print(op.procedures())")).toBe(true);
+    expect(stdout).toBe("[]\n");
+    expect(await run("import os; print(os.path.exists('Proc.py'))")).toBe(true);
+    expect(stdout).toBe("False\n");
+  });
+
+  it("keeps the files Python writes, and gives it the files of the experiment", async () => {
+    // Every byte value, and bit patterns that are NaNs when read as numbers.
+    const odd = [1, 0, 0, 0, 0, 0, 0xf0, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 7];
+    expect(
+      await run(
+        [
+          "import os",
+          "print(os.getcwd())",
+          'open("out.txt", "w").write("héllo")',
+          'os.makedirs("sub/dir", exist_ok=True)',
+          `open("sub/dir/b.bin", "wb").write(bytes(range(256)) + bytes(${JSON.stringify(odd)}))`,
+          'open("empty", "w").close()',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("/experiment\n");
+    expect(stderr).toBe("");
+    expect(files.list().map((file) => file.path)).toEqual(["empty", "out.txt", "sub/dir/b.bin"]);
+    expect(new TextDecoder().decode(files.get("out.txt")!.bytes)).toBe("héllo");
+    expect(Array.from(files.get("sub/dir/b.bin")!.bytes)).toEqual([
+      ...Array.from({ length: 256 }, (_, index) => index),
+      ...odd,
+    ]);
+    expect(files.get("empty")!.bytes).toHaveLength(0);
+
+    // Nothing is sent again while nothing changes.
+    const version = files.get("out.txt")!.version;
+    expect(await run("1 + 1")).toBe(true);
+    expect(files.get("out.txt")!.version).toBe(version);
+
+    // Added, replaced and removed in the application.
+    files.put("in/data.bin", Uint8Array.from([...odd, 250, 251]));
+    files.put("out.txt", new TextEncoder().encode("from the app"));
+    files.remove("empty");
+    expect(
+      await run(
+        'print(list(open("in/data.bin", "rb").read()), open("out.txt").read(), os.path.exists("empty"))',
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(`[${[...odd, 250, 251].join(", ")}] from the app False\n`);
+
+    expect(await run('os.remove("out.txt"); open("in/data.bin", "ab").write(b"!")')).toBe(true);
+    expect(files.get("out.txt")).toBeUndefined();
+    expect(files.get("in/data.bin")!.bytes).toHaveLength(odd.length + 3);
+
+    // A different experiment: Python's directory becomes what that one has.
+    files.load([["only.txt", new TextEncoder().encode("x")]]);
+    expect(await run("print(sorted(os.listdir()), sorted(os.listdir('in')))")).toBe(true);
+    expect(stdout).toBe("['in', 'only.txt', 'sub'] []\n");
+  });
+
+  it("writes the script that draws a graph again", async () => {
+    expect(
+      await run(
+        [
+          'sx = op.make("sx", [1.0, 2.0, 4.0]); sy = op.make("sy", [3.0, 1.0, 2.0]); se = op.make("se", [0.1, 0.2, 0.1])',
+          'sg = op.display(sy, x=sx, name="Styled")',
+          'sg.trace("sy").set(mode="lines+markers", color="#0000ff", y_error=se)',
+          'sg.add_axis("R2", "right"); sg.append(se, axis="R2")',
+          'sg.left.set(range=(0, 5), label="Signal", grid="major"); sg.bottom.set(log=True)',
+          'sg.legend(anchor="LT"); sg.textbox("note", frame=False); sg.set(font_size=14)',
+          'sg.cursor("A", "sy", 1)',
+          "script = sg.script()",
+          "print(script)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        'g = op.display("sy", x="sx")',
+        'g.add_axis("R2", "right")',
+        'g.append("se", axis="R2")',
+        'g.trace("sy").set(mode="lines+markers", color="#0000ff", y_error="se")',
+        'g.axis("left").set(range=(0, 5), label="Signal", grid="major")',
+        'g.axis("bottom").set(log=True)',
+        'g.legend(anchor="LT", frame=True)',
+        'g.textbox("note", anchor="RT", frame=False)',
+        'g.cursor("A", "sy", 1)',
+        "g.set(font_size=14)",
+        "",
+      ].join("\n"),
+    );
+    // Run as it is, it makes a second graph that looks the same.
+    expect(await run("exec(script); print(g.name)")).toBe(true);
+    const made = stdout.trim();
+    expect(made).not.toBe("Styled");
+    const { graphs } = doc.getState();
+    expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Styled, name: "" });
   });
 });

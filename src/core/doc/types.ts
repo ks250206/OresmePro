@@ -214,10 +214,22 @@ export interface TableSpec {
 
 export const DEFAULT_TABLE_DIGITS = 8;
 
-export interface WindowState {
-  /** Same as the graph or table name. */
+/**
+ * A Python file kept in the experiment, with a window to edit it: the
+ * counterpart of an Igor procedure window. It is `<name>.py` in Python's
+ * working directory, so other code can import it.
+ */
+export interface ProcedureSpec {
   name: string;
-  kind: "graph" | "table";
+  code: string;
+  /** Runs the file when the experiment is opened and whenever Python starts. */
+  autoRun: boolean;
+}
+
+export interface WindowState {
+  /** Same as the name of the graph, table or procedure it shows. */
+  name: string;
+  kind: "graph" | "table" | "procedure";
   x: number;
   y: number;
   w: number;
@@ -232,6 +244,7 @@ export interface DocState {
   readonly folders: readonly string[];
   readonly graphs: Readonly<Record<string, GraphSpec>>;
   readonly tables: Readonly<Record<string, TableSpec>>;
+  readonly procedures: Readonly<Record<string, ProcedureSpec>>;
   /** Back-to-front z-order; the last window is the active one. */
   readonly windows: readonly WindowState[];
 }
@@ -242,6 +255,7 @@ export const emptyDoc = (): DocState => ({
   folders: [],
   graphs: {},
   tables: {},
+  procedures: {},
   windows: [],
 });
 

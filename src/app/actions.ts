@@ -8,6 +8,7 @@ import {
   activeWindow,
   doc,
   exportLayout,
+  files,
   history,
   kernel,
   note,
@@ -162,7 +163,11 @@ async function loadTextFile(file: File): Promise<void> {
 /** Downloads the whole experiment as one .oresme file. */
 export function saveExperiment(): void {
   try {
-    const bytes = zipExperiment(doc.getState(), history.getEntries()) as Uint8Array<ArrayBuffer>;
+    const bytes = zipExperiment(
+      doc.getState(),
+      history.getEntries(),
+      files.list(),
+    ) as Uint8Array<ArrayBuffer>;
     download(new Blob([bytes], { type: "application/zip" }), "experiment.oresme");
   } catch (error) {
     showError("Could not save the experiment", error);
@@ -177,17 +182,67 @@ export function openExperiment(): void {
 
 async function openExperimentFile(file: File): Promise<void> {
   try {
-    const { state, history: entries } = unzipExperiment(new Uint8Array(await file.arrayBuffer()));
+    const opened = unzipExperiment(new Uint8Array(await file.arrayBuffer()));
     const current = doc.getState();
-    const hasWork = current.waveOrder.length > 0 || current.windows.length > 0;
+    const hasWork =
+      current.waveOrder.length > 0 || current.windows.length > 0 || files.list().length > 0;
     if (hasWork && !window.confirm(`Replace the current experiment with ${file.name}?`)) return;
-    doc.load(state);
-    history.load(entries);
+    // Procedures run when an experiment opens. For a file from somewhere else
+    // that is code the user has not seen, so it is theirs to allow.
+    const automatic = Object.values(opened.state.procedures).filter(
+      (procedure) => procedure.autoRun && procedure.code.trim(),
+    );
+    const allowed =
+      automatic.length === 0 ||
+      window.confirm(
+        `${file.name} has Python procedures that run when it opens (${automatic
+          .map((procedure) => procedure.name)
+          .join(", ")}). Run them?\n\nChoose Cancel to open the experiment without running them.`,
+      );
+    const procedures = allowed
+      ? opened.state.procedures
+      : Object.fromEntries(
+          Object.entries(opened.state.procedures).map(([name, procedure]) => [
+            name,
+            { ...procedure, autoRun: false },
+          ]),
+        );
+    doc.load({ ...opened.state, procedures });
+    history.load(opened.history);
+    files.load(opened.files);
     // Python's variables belong to the experiment that was open before.
     kernel.restart(`Opened ${file.name}.`);
   } catch (error) {
     showError(`Could not open ${file.name}`, error);
   }
+}
+
+/** Asks for files of any kind and puts them where Python can open them by name. */
+export function addFilesForPython(): void {
+  pickFile("", true, (picked) => {
+    void (async () => {
+      try {
+        for (const file of picked) {
+          files.put(file.name, new Uint8Array(await file.arrayBuffer()));
+        }
+        if (picked.length > 0) {
+          note(`Added ${picked.map((file) => file.name).join(", ")} to the experiment's files.`);
+        }
+      } catch (error) {
+        showError("Could not add the file", error);
+      }
+    })();
+  });
+}
+
+/** Downloads one of the experiment's files. */
+export function downloadFile(path: string): void {
+  const file = files.get(path);
+  if (!file) return;
+  download(
+    new Blob([file.bytes as Uint8Array<ArrayBuffer>]),
+    path.slice(path.lastIndexOf("/") + 1),
+  );
 }
 
 /** The frontmost window if it is a graph. */
@@ -215,9 +270,8 @@ export function newMatrixPlot(
   props: Record<string, unknown> = {},
 ): void {
   const state = doc.getState();
-  const name = uniqueName(
-    "Graph",
-    (candidate) => candidate in state.graphs || candidate in state.tables,
+  const name = uniqueName("Graph", (candidate) =>
+    state.windows.some((window) => window.name === candidate),
   );
   runGui([
     { op: "display", y: [], name },

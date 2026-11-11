@@ -55,6 +55,10 @@ __all__ = [
     "table",
     "tables",
     "kill_window",
+    "Procedure",
+    "new_procedure",
+    "procedure",
+    "procedures",
 ]
 
 
@@ -905,6 +909,14 @@ class Graph(_Props):
             {"name": self._name, "filename": str(filename), "cursors": bool(cursors)},
         )
 
+    def script(self):
+        """Python that draws this graph again, as text.
+
+        Like Igor's window recreation macro: paste it into a procedure to
+        keep a graph's look, or to apply it to other waves.
+        """
+        return _call("graphScript", {"name": self._name})[0]
+
     left = property(lambda self: Axis(self, "left"))
     bottom = property(lambda self: Axis(self, "bottom"))
     right = property(lambda self: Axis(self, "right"))
@@ -963,6 +975,66 @@ class Graph(_Props):
 
     def __repr__(self):
         return f"Graph({self._name!r})"
+
+
+class Procedure:
+    """A Python file kept in the experiment, shown in a procedure window.
+
+    It is ``<name>.py`` in the working directory: ``run()`` executes it in
+    the interactive namespace, and other code can ``import`` it.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _info(self):
+        return _call("procedureInfo", {"name": self._name})[0]
+
+    @property
+    def code(self):
+        return self._info()["code"]
+
+    @code.setter
+    def code(self, value):
+        _dispatch({"op": "setProcedure", "name": self._name, "code": str(value)})
+
+    @property
+    def auto_run(self):
+        """Whether the file runs when the experiment is opened."""
+        return self._info()["autoRun"]
+
+    @auto_run.setter
+    def auto_run(self, value):
+        _dispatch({"op": "setProcedure", "name": self._name, "autoRun": bool(value)})
+
+    def run(self):
+        """Run the file in the interactive namespace, as if it were typed there.
+
+        What it defines can then be used from the command line. An error
+        stops it and is reported with the file's name and line.
+        """
+        import linecache
+
+        from IPython import get_ipython
+
+        __tracebackhide__ = True
+        code = self.code
+        path = f"{self._name}.py"
+        # Tracebacks quote the file, so it has to hold what is being run.
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(code)
+        linecache.checkcache(path)
+        exec(compile(code, path, "exec"), get_ipython().user_ns)
+
+    def kill(self):
+        kill_window(self._name)
+
+    def __repr__(self):
+        return f"Procedure({self._name!r})"
 
 
 class Table(_Props):
@@ -1204,8 +1276,32 @@ def table(name=None):
     return Table(name)
 
 
+def new_procedure(name=None, code=""):
+    """Make a procedure window: a Python file that is saved with the experiment."""
+    command = {"op": "newProcedure", "code": str(code)}
+    if name is not None:
+        command["name"] = name
+    return Procedure(_dispatch(command))
+
+
+def procedures():
+    return [Procedure(name) for name in _call("listWindows", {"kind": "procedure"})[0]]
+
+
+def procedure(name=None):
+    """A procedure by name; with no name, the frontmost one."""
+    names = _call("listWindows", {"kind": "procedure"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no procedures.")
+        return Procedure(names[-1])
+    if name not in names:
+        raise OresmeError(f"No procedure named {name!r}.")
+    return Procedure(name)
+
+
 def kill_window(name):
-    """Close a graph or table."""
+    """Close a graph, table or procedure window."""
     _dispatch({"op": "killWindow", "name": name})
 
 

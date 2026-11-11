@@ -1,4 +1,5 @@
 import type { Doc } from "../core/doc/doc";
+import type { FileStore } from "../core/files/files";
 import type { History, HistoryEntry } from "../core/history/history";
 import {
   buildState,
@@ -43,12 +44,18 @@ async function readFile(dir: FileSystemDirectoryHandle, name: string): Promise<F
   }
 }
 
+/** An entry of files.json: where a file of the experiment is kept. */
+interface SavedFile {
+  path: string;
+  file: string;
+}
+
 /**
  * Loads what was saved into the document and the history. The two are
  * restored independently: a session that only ran commands has a history
  * to bring back even though no document was ever written.
  */
-export async function restore(doc: Doc, history: History): Promise<void> {
+export async function restore(doc: Doc, history: History, files: FileStore): Promise<void> {
   const dir = await directory();
   if (!dir) return;
   try {
@@ -67,6 +74,20 @@ export async function restore(doc: Doc, history: History): Promise<void> {
     console.warn("Could not restore the saved experiment:", error);
   }
   try {
+    const index = await readFile(dir, "files.json");
+    if (index) {
+      const saved = JSON.parse(await index.text()) as SavedFile[];
+      const loaded: [string, Uint8Array][] = [];
+      for (const { path, file } of saved) {
+        const blob = await readFile(dir, file);
+        if (blob) loaded.push([path, new Uint8Array(await blob.arrayBuffer())]);
+      }
+      files.load(loaded);
+    }
+  } catch (error) {
+    console.warn("Could not restore the experiment's files:", error);
+  }
+  try {
     const savedHistory = await readFile(dir, "history.json");
     if (savedHistory) history.load(JSON.parse(await savedHistory.text()) as HistoryEntry[]);
   } catch (error) {
@@ -75,13 +96,22 @@ export async function restore(doc: Doc, history: History): Promise<void> {
 }
 
 /** Saves after changes, at most once per interval, writing only waves that changed. */
-export function autosave(doc: Doc, history: History, intervalMs = 800): () => void {
+export function autosave(
+  doc: Doc,
+  history: History,
+  files: FileStore,
+  intervalMs = 800,
+): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let saving = false;
   let dirtyDoc = false;
   let dirtyHistory = false;
+  let dirtyFiles = false;
   /** Wave revision -> file already written for it. */
   const written = new Map<number, string>();
+  /** File version -> where it was written. Versions start over each session, so names carry the session. */
+  const writtenFiles = new Map<number, string>();
+  const session = Date.now().toString(36);
 
   const save = async () => {
     timer = null;
@@ -115,6 +145,28 @@ export function autosave(doc: Doc, history: History, intervalMs = 800): () => vo
         }
         for (const [rev, file] of written) if (!live.has(file)) written.delete(rev);
       }
+      if (dirtyFiles) {
+        dirtyFiles = false;
+        const live = new Set<string>();
+        const saved: SavedFile[] = [];
+        for (const { path, bytes, version } of files.list()) {
+          let file = writtenFiles.get(version);
+          if (!file) {
+            file = `file-${session}-${version}`;
+            await writeFile(dir, file, bytes as Uint8Array<ArrayBuffer>);
+            writtenFiles.set(version, file);
+          }
+          live.add(file);
+          saved.push({ path, file });
+        }
+        await writeFile(dir, "files.json", JSON.stringify(saved));
+        for await (const name of (dir as unknown as { keys(): AsyncIterable<string> }).keys()) {
+          if (name.startsWith("file-") && !live.has(name)) await dir.removeEntry(name);
+        }
+        for (const [version, file] of writtenFiles) {
+          if (!live.has(file)) writtenFiles.delete(version);
+        }
+      }
       if (dirtyHistory) {
         dirtyHistory = false;
         await writeFile(dir, "history.json", JSON.stringify(trimHistory(history.getEntries())));
@@ -138,6 +190,10 @@ export function autosave(doc: Doc, history: History, intervalMs = 800): () => vo
     dirtyHistory = true;
     schedule();
   });
+  const offFiles = files.subscribe(() => {
+    dirtyFiles = true;
+    schedule();
+  });
   const flush = () => {
     if (document.visibilityState === "hidden" && timer) {
       clearTimeout(timer);
@@ -148,6 +204,7 @@ export function autosave(doc: Doc, history: History, intervalMs = 800): () => vo
   return () => {
     offDoc();
     offHistory();
+    offFiles();
     document.removeEventListener("visibilitychange", flush);
     if (timer) clearTimeout(timer);
   };

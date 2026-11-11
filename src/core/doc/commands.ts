@@ -33,6 +33,7 @@ import {
   type TraceStyle,
   type Wave,
   type WindowState,
+  type ProcedureSpec,
 } from "./types";
 
 type Props = Readonly<Record<string, unknown>>;
@@ -141,13 +142,21 @@ export type Command =
   | { op: "removeFromTable"; table: string; waves: readonly string[] }
   | { op: "modifyTable"; table: string; props: Props }
   | { op: "resizeColumn"; table: string; wave: string; width: number }
+  | { op: "newProcedure"; name?: string; code?: string }
+  | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
 
-/** Window geometry, focus and column widths are view state: not undoable and not echoed. */
+/**
+ * Window geometry, focus and column widths are view state: not undoable and
+ * not echoed. Neither is the text of a procedure: its editor has its own undo.
+ */
 export const isTransient = (command: Command): boolean =>
-  command.op === "moveWindow" || command.op === "activateWindow" || command.op === "resizeColumn";
+  command.op === "moveWindow" ||
+  command.op === "activateWindow" ||
+  command.op === "resizeColumn" ||
+  command.op === "setProcedure";
 
 export interface CommandOutcome {
   state: DocState;
@@ -315,11 +324,16 @@ function contentOf(command: {
 }
 
 const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables;
+  name in state.graphs || name in state.tables || name in state.procedures;
 
 function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
-  const size = kind === "graph" ? { w: 440, h: 300 } : { w: 360, h: 300 };
+  const size =
+    kind === "graph"
+      ? { w: 440, h: 300 }
+      : kind === "table"
+        ? { w: 360, h: 300 }
+        : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -1197,19 +1211,70 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "newProcedure": {
+      let name = "Procedure";
+      if (command.name !== undefined) {
+        name = checkName(command.name, "procedure");
+      } else {
+        // Procedure, Procedure1, Procedure2: the first is plain, like Igor's.
+        for (let count = 1; windowTaken(state)(name); count += 1) name = `Procedure${count}`;
+      }
+      // The procedure is a Python module of this name.
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new DocError('A procedure name can have only ASCII letters, digits and "_".');
+      }
+      if (windowTaken(state)(name)) {
+        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+      }
+      if (command.code !== undefined && typeof command.code !== "string") {
+        throw new DocError("code must be text.");
+      }
+      const procedure: ProcedureSpec = { name, code: command.code ?? "", autoRun: true };
+      return {
+        state: {
+          ...state,
+          procedures: { ...state.procedures, [name]: procedure },
+          windows: [...state.windows, placeWindow(state, name, "procedure")],
+        },
+        result: name,
+      };
+    }
+    case "setProcedure": {
+      const procedure = state.procedures[command.name];
+      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(command.name)}.`);
+      if (command.code !== undefined && typeof command.code !== "string") {
+        throw new DocError("code must be text.");
+      }
+      const next: ProcedureSpec = {
+        ...procedure,
+        code: command.code ?? procedure.code,
+        autoRun:
+          command.autoRun === undefined ? procedure.autoRun : bool(command.autoRun, "autoRun"),
+      };
+      if (next.code === procedure.code && next.autoRun === procedure.autoRun) {
+        return { state, result: null };
+      }
+      return {
+        state: { ...state, procedures: { ...state.procedures, [command.name]: next } },
+        result: null,
+      };
+    }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
         throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
       }
       const graphs = { ...state.graphs };
       const tables = { ...state.tables };
+      const procedures = { ...state.procedures };
       delete graphs[command.name];
       delete tables[command.name];
+      delete procedures[command.name];
       return {
         state: {
           ...state,
           graphs,
           tables,
+          procedures,
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

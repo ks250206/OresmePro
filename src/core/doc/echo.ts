@@ -64,7 +64,10 @@ export function echoPython(
     case "moveWindow":
     case "activateWindow":
     case "resizeColumn":
+    case "setProcedure":
       return null;
+    case "newProcedure":
+      return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
     case "modifyTable":
       return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
     case "setWavePoints": {

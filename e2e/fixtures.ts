@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { test as base, expect, type Download, type Locator, type Page } from "@playwright/test";
 import type { Doc } from "../src/core/doc/doc";
+import type { FileStore } from "../src/core/files/files";
 import type { History } from "../src/core/history/history";
 import type { KernelClient } from "../src/kernel/client";
 
 declare global {
   /** The debugging handle the app puts on the page (see src/App.tsx). */
-  var oresme: { doc: Doc; history: History; kernel: KernelClient };
+  var oresme: { doc: Doc; history: History; kernel: KernelClient; files: FileStore };
 }
 
 export interface Entry {
@@ -94,6 +95,7 @@ export class App {
           folders: state.folders,
           graphs: state.graphs,
           tables: state.tables,
+          procedures: state.procedures,
           windows: state.windows,
         }),
       ) as {
@@ -101,6 +103,7 @@ export class App {
         folders: string[];
         graphs: typeof state.graphs;
         tables: typeof state.tables;
+        procedures: typeof state.procedures;
         windows: typeof state.windows;
       };
     });
@@ -118,6 +121,17 @@ export class App {
         unit: wave.unit,
       };
     }, name);
+  }
+
+  /** The experiment's files: path and contents (as text). */
+  files(): Promise<Record<string, string>> {
+    return this.page.evaluate(() =>
+      Object.fromEntries(
+        globalThis.oresme.files
+          .list()
+          .map((file) => [file.path, new TextDecoder().decode(file.bytes)]),
+      ),
+    );
   }
 
   window(name: string): Locator {

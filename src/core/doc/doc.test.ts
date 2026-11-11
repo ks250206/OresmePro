@@ -393,3 +393,58 @@ describe("tables", () => {
     );
   });
 });
+
+describe("procedures", () => {
+  it("are windows with a Python file's text", () => {
+    const doc = new Doc();
+    expect(doc.dispatch({ op: "newProcedure" })).toBe("Procedure");
+    expect(doc.dispatch({ op: "newProcedure", code: "x = 1\n" })).toBe("Procedure1");
+    expect(doc.getState().windows.map((window) => [window.name, window.kind])).toEqual([
+      ["Procedure", "procedure"],
+      ["Procedure1", "procedure"],
+    ]);
+    expect(doc.getState().procedures.Procedure1).toEqual({
+      name: "Procedure1",
+      code: "x = 1\n",
+      autoRun: true,
+    });
+    // The name is a module name, and windows share one set of names.
+    expect(() => doc.dispatch({ op: "newProcedure", name: "données" })).toThrow();
+    expect(() => doc.dispatch({ op: "newProcedure", name: "Procedure" })).toThrow();
+    expect(() => doc.dispatch({ op: "display", y: [], name: "Procedure" })).toThrow();
+    expect(echoPython({ op: "newProcedure", name: "Fits" })).toBe('op.new_procedure(name="Fits")');
+    expect(echoPython({ op: "setProcedure", name: "Fits", code: "x" })).toBeNull();
+  });
+
+  it("keep their text through undo, which their editor handles itself", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "newProcedure" });
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1) });
+    doc.dispatch({ op: "setProcedure", name: "Procedure", code: "typed later" });
+    doc.dispatch({ op: "setProcedure", name: "Procedure", autoRun: false });
+    doc.undo();
+    expect(doc.getState().waves.a).toBeUndefined();
+    expect(doc.getState().procedures.Procedure).toMatchObject({
+      code: "typed later",
+      autoRun: false,
+    });
+    doc.redo();
+    expect(doc.getState().procedures.Procedure!.code).toBe("typed later");
+
+    // Closing the window is undone with the text it had.
+    doc.dispatch({ op: "killWindow", name: "Procedure" });
+    expect(doc.getState().procedures.Procedure).toBeUndefined();
+    doc.undo();
+    expect(doc.getState().procedures.Procedure!.code).toBe("typed later");
+  });
+
+  it("keep column widths through undo as well", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1) });
+    doc.dispatch({ op: "edit", waves: ["a"] });
+    doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 4 } });
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "a", width: 200 });
+    doc.undo();
+    expect(doc.getState().tables.Table0).toMatchObject({ digits: 8, widths: { a: 200 } });
+  });
+});

@@ -2,6 +2,7 @@ import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
 import type { DocState } from "../core/doc/types";
+import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
 import { toSvg } from "../core/plot/svg";
@@ -29,6 +30,7 @@ export type DialogRequest =
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
+  | { kind: "graphScript"; graph: string }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -61,6 +63,8 @@ export interface UiState {
 
 export const doc = new Doc();
 export const history = new History();
+/** The experiment's files: what Python wrote, and what was added for it to read. */
+export const files = new FileStore();
 export const ui = createStore<UiState>({
   dialog: null,
   alert: null,
@@ -131,9 +135,28 @@ const PYODIDE_URL =
   new URL(`${import.meta.env.BASE_URL}pyodide/`, globalThis.location?.href ?? "http://localhost/")
     .href;
 
-export const kernel = new KernelClient({
+/** The Python that runs a procedure, as it is written into the history. */
+export const runProcedureCode = (name: string): string =>
+  `op.procedure(${JSON.stringify(name)}).run()`;
+
+/**
+ * Runs the procedures of the experiment, as Igor compiles its procedure
+ * windows: what they define is there whenever Python is, after a restart or
+ * after opening an experiment.
+ */
+function runProcedures(): void {
+  for (const procedure of Object.values(doc.getState().procedures)) {
+    if (procedure.autoRun && procedure.code.trim()) {
+      kernel.execute(runProcedureCode(procedure.name), "gui");
+    }
+  }
+}
+
+export const kernel: KernelClient = new KernelClient({
   doc,
   history,
+  files,
+  onStart: runProcedures,
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
   indexURL: PYODIDE_URL,
@@ -224,6 +247,10 @@ export function useUi<T>(selector: (state: UiState) => T): T {
 
 export function useKernelState() {
   return useSyncExternalStore(kernel.subscribe, kernel.getState);
+}
+
+export function useFiles() {
+  return useSyncExternalStore(files.subscribe, files.list);
 }
 
 export function useHistoryEntries() {

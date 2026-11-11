@@ -1,11 +1,15 @@
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
+import { graphScript } from "../core/doc/recreate";
 import { DocError, type Wave } from "../core/doc/types";
+import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { tracePosition, traceX } from "../core/plot/layout";
 
 export interface RpcContext {
   doc: Doc;
+  /** The experiment's files; Python's working directory mirrors them. */
+  files: FileStore;
   /** Renders a graph as SVG at the given size (or its window's size). */
   renderSvg(graph: string, width: number | null, height: number | null, cursors: boolean): string;
   /** Saves a graph to a file the user downloads; the format follows the extension. */
@@ -127,6 +131,41 @@ export function handleRpc(
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
       return { result: table };
     }
+    case "procedureInfo": {
+      const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
+      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`);
+      return { result: procedure };
+    }
+    case "graphScript": {
+      if (typeof params.name !== "string" || !state.graphs[params.name]) {
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+      }
+      return { result: graphScript(state, params.name) };
+    }
+    // The three below keep Python's working directory and the experiment's
+    // files the same: Python asks what there is before running an input and
+    // reports what the input wrote or deleted afterwards.
+    case "filesState":
+      return {
+        result: {
+          procedures: Object.values(state.procedures).map(({ name, code }) => ({ name, code })),
+          files: Object.fromEntries(context.files.list().map((file) => [file.path, file.version])),
+        },
+      };
+    case "readFile": {
+      const file = typeof params.path === "string" ? context.files.get(params.path) : undefined;
+      if (!file) throw new DocError(`The experiment has no file ${JSON.stringify(params.path)}.`);
+      return {
+        result: { size: file.bytes.byteLength, version: file.version },
+        data: bytesToWords(file.bytes),
+      };
+    }
+    case "putFile": {
+      const bytes = wordsToBytes(data, Number(params.size));
+      return { result: context.files.put(String(params.path), bytes) };
+    }
+    case "removeFile":
+      return { result: context.files.remove(String(params.path)) };
     case "graphSvg": {
       if (typeof params.name !== "string" || !state.graphs[params.name]) {
         throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);

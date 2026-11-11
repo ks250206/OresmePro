@@ -1,6 +1,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import {
   activeGraph,
+  addFilesForPython,
   autoscaleGraph,
   EXAMPLE,
   exportGraph,
@@ -14,6 +15,7 @@ import { autosave, restore } from "./app/persist";
 import {
   activeWindow,
   doc,
+  files,
   history,
   kernel,
   requestCommandLine,
@@ -75,6 +77,7 @@ function newExperiment() {
     return;
   doc.load(emptyDoc());
   history.clear();
+  files.load([]);
   kernel.restart();
 }
 
@@ -115,6 +118,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
+        { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
         graphItem("Save Graph as SVG", (name) => exportGraph(name, `${name}.svg`)),
@@ -204,6 +208,8 @@ function useMenus(): MenuDefinition[] {
           ),
           disabled: !spec || spec.images.length === 0,
         },
+        { separator: true },
+        graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },
     {
@@ -213,6 +219,7 @@ function useMenus(): MenuDefinition[] {
         { label: "New Image Plot…", onSelect: open({ kind: "matrixPlot", plot: "image" }) },
         { label: "New Contour Plot…", onSelect: open({ kind: "matrixPlot", plot: "contour" }) },
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
+        { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
         { separator: true },
         {
           label: "Data Browser",
@@ -314,9 +321,9 @@ export function App() {
     let cancelled = false;
     void ensureIsolated().then(async (proceed) => {
       if (!proceed || cancelled) return;
-      await restore(doc, history);
+      await restore(doc, history, files);
       if (cancelled) return;
-      stopSaving = autosave(doc, history);
+      stopSaving = autosave(doc, history, files);
       kernel.start();
     });
     window.addEventListener("keydown", onGlobalKey);
@@ -392,4 +399,4 @@ export function App() {
 }
 
 // Exposed for debugging from the browser console.
-Object.assign(globalThis, { oresme: { doc, history, kernel, activeWindow } });
+Object.assign(globalThis, { oresme: { doc, history, kernel, files, activeWindow } });

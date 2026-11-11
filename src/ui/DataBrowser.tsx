@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { newMatrixPlot } from "../app/actions";
-import { runGui, ui, useDoc, useUi, type MenuItem } from "../app/session";
+import { downloadFile, newMatrixPlot } from "../app/actions";
+import {
+  files,
+  requestCommandLine,
+  runGui,
+  ui,
+  useDoc,
+  useFiles,
+  useUi,
+  type MenuItem,
+} from "../app/session";
 import type { Command } from "../core/doc/commands";
 import { leafName, parentFolder, type Wave } from "../core/doc/types";
 import { renderMatrix } from "../core/plot/colorTables";
@@ -144,6 +153,56 @@ function WaveIcon({ wave, active }: { wave: Wave; active: boolean }) {
     <svg width="12" height="10" viewBox="0 0 12 10" aria-hidden className="shrink-0">
       <path d="M1.5 5c1.5-6 3-6 4.5 0s3 6 4.5 0" fill="none" stroke={color} strokeWidth="1.2" />
     </svg>
+  );
+}
+
+const byteSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} kB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
+
+/** The experiment's files: what Python wrote to its working directory or can read from it. */
+function FileList() {
+  const list = useFiles();
+  if (list.length === 0) return null;
+  return (
+    <section aria-label="Files" className="flex max-h-[35%] shrink-0 flex-col border-t border-line">
+      <div className="flex h-6 shrink-0 items-center border-b border-line px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        Files
+      </div>
+      <div role="list" className="min-h-0 overflow-y-auto bg-paper py-0.5">
+        {list.map((file) => {
+          const menu = (event: React.MouseEvent) => {
+            event.preventDefault();
+            openContextMenu(event, [
+              { label: "Download", onSelect: () => downloadFile(file.path) },
+              {
+                label: "Put the Path in the Command Line",
+                onSelect: () => requestCommandLine(JSON.stringify(file.path)),
+              },
+              { separator: true },
+              { label: "Delete", onSelect: () => files.remove(file.path) },
+            ]);
+          };
+          return (
+            <div
+              key={file.path}
+              role="listitem"
+              title={`${file.path} — double-click to download`}
+              className="flex cursor-default items-center gap-1.5 py-[1px] pl-2 pr-2 hover:bg-chrome"
+              onDoubleClick={() => downloadFile(file.path)}
+              onContextMenu={menu}
+            >
+              <span className="min-w-0 flex-1 truncate">{file.path}</span>
+              <span className="font-mono text-[10.5px] text-muted">
+                {byteSize(file.bytes.byteLength)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -419,6 +478,7 @@ export function DataBrowser() {
         ) : null}
       </div>
       {focused ? <WaveInfo wave={focused} /> : null}
+      <FileList />
     </aside>
   );
 }

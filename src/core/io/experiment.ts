@@ -10,6 +10,7 @@ import {
   type AxisSpec,
   type DocState,
   type GraphSpec,
+  type ProcedureSpec,
   type TableSpec,
   type TraceSpec,
   type Wave,
@@ -45,8 +46,12 @@ export interface SavedExperiment {
   folders?: string[];
   graphs: Record<string, GraphSpec>;
   tables: Record<string, TableSpec>;
+  procedures?: Record<string, ProcedureSpec>;
   windows: WindowState[];
 }
+
+/** Where the experiment's files (see FileStore) sit in an .oresme archive. */
+const FILES_PREFIX = "files/";
 
 const MAX_SAVED_ENTRIES = 2000;
 const MAX_SAVED_IMAGE = 300_000;
@@ -68,6 +73,7 @@ export function describeExperiment(
     folders: [...state.folders],
     graphs: { ...state.graphs },
     tables: { ...state.tables },
+    procedures: { ...state.procedures },
     windows: [...state.windows],
   };
 }
@@ -142,7 +148,15 @@ export function buildState(
       widths: table.widths ?? {},
     };
   }
-  return { ...state, graphs, tables, windows: saved.windows };
+  const procedures: Record<string, ProcedureSpec> = {};
+  for (const [name, procedure] of Object.entries(saved.procedures ?? {})) {
+    procedures[name] = { name, code: procedure.code ?? "", autoRun: procedure.autoRun ?? true };
+  }
+  // A window whose content did not come along would be an empty frame.
+  const windows = saved.windows.filter(
+    (window) => window.name in graphs || window.name in tables || window.name in procedures,
+  );
+  return { ...state, graphs, tables, procedures, windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */
@@ -159,8 +173,13 @@ export function trimHistory(entries: readonly HistoryEntry[]): HistoryEntry[] {
 }
 
 /** Packs an experiment into a single .oresme file (a zip archive). */
-export function zipExperiment(state: DocState, entries: readonly HistoryEntry[]): Uint8Array {
+export function zipExperiment(
+  state: DocState,
+  entries: readonly HistoryEntry[],
+  stored: Iterable<{ path: string; bytes: Uint8Array }> = [],
+): Uint8Array {
   const files: Record<string, Uint8Array> = {};
+  for (const { path, bytes } of stored) files[FILES_PREFIX + path] = bytes;
   let counter = 0;
   const saved = describeExperiment(state, (wave) => {
     counter += 1;
@@ -173,7 +192,11 @@ export function zipExperiment(state: DocState, entries: readonly HistoryEntry[])
   return zipSync(files, { level: 6 });
 }
 
-export function unzipExperiment(bytes: Uint8Array): { state: DocState; history: HistoryEntry[] } {
+export function unzipExperiment(bytes: Uint8Array): {
+  state: DocState;
+  history: HistoryEntry[];
+  files: [string, Uint8Array][];
+} {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes);
@@ -186,5 +209,8 @@ export function unzipExperiment(bytes: Uint8Array): { state: DocState; history: 
   const history = files["history.json"]
     ? (JSON.parse(strFromU8(files["history.json"])) as HistoryEntry[])
     : [];
-  return { state: buildState(saved, new Map(Object.entries(files))), history };
+  const stored = Object.entries(files)
+    .filter(([name]) => name.startsWith(FILES_PREFIX) && !name.endsWith("/"))
+    .map(([name, data]): [string, Uint8Array] => [name.slice(FILES_PREFIX.length), data]);
+  return { state: buildState(saved, new Map(Object.entries(files))), history, files: stored };
 }

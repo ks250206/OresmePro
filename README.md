@@ -40,7 +40,7 @@ g.legend()
 CSV / TSV ファイルは、ウィンドウにドロップするか **File › Load Delimited Text…** で読み込めます。
 列が 1 列ずつ wave になります(数値の列は数値 wave、文字列の列はテキスト wave)。
 
-初回は Python 本体(Pyodide)と NumPy・IPython を CDN から取得するため、起動に数秒かかります。
+Python 本体(Pyodide)と NumPy・IPython はアプリと一緒に配信され、起動に数秒かかります。
 グラフや表の操作は Python の起動を待たずに使えます。
 
 ## できること
@@ -140,12 +140,47 @@ wave を列として表示・編集します。行も列も仮想スクロール
   結果は `fit_<wave名>`(当てはめた曲線。元データのグラフに追加されます)、`W_coef`(係数)、`W_sigma`(標準偏差)に入ります。
 - Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル)、ヒストグラム。
 
+### プロシージャウィンドウ
+
+Igor のプロシージャウィンドウに当たる、実験に保存される Python ファイルです(**Windows › New Procedure**)。
+
+- 行番号・構文の色分け付きのエディタで、入力した内容はそのまま実験に保存されます。
+- **Run**(`Ctrl+Enter` / `⌘Enter`)でファイル全体を対話環境で実行します。定義した関数はコマンドラインからそのまま使えます。
+  `Shift+Enter` は選択範囲(なければカーソルのある行)だけを実行します。
+- 「Run when the experiment opens」がオンのプロシージャは、実験を開いたとき・Python を再起動したときに自動で実行されます。
+  Igor がプロシージャをコンパイルするのと同じで、自分の関数がいつでも使える状態になります。
+  `.oresme` ファイルを開くときは、自動実行されるプロシージャがあれば実行してよいか確認します(断ると、実行せずに開きます)。
+- 名前がそのままモジュール名です。`Procedure` という名前なら、ほかのコードから `import Procedure` できます。
+- エラーは `File /experiment/Procedure.py:4, in bad()` のように、ファイル名と行番号付きで履歴に出ます。
+
+### グラフの再作成スクリプト
+
+**Graph › Recreation Script…** で、いま開いているグラフをもう一度描く Python を表示します(Igor のウィンドウ再作成マクロに当たるもの)。
+既定値と違うところだけが書き出されます。コピー、コマンドラインへ送る、プロシージャに関数として追加する、のいずれかができます。
+Python からは `g.script()` で同じ文字列が得られます。
+
+```python
+g = op.display("y", x="x")
+g.trace("y").set(mode="markers", color="#0000ff")
+g.axis("left").set(label="Squared", grid="major")
+g.legend(anchor="RT", frame=True)
+```
+
+### Python のファイル
+
+Python の作業ディレクトリ(`/experiment`)は実験の一部です。
+
+- `np.savetxt("fit.csv", ...)` や `open("notes.txt", "w")` で書いたファイルは、データブラウザ下部の **Files** に並び、実験と一緒に保存されます。
+  ダブルクリックでダウンロード、右クリックで削除できます。
+- **File › Add Files for Python…** で追加したファイルは、Python から名前だけで開けます(`open("raw.bin", "rb")`)。
+- 1 ファイル 64 MB までです。それより大きいファイルは Python からは使えますが、実験には保存されません。
+
 ### 保存
 
-- wave・グラフ・表・ウィンドウ配置・履歴は、ブラウザの OPFS(Origin Private File System)に自動保存され、次に開いたときに復元されます。
+- wave・グラフ・表・プロシージャ・Python のファイル・ウィンドウ配置・履歴は、ブラウザの OPFS(Origin Private File System)に自動保存され、次に開いたときに復元されます。
 - **File › Save Experiment As…**(`Ctrl+S` / `⌘S`)で、実験全体を 1 つの `.oresme` ファイルに保存できます。
   開くときは **File › Open Experiment…** か、ウィンドウへのドロップです。
-- `.oresme` は zip で、中身は `experiment.json`(構成)、`waves/*.npy`(NumPy でそのまま読める wave データ)、`history.json` です。
+- `.oresme` は zip で、中身は `experiment.json`(構成とプロシージャ)、`waves/*.npy`(NumPy でそのまま読める wave データ)、`files/`(Python のファイル)、`history.json` です。
 
 ## Python API
 
@@ -208,6 +243,12 @@ op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); o
 # 表
 t = op.edit(w, labels)
 t.digits = 5                                   # 表示する桁数
+
+# プロシージャ、グラフの再作成
+p = op.new_procedure("Fits", "def model(x, a):\n    return a * x\n")
+p.run()                                        # 対話環境で実行(model が使えるようになる)
+p.code; p.auto_run = False; op.procedure("Fits"); op.procedures()
+print(g.script())                              # このグラフをもう一度描く Python
 ```
 
 `w.data` はコピーなので、`w.data[0] = 1` は wave を変更しません(読み取り専用なのでエラーになります)。
@@ -252,6 +293,7 @@ SciPy や pandas など Pyodide に含まれるパッケージは、`import` し
 | `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算 |
 | `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                     |
 | `src/core/io/`      | `.npy` の読み書き、区切りテキストの読み込み、実験ファイル(`.oresme`)            |
+| `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                         |
 | `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                |
 | `src/app/`          | アプリの状態、自動保存、書き出し                                                |
 | `src/ui/`           | React コンポーネント                                                            |
@@ -267,7 +309,7 @@ SciPy や pandas など Pyodide に含まれるパッケージは、`import` し
 | UI                          | React 19, Tailwind CSS 4                 |
 | 表                          | TanStack Table(列)+ TanStack Virtual(行) |
 | 履歴ビュー                  | TanStack Virtual                         |
-| コマンドライン              | CodeMirror 6                             |
+| コマンドライン / エディタ   | CodeMirror 6                             |
 | スクリプト言語              | Python 3.14 (Pyodide 314 + IPython 9)    |
 | グラフ                      | 専用レンダラ (Canvas 2D / SVG / PDF)     |
 | 永続化                      | OPFS、`.oresme` ファイル (zip: fflate)   |
