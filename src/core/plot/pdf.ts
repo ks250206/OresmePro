@@ -151,6 +151,8 @@ interface PdfImage {
 
 interface Context {
   out: string[];
+  /** Fill opacities in use, by graphics state name. */
+  alphas: Map<number, string>;
   fonts: Map<string, string>;
   images: PdfImage[];
   options: PdfOptions;
@@ -209,6 +211,23 @@ function render(prims: readonly Prim[], context: Context): void {
         out.push(
           `${rgb(prim.stroke)} RG ${num(prim.width)} w ${dashOp(prim.dash)} ${points.length === 2 ? 1 : 0} J 1 j ${path}S`,
         );
+        break;
+      }
+      case "polygon": {
+        const { points } = prim;
+        if (points.length < 6) break;
+        let path = `${num(points[0]!)} ${num(points[1]!)} m `;
+        for (let index = 2; index < points.length; index += 2) {
+          path += `${num(points[index]!)} ${num(points[index + 1]!)} l `;
+        }
+        const opacity = Math.round((prim.opacity ?? 1) * 100) / 100;
+        if (opacity < 1) {
+          let name = context.alphas.get(opacity);
+          if (!name) context.alphas.set(opacity, (name = `GS${context.alphas.size + 1}`));
+          out.push(`q /${name} gs ${rgb(prim.fill)} rg ${path}h f Q`);
+        } else {
+          out.push(`${rgb(prim.fill)} rg ${path}h f`);
+        }
         break;
       }
       case "segments": {
@@ -301,7 +320,7 @@ export function toPdf(
   height: number,
   options: PdfOptions = {},
 ): Uint8Array {
-  const context: Context = { out: [], fonts: new Map(), images: [], options };
+  const context: Context = { out: [], alphas: new Map(), fonts: new Map(), images: [], options };
   const pageWidth = width * SCALE;
   const pageHeight = height * SCALE;
   context.out.push(`${SCALE} 0 0 ${-SCALE} 0 ${num(pageHeight)} cm`);
@@ -363,13 +382,17 @@ export function toPdf(
     return `/Im${index + 1} ${id} 0 R`;
   });
 
+  const alphaRefs = [...context.alphas].map(
+    ([opacity, name]) => `/${name} << /Type /ExtGState /ca ${num(opacity)} >>`,
+  );
+
   objects[catalog - 1] = [ascii(`<< /Type /Catalog /Pages ${pages} 0 R >>`)];
   objects[pages - 1] = [ascii(`<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`)];
   objects[page - 1] = [
     ascii(
       `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${num(pageWidth)} ${num(pageHeight)}] ` +
         `/Contents ${content} 0 R /Resources << /Font << ${fontRefs.join(" ")} >> ` +
-        `/XObject << ${imageRefs.join(" ")} >> >> >>`,
+        `/XObject << ${imageRefs.join(" ")} >> /ExtGState << ${alphaRefs.join(" ")} >> >> >>`,
     ),
   ];
 

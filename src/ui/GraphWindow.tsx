@@ -213,7 +213,13 @@ export function GraphWindow({ name }: { name: string }) {
   // Re-layout only when this graph's own waves change, not on every edit elsewhere.
   const waveKey = graph
     ? [
-        ...graph.traces.flatMap((trace) => [trace.y, trace.x, trace.yError, trace.xError]),
+        ...graph.traces.flatMap((trace) => [
+          trace.y,
+          trace.x,
+          trace.yError,
+          trace.xError,
+          trace.colorWave,
+        ]),
         ...graph.images.map((image) => image.wave),
         ...graph.contours.map((contour) => contour.wave),
       ]
@@ -277,7 +283,8 @@ export function GraphWindow({ name }: { name: string }) {
   const pointAt = (traceName: string, x: number): number | null => {
     const trace = graph.traces.find((item) => item.name === traceName);
     const position = trace && tracePosition(trace, waves);
-    const scale = trace && layout?.axes[trace.hAxis]?.scale;
+    // The scale the trace is drawn with, which includes its X offset.
+    const scale = trace && layout?.traces.find((item) => item.name === trace.name)?.xScale;
     if (!position || !scale) return null;
     return nearestPoint(position.y, position.x, scale, x);
   };

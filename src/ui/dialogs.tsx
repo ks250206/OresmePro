@@ -412,6 +412,12 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   const [changes, setChanges] = useState<Partial<TraceStyle>>({});
   const [lineSize, setLineSize] = useState<string | null>(null);
   const [markerSize, setMarkerSize] = useState<string | null>(null);
+  const [offsets, setOffsets] = useState<{ x: string | null; y: string | null }>({
+    x: null,
+    y: null,
+  });
+  const [opacity, setOpacity] = useState<string | null>(null);
+  const colorWaves = useNumericWaves(1);
   const base = graph?.traces.find((item) => item.name === selected[0]);
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -424,7 +430,24 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   const parsedMarker = markerSize === null ? undefined : parseNumber(markerSize);
   if (typeof parsedLine === "number") sizes.lineSize = parsedLine;
   if (typeof parsedMarker === "number") sizes.markerSize = parsedMarker;
-  const invalid = parsedLine === null || parsedMarker === null;
+  const parsedX = offsets.x === null ? undefined : parseNumber(offsets.x || "0");
+  const parsedY = offsets.y === null ? undefined : parseNumber(offsets.y || "0");
+  if (typeof parsedX === "number") sizes.xOffset = parsedX;
+  if (typeof parsedY === "number") sizes.yOffset = parsedY;
+  // Opacity is entered in percent.
+  const parsedOpacity = opacity === null ? undefined : parseNumber(opacity);
+  const opacityInvalid =
+    parsedOpacity === null ||
+    (parsedOpacity !== undefined && (parsedOpacity < 0 || parsedOpacity > 100));
+  if (typeof parsedOpacity === "number" && !opacityInvalid) {
+    sizes.fillOpacity = parsedOpacity / 100;
+  }
+  const invalid =
+    parsedLine === null ||
+    parsedMarker === null ||
+    parsedX === null ||
+    parsedY === null ||
+    opacityInvalid;
   const props = { ...changes, ...sizes };
 
   return (
@@ -522,6 +545,65 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
             value={current.xError}
             onChange={(xError) => set({ xError })}
           />
+          <Field label="Fill">
+            <Select
+              aria-label="Fill"
+              value={current.fill}
+              onChange={(event) => set({ fill: event.target.value as TraceStyle["fill"] })}
+            >
+              <option value="none">none</option>
+              <option value="zero">to zero</option>
+              <option value="next">to next trace</option>
+            </Select>
+            <TextInput
+              aria-label="Fill opacity"
+              aria-invalid={opacityInvalid}
+              disabled={current.fill === "none"}
+              className="w-12"
+              value={opacity ?? String(Math.round(base.fillOpacity * 100))}
+              onChange={(event) => setOpacity(event.target.value)}
+            />
+            <span className="text-muted">% opaque</span>
+          </Field>
+          <Field label="Offset">
+            <span className="text-muted">X</span>
+            <TextInput
+              aria-label="X offset"
+              aria-invalid={parsedX === null}
+              className="w-20"
+              value={offsets.x ?? formatNumber(base.xOffset, 10)}
+              onChange={(event) => setOffsets({ ...offsets, x: event.target.value })}
+            />
+            <span className="text-muted">Y</span>
+            <TextInput
+              aria-label="Y offset"
+              aria-invalid={parsedY === null}
+              className="w-20"
+              value={offsets.y ?? formatNumber(base.yOffset, 10)}
+              onChange={(event) => setOffsets({ ...offsets, y: event.target.value })}
+            />
+          </Field>
+          <Field label="Color by">
+            <Select
+              aria-label="Color by"
+              className="min-w-0 flex-1"
+              value={current.colorWave ?? ""}
+              onChange={(event) => set({ colorWave: event.target.value || null })}
+            >
+              <option value="">trace color</option>
+              {colorWaves.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </Select>
+            {current.colorWave !== null ? (
+              <ColorTableSelect
+                value={current.colorTable}
+                onChange={(colorTable) =>
+                  set({ colorTable: colorTable as TraceStyle["colorTable"] })
+                }
+              />
+            ) : null}
+          </Field>
           <Field label="">
             <Checkbox
               label="Hide trace"
@@ -550,6 +632,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const [min, setMin] = useState<string | null>(null);
   const [max, setMax] = useState<string | null>(null);
   const [span, setSpan] = useState<[string, string] | null>(null);
+  const [step, setStep] = useState<string | null>(null);
   const base = graph?.axes[axis];
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -576,6 +659,23 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
       spanHigh > 100 ||
       spanHigh - spanLow < 2);
   if (span && !spanInvalid) props.span = [spanLow! / 100, spanHigh! / 100];
+  // An empty step goes back to automatic ticks.
+  const parsedStep = step === null ? undefined : step.trim() === "" ? null : parseNumber(step);
+  const stepInvalid = step !== null && step.trim() !== "" && !(parsedStep! > 0);
+  if (parsedStep !== undefined && !stepInvalid) props.tickStep = parsedStep;
+  const formats: [string, string][] = [
+    ["", "Automatic"],
+    [".0f", "0 decimals"],
+    [".1f", "1 decimal"],
+    [".2f", "2 decimals"],
+    [".3f", "3 decimals"],
+    [",.0f", "Thousands: 12,000"],
+    [".1e", "Scientific: 1.2×10⁴"],
+    ["%", "Percent"],
+  ];
+  if (current.tickFormat && !formats.some(([value]) => value === current.tickFormat)) {
+    formats.push([current.tickFormat, current.tickFormat]);
+  }
 
   const switchAxis = (next: string) => {
     setAxis(next);
@@ -583,13 +683,14 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
     setMin(null);
     setMax(null);
     setSpan(null);
+    setStep(null);
   };
 
   return (
     <Dialog
       title={`Modify Axis — ${graphName}`}
       onClose={close}
-      submitDisabled={invalid || spanInvalid || Object.keys(props).length === 0}
+      submitDisabled={invalid || spanInvalid || stepInvalid || Object.keys(props).length === 0}
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
     >
       <Field label="Axis">
@@ -655,6 +756,11 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           checked={current.log}
           onChange={(event) => set({ log: event.target.checked })}
         />
+        <Checkbox
+          label="Reversed"
+          checked={current.reverse}
+          onChange={(event) => set({ reverse: event.target.checked })}
+        />
       </Field>
       <Field label="Ticks">
         <Select
@@ -671,6 +777,29 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           checked={current.minor}
           onChange={(event) => set({ minor: event.target.checked })}
         />
+        <span className="text-muted">every</span>
+        <TextInput
+          aria-label="Tick step"
+          aria-invalid={stepInvalid}
+          className="w-16"
+          placeholder="auto"
+          disabled={current.log}
+          value={step ?? show(current.tickStep)}
+          onChange={(event) => setStep(event.target.value)}
+        />
+      </Field>
+      <Field label="Tick labels">
+        <Select
+          aria-label="Tick labels"
+          value={current.tickFormat ?? ""}
+          onChange={(event) => set({ tickFormat: event.target.value || null })}
+        >
+          {formats.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
       </Field>
       <Field label="Mirror">
         <Select

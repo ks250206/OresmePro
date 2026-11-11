@@ -246,6 +246,7 @@ export function tracePixels(y: Wave, x: Wave | null, xs: Scale, ys: Scale): Trac
 /**
  * Pixel positions of the points that fall inside the given bounds, for
  * markers. Consecutive points landing on the same pixel are drawn once.
+ * `indices`, if given, receives the index of each point that was kept.
  */
 export function markerPixels(
   y: Wave,
@@ -253,6 +254,7 @@ export function markerPixels(
   xs: Scale,
   ys: Scale,
   bounds: { x: number; y: number; w: number; h: number },
+  indices?: number[],
 ): Float32Array {
   const { first, last } = visibleRange(y, x, xs.min, xs.max);
   const buffer = new PointBuffer();
@@ -272,6 +274,7 @@ export function markerPixels(
     previousX = rx;
     previousY = ry;
     buffer.push(px, py);
+    indices?.push(index);
   }
   return buffer.take();
 }

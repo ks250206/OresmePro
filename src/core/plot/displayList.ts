@@ -17,6 +17,14 @@ export type Prim =
       dash?: readonly number[];
     }
   | {
+      kind: "polygon";
+      /** Corners: x0, y0, x1, y1, ... The outline closes itself. */
+      points: ArrayLike<number>;
+      fill: string;
+      /** 0 (invisible) to 1 (solid); solid if left out. */
+      opacity?: number;
+    }
+  | {
       kind: "segments";
       /** Independent segments: ax, ay, bx, by, ... */
       points: ArrayLike<number>;

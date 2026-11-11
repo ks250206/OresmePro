@@ -61,6 +61,20 @@ function render(prims: readonly Prim[], state: { clips: number }, out: string[])
         );
         break;
       }
+      case "polygon": {
+        const { points } = prim;
+        if (points.length < 6) break;
+        const coords: string[] = [];
+        for (let index = 0; index < points.length; index += 2) {
+          coords.push(`${num(points[index]!)},${num(points[index + 1]!)}`);
+        }
+        const opacity =
+          prim.opacity !== undefined && prim.opacity < 1
+            ? ` fill-opacity="${num(prim.opacity)}"`
+            : "";
+        out.push(`<polygon points="${coords.join(" ")}" fill="${prim.fill}"${opacity}/>`);
+        break;
+      }
       case "segments": {
         const { points } = prim;
         if (points.length < 4) break;

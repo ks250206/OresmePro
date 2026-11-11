@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "../doc/doc";
-import type { Wave } from "../doc/types";
+import { defaultAxis, type Wave } from "../doc/types";
 import { tracePixels, visibleRange, xExtentOf } from "./decimate";
 import type { MeasureText, Prim } from "./displayList";
 import { axisRange, layoutGraph } from "./layout";
@@ -13,6 +13,8 @@ import {
   dateTicks,
   formatDate,
   formatNumber,
+  formatTick,
+  isTickFormat,
   linearTicks,
   logTicks,
   niceStep,
@@ -76,6 +78,58 @@ describe("linear ticks", () => {
   it("handles reversed and empty ranges", () => {
     expect(labels(linearTicks(10, 0, 5, false))).toEqual(["0", "2", "4", "6", "8", "10"]);
     expect(linearTicks(1, 1, 5, false).major).toEqual([]);
+  });
+});
+
+describe("tick steps and formats", () => {
+  it("puts ticks at a chosen step", () => {
+    const ticks = linearTicks(0, 1, 5, false, { step: 0.25 });
+    expect(ticks.major.map((tick) => tick.label)).toEqual(["0", "0.25", "0.5", "0.75", "1"]);
+    expect(linearTicks(0, 0.35, 5, false, { step: 0.1 }).major.map((tick) => tick.label)).toEqual([
+      "0",
+      "0.1",
+      "0.2",
+      "0.3",
+    ]);
+    // A step that would make thousands of ticks is not used.
+    expect(linearTicks(0, 1000, 5, false, { step: 0.001 }).major.length).toBeLessThan(12);
+  });
+
+  it("writes labels in a Python-style format", () => {
+    expect(formatTick(1234.5, ".1f")).toBe("1234.5");
+    expect(formatTick(1234.5, ",.0f")).toBe("1,235");
+    expect(formatTick(-0.5, ".2f")).toBe("−0.50");
+    expect(formatTick(-0.001, ".1f")).toBe("0.0");
+    expect(formatTick(0.25, "%")).toBe("25%");
+    expect(formatTick(0.125, ".1%")).toBe("12.5%");
+    expect(formatTick(12000, "e")).toBe("1.2×10^{4}");
+    expect(formatTick(0.00012, ".0e")).toBe("1×10^{−4}");
+    expect(formatTick(0, ".1e")).toBe("0");
+    expect(formatTick(5, "+d")).toBe("+5");
+    expect(formatTick(1234567, "g")).toBe("1.23457e6");
+    expect(formatTick(0.5, ".3")).toBe("0.500");
+    expect(isTickFormat(".2f")).toBe(true);
+    for (const bad of ["", "x", ".2q", "%.2f", "2f"]) expect(isTickFormat(bad)).toBe(false);
+  });
+
+  it("keeps the full value in the labels when a format is given", () => {
+    const auto = linearTicks(0, 2e6, 5, false);
+    expect(auto.exponent).toBe(6);
+    const plain = linearTicks(0, 2e6, 5, false, { format: ",.0f" });
+    expect(plain.exponent).toBe(0);
+    expect(plain.major.map((tick) => tick.label)).toEqual([
+      "0",
+      "500,000",
+      "1,000,000",
+      "1,500,000",
+      "2,000,000",
+    ]);
+    expect(logTicks(1, 1000, 5, "g").major.map((tick) => tick.label)).toEqual([
+      "1",
+      "10",
+      "100",
+      "1000",
+    ]);
   });
 });
 
@@ -235,18 +289,7 @@ describe("decimation", () => {
 });
 
 describe("axisRange", () => {
-  const axis = {
-    side: "left",
-    span: [0, 1],
-    label: null,
-    min: null,
-    max: null,
-    log: false,
-    mirror: "off",
-    ticks: "outside",
-    minor: false,
-    grid: "off",
-  } as const;
+  const axis = defaultAxis("left");
   it("autoscales to the data exactly", () => {
     expect(axisRange(axis, { min: -2, max: 7, minPositive: 1 })).toEqual([-2, 7]);
   });
@@ -315,6 +358,194 @@ describe("layoutGraph", () => {
     );
     expect(wide.plot.x).toBeGreaterThan(narrow.plot.x);
     expect(texts(wide.prims)).toContain("Voltage (mV)");
+  });
+
+  it("reverses an axis and follows its tick step and format", () => {
+    const doc = graphDoc();
+    const state = () => doc.getState();
+    const plain = layoutGraph(state().graphs.Graph0!, state().waves, 400, 300, measure);
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { reverse: true, tickStep: 0.5, tickFormat: ".2f" },
+    });
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { reverse: true } });
+    const layout = layoutGraph(state().graphs.Graph0!, state().waves, 400, 300, measure);
+    const { bottom, left } = layout.axes;
+    // The same range, drawn the other way round.
+    expect([bottom!.scale.min, bottom!.scale.max]).toEqual([
+      plain.axes.bottom!.scale.min,
+      plain.axes.bottom!.scale.max,
+    ]);
+    expect(bottom!.scale.toPixel(0)).toBeGreaterThan(bottom!.scale.toPixel(1));
+    expect(left!.scale.toPixel(0.002)).toBeGreaterThan(left!.scale.toPixel(-0.002));
+    expect(bottom!.scale.toValue(bottom!.scale.toPixel(1.25))).toBeCloseTo(1.25, 9);
+    const all = texts(layout.prims);
+    for (const label of ["0.00", "0.50", "1.00", "1.50"]) expect(all).toContain(label);
+    // The trace is still drawn, point for point.
+    expect(layout.traces[0]!.runs[0]!.length).toBe(400);
+
+    expect(() =>
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickFormat: "x" } }),
+    ).toThrow(/tickFormat/);
+    expect(() =>
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickStep: 0 } }),
+    ).toThrow();
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickFormat: "" } });
+    expect(state().graphs.Graph0!.axes.left!.tickFormat).toBeNull();
+  });
+
+  const find = <K extends Prim["kind"]>(
+    prims: readonly Prim[],
+    kind: K,
+  ): Extract<Prim, { kind: K }>[] =>
+    prims.flatMap((prim) =>
+      prim.kind === kind
+        ? [prim as Extract<Prim, { kind: K }>]
+        : prim.kind === "clip"
+          ? find(prim.children, kind)
+          : [],
+    );
+
+  function pairDoc() {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "hi", data: Float64Array.of(2, 3, 4, 3) });
+    doc.dispatch({ op: "makeWave", name: "lo", data: Float64Array.of(1, 1, 2, 1) });
+    doc.dispatch({ op: "makeWave", name: "z", data: Float64Array.of(0, 1, 2, NaN) });
+    doc.dispatch({ op: "display", y: ["hi", "lo"] });
+    return doc;
+  }
+  const lay = (doc: Doc) =>
+    layoutGraph(doc.getState().graphs.Graph0!, doc.getState().waves, 400, 300, measure);
+
+  it("fills under a trace to zero, and between a trace and the next", () => {
+    const doc = pairDoc();
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "lo",
+      props: { fill: "zero", fillColor: "#00ff00", fillOpacity: 0.5 },
+    });
+    let layout = lay(doc);
+    // Zero comes into view for the fill to stand on.
+    expect(layout.axes.left!.scale.min).toBe(0);
+    let [area] = find(layout.prims, "polygon");
+    expect(area).toMatchObject({ fill: "#00ff00", opacity: 0.5 });
+    const zero = layout.axes.left!.scale.toPixel(0);
+    // Four points of the trace, then back along zero.
+    expect(area!.points.length).toBe(12);
+    expect(Array.from(area!.points).slice(8).map(Math.round)).toEqual(
+      [layout.axes.bottom!.scale.toPixel(3), zero, layout.axes.bottom!.scale.toPixel(0), zero].map(
+        Math.round,
+      ),
+    );
+
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "lo", props: { fill: "none" } });
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "hi", props: { fill: "next" } });
+    layout = lay(doc);
+    [area] = find(layout.prims, "polygon");
+    // Out along "hi" and back along "lo"; in the trace's own color by default.
+    expect(area!.points.length).toBe(16);
+    expect(area!.fill).toBe("#ff0000");
+    expect(area!.points[14]).toBeCloseTo(layout.axes.bottom!.scale.toPixel(0), 3);
+    expect(area!.points[15]).toBeCloseTo(layout.axes.left!.scale.toPixel(1), 3);
+    const svg = toSvg(layout.prims, 400, 300);
+    expect(svg).toContain('<polygon points="');
+    expect(svg).toContain('fill-opacity="0.25"');
+  });
+
+  it("draws a trace shifted by its offsets and makes room for it", () => {
+    const doc = pairDoc();
+    const before = lay(doc);
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { xOffset: 10, yOffset: 100 },
+    });
+    const layout = lay(doc);
+    expect(layout.axes.left!.scale.max).toBe(104);
+    expect(layout.axes.bottom!.scale.max).toBe(13);
+    const trace = layout.traces[0]!;
+    // Point 1 of "hi" is (1, 3) in the wave and (11, 103) on the axes.
+    expect(trace.runs[0]![2]).toBeCloseTo(layout.axes.bottom!.scale.toPixel(11), 3);
+    expect(trace.runs[0]![3]).toBeCloseTo(layout.axes.left!.scale.toPixel(103), 3);
+    expect(trace.xScale.toValue(trace.runs[0]![2]!)).toBeCloseTo(1, 4);
+    // The other trace stays where its values are.
+    expect(layout.traces[1]!.yScale).toBe(layout.axes.left!.scale);
+    expect(before.axes.left!.scale.max).toBe(4);
+
+    // A cursor sits on the shifted point.
+    doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "A", trace: "hi", point: 1 });
+    const cursor = lay(doc).cursors[0]!;
+    expect(cursor.x).toBeCloseTo(trace.runs[0]![2]!, 3);
+    expect(cursor.y).toBeCloseTo(trace.runs[0]![3]!, 3);
+  });
+
+  it("colors points and line pieces from a wave", () => {
+    const doc = pairDoc();
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { mode: "markers", colorWave: "z", colorTable: "grays" },
+    });
+    let layout = lay(doc);
+    const groups = find(layout.prims, "markers");
+    // Three values of z and one NaN, which keeps the trace's color.
+    expect(groups.map((group) => group.points.length)).toEqual([2, 2, 2, 2]);
+    const fills = groups.map((group) => group.fill);
+    expect(fills[0]).toBe("#ff0000");
+    expect(new Set(fills).size).toBe(4);
+    // Dark to light along the gray table.
+    const level = (color: string | null) => Number.parseInt(color!.slice(1, 3), 16);
+    expect(level(fills[1]!)).toBeLessThan(level(fills[2]!));
+    expect(level(fills[2]!)).toBeLessThan(level(fills[3]!));
+
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { mode: "lines", colorMin: 0, colorMax: 1000 },
+    });
+    layout = lay(doc);
+    const pieces = find(layout.prims, "segments").filter((prim) => !prim.crisp);
+    // With the range that wide, the three pieces fall on the same step of the table.
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0]!.points.length).toBe(12);
+
+    // The color wave belongs to the graph: it cannot be killed, and follows a rename.
+    expect(() => doc.dispatch({ op: "killWaves", names: ["z"] })).toThrow(/in use/);
+    doc.dispatch({ op: "renameWave", name: "z", newName: "depth" });
+    expect(doc.getState().graphs.Graph0!.traces[0]!.colorWave).toBe("depth");
+    expect(() =>
+      doc.dispatch({
+        op: "modifyTrace",
+        graph: "Graph0",
+        trace: "hi",
+        props: { colorWave: "nope" },
+      }),
+    ).toThrow();
+  });
+
+  it("gives bars on a log axis the same width in every decade", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "f", data: Float64Array.of(1, 10, 100, 1000) });
+    doc.dispatch({ op: "makeWave", name: "n", data: Float64Array.of(4, 3, 2, 1) });
+    doc.dispatch({ op: "display", y: ["n"], x: "f" });
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "n", props: { mode: "bars" } });
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "bottom", props: { log: true } });
+    const layout = lay(doc);
+    const { scale } = layout.axes.bottom!;
+    // Half a bar of room beyond the first and last point.
+    expect(scale.min).toBeCloseTo(1 / Math.sqrt(10), 9);
+    expect(scale.max).toBeCloseTo(1000 * Math.sqrt(10), 9);
+    const bars = find(layout.prims, "rect").filter((rect) => rect.fill === "#ff0000");
+    expect(bars).toHaveLength(4);
+    const decade = scale.toPixel(10) - scale.toPixel(1);
+    for (const bar of bars) expect(bar.w).toBeCloseTo(decade * 0.8, 3);
+    expect(bars[1]!.x + bars[1]!.w / 2).toBeCloseTo(scale.toPixel(10), 3);
   });
 
   it("reports missing waves instead of failing", () => {

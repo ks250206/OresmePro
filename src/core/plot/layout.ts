@@ -24,7 +24,7 @@ import {
 } from "./decimate";
 import { DASHES, type MeasureText, type Prim, type Rect } from "./displayList";
 import { emitText, layoutText, CAP_HEIGHT, type TextBlock } from "./richText";
-import { makeScale, type Scale } from "./scale";
+import { makeScale, shiftScale, type Scale } from "./scale";
 import {
   axisLabelText,
   categoryTicks,
@@ -66,6 +66,9 @@ export interface AxisGeometry {
 
 export interface TraceGeometry {
   name: string;
+  /** The scales the trace is drawn with: its axes', shifted by its offsets. */
+  xScale: Scale;
+  yScale: Scale;
   /** Pixel-space polylines and marker centers, for hit-testing. */
   runs: Float32Array[];
   markers: Float32Array | null;
@@ -189,10 +192,49 @@ function ticksFor(axis: AxisInfo, scale: Scale, maxCount: number): TickSet & { c
     const ticks = dateTicks(scale.min, scale.max, maxCount);
     if (ticks) return ticks;
   }
+  const { tickFormat: format, tickStep: step } = axis.spec;
   return axis.spec.log
-    ? logTicks(scale.min, scale.max, maxCount)
-    : linearTicks(scale.min, scale.max, maxCount, axis.spec.minor);
+    ? logTicks(scale.min, scale.max, maxCount, format)
+    : linearTicks(scale.min, scale.max, maxCount, axis.spec.minor, { step, format });
 }
+
+/** The extent of values that are drawn shifted by an offset. */
+function shiftExtent(extent: Extent, offset: number, data: Float64Array): Extent {
+  if (offset === 0 || !Number.isFinite(extent.min)) return extent;
+  const min = extent.min + offset;
+  const max = extent.max + offset;
+  let minPositive = min > 0 ? min : Infinity;
+  if (min <= 0 && max > 0) {
+    for (let index = 0; index < data.length; index += 1) {
+      const value = data[index]! + offset;
+      if (value > 0 && value < minPositive) minPositive = value;
+    }
+  }
+  return { min, max, minPositive };
+}
+
+/** The usual ratio between neighbouring X values of a trace, for bars on a log axis. */
+function barRatio(y: Wave, x: Wave | null): number {
+  const extent = xExtentOf(y, x);
+  const count = x ? x.data.length : y.data.length;
+  return count > 1 && extent.minPositive < extent.max
+    ? (extent.max / extent.minPositive) ** (1 / (count - 1))
+    : 2;
+}
+
+/** The distance between neighbouring bars of a trace, in pixels. */
+function barPitch(y: Wave, x: Wave | null, scale: Scale): number {
+  if (scale.log) {
+    const perDecade = Math.abs((scale.p1 - scale.p0) / Math.log10(scale.max / scale.min));
+    return perDecade * Math.log10(barRatio(y, x));
+  }
+  return barSpacing(y, x) * Math.abs((scale.p1 - scale.p0) / (scale.max - scale.min));
+}
+
+/** Per-point colors come in this many steps of the color table. */
+const COLOR_BINS = 64;
+/** Above this many visible points a line is drawn in one color even if it has a color wave. */
+const COLORED_LINE_LIMIT = 20_000;
 
 /** The usual distance between neighbouring points of a trace along X. */
 function barSpacing(y: Wave, x: Wave | null): number {
@@ -653,15 +695,31 @@ export function layoutGraph(
   };
   for (const { spec, y, x, categories, xUnit } of traces) {
     const bars = spec.mode === "bars";
-    // Bars grow from zero, so zero belongs in view.
+    // Bars and fills grow from zero, so zero belongs in view.
+    const fromZero = bars || spec.fill === "zero";
+    const up = extentOf(y.data);
     feed(
       spec.vAxis,
-      bars ? mergeExtent(extentOf(y.data), spanExtent(0, 0)) : extentOf(y.data),
+      shiftExtent(fromZero ? mergeExtent(up, spanExtent(0, 0)) : up, spec.yOffset, y.data),
       y.unit,
     );
-    const across = xExtentOf(y, x);
-    const half = categories || bars ? barSpacing(y, x) / 2 : 0;
-    feed(spec.hAxis, half > 0 ? spanExtent(across.min - half, across.max + half) : across, xUnit);
+    const across = x
+      ? shiftExtent(extentOf(x.data), spec.xOffset, x.data)
+      : xExtentOf({ ...y, x0: y.x0 + spec.xOffset }, null);
+    let wide = across;
+    if (categories || bars) {
+      // Room for half a bar beyond the first and last point.
+      if (graph.axes[spec.hAxis]!.log) {
+        const half = Math.sqrt(barRatio(y, x));
+        if (across.minPositive < Infinity) {
+          wide = spanExtent(across.minPositive / half, across.max * half);
+        }
+      } else {
+        const half = barSpacing(y, x) / 2;
+        wide = spanExtent(across.min - half, across.max + half);
+      }
+    }
+    feed(spec.hAxis, wide, xUnit);
     if (categories && !categoryLabels.has(spec.hAxis)) categoryLabels.set(spec.hAxis, categories);
   }
   for (const { spec, wave, nx, ny } of images) {
@@ -757,9 +815,11 @@ export function layoutGraph(
     };
     for (const axis of axisList) {
       const [lo, hi] = axis.spec.span;
-      const [p0, p1] = axis.vertical
+      const ends = axis.vertical
         ? [Math.round(plot.y + plot.h * (1 - lo)), Math.round(plot.y + plot.h * (1 - hi))]
         : [Math.round(plot.x + plot.w * lo), Math.round(plot.x + plot.w * hi)];
+      // A reversed axis has its lowest value where the highest would be.
+      const [p0, p1] = axis.spec.reverse ? [ends[1]!, ends[0]!] : [ends[0]!, ends[1]!];
       const scale = makeScale(axis.range[0], axis.range[1], axis.spec.log, p0, p1);
       const length = Math.abs(p1 - p0);
       // Category axes start with every category and thin out from there.
@@ -782,6 +842,8 @@ export function layoutGraph(
             spacing = Math.min(spacing, Math.abs(pixels[index]! - pixels[index - 1]!));
           }
           if (widest + size * 0.8 <= spacing) break;
+          // Ticks at a step the user chose stay where they are.
+          if (axis.kind === "number" && !axis.spec.log && axis.spec.tickStep !== null) break;
           maxCount = axis.kind === "category" ? Math.floor(maxCount * 0.7) : maxCount - 1;
           ticks = ticksFor(axis, scale, Math.max(1, maxCount));
           labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
@@ -991,14 +1053,124 @@ export function layoutGraph(
     clipped(spec, children);
   }
 
+  const scalesOf = (spec: TraceSpec) => ({
+    xs: shiftScale(info.get(spec.hAxis)!.scale, spec.xOffset),
+    ys: shiftScale(info.get(spec.vAxis)!.scale, spec.yOffset),
+  });
+  /** Where a trace's zero is drawn: at zero if that is on the axis, else at the nearer end. */
+  const baseline = (ys: Scale): number => {
+    const zero = ys.log ? Number.NaN : ys.toPixel(0);
+    const low = Math.max(ys.p0, ys.p1);
+    const high = Math.min(ys.p0, ys.p1);
+    return Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
+  };
+  const pixelRuns = new Map<TraceSpec, Float32Array[]>();
+  const runsOf = (trace: ResolvedTrace): Float32Array[] => {
+    let runs = pixelRuns.get(trace.spec);
+    if (!runs) {
+      const { xs, ys } = scalesOf(trace.spec);
+      runs = tracePixels(trace.y, trace.x, xs, ys).runs;
+      if (trace.spec.mode === "cityscape") {
+        runs = runs.map((run) => {
+          const steps = new Float32Array(Math.max(0, run.length * 2 - 2));
+          for (let index = 0, at = 0; index < run.length; index += 2) {
+            if (index > 0) {
+              steps[at++] = run[index]!;
+              steps[at++] = run[index - 1]!;
+            }
+            steps[at++] = run[index]!;
+            steps[at++] = run[index + 1]!;
+          }
+          return steps;
+        });
+      }
+      pixelRuns.set(trace.spec, runs);
+    }
+    return runs;
+  };
+
   const geometry: TraceGeometry[] = [];
-  for (const { spec, y, x } of traces) {
-    const xs = info.get(spec.hAxis)!.scale;
-    const ys = info.get(spec.vAxis)!.scale;
+  traces.forEach((trace, order) => {
+    const { spec, y, x } = trace;
+    const { xs, ys } = scalesOf(spec);
     const clip = clipFor(spec);
     const children: Prim[] = [];
     const dash = DASHES[spec.lineStyle];
-    const item: TraceGeometry = { name: spec.name, runs: [], markers: null };
+    const item: TraceGeometry = {
+      name: spec.name,
+      xScale: xs,
+      yScale: ys,
+      runs: [],
+      markers: null,
+    };
+
+    // The colors of the points, when a wave gives them: a function from a
+    // point's index to its step in the color table (-1: no color, use the trace's).
+    const zWave = spec.colorWave === null ? undefined : waves[spec.colorWave];
+    let binOf: ((index: number) => number) | null = null;
+    if (zWave && !zWave.text) {
+      const extent = extentOf(zWave.data);
+      const zMin = spec.colorMin ?? extent.min;
+      const zMax = spec.colorMax ?? extent.max;
+      const span = zMax - zMin;
+      binOf = (index) => {
+        const z = zWave.data[index];
+        if (z === undefined || Number.isNaN(z)) return -1;
+        const fraction = span > 0 ? (z - zMin) / span : 0.5;
+        return Math.max(0, Math.min(COLOR_BINS - 1, Math.floor(fraction * COLOR_BINS)));
+      };
+    } else if (spec.colorWave !== null) {
+      missing.add(spec.colorWave);
+    }
+    const binColor = (bin: number): string =>
+      bin < 0 ? spec.color : colorAt(spec.colorTable, (bin + 0.5) / COLOR_BINS);
+    /** Splits points (x, y pairs or longer groups of `stride` numbers) by color. */
+    const byColor = (points: ArrayLike<number>, indices: readonly number[], stride: number) => {
+      const groups = new Map<number, number[]>();
+      indices.forEach((index, at) => {
+        const bin = binOf!(index);
+        let group = groups.get(bin);
+        if (!group) groups.set(bin, (group = []));
+        for (let part = 0; part < stride; part += 1) group.push(points[at * stride + part]!);
+      });
+      return [...groups].sort(([one], [other]) => one - other);
+    };
+
+    // The area under the trace, behind everything else of it.
+    if (spec.fill !== "none") {
+      const fill = spec.fillColor ?? spec.color;
+      const opacity = spec.fillOpacity;
+      const upper = runsOf(trace);
+      if (spec.fill === "zero") {
+        const base = baseline(ys);
+        for (const run of upper) {
+          if (run.length < 4) continue;
+          const points = new Float32Array(run.length + 4);
+          points.set(run);
+          points.set([run[run.length - 2]!, base, run[0]!, base], run.length);
+          children.push({ kind: "polygon", points, fill, opacity });
+        }
+      } else {
+        // Out along this trace and back along the next one, if they share axes.
+        const next = traces[order + 1];
+        if (next && next.spec.hAxis === spec.hAxis && next.spec.vAxis === spec.vAxis) {
+          const out = upper.flatMap((run) => Array.from(run));
+          const forward = runsOf(next).flatMap((run) => Array.from(run));
+          const lower: number[] = [];
+          for (let index = forward.length - 2; index >= 0; index -= 2) {
+            lower.push(forward[index]!, forward[index + 1]!);
+          }
+          if (out.length >= 4 && lower.length >= 4) {
+            children.push({
+              kind: "polygon",
+              points: Float32Array.from([...out, ...lower]),
+              fill,
+              opacity,
+            });
+          }
+        }
+      }
+    }
 
     const yError = errorAt(spec.yError, waves);
     const xError = errorAt(spec.xError, waves);
@@ -1067,98 +1239,113 @@ export function layoutGraph(
     const wantsLine =
       spec.mode === "lines" || spec.mode === "lines+markers" || spec.mode === "cityscape";
     if (wantsLine) {
-      let { runs } = tracePixels(y, x, xs, ys);
-      if (spec.mode === "cityscape") {
-        runs = runs.map((run) => {
-          const steps = new Float32Array(Math.max(0, run.length * 2 - 2));
-          for (let index = 0, at = 0; index < run.length; index += 2) {
-            if (index > 0) {
-              steps[at++] = run[index]!;
-              steps[at++] = run[index - 1]!;
-            }
-            steps[at++] = run[index]!;
-            steps[at++] = run[index + 1]!;
-          }
-          return steps;
-        });
-      }
-      for (const run of runs) {
-        children.push({
-          kind: "polyline",
-          points: run,
-          stroke: spec.color,
-          width: spec.lineSize,
-          dash,
-        });
-      }
+      const runs = runsOf(trace);
       item.runs = runs;
-    }
-    if (spec.mode !== "lines" && spec.mode !== "cityscape") {
-      const points = markerPixels(y, x, xs, ys, clip);
-      item.markers = points;
-      if (spec.mode === "bars") {
-        // Bars share each slot: together they fill 80% of the spacing between points.
-        const slot = barSlots.get(spec)!;
-        const groups = slot.of();
-        const perUnit = Math.abs((xs.p1 - xs.p0) / (xs.max - xs.min));
-        const barWidth = Math.max(1, (barSpacing(y, x) * perUnit * 0.8) / groups);
-        const shift = (slot.index - (groups - 1) / 2) * barWidth;
-        const zero = ys.log ? Number.NaN : ys.toPixel(0);
-        const low = Math.max(ys.p0, ys.p1);
-        const high = Math.min(ys.p0, ys.p1);
-        const base = Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
-        for (let index = 0; index < points.length; index += 2) {
-          const top = points[index + 1]!;
+      const { first, last } = visibleRange(y, x, xs.min, xs.max);
+      if (binOf && spec.mode !== "cityscape" && last - first < COLORED_LINE_LIMIT) {
+        // Each piece of the line takes the color of the point it starts from.
+        const pieces: number[] = [];
+        const starts: number[] = [];
+        let fromX = Number.NaN;
+        let fromY = Number.NaN;
+        for (let index = first; index <= last; index += 1) {
+          const px = xs.toPixel(traceX(y, x, index));
+          const py = ys.toPixel(y.data[index]!);
+          if (Number.isFinite(fromX) && Number.isFinite(fromY) && Number.isFinite(px + py)) {
+            pieces.push(fromX, fromY, px, py);
+            starts.push(index - 1);
+          }
+          fromX = px;
+          fromY = py;
+        }
+        for (const [bin, points] of byColor(pieces, starts, 4)) {
           children.push({
-            kind: "rect",
-            x: points[index]! + shift - barWidth / 2,
-            y: Math.min(top, base),
-            w: barWidth,
-            h: Math.abs(top - base),
-            fill: spec.color,
+            kind: "segments",
+            points: Float32Array.from(points),
+            stroke: binColor(bin),
+            width: spec.lineSize,
+            dash,
           });
         }
-      } else if (spec.mode === "sticks") {
-        // Sticks run from each point to zero, or to the axis if zero is off-scale.
-        const zero = ys.log ? Number.NaN : ys.toPixel(0);
-        const low = Math.max(ys.p0, ys.p1);
-        const high = Math.min(ys.p0, ys.p1);
-        const base = Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
-        const segments = new Float32Array(points.length * 2);
-        for (let index = 0; index < points.length; index += 2) {
-          segments.set([points[index]!, points[index + 1]!, points[index]!, base], index * 2);
-        }
-        children.push({
-          kind: "segments",
-          points: segments,
-          stroke: spec.color,
-          width: spec.lineSize,
-        });
-      } else if (spec.mode === "dots") {
-        children.push({
-          kind: "markers",
-          points,
-          shape: "square",
-          size: Math.max(0.75, spec.lineSize),
-          fill: spec.color,
-          stroke: spec.color,
-          width: 0,
-        });
       } else {
-        children.push({
-          kind: "markers",
-          points,
-          shape: spec.marker,
-          size: spec.markerSize,
-          fill: spec.markerFill ? spec.color : null,
-          stroke: spec.color,
-          width: Math.max(1, spec.lineSize),
-        });
+        for (const run of runs) {
+          children.push({
+            kind: "polyline",
+            points: run,
+            stroke: spec.color,
+            width: spec.lineSize,
+            dash,
+          });
+        }
+      }
+    }
+    if (spec.mode !== "lines" && spec.mode !== "cityscape") {
+      const indices: number[] = [];
+      const points = markerPixels(y, x, xs, ys, clip, indices);
+      item.markers = points;
+      // One group in the trace's color, or one per color when a wave gives them.
+      const groups: [string, ArrayLike<number>][] = binOf
+        ? byColor(points, indices, 2).map(([bin, group]) => [binColor(bin), group])
+        : [[spec.color, points]];
+      for (const [color, group] of groups) {
+        if (spec.mode === "bars") {
+          // Bars share each slot: together they fill 80% of the distance between points.
+          const slot = barSlots.get(spec)!;
+          const count = slot.of();
+          const pitch = barPitch(y, x, info.get(spec.hAxis)!.scale);
+          const barWidth = Math.max(1, (pitch * 0.8) / count);
+          const shift = (slot.index - (count - 1) / 2) * barWidth;
+          const base = baseline(ys);
+          for (let index = 0; index < group.length; index += 2) {
+            const top = group[index + 1]!;
+            children.push({
+              kind: "rect",
+              x: group[index]! + shift - barWidth / 2,
+              y: Math.min(top, base),
+              w: barWidth,
+              h: Math.abs(top - base),
+              fill: color,
+            });
+          }
+        } else if (spec.mode === "sticks") {
+          // Sticks run from each point to zero, or to the axis if zero is off-scale.
+          const base = baseline(ys);
+          const segments = new Float32Array(group.length * 2);
+          for (let index = 0; index < group.length; index += 2) {
+            segments.set([group[index]!, group[index + 1]!, group[index]!, base], index * 2);
+          }
+          children.push({
+            kind: "segments",
+            points: segments,
+            stroke: color,
+            width: spec.lineSize,
+          });
+        } else if (spec.mode === "dots") {
+          children.push({
+            kind: "markers",
+            points: group,
+            shape: "square",
+            size: Math.max(0.75, spec.lineSize),
+            fill: color,
+            stroke: color,
+            width: 0,
+          });
+        } else {
+          children.push({
+            kind: "markers",
+            points: group,
+            shape: spec.marker,
+            size: spec.markerSize,
+            fill: spec.markerFill ? color : null,
+            stroke: color,
+            width: Math.max(1, spec.lineSize),
+          });
+        }
       }
     }
     clipped(spec, children);
     geometry.push(item);
-  }
+  });
 
   /** Draws an axis line with ticks and labels at `line`, for an axis or its mirror. */
   const drawAxis = (
@@ -1265,8 +1452,9 @@ export function layoutGraph(
     ][]) {
       const trace = traces.find((item) => item.spec.name === cursor.trace);
       if (!trace || cursor.point >= trace.y.data.length) continue;
-      const x = info.get(trace.spec.hAxis)!.scale.toPixel(traceX(trace.y, trace.x, cursor.point));
-      const y = info.get(trace.spec.vAxis)!.scale.toPixel(trace.y.data[cursor.point]!);
+      const scales = scalesOf(trace.spec);
+      const x = scales.xs.toPixel(traceX(trace.y, trace.x, cursor.point));
+      const y = scales.ys.toPixel(trace.y.data[cursor.point]!);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       cursors.push({ name, trace: cursor.trace, point: cursor.point, x, y });
       // A is round and B is square, as in Igor.

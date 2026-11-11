@@ -55,6 +55,10 @@ export type LineStyle = (typeof LINE_STYLES)[number];
 export const MARKER_SHAPES = ["circle", "square", "triangle", "diamond", "cross", "plus"] as const;
 export type MarkerShape = (typeof MARKER_SHAPES)[number];
 
+/** What the area under a trace is filled down (or up) to. */
+export const FILL_MODES = ["none", "zero", "next"] as const;
+export type FillMode = (typeof FILL_MODES)[number];
+
 /** An error bar size: the name of a wave with one value per point, or a constant. */
 export type ErrorSource = string | number | null;
 
@@ -72,6 +76,25 @@ export interface TraceStyle {
   /** Symmetric error bars in Y and X. */
   yError: ErrorSource;
   xError: ErrorSource;
+  /**
+   * Fills the area between the trace and zero, or between it and the next
+   * trace of the graph (for a band between two curves).
+   */
+  fill: FillMode;
+  /** null fills with the trace's own color. */
+  fillColor: string | null;
+  fillOpacity: number;
+  /** Added to every point where it is drawn; the wave is not changed. */
+  xOffset: number;
+  yOffset: number;
+  /**
+   * A wave with one value per point that colors the trace point by point
+   * through `colorTable`, from `colorMin` to `colorMax` (null follows the wave).
+   */
+  colorWave: string | null;
+  colorTable: ColorTable;
+  colorMin: number | null;
+  colorMax: number | null;
 }
 
 export interface TraceSpec extends TraceStyle {
@@ -150,6 +173,16 @@ export interface AxisSpec {
   ticks: TickMode;
   minor: boolean;
   grid: GridMode;
+  /** Runs high to low: the largest value at the left or the bottom. */
+  reverse: boolean;
+  /** Distance between major ticks; null chooses one. For plain number axes that are not log. */
+  tickStep: number | null;
+  /**
+   * How tick labels are written, in the style of a Python format spec:
+   * ".2f", "e", ".1e", "g", ",.0f", "%". null factors a power of 1000 out
+   * of the labels and shows it once on the axis.
+   */
+  tickFormat: string | null;
   /**
    * The part of the plot area the axis covers, as fractions from 0 (bottom or
    * left) to 1. Axes with separate spans stack plots in one graph.
@@ -278,6 +311,9 @@ export const defaultAxis = (side: AxisSide): AxisSpec => ({
   ticks: "outside",
   minor: false,
   grid: "off",
+  reverse: false,
+  tickStep: null,
+  tickFormat: null,
   span: [0, 1],
 });
 
@@ -304,6 +340,15 @@ export const defaultTraceStyle = (index: number): TraceStyle => ({
   hidden: false,
   yError: null,
   xError: null,
+  fill: "none",
+  fillColor: null,
+  fillOpacity: 0.25,
+  xOffset: 0,
+  yOffset: 0,
+  colorWave: null,
+  colorTable: "rainbow",
+  colorMin: null,
+  colorMax: null,
 });
 
 /** The last component of a wave or folder path. */

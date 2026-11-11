@@ -1,3 +1,4 @@
+import { isTickFormat } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import {
   ANCHORS,
@@ -8,6 +9,7 @@ import {
   DEFAULT_FONT_FAMILY,
   DEFAULT_TABLE_DIGITS,
   DocError,
+  FILL_MODES,
   GRID_MODES,
   LINE_STYLES,
   MARKER_SHAPES,
@@ -453,6 +455,22 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   hidden: (value) => bool(value, "hidden"),
   yError: errorSource("yError"),
   xError: errorSource("xError"),
+  fill: (value) => oneOf(value, FILL_MODES, "fill"),
+  fillColor: (value) => (value === null ? null : normalizeColor(value)),
+  fillOpacity: (value) => {
+    const opacity = finite(value, "fillOpacity");
+    if (opacity < 0 || opacity > 1) throw new DocError("fillOpacity must be between 0 and 1.");
+    return opacity;
+  },
+  xOffset: (value) => finite(value, "xOffset"),
+  yOffset: (value) => finite(value, "yOffset"),
+  colorWave: (value) => {
+    if (value === null || typeof value === "string") return value;
+    throw new DocError("colorWave must be a wave name or null.");
+  },
+  colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
+  colorMin: (value) => (value === null ? null : finite(value, "colorMin")),
+  colorMax: (value) => (value === null ? null : finite(value, "colorMax")),
 };
 
 const nullableNumber = (what: string) => (value: unknown) =>
@@ -471,6 +489,15 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     ticks: (value) => oneOf(value, TICK_MODES, "ticks"),
     minor: (value) => bool(value, "minor"),
     grid: (value) => oneOf(value, GRID_MODES, "grid"),
+    reverse: (value) => bool(value, "reverse"),
+    tickStep: (value) => (value === null ? null : positive(value, "tickStep")),
+    tickFormat: (value) => {
+      if (value === null || value === "") return null;
+      if (typeof value === "string" && isTickFormat(value)) return value;
+      throw new DocError(
+        'tickFormat must be a format such as ".2f", "e", ".1e", "g", ",.0f" or "%", or null.',
+      );
+    },
     span: (value) => {
       if (Array.isArray(value) && value.length === 2) {
         const lo = finite(value[0], "span");
@@ -574,6 +601,7 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
         x: trace.x === null ? null : rename(trace.x),
         yError: typeof trace.yError === "string" ? rename(trace.yError) : trace.yError,
         xError: typeof trace.xError === "string" ? rename(trace.xError) : trace.xError,
+        colorWave: trace.colorWave === null ? null : rename(trace.colorWave),
       });
     }
     const cursors: GraphSpec["cursors"] = Object.fromEntries(
@@ -609,7 +637,11 @@ function waveUsers(state: DocState, name: string): string[] {
     const used =
       graph.traces.some(
         (trace) =>
-          trace.y === name || trace.x === name || trace.yError === name || trace.xError === name,
+          trace.y === name ||
+          trace.x === name ||
+          trace.yError === name ||
+          trace.xError === name ||
+          trace.colorWave === name,
       ) ||
       graph.images.some((image) => image.wave === name) ||
       graph.contours.some((contour) => contour.wave === name);
@@ -668,6 +700,14 @@ function requireItem<T extends { name: string }>(
 /** Checks that an error-bar wave exists and matches its trace. */
 function checkErrorWaves(state: DocState, trace: TraceSpec): void {
   const length = state.waves[trace.y]?.data.length;
+  if (trace.colorWave !== null) {
+    const wave = requireNumeric(state, trace.colorWave, 1, "used to color a trace");
+    if (length !== undefined && wave.data.length !== length) {
+      throw new DocError(
+        `Color wave ${wave.name} has ${wave.data.length} points but ${trace.y} has ${length}.`,
+      );
+    }
+  }
   for (const source of [trace.yError, trace.xError]) {
     if (typeof source !== "string") continue;
     const wave = requireNumeric(state, source, 1, "used for error bars");
@@ -946,6 +986,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           typeof next.yError === "string" ? requireWave(state, next.yError).name : next.yError,
         xError:
           typeof next.xError === "string" ? requireWave(state, next.xError).name : next.xError,
+        colorWave: next.colorWave === null ? null : requireWave(state, next.colorWave).name,
       };
       const traces = graph.traces.map((item) => (item === trace ? normalized : item));
       return { state: putGraph(state, { ...graph, traces }), result: null };

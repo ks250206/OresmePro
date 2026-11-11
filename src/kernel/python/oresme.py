@@ -481,7 +481,15 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
 
 
 class Trace(_Props):
-    """One curve in a graph."""
+    """One curve in a graph.
+
+    ``fill="zero"`` fills the area down to zero and ``fill="next"`` the band
+    between this trace and the next one; ``fill_color`` and ``fill_opacity``
+    style it. ``x_offset`` and ``y_offset`` shift the trace where it is
+    drawn without changing its waves. ``color_wave`` colors the trace point
+    by point from another wave, through ``color_table`` (over ``color_min``
+    to ``color_max``, or the wave's own range).
+    """
 
     _props = (
         "mode",
@@ -494,6 +502,15 @@ class Trace(_Props):
         "hidden",
         "y_error",
         "x_error",
+        "fill",
+        "fill_color",
+        "fill_opacity",
+        "x_offset",
+        "y_offset",
+        "color_wave",
+        "color_table",
+        "color_min",
+        "color_max",
     )
 
     def __init__(self, graph, name):
@@ -511,7 +528,7 @@ class Trace(_Props):
         raise OresmeError(f"{self._graph.name} has no trace named {self._name!r}.")
 
     def _set(self, props):
-        for key in ("yError", "xError"):
+        for key in ("yError", "xError", "colorWave"):
             if isinstance(props.get(key), Wave):
                 props[key] = props[key].name
         _dispatch(
@@ -539,9 +556,27 @@ class Axis(_Props):
 
     ``span=(low, high)`` draws the axis over part of the plot area, as
     fractions from 0 to 1; use it to stack plots in one graph.
+
+    ``reverse=True`` runs the axis high to low. ``tick_step=0.25`` puts the
+    major ticks that far apart. ``tick_format`` writes the tick labels like
+    Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
+    goes back to automatic labels.
     """
 
-    _props = ("label", "min", "max", "log", "mirror", "ticks", "minor", "grid", "span")
+    _props = (
+        "label",
+        "min",
+        "max",
+        "log",
+        "mirror",
+        "ticks",
+        "minor",
+        "grid",
+        "span",
+        "reverse",
+        "tick_step",
+        "tick_format",
+    )
 
     def __init__(self, graph, name):
         self._graph = graph

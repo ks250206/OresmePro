@@ -36,3 +36,20 @@ export function makeScale(min: number, max: number, log: boolean, p0: number, p1
     toValue: (pixel) => min + (pixel - p0) / k,
   };
 }
+
+/**
+ * A scale for values that are drawn shifted by `offset`: a trace with an
+ * offset is placed as if every one of its values were that much larger.
+ */
+export function shiftScale(scale: Scale, offset: number): Scale {
+  if (offset === 0) return scale;
+  return {
+    min: scale.min - offset,
+    max: scale.max - offset,
+    log: scale.log,
+    p0: scale.p0,
+    p1: scale.p1,
+    toPixel: (value) => scale.toPixel(value + offset),
+    toValue: (pixel) => scale.toValue(pixel) - offset,
+  };
+}

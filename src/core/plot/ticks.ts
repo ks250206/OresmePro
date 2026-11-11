@@ -62,6 +62,12 @@ function decimalsFor(step: number): number {
   return Math.min(12, Math.max(0, digits));
 }
 
+/** Fixed notation with up to `decimals` digits, without trailing zeros. */
+function trimmed(value: number, decimals: number): string {
+  const text = fixed(value, decimals);
+  return text.includes(".") ? text.replace(/\.?0+$/, "") : text;
+}
+
 function fixed(value: number, decimals: number): string {
   let text = value.toFixed(decimals);
   if (Number(text) === 0) text = (0).toFixed(decimals);
@@ -76,17 +82,75 @@ export function engineeringExponent(maxAbs: number): number {
   return Math.floor(exponent / 3) * 3;
 }
 
-export function linearTicks(lo: number, hi: number, maxCount: number, minor: boolean): TickSet {
+const FORMAT_PATTERN = /^(\+)?(,)?(?:\.(\d{1,2}))?([fegd%])?$/;
+
+/** Whether text is a tick label format this module understands. */
+export const isTickFormat = (text: string): boolean => text !== "" && FORMAT_PATTERN.test(text);
+
+const grouped = (digits: string): string => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/**
+ * Writes a number the way a Python format spec would (`format(value, spec)`),
+ * for the subset that makes sense on an axis: an optional "+", "," for
+ * thousands, a precision, and a type f, e, g, d or %. Exponents are set as
+ * superscripts rather than "e+03".
+ */
+export function formatTick(value: number, format: string): string {
+  const match = FORMAT_PATTERN.exec(format);
+  if (!match || !Number.isFinite(value)) return formatNumber(value);
+  const [, plus, comma, precisionText, type = precisionText === undefined ? "g" : "f"] = match;
+  const precision = precisionText === undefined ? undefined : Number(precisionText);
+  const magnitude = Math.abs(value);
+  let body: string;
+  if (type === "e") {
+    const [mantissa, exponent] = magnitude.toExponential(precision ?? 1).split("e");
+    body = magnitude === 0 ? "0" : `${mantissa}×10^{${Number(exponent)}}`.replace("-", MINUS);
+  } else if (type === "g") {
+    body = formatNumber(magnitude, precision ?? 6);
+  } else {
+    const scaled = type === "%" ? magnitude * 100 : magnitude;
+    const text = scaled.toFixed(type === "d" ? 0 : (precision ?? (type === "%" ? 0 : 6)));
+    const [whole, fraction] = text.split(".");
+    body = (comma ? grouped(whole!) : whole!) + (fraction ? `.${fraction}` : "");
+    if (type === "%") body += "%";
+  }
+  const zero = !/[1-9]/.test(body.split("×")[0]!);
+  const sign = value < 0 && !zero ? MINUS : plus ? "+" : "";
+  return sign + body;
+}
+
+export interface TickOptions {
+  /** Distance between major ticks, instead of one chosen to fit `maxCount`. */
+  step?: number | null;
+  /** A format for the labels (see formatTick), instead of factoring out an exponent. */
+  format?: string | null;
+}
+
+/** More ticks than this cannot be what was meant; the step is chosen automatically instead. */
+const MAX_MANUAL_TICKS = 400;
+
+export function linearTicks(
+  lo: number,
+  hi: number,
+  maxCount: number,
+  minor: boolean,
+  options: TickOptions = {},
+): TickSet {
   const min = Math.min(lo, hi);
   const max = Math.max(lo, hi);
   const range = max - min;
   if (!(range > 0) || !Number.isFinite(range)) return { major: [], minor: [], exponent: 0 };
 
-  const step = niceStep(range, maxCount);
+  const manual =
+    options.step && options.step > 0 && range / options.step <= MAX_MANUAL_TICKS
+      ? options.step
+      : null;
+  const step = manual ?? niceStep(range, maxCount);
   const tolerance = range * 1e-9;
   const first = Math.ceil((min - tolerance) / step);
   const last = Math.floor((max + tolerance) / step);
-  const exponent = engineeringExponent(Math.max(Math.abs(min), Math.abs(max)));
+  const { format } = options;
+  const exponent = format ? 0 : engineeringExponent(Math.max(Math.abs(min), Math.abs(max)));
   const factor = 10 ** exponent;
   const decimals = decimalsFor(step / factor);
 
@@ -94,7 +158,15 @@ export function linearTicks(lo: number, hi: number, maxCount: number, minor: boo
   for (let index = first; index <= last; index += 1) {
     // `|| 0` turns -0 into 0.
     const value = index * step || 0;
-    major.push({ value, label: fixed(value / factor, decimals) });
+    major.push({
+      value,
+      label: format
+        ? formatTick(value, format)
+        : manual
+          ? // A step such as 0.25 needs more digits than its size suggests.
+            trimmed(value / factor, decimals + 3)
+          : fixed(value / factor, decimals),
+    });
   }
 
   const minorValues: number[] = [];
@@ -111,7 +183,12 @@ export function linearTicks(lo: number, hi: number, maxCount: number, minor: boo
   return { major, minor: minorValues, exponent };
 }
 
-export function logTicks(lo: number, hi: number, maxCount: number): TickSet {
+export function logTicks(
+  lo: number,
+  hi: number,
+  maxCount: number,
+  format: string | null = null,
+): TickSet {
   const min = Math.min(lo, hi);
   const max = Math.max(lo, hi);
   if (!(min > 0) || !Number.isFinite(max)) return { major: [], minor: [], exponent: 0 };
@@ -121,13 +198,17 @@ export function logTicks(lo: number, hi: number, maxCount: number): TickSet {
 
   // Less than two decade ticks would leave the axis nearly unlabelled, so
   // fall back to ordinary 1-2-5 ticks on the values.
-  if (decades < 2) return linearTicks(min, max, maxCount, true);
+  if (decades < 2) return linearTicks(min, max, maxCount, true, { format });
 
   const stride = Math.max(1, Math.ceil(decades / Math.max(1, maxCount)));
   const major: Tick[] = [];
   for (let decade = firstDecade; decade <= lastDecade; decade += 1) {
     if ((decade - firstDecade) % stride !== 0) continue;
-    const label = decade < 0 ? `10^{${MINUS}${-decade}}` : `10^{${decade}}`;
+    const label = format
+      ? formatTick(10 ** decade, format)
+      : decade < 0
+        ? `10^{${MINUS}${-decade}}`
+        : `10^{${decade}}`;
     major.push({ value: 10 ** decade, label });
   }
   const minor: number[] = [];
