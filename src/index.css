@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+@theme {
+  --color-chrome: #f2f3f5;
+  --color-chrome-2: #e6e8ec;
+  --color-line: #c8ccd3;
+  --color-line-soft: #dfe2e7;
+  --color-ink: #1c2026;
+  --color-muted: #69717d;
+  --color-accent: #2760c4;
+  --color-accent-soft: #dbe7fb;
+  --color-desktop: #d9dde3;
+  --color-paper: #ffffff;
+  --color-danger: #c4282b;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-chrome);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.selectable {
+  user-select: text;
+}
+
+/* Scrollbars that match the compact chrome. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #b4b9c2 transparent;
+}
+
+/* Command line editor */
+.cm-editor {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: transparent;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+.cm-editor .cm-content {
+  padding: 5px 0;
+  caret-color: var(--color-ink);
+}
+.cm-editor .cm-line {
+  padding: 0 8px 0 0;
+}
+.cm-editor .cm-scroller {
+  font-family: inherit;
+  line-height: 1.45;
+  max-height: 12em;
+}
+.cm-ghost {
+  color: #a3a9b3;
+  pointer-events: none;
+}
+.cm-tooltip.cm-tooltip-autocomplete {
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-paper);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.14);
+  overflow: hidden;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-height: 14em;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li {
+  padding: 2px 8px;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--color-accent);
+  color: #fff;
+}
+.cm-completionDetail {
+  color: var(--color-muted);
+  font-style: normal;
+  margin-left: 1.2em;
+}
+li[aria-selected] .cm-completionDetail {
+  color: #dbe7fb;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Python syntax colors, shared by the command line and the history. */
+.tok-keyword,
+.tok-controlKeyword,
+.tok-operatorKeyword,
+.tok-definitionKeyword,
+.tok-moduleKeyword {
+  color: #a626a4;
+}
+.tok-string,
+.tok-string2 {
+  color: #3f7d2c;
+}
+.tok-number,
+.tok-bool,
+.tok-atom {
+  color: #b35c00;
+}
+.tok-comment {
+  color: #8c959f;
+  font-style: italic;
+}
+.tok-variableName.tok-definition,
+.tok-className {
+  color: #2760c4;
+}
+.tok-operator,
+.tok-punctuation {
+  color: #57606a;
+}
+.tok-meta {
+  color: #0e7c86;
+}
