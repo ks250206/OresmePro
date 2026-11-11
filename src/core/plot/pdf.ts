@@ -25,10 +25,12 @@ export interface RasterText {
 
 export interface PdfOptions {
   rasterizeText?: (text: string, family: string, size: number, fill: string) => RasterText | null;
+  /**
+   * PDF points per unit of the display list. By default 0.75: the list is in
+   * CSS pixels. A page layout is in points already and passes 1.
+   */
+  scale?: number;
 }
-
-/** CSS pixels to PDF points. */
-const SCALE = 0.75;
 
 const num = (value: number): string => String(Math.round(value * 1000) / 1000);
 
@@ -321,9 +323,10 @@ export function toPdf(
   options: PdfOptions = {},
 ): Uint8Array {
   const context: Context = { out: [], alphas: new Map(), fonts: new Map(), images: [], options };
-  const pageWidth = width * SCALE;
-  const pageHeight = height * SCALE;
-  context.out.push(`${SCALE} 0 0 ${-SCALE} 0 ${num(pageHeight)} cm`);
+  const scale = options.scale ?? 0.75;
+  const pageWidth = width * scale;
+  const pageHeight = height * scale;
+  context.out.push(`${num(scale)} 0 0 ${num(-scale)} 0 ${num(pageHeight)} cm`);
   render(prims, context);
 
   // Objects are numbered from 1; bodies are collected first, then written with offsets.

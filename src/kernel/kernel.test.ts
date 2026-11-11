@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { Doc } from "../core/doc/doc";
 import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
+import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { bootPython, type PythonKernel } from "./boot";
 import { answerRpc } from "./rpc";
@@ -52,6 +53,16 @@ beforeAll(async () => {
           },
           exportGraph: (name, filename, cursors) =>
             exported.push(`${name}:${filename}${cursors ? ":cursors" : ""}`),
+          renderPageSvg: (name) => {
+            const state = doc.getState();
+            const layout = layoutPage(
+              state.pages[name]!,
+              state,
+              (text, size) => text.length * size * 0.55,
+            );
+            return toSvg(layout.prims, layout.width, layout.height);
+          },
+          exportPage: (name, filename) => exported.push(`${name}:${filename}`),
         },
         method,
         paramsJson,
@@ -793,5 +804,36 @@ describe("oresme Python API", () => {
       "float64 1.0",
       "magnitude True True",
     ]);
+  });
+
+  it("arranges graphs on a page layout", async () => {
+    expect(
+      await run(
+        [
+          'pa = op.make("pa", [1.0, 2.0, 4.0]); g1 = op.display(pa, name="PanelA"); g2 = op.display(pa, name="PanelB")',
+          'page = op.new_layout("Fig", "A5", landscape=True)',
+          "top = page.add_graph(g1, x=30, y=30, w=250, h=160)",
+          'bottom = page.add_graph("PanelB")',
+          'cap = page.add_text("Figure 1. Two panels", x=30, y=380, size=9)',
+          "bottom.set(x=300, y=30, w=250, h=160); cap.text = 'Fig. 1'",
+          "print(page, page.width, page.height, [i.name for i in page.items], op.layouts(), op.layout().name)",
+          "print(top.graph, bottom.x, bottom.w, cap.text, cap.size, page.item('graph0').h)",
+          "svg = page.svg(); print(svg.count('<polyline'), 'Fig. 1' in svg, 'width=\"595\" height=\"420\"' in svg)",
+          'page.save("fig.pdf"); cap.remove(); page.set(width=842, height=595); print(len(page.items), page.width)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "Layout('Fig') 595 420 ['graph0', 'graph1', 'text0'] [Layout('Fig')] Fig",
+      "Graph('PanelA') 300 250 Fig. 1 9 160",
+      "2 True True",
+      "2 842",
+    ]);
+    expect(exported.at(-1)).toBe("Fig:fig.pdf");
+    expect(await run('page.save("fig.gif")')).toBe(false);
+    expect(
+      await run("g1.kill(); print([i.name for i in page.items]); page.kill(); print(op.layouts())"),
+    ).toBe(true);
+    expect(stdout).toBe("['graph1']\n[]\n");
   });
 });

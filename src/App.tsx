@@ -233,6 +233,7 @@ function useMenus(): MenuDefinition[] {
         { label: "New Contour Plot…", onSelect: open({ kind: "matrixPlot", plot: "contour" }) },
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
         { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
+        { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
         { separator: true },
         {
           label: "Data Browser",

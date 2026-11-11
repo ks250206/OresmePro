@@ -195,6 +195,25 @@ g.axis("left").set(label="Squared", grid="major")
 g.legend(anchor="RT", frame=True)
 ```
 
+### ページレイアウト
+
+複数のグラフとテキストを 1 枚の用紙に並べて、図として書き出します(**Windows › New Page Layout**)。Igor のページレイアウトに当たります。
+
+- ツールバーの **Add Graph…** でグラフを、**Add Text…** でテキスト(キャプションなど)を置きます。
+  ドラッグで移動、四隅のハンドルでサイズ変更、矢印キーで 1 pt ずつ(`Shift` で 10 pt)、`Delete` で削除です。
+- ページはグラフを**そのまま**映します。グラフを変えればページも変わります。グラフはページ上の大きさで描き直されるので、
+  文字や線の太さは縮小されません(グラフのフォントが 9 pt なら、紙の上でも 9 pt)。
+- 用紙は A4 / A5 / A3 / Letter の縦・横。**Save PDF** で、用紙サイズそのままのベクター PDF になります(Python からは `.svg` と `.png` も)。
+
+```python
+page = op.new_layout("Figure", "A4")           # landscape=True で横、(幅, 高さ) を pt で直接指定も可
+page.add_text("Figure 1. Damped oscillation", x=40, y=36, size=13)
+top = page.add_graph(g1, x=40, y=64, w=250, h=170)          # 位置と大きさは pt(1/72 インチ)。左上が原点
+page.add_graph(g2, x=305, y=64, w=250, h=170)
+top.set(w=300); page.items; page.item("graph0").remove()
+page.save("figure.pdf")
+```
+
 ### Python のファイル
 
 Python の作業ディレクトリ(`/experiment`)は実験の一部です。
@@ -206,7 +225,7 @@ Python の作業ディレクトリ(`/experiment`)は実験の一部です。
 
 ### 保存
 
-- wave・グラフ・表・プロシージャ・Python のファイル・ウィンドウ配置・履歴は、ブラウザの OPFS(Origin Private File System)に自動保存され、次に開いたときに復元されます。
+- wave・グラフ・表・プロシージャ・ページレイアウト・Python のファイル・ウィンドウ配置・履歴は、ブラウザの OPFS(Origin Private File System)に自動保存され、次に開いたときに復元されます。
 - **File › Save Experiment As…**(`Ctrl+S` / `⌘S`)で、実験全体を 1 つの `.oresme` ファイルに保存できます。
   開くときは **File › Open Experiment…** か、ウィンドウへのドロップです。
 - `.oresme` は zip で、中身は `experiment.json`(構成とプロシージャ)、`waves/*.npy`(NumPy でそのまま読める wave データ)、`files/`(Python のファイル)、`history.json` です。

@@ -5,6 +5,7 @@ import type { DocState } from "../core/doc/types";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
+import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
 import { measureText } from "./measure";
@@ -34,6 +35,7 @@ export type DialogRequest =
   | { kind: "analysis"; operation: string; wave?: string }
   | { kind: "graphScript"; graph: string }
   | { kind: "timeZone" }
+  | { kind: "pageText"; layout: string; item?: string }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -126,6 +128,24 @@ export function renderGraphSvg(
   return toSvg(layout.prims, layout.width, layout.height);
 }
 
+/** Lays a page layout out, in points. */
+export function pageLayout(name: string) {
+  const state = doc.getState();
+  const page = state.pages[name];
+  if (!page) throw new Error(`No page layout named ${JSON.stringify(name)}.`);
+  return layoutPage(page, state, measureText);
+}
+
+export function renderPageSvg(name: string): string {
+  const layout = pageLayout(name);
+  return toSvg(layout.prims, layout.width, layout.height);
+}
+
+let pageExportHandler: (page: string, filename: string) => void = () => {};
+export function setPageExportHandler(handler: typeof pageExportHandler): void {
+  pageExportHandler = handler;
+}
+
 let exportHandler: (graph: string, filename: string, cursors: boolean) => void = () => {};
 /** Lets the export code (which depends on this module) serve Python's g.save(). */
 export function setExportHandler(handler: typeof exportHandler): void {
@@ -163,6 +183,8 @@ export const kernel: KernelClient = new KernelClient({
   onStart: runProcedures,
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
+  renderPageSvg,
+  exportPage: (page, filename) => pageExportHandler(page, filename),
   indexURL: PYODIDE_URL,
 });
 

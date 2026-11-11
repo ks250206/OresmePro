@@ -14,6 +14,9 @@ export interface RpcContext {
   renderSvg(graph: string, width: number | null, height: number | null, cursors: boolean): string;
   /** Saves a graph to a file the user downloads; the format follows the extension. */
   exportGraph(graph: string, filename: string, cursors: boolean): void;
+  /** The same for page layouts. */
+  renderPageSvg(page: string): string;
+  exportPage(page: string, filename: string): void;
 }
 
 export interface RpcReply {
@@ -152,6 +155,28 @@ export function handleRpc(
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
       return { result: table };
+    }
+    case "pageInfo": {
+      const page = typeof params.name === "string" ? state.pages[params.name] : undefined;
+      if (!page) throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      return { result: page };
+    }
+    case "pageSvg": {
+      if (typeof params.name !== "string" || !state.pages[params.name]) {
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      }
+      return { result: context.renderPageSvg(params.name) };
+    }
+    case "exportPage": {
+      if (typeof params.name !== "string" || !state.pages[params.name]) {
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      }
+      const filename = typeof params.filename === "string" ? params.filename : "";
+      if (!/\.(pdf|svg|png)$/i.test(filename)) {
+        throw new DocError("The file name must end in .pdf, .svg or .png.");
+      }
+      context.exportPage(params.name, filename);
+      return { result: null };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;

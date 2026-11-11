@@ -24,6 +24,8 @@ export interface KernelOptions {
   onStart?: () => void;
   renderSvg: RpcContext["renderSvg"];
   exportGraph: RpcContext["exportGraph"];
+  renderPageSvg: RpcContext["renderPageSvg"];
+  exportPage: RpcContext["exportPage"];
   indexURL: string;
 }
 

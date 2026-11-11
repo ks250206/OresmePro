@@ -96,6 +96,7 @@ export class App {
           graphs: state.graphs,
           tables: state.tables,
           procedures: state.procedures,
+          pages: state.pages,
           windows: state.windows,
         }),
       ) as {
@@ -104,6 +105,7 @@ export class App {
         graphs: typeof state.graphs;
         tables: typeof state.tables;
         procedures: typeof state.procedures;
+        pages: typeof state.pages;
         windows: typeof state.windows;
       };
     });

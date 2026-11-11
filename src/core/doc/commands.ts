@@ -15,6 +15,7 @@ import {
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
+  PAGE_SIZES,
   TAG_OFFSET,
   TICK_MODES,
   TRACE_MODES,
@@ -44,6 +45,8 @@ import {
   type TraceStyle,
   type Wave,
   type WindowState,
+  type PageItem,
+  type PageSpec,
   type ProcedureSpec,
 } from "./types";
 
@@ -177,6 +180,23 @@ export type Command =
   | { op: "modifyTable"; table: string; props: Props }
   | { op: "resizeColumn"; table: string; wave: string; width: number }
   | { op: "setTimeZone"; zone: string }
+  | { op: "newLayout"; name?: string; width?: number; height?: number }
+  | { op: "modifyLayout"; layout: string; props: Props }
+  | {
+      /** Puts a graph or a block of text on a page. Left out, the place is chosen. */
+      op: "addLayoutItem";
+      layout: string;
+      kind: string;
+      graph?: string;
+      text?: string;
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      size?: number;
+    }
+  | { op: "modifyLayoutItem"; layout: string; item: string; props: Props }
+  | { op: "removeLayoutItem"; layout: string; item: string }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   | { op: "killWindow"; name: string }
@@ -398,7 +418,7 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
 }
 
 const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables || name in state.procedures;
+  name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
 
 function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
@@ -407,7 +427,9 @@ function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): 
       ? { w: 440, h: 300 }
       : kind === "table"
         ? { w: 360, h: 300 }
-        : { w: 520, h: 340 };
+        : kind === "page"
+          ? { w: 440, h: 560 }
+          : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -644,6 +666,41 @@ const ANNOTATION_VALIDATORS: {
   y: (value) => finite(value, "y"),
   point: (value) => index(value, "point"),
 };
+
+const pageSide = (what: string) => (value: unknown) => {
+  const size = positive(value, what);
+  if (size < 72 || size > 5000) throw new DocError(`${what} must be between 72 and 5000 points.`);
+  return size;
+};
+const PAGE_VALIDATORS = { width: pageSide("width"), height: pageSide("height") };
+
+type ItemProps = Pick<PageItem, "x" | "y" | "w" | "h" | "size" | "text">;
+const ITEM_VALIDATORS: { [K in keyof ItemProps]: (value: unknown) => ItemProps[K] } = {
+  x: (value) => finite(value, "x"),
+  y: (value) => finite(value, "y"),
+  w: (value) => Math.max(40, positive(value, "w")),
+  h: (value) => Math.max(40, positive(value, "h")),
+  size: (value) => {
+    const size = positive(value, "size");
+    if (size < 4 || size > 200) throw new DocError("size must be between 4 and 200.");
+    return size;
+  },
+  text: (value) => {
+    if (typeof value !== "string") throw new DocError("text must be text.");
+    return value;
+  },
+};
+
+function requirePage(state: DocState, name: string): PageSpec {
+  const page = state.pages[name];
+  if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
+  return page;
+}
+
+const putPage = (state: DocState, page: PageSpec): DocState => ({
+  ...state,
+  pages: { ...state.pages, [page.name]: page },
+});
 
 function validateProps<T>(
   props: Props,
@@ -1394,6 +1451,100 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       }
       return { state: { ...state, timeZone: command.zone }, result: null };
     }
+    case "newLayout": {
+      const name =
+        command.name === undefined
+          ? uniqueName("Layout", windowTaken(state))
+          : checkName(command.name, "layout");
+      if (windowTaken(state)(name)) {
+        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+      }
+      const page: PageSpec = {
+        name,
+        width: PAGE_VALIDATORS.width(command.width ?? PAGE_SIZES.A4[0]),
+        height: PAGE_VALIDATORS.height(command.height ?? PAGE_SIZES.A4[1]),
+        items: [],
+      };
+      return {
+        state: {
+          ...state,
+          pages: { ...state.pages, [name]: page },
+          windows: [...state.windows, placeWindow(state, name, "page")],
+        },
+        result: name,
+      };
+    }
+    case "modifyLayout": {
+      const page = requirePage(state, command.layout);
+      const props = validateProps<Pick<PageSpec, "width" | "height">>(
+        command.props,
+        PAGE_VALIDATORS,
+        "layout",
+      );
+      return { state: putPage(state, { ...page, ...props }), result: null };
+    }
+    case "addLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const kind = oneOf(command.kind, ["graph", "text"] as const, "kind");
+      const margin = 36;
+      // Below what is there already, or back at the top if that is off the page.
+      let below = margin;
+      for (const item of page.items) below = Math.max(below, item.y + item.h + 12);
+      const base = { x: margin, y: below < page.height - 2 * margin ? below : margin };
+      let item: PageItem;
+      if (kind === "graph") {
+        const graph = requireGraph(state, command.graph ?? "");
+        const w = Math.min(page.width - 2 * margin, 440);
+        item = {
+          name: uniqueName("graph", (name) => page.items.some((other) => other.name === name)),
+          kind,
+          graph: graph.name,
+          text: "",
+          ...base,
+          w,
+          h: Math.round(w * 0.68),
+          size: 12,
+        };
+      } else {
+        if (typeof command.text !== "string" || command.text === "") {
+          throw new DocError("Give the text to put on the page.");
+        }
+        item = {
+          name: uniqueName("text", (name) => page.items.some((other) => other.name === name)),
+          kind,
+          graph: null,
+          text: command.text,
+          ...base,
+          w: 0,
+          h: 0,
+          size: 12,
+        };
+      }
+      const given: Record<string, unknown> = {};
+      for (const key of ["x", "y", "w", "h", "size"] as const) {
+        if (command[key] !== undefined) given[key] = command[key];
+      }
+      item = { ...item, ...validateProps<ItemProps>(given, ITEM_VALIDATORS, "item") };
+      return {
+        state: putPage(state, { ...page, items: [...page.items, item] }),
+        result: item.name,
+      };
+    }
+    case "modifyLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const target = requireItem(page.items, command.item, page.name, "item");
+      const props = validateProps<ItemProps>(command.props, ITEM_VALIDATORS, "item");
+      const items = page.items.map((item) => (item === target ? { ...item, ...props } : item));
+      return { state: putPage(state, { ...page, items }), result: null };
+    }
+    case "removeLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const target = requireItem(page.items, command.item, page.name, "item");
+      return {
+        state: putPage(state, { ...page, items: page.items.filter((item) => item !== target) }),
+        result: null,
+      };
+    }
     case "newProcedure": {
       let name = "Procedure";
       if (command.name !== undefined) {
@@ -1449,15 +1600,29 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const graphs = { ...state.graphs };
       const tables = { ...state.tables };
       const procedures = { ...state.procedures };
+      const pages = { ...state.pages };
+      // A graph that is closed leaves the pages it was on.
+      if (command.name in graphs) {
+        for (const [name, page] of Object.entries(pages)) {
+          if (page.items.some((item) => item.graph === command.name)) {
+            pages[name] = {
+              ...page,
+              items: page.items.filter((item) => item.graph !== command.name),
+            };
+          }
+        }
+      }
       delete graphs[command.name];
       delete tables[command.name];
       delete procedures[command.name];
+      delete pages[command.name];
       return {
         state: {
           ...state,
           graphs,
           tables,
           procedures,
+          pages,
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

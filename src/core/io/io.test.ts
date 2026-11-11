@@ -147,6 +147,9 @@ describe("experiment files", () => {
     doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 5 } });
     doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "labels", width: 140 });
     doc.dispatch({ op: "setTimeZone", zone: "Europe/Paris" });
+    doc.dispatch({ op: "newLayout", width: 842, height: 595 });
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph0" });
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "text", text: "Caption" });
     doc.dispatch({ op: "newProcedure", code: "def f():\n    return 1\n" });
     doc.dispatch({ op: "setProcedure", name: "Procedure", autoRun: false });
     const history = new History();
@@ -181,6 +184,8 @@ describe("experiment files", () => {
     expect(restored.state.tables).toEqual(before.tables);
     expect(restored.state.procedures).toEqual(before.procedures);
     expect(restored.state.timeZone).toBe("Europe/Paris");
+    expect(restored.state.pages).toEqual(before.pages);
+    expect(before.pages.Layout0!.items).toHaveLength(2);
     expect(restored.state.windows).toEqual(before.windows);
     expect(restored.history[0]!.code).toBe("print(1)");
     expect(restored.files.map(([path, bytes]) => [path, Array.from(bytes)])).toEqual(

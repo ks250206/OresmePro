@@ -1454,6 +1454,59 @@ function GraphScriptDialog({ graph }: { graph: string }) {
   );
 }
 
+/** Adds a block of text to a page layout, or changes one that is there. */
+function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
+  const existing = useDoc((state) =>
+    state.pages[layout]?.items.find((other) => other.name === item),
+  );
+  const [text, setText] = useState(existing?.text ?? "");
+  const [size, setSize] = useState(String(existing?.size ?? 12));
+  if (item && !existing) return null;
+  const points = parseNumber(size);
+  const invalid = points === null || points < 4 || points > 200;
+  const props: Record<string, unknown> = {};
+  if (existing) {
+    if (text !== existing.text) props.text = text;
+    if (!invalid && points !== existing.size) props.size = points;
+  }
+  return (
+    <Dialog
+      title={existing ? `Edit Text — ${layout}` : `Add Text — ${layout}`}
+      onClose={close}
+      submitDisabled={
+        invalid || text.trim() === "" || (existing ? Object.keys(props).length === 0 : false)
+      }
+      onSubmit={() =>
+        submit(
+          existing
+            ? { op: "modifyLayoutItem", layout, item: existing.name, props }
+            : { op: "addLayoutItem", layout, kind: "text", text, size: points! },
+        )
+      }
+    >
+      <textarea
+        aria-label="Text"
+        autoFocus
+        rows={3}
+        spellCheck={false}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+      />
+      <Field label="Size">
+        <TextInput
+          aria-label="Size"
+          aria-invalid={invalid}
+          className="w-16"
+          value={size}
+          onChange={(event) => setSize(event.target.value)}
+        />
+        <span className="text-muted">points</span>
+      </Field>
+    </Dialog>
+  );
+}
+
 /** Chooses the time zone dates are shown and typed in. */
 function TimeZoneDialog() {
   const current = useDoc((state) => state.timeZone);
@@ -1920,6 +1973,8 @@ function renderDialog(dialog: DialogRequest) {
       return <GraphScriptDialog graph={dialog.graph} />;
     case "timeZone":
       return <TimeZoneDialog />;
+    case "pageText":
+      return <PageTextDialog layout={dialog.layout} item={dialog.item} />;
     case "about":
       return <AboutDialog />;
   }

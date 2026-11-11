@@ -415,10 +415,50 @@ export interface ProcedureSpec {
   autoRun: boolean;
 }
 
-export interface WindowState {
-  /** Same as the name of the graph, table or procedure it shows. */
+/** Something placed on a page layout: a graph, or a block of text. */
+export interface PageItem {
+  /** Unique on its page: "graph0", "text0", ... */
   name: string;
-  kind: "graph" | "table" | "procedure";
+  kind: "graph" | "text";
+  /** The graph shown, for an item of kind "graph". */
+  graph: string | null;
+  /** The text, which may have several lines, for an item of kind "text". */
+  text: string;
+  /** The top left corner on the page, in points (1/72 inch). */
+  x: number;
+  y: number;
+  /** The size of a graph on the page, in points. Text takes the room it needs. */
+  w: number;
+  h: number;
+  /** The font size of text, in points. */
+  size: number;
+}
+
+/**
+ * A page layout: graphs and text arranged on a sheet of paper, for a figure
+ * of several panels. Like an Igor page layout, it shows the graphs as they
+ * are; change a graph and the page follows.
+ */
+export interface PageSpec {
+  name: string;
+  /** The size of the paper, in points. */
+  width: number;
+  height: number;
+  items: readonly PageItem[];
+}
+
+/** Paper sizes in points, upright. */
+export const PAGE_SIZES = {
+  A4: [595, 842],
+  A5: [420, 595],
+  A3: [842, 1191],
+  Letter: [612, 792],
+} as const;
+
+export interface WindowState {
+  /** Same as the name of the graph, table, procedure or page layout it shows. */
+  name: string;
+  kind: "graph" | "table" | "procedure" | "page";
   x: number;
   y: number;
   w: number;
@@ -434,6 +474,7 @@ export interface DocState {
   readonly graphs: Readonly<Record<string, GraphSpec>>;
   readonly tables: Readonly<Record<string, TableSpec>>;
   readonly procedures: Readonly<Record<string, ProcedureSpec>>;
+  readonly pages: Readonly<Record<string, PageSpec>>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -450,6 +491,7 @@ export const emptyDoc = (): DocState => ({
   graphs: {},
   tables: {},
   procedures: {},
+  pages: {},
   timeZone: "UTC",
   windows: [],
 });

@@ -4,6 +4,8 @@ import { defaultAxis, type Wave } from "../doc/types";
 import { tracePixels, visibleRange, xExtentOf } from "./decimate";
 import type { MeasureText, Prim } from "./displayList";
 import { axisRange, layoutGraph } from "./layout";
+import { layoutPage, translatePrims } from "./page";
+import { toPdf } from "./pdf";
 import { parseRichText } from "./richText";
 import { makeScale } from "./scale";
 import { toSvg } from "./svg";
@@ -924,5 +926,98 @@ describe("layoutGraph", () => {
       { kind: "image" }
     >;
     expect(new Set(Array.from(image.rgba.filter((_, index) => index % 4 === 0))).size).toBe(1);
+  });
+});
+
+describe("page layouts", () => {
+  function pageDoc() {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 3, 2), unit: "V" });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "newLayout" });
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "graph",
+      graph: "Graph0",
+      x: 100,
+      y: 200,
+      w: 300,
+      h: 200,
+    });
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "text",
+      text: "Figure 1\nsecond line",
+      x: 100,
+      y: 420,
+      size: 10,
+    });
+    return doc;
+  }
+
+  it("draws each graph at its place and size on the page", () => {
+    const state = pageDoc().getState();
+    const layout = layoutPage(state.pages.Layout0!, state, measure);
+    expect([layout.width, layout.height]).toEqual([595, 842]);
+    expect(layout.items).toEqual([
+      { name: "graph0", kind: "graph", box: { x: 100, y: 200, w: 300, h: 200 } },
+      {
+        name: "text0",
+        kind: "text",
+        box: { x: 100, y: 420, w: measure("second line", 10, ""), h: 26 },
+      },
+    ]);
+    // The graph as it would be drawn alone at that size, moved to its place.
+    const alone = layoutGraph(state.graphs.Graph0!, state.waves, 300, 200, measure);
+    const clip = layout.prims.find((prim) => prim.kind === "clip")!;
+    expect(clip).toMatchObject({ kind: "clip", x: 100, y: 200, w: 300, h: 200 });
+    const placed = clip.kind === "clip" ? clip.children : [];
+    expect(placed).toHaveLength(alone.prims.length);
+    const text = (prims: readonly Prim[]) =>
+      prims.flatMap((prim) => (prim.kind === "text" ? [[prim.text, prim.x, prim.y]] : []));
+    expect(text(placed)).toEqual(
+      text(alone.prims).map(([label, x, y]) => [label, (x as number) + 100, (y as number) + 200]),
+    );
+    const lines = layout.prims.filter((prim) => prim.kind === "text");
+    expect(lines.map((prim) => (prim.kind === "text" ? prim.text : ""))).toEqual([
+      "Figure 1",
+      "second line",
+    ]);
+  });
+
+  it("moves every kind of drawing instruction, and leaves the original alone", () => {
+    const original: Prim[] = [
+      { kind: "polyline", points: [0, 0, 10, 10], stroke: "#000000", width: 1 },
+      { kind: "rect", x: 1, y: 2, w: 3, h: 4, fill: "#ffffff" },
+      {
+        kind: "clip",
+        x: 0,
+        y: 0,
+        w: 5,
+        h: 5,
+        children: [{ kind: "text", x: 1, y: 1, text: "a", family: "f", size: 9, fill: "#000000" }],
+      },
+    ];
+    const moved = translatePrims(original, 5, -2);
+    expect(Array.from((moved[0] as { points: ArrayLike<number> }).points)).toEqual([5, -2, 15, 8]);
+    expect(moved[1]).toMatchObject({ x: 6, y: 0, w: 3, h: 4 });
+    expect(moved[2]).toMatchObject({ x: 5, y: -2, children: [{ x: 6, y: -1 }] });
+    expect(original[1]).toMatchObject({ x: 1, y: 2 });
+  });
+
+  it("makes a PDF of the paper's own size", () => {
+    const state = pageDoc().getState();
+    const layout = layoutPage(state.pages.Layout0!, state, measure);
+    const pdf = new TextDecoder("latin1").decode(
+      toPdf(layout.prims, layout.width, layout.height, { scale: 1 }),
+    );
+    expect(pdf).toContain("/MediaBox [0 0 595 842]");
+    // A graph alone is in CSS pixels: three quarters of a point each.
+    const graph = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    expect(new TextDecoder("latin1").decode(toPdf(graph.prims, 400, 300))).toContain(
+      "/MediaBox [0 0 300 225]",
+    );
   });
 });

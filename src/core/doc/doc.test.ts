@@ -565,3 +565,115 @@ describe("wave types", () => {
     expect(() => doc.dispatch({ op: "redimension", name: "t", type: "float32" })).toThrow(/text/);
   });
 });
+
+describe("page layouts", () => {
+  const setup = () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2, 3) });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "newLayout" });
+    return doc;
+  };
+  const page = (doc: Doc) => doc.getState().pages.Layout0!;
+
+  it("are windows holding graphs and text at places on a sheet of paper", () => {
+    const doc = setup();
+    expect(page(doc)).toEqual({ name: "Layout0", width: 595, height: 842, items: [] });
+    expect(doc.getState().windows.at(-1)).toMatchObject({ name: "Layout0", kind: "page" });
+    expect(
+      doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph0" }),
+    ).toBe("graph0");
+    expect(
+      doc.dispatch({
+        op: "addLayoutItem",
+        layout: "Layout0",
+        kind: "graph",
+        graph: "Graph1",
+        w: 200,
+        h: 150,
+      }),
+    ).toBe("graph1");
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "text",
+      text: "Figure 1",
+      x: 40,
+      y: 800,
+      size: 9,
+    });
+    const [first, second, caption] = page(doc).items;
+    // The first at the top margin, as wide as the page allows; the next below it.
+    expect(first).toMatchObject({ x: 36, y: 36, w: 440, graph: "Graph0" });
+    expect(second).toMatchObject({ x: 36, y: first!.y + first!.h + 12, w: 200, h: 150 });
+    expect(caption).toMatchObject({
+      name: "text0",
+      kind: "text",
+      text: "Figure 1",
+      x: 40,
+      y: 800,
+      size: 9,
+    });
+
+    doc.dispatch({
+      op: "modifyLayoutItem",
+      layout: "Layout0",
+      item: "graph1",
+      props: { x: 300, w: 10 },
+    });
+    // Never too small to grab.
+    expect(page(doc).items[1]).toMatchObject({ x: 300, w: 40 });
+    doc.dispatch({ op: "modifyLayout", layout: "Layout0", props: { width: 842, height: 595 } });
+    expect([page(doc).width, page(doc).height]).toEqual([842, 595]);
+    expect(() =>
+      doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Nope" }),
+    ).toThrow();
+    expect(() => doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "text" })).toThrow(
+      /text/,
+    );
+    expect(() =>
+      doc.dispatch({ op: "modifyLayout", layout: "Layout0", props: { width: 1 } }),
+    ).toThrow();
+  });
+
+  it("lose a graph that is closed, and get it back with undo", () => {
+    const doc = setup();
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph0" });
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph1" });
+    doc.dispatch({ op: "killWindow", name: "Graph0" });
+    expect(page(doc).items.map((item) => item.graph)).toEqual(["Graph1"]);
+    doc.undo();
+    expect(page(doc).items.map((item) => item.graph)).toEqual(["Graph0", "Graph1"]);
+    doc.dispatch({ op: "removeLayoutItem", layout: "Layout0", item: "graph0" });
+    expect(page(doc).items.map((item) => item.name)).toEqual(["graph1"]);
+    doc.dispatch({ op: "killWindow", name: "Layout0" });
+    expect(doc.getState().pages).toEqual({});
+  });
+
+  it("are written into the history as Python", () => {
+    expect(echoPython({ op: "newLayout" })).toBe("op.new_layout()");
+    expect(
+      echoPython({
+        op: "addLayoutItem",
+        layout: "L",
+        kind: "graph",
+        graph: "Graph0",
+        x: 10,
+        w: 200,
+      }),
+    ).toBe('op.layout("L").add_graph("Graph0", x=10, w=200)');
+    expect(
+      echoPython({ op: "addLayoutItem", layout: "L", kind: "text", text: "Hi", size: 9 }),
+    ).toBe('op.layout("L").add_text("Hi", size=9)');
+    expect(
+      echoPython({ op: "modifyLayoutItem", layout: "L", item: "graph0", props: { x: 1, y: 2 } }),
+    ).toBe('op.layout("L").item("graph0").set(x=1, y=2)');
+    expect(echoPython({ op: "removeLayoutItem", layout: "L", item: "text0" })).toBe(
+      'op.layout("L").item("text0").remove()',
+    );
+    expect(
+      echoPython({ op: "modifyLayout", layout: "L", props: { width: 842, height: 595 } }),
+    ).toBe('op.layout("L").set(width=842, height=595)');
+  });
+});

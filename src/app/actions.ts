@@ -4,6 +4,8 @@ import { columnsFromRows, parseDelimited, type DelimitedResult } from "../core/i
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { readXlsx } from "../core/io/xlsx";
 import { drawPrims } from "../core/plot/canvas";
+import type { Prim } from "../core/plot/displayList";
+import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { timeZone } from "../core/plot/ticks";
 import {
@@ -14,9 +16,10 @@ import {
   history,
   kernel,
   note,
-  renderGraphSvg,
+  pageLayout,
   runGui,
   setExportHandler,
+  setPageExportHandler,
   showError,
 } from "./session";
 
@@ -66,41 +69,64 @@ function rasterizeText(
   };
 }
 
+/**
+ * Saves a drawing as .pdf, .svg or .png, chosen by the file name. `points`
+ * is how many PDF points one unit of the drawing is: 0.75 for a graph, which
+ * is in CSS pixels, and 1 for a page layout.
+ */
+function exportDrawing(
+  layout: { prims: readonly Prim[]; width: number; height: number },
+  filename: string,
+  points: number,
+): void {
+  const extension = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
+  if (extension === "svg") {
+    download(
+      new Blob([toSvg(layout.prims, layout.width, layout.height)], { type: "image/svg+xml" }),
+      filename,
+    );
+  } else if (extension === "pdf") {
+    const pdf = toPdf(layout.prims, layout.width, layout.height, {
+      rasterizeText,
+      scale: points,
+    }) as Uint8Array<ArrayBuffer>;
+    download(new Blob([pdf], { type: "application/pdf" }), filename);
+  } else {
+    // Three times screen resolution for a graph (about 300 dpi for a page),
+    // enough for print at typical sizes.
+    const scale = points === 1 ? 300 / 72 : 3;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(layout.width * scale);
+    canvas.height = Math.round(layout.height * scale);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("No canvas available.");
+    context.scale(scale, scale);
+    drawPrims(context, layout.prims, scale);
+    canvas.toBlob((blob) => {
+      if (blob) download(blob, filename);
+      else showError("Could not export", "The image could not be encoded.");
+    }, "image/png");
+  }
+}
+
 /** Saves a graph as .pdf, .svg or .png, chosen by the file name. */
 export function exportGraph(name: string, filename: string, cursors = false): void {
   try {
-    const extension = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
-    if (extension === "svg") {
-      download(
-        new Blob([renderGraphSvg(name, null, null, cursors)], { type: "image/svg+xml" }),
-        filename,
-      );
-    } else if (extension === "pdf") {
-      const layout = exportLayout(name, null, null, cursors);
-      const pdf = toPdf(layout.prims, layout.width, layout.height, {
-        rasterizeText,
-      }) as Uint8Array<ArrayBuffer>;
-      download(new Blob([pdf], { type: "application/pdf" }), filename);
-    } else {
-      // Three times screen resolution, enough for print at typical sizes.
-      const scale = 3;
-      const layout = exportLayout(name, null, null, cursors);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(layout.width * scale);
-      canvas.height = Math.round(layout.height * scale);
-      const context = canvas.getContext("2d");
-      if (!context) throw new Error("No canvas available.");
-      context.scale(scale, scale);
-      drawPrims(context, layout.prims, scale);
-      canvas.toBlob((blob) => {
-        if (blob) download(blob, filename);
-        else showError("Could not export the graph", "The image could not be encoded.");
-      }, "image/png");
-    }
+    exportDrawing(exportLayout(name, null, null, cursors), filename, 0.75);
   } catch (error) {
     showError("Could not export the graph", error);
   }
 }
+
+/** Saves a page layout as .pdf (at its paper size), .svg or .png. */
+export function exportPage(name: string, filename: string): void {
+  try {
+    exportDrawing(pageLayout(name), filename, 1);
+  } catch (error) {
+    showError("Could not export the page", error);
+  }
+}
+setPageExportHandler(exportPage);
 setExportHandler(exportGraph);
 
 function pickFile(accept: string, multiple: boolean, onFiles: (files: File[]) => void): void {

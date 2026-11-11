@@ -89,6 +89,21 @@ export function echoPython(
     case "resizeColumn":
     case "setProcedure":
       return null;
+    case "newLayout":
+      return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
+    case "modifyLayout":
+      return `op.layout(${pyLiteral(command.layout)}).set(${keywords(command.props)})`;
+    case "addLayoutItem": {
+      const layout = `op.layout(${pyLiteral(command.layout)})`;
+      const place = keywords({ x: command.x, y: command.y, w: command.w, h: command.h });
+      return command.kind === "graph"
+        ? `${layout}.add_graph(${joinArgs(pyLiteral(command.graph), place)})`
+        : `${layout}.add_text(${joinArgs(pyLiteral(command.text), keywords({ x: command.x, y: command.y, size: command.size }))})`;
+    }
+    case "modifyLayoutItem":
+      return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).set(${keywords(command.props)})`;
+    case "removeLayoutItem":
+      return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).remove()`;
     case "setTimeZone":
       return `op.set_time_zone(${pyLiteral(command.zone)})`;
     case "newProcedure":

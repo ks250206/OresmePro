@@ -10,6 +10,7 @@ import {
   type AxisSpec,
   type DocState,
   type GraphSpec,
+  type PageSpec,
   type ProcedureSpec,
   type TableSpec,
   type TraceSpec,
@@ -48,6 +49,7 @@ export interface SavedExperiment {
   graphs: Record<string, GraphSpec>;
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
+  pages?: Record<string, PageSpec>;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -76,6 +78,7 @@ export function describeExperiment(
     graphs: { ...state.graphs },
     tables: { ...state.tables },
     procedures: { ...state.procedures },
+    pages: { ...state.pages },
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
@@ -163,11 +166,21 @@ export function buildState(
     procedures[name] = { name, code: procedure.code ?? "", autoRun: procedure.autoRun ?? true };
   }
   // A window whose content did not come along would be an empty frame.
+  const pages: Record<string, PageSpec> = {};
+  for (const [name, page] of Object.entries(saved.pages ?? {})) {
+    // A page keeps only the graphs that came along.
+    const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
+    pages[name] = { ...page, name, items };
+  }
   const windows = saved.windows.filter(
-    (window) => window.name in graphs || window.name in tables || window.name in procedures,
+    (window) =>
+      window.name in graphs ||
+      window.name in tables ||
+      window.name in procedures ||
+      window.name in pages,
   );
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
-  return { ...state, graphs, tables, procedures, timeZone, windows };
+  return { ...state, graphs, tables, procedures, pages, timeZone, windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

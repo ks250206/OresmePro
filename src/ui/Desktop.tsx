@@ -2,6 +2,7 @@ import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "
 import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
 import type { WindowState } from "../core/doc/types";
 import { GraphWindow } from "./GraphWindow";
+import { LayoutWindow } from "./LayoutWindow";
 import { ProcedureWindow } from "./ProcedureWindow";
 import { TableWindow } from "./TableWindow";
 
@@ -198,6 +199,8 @@ export function Desktop() {
               <GraphWindow name={window.name} />
             ) : window.kind === "table" ? (
               <TableWindow name={window.name} />
+            ) : window.kind === "page" ? (
+              <LayoutWindow name={window.name} />
             ) : (
               <ProcedureWindow name={window.name} />
             )}

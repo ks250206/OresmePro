@@ -62,6 +62,11 @@ __all__ = [
     "time_zone",
     "set_time_zone",
     "WAVE_TYPES",
+    "Layout",
+    "LayoutItem",
+    "new_layout",
+    "layout",
+    "layouts",
 ]
 
 
@@ -1192,6 +1197,155 @@ class Procedure:
 
     def __repr__(self):
         return f"Procedure({self._name!r})"
+
+
+class LayoutItem(_Props):
+    """A graph or a block of text on a page layout.
+
+    ``x`` and ``y`` are its top left corner and ``w`` and ``h`` the size of
+    a graph, all in points (1/72 inch) from the top left of the page.
+    ``text`` and ``size`` are the words and font size of a text item.
+    """
+
+    _props = ("x", "y", "w", "h", "text", "size")
+
+    def __init__(self, layout, name):
+        self._layout = layout
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        for item in self._layout._get()["items"]:
+            if item["name"] == self._name:
+                return item
+        raise OresmeError(f"{self._layout.name} has no item named {self._name!r}.")
+
+    def _set(self, props):
+        _dispatch(
+            {
+                "op": "modifyLayoutItem",
+                "layout": self._layout.name,
+                "item": self._name,
+                "props": props,
+            }
+        )
+
+    @property
+    def graph(self):
+        name = self._get()["graph"]
+        return None if name is None else Graph(name)
+
+    def remove(self):
+        _dispatch({"op": "removeLayoutItem", "layout": self._layout.name, "item": self._name})
+
+    def __repr__(self):
+        return f"LayoutItem({self._name!r} on {self._layout.name})"
+
+
+class Layout(_Props):
+    """A page layout: graphs and text arranged on a sheet of paper.
+
+    ``width`` and ``height`` are the size of the paper in points. The page
+    shows the graphs as they are: change a graph and the page follows.
+    """
+
+    _props = ("width", "height")
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        return _call("pageInfo", {"name": self._name})[0]
+
+    def _set(self, props):
+        _dispatch({"op": "modifyLayout", "layout": self._name, "props": props})
+
+    def add_graph(self, graph, x=None, y=None, w=None, h=None):
+        """Put a graph on the page. Without a place, it goes below what is there."""
+        command = {
+            "op": "addLayoutItem",
+            "layout": self._name,
+            "kind": "graph",
+            "graph": graph.name if isinstance(graph, Graph) else graph,
+        }
+        for key, value in (("x", x), ("y", y), ("w", w), ("h", h)):
+            if value is not None:
+                command[key] = float(value)
+        return LayoutItem(self, _dispatch(command))
+
+    def add_text(self, text, x=None, y=None, size=None):
+        """Put text on the page. ``^{...}`` and ``_{...}`` give super- and subscripts."""
+        command = {"op": "addLayoutItem", "layout": self._name, "kind": "text", "text": str(text)}
+        for key, value in (("x", x), ("y", y), ("size", size)):
+            if value is not None:
+                command[key] = float(value)
+        return LayoutItem(self, _dispatch(command))
+
+    @property
+    def items(self):
+        return [LayoutItem(self, item["name"]) for item in self._get()["items"]]
+
+    def item(self, name):
+        return LayoutItem(self, name)
+
+    def svg(self):
+        """The page as an SVG document."""
+        return _call("pageSvg", {"name": self._name})[0]
+
+    def save(self, filename):
+        """Download the page as a file: .pdf (at the paper's size), .svg or .png."""
+        _call("exportPage", {"name": self._name, "filename": str(filename)})
+
+    def kill(self):
+        kill_window(self._name)
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        return {"text/plain": repr(self), "image/svg+xml": self.svg()}
+
+    def __repr__(self):
+        return f"Layout({self._name!r})"
+
+
+#: Paper sizes in points, upright.
+PAGE_SIZES = {"A4": (595, 842), "A5": (420, 595), "A3": (842, 1191), "Letter": (612, 792)}
+
+
+def new_layout(name=None, size="A4", landscape=False):
+    """Make a page layout. ``size`` is a paper name or (width, height) in points."""
+    if isinstance(size, str):
+        if size not in PAGE_SIZES:
+            raise OresmeError(f"Paper sizes: {', '.join(PAGE_SIZES)}; or give (width, height).")
+        size = PAGE_SIZES[size]
+    width, height = (float(size[0]), float(size[1]))
+    if landscape:
+        width, height = height, width
+    command = {"op": "newLayout", "width": width, "height": height}
+    if name is not None:
+        command["name"] = name
+    return Layout(_dispatch(command))
+
+
+def layouts():
+    return [Layout(name) for name in _call("listWindows", {"kind": "page"})[0]]
+
+
+def layout(name=None):
+    """A page layout by name; with no name, the frontmost one."""
+    names = _call("listWindows", {"kind": "page"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no page layouts.")
+        return Layout(names[-1])
+    if name not in names:
+        raise OresmeError(f"No page layout named {name!r}.")
+    return Layout(name)
 
 
 class Table(_Props):
