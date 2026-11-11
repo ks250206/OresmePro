@@ -93,3 +93,54 @@ export function contourSegments(
   }
   return Float64Array.from(out);
 }
+
+/**
+ * Joins the loose segments of one contour level into polylines (x0, y0,
+ * x1, y1, ... each), so lines can be drawn with proper joins and labelled.
+ */
+export function chainSegments(segments: Float64Array): Float64Array[] {
+  // Segment ends that meet were computed from the same cell edge, so they
+  // agree to within rounding; a fine grid makes them compare equal.
+  const key = (x: number, y: number) => `${Math.round(x * 1e6)},${Math.round(y * 1e6)}`;
+  const count = segments.length / 4;
+  const ends = new Map<string, number[]>();
+  for (let index = 0; index < count; index += 1) {
+    for (const at of [0, 2]) {
+      const k = key(segments[index * 4 + at]!, segments[index * 4 + at + 1]!);
+      const list = ends.get(k);
+      if (list) list.push(index);
+      else ends.set(k, [index]);
+    }
+  }
+  const used = new Uint8Array(count);
+  /** Follows unused segments from a point, appending the far end of each. */
+  const walk = (x: number, y: number, out: number[]) => {
+    for (;;) {
+      const next = ends.get(key(x, y))?.find((index) => !used[index]);
+      if (next === undefined) return;
+      used[next] = 1;
+      const base = next * 4;
+      const atStart = key(segments[base]!, segments[base + 1]!) === key(x, y);
+      x = segments[base + (atStart ? 2 : 0)]!;
+      y = segments[base + (atStart ? 3 : 1)]!;
+      out.push(x, y);
+    }
+  };
+  const chains: Float64Array[] = [];
+  for (let index = 0; index < count; index += 1) {
+    if (used[index]) continue;
+    used[index] = 1;
+    const base = index * 4;
+    const forward = [segments[base + 2]!, segments[base + 3]!];
+    walk(forward[0]!, forward[1]!, forward);
+    const backward: number[] = [];
+    walk(segments[base]!, segments[base + 1]!, backward);
+    // backward holds points going away from the start: reverse it in pairs.
+    const points: number[] = [];
+    for (let at = backward.length - 2; at >= 0; at -= 2)
+      points.push(backward[at]!, backward[at + 1]!);
+    points.push(segments[base]!, segments[base + 1]!, ...forward);
+    chains.push(Float64Array.from(points));
+  }
+  return chains;
+}

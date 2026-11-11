@@ -27,6 +27,9 @@ export interface Wave {
   readonly rev: number;
 }
 
+/** The unit that marks values as dates: seconds since 1970-01-01 UTC. As in Igor. */
+export const DATE_UNIT = "dat";
+
 /** Number of elements along the first dimension. */
 export const waveRows = (wave: Wave): number => wave.shape[0] ?? 0;
 export const isTextWave = (wave: Wave): boolean => wave.text !== null;
@@ -42,6 +45,7 @@ export const TRACE_MODES = [
   "sticks",
   "dots",
   "cityscape",
+  "bars",
 ] as const;
 export type TraceMode = (typeof TRACE_MODES)[number];
 
@@ -74,7 +78,11 @@ export interface TraceSpec extends TraceStyle {
   /** Unique within the graph: the Y wave's own name, plus `#n` for repeats. */
   name: string;
   y: string;
-  /** X wave name, or null to use the Y wave's X scaling. */
+  /**
+   * X wave name, or null to use the Y wave's X scaling. A text wave here
+   * makes a category plot: the points are spaced evenly and labelled with
+   * the text.
+   */
   x: string | null;
   /** Names of the axes the trace is plotted against. */
   vAxis: string;
@@ -84,12 +92,18 @@ export interface TraceSpec extends TraceStyle {
 export const COLOR_TABLES = ["grays", "viridis", "plasma", "hot", "rainbow", "bluered"] as const;
 export type ColorTable = (typeof COLOR_TABLES)[number];
 
-/** A 2-D wave shown as an image: dimension 0 along the horizontal axis. */
+/**
+ * A wave shown as an image: dimension 0 along the horizontal axis and
+ * dimension 1 along the vertical. For a wave of 3 or 4 dimensions, `layer`
+ * and `chunk` pick the plane to show (indices along dimensions 2 and 3).
+ */
 export interface ImageSpec {
   name: string;
   wave: string;
   vAxis: string;
   hAxis: string;
+  layer: number;
+  chunk: number;
   colorTable: ColorTable;
   /** Values mapped to the ends of the color table; null follows the data. */
   zMin: number | null;
@@ -97,12 +111,16 @@ export interface ImageSpec {
   reverse: boolean;
 }
 
-/** Contour lines of a 2-D wave. */
+/** Contour lines of one plane of a wave (see {@link ImageSpec}). */
 export interface ContourSpec {
   name: string;
   wave: string;
   vAxis: string;
   hAxis: string;
+  layer: number;
+  chunk: number;
+  /** Writes each level's value on its line. */
+  labels: boolean;
   /** How many levels to choose automatically, or the level values themselves. */
   levels: number | readonly number[];
   color: string;

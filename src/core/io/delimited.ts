@@ -1,10 +1,13 @@
 import { sanitizeName } from "../doc/commands";
+import { parseDate } from "../plot/ticks";
 
 export interface DelimitedResult {
   /** Legal, unique wave names, one per column. */
   names: string[];
   /** Numeric columns as numbers; columns that hold text as strings. */
   columns: (Float64Array | string[])[];
+  /** True for columns of dates, stored as seconds since 1970-01-01 UTC. */
+  dates: boolean[];
   rows: number;
 }
 
@@ -41,7 +44,7 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
   const lines = text
     .split(/\r\n|\n|\r/)
     .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
-  if (lines.length === 0) return { names: [], columns: [], rows: 0 };
+  if (lines.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
 
   const delimiter = detectDelimiter(lines);
   const split = (line: string): string[] => {
@@ -55,6 +58,7 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
 
   const names: string[] = [];
   const columns: (Float64Array | string[])[] = [];
+  const dates: boolean[] = [];
   const used = new Set<string>();
   for (let column = 0; column < width; column += 1) {
     const title = header[column]?.trim() || `column${column}`;
@@ -69,14 +73,28 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
         if (isNumeric(cell)) numeric += 1;
       }
     });
-    // A column counts as text when most of its filled cells are not numbers.
-    const isText = filled > 0 && numeric < filled / 2;
+    // A column counts as text when most of its filled cells are not numbers...
+    let isText = filled > 0 && numeric < filled / 2;
+    // ...unless every filled cell is a date, which is stored as a number of seconds.
+    let isDate = false;
+    if (isText) {
+      const seconds = rows.map((row) => {
+        const cell = (row[column] ?? "").trim();
+        return cell === "" ? Number.NaN : parseDate(cell);
+      });
+      if (seconds.every((value) => value !== null)) {
+        data.set(seconds as number[]);
+        isText = false;
+        isDate = true;
+      }
+    }
     const base = sanitizeName(title, "wave");
     let name = base;
     for (let suffix = 1; used.has(name) || taken(name); suffix += 1) name = `${base}_${suffix}`;
     used.add(name);
     names.push(name);
     columns.push(isText ? rows.map((row) => row[column] ?? "") : data);
+    dates.push(isDate);
   }
-  return { names, columns, rows: rows.length };
+  return { names, columns, dates, rows: rows.length };
 }

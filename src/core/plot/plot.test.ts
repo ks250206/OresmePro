@@ -7,7 +7,17 @@ import { axisRange, layoutGraph } from "./layout";
 import { parseRichText } from "./richText";
 import { makeScale } from "./scale";
 import { toSvg } from "./svg";
-import { axisLabelText, formatNumber, linearTicks, logTicks, niceStep } from "./ticks";
+import {
+  axisLabelText,
+  categoryTicks,
+  dateTicks,
+  formatDate,
+  formatNumber,
+  linearTicks,
+  logTicks,
+  niceStep,
+  parseDate,
+} from "./ticks";
 
 const measure: MeasureText = (text, size) => text.length * size * 0.55;
 
@@ -99,6 +109,56 @@ describe("formatNumber", () => {
     expect(formatNumber(1234567)).toBe("1.23457e6");
     expect(formatNumber(0.00001234)).toBe("1.234e-5");
     expect(formatNumber(Number.NaN)).toBe("NaN");
+  });
+});
+
+describe("dates", () => {
+  const at = (text: string) => parseDate(text)!;
+
+  it("parses and formats ISO dates, taking times without a zone as UTC", () => {
+    expect(at("1970-01-02")).toBe(86400);
+    expect(at("2026-11-11T09:30:15.5")).toBe(at("2026-11-11") + 9 * 3600 + 30 * 60 + 15.5);
+    expect(at("2026-11-11 09:30+09:00")).toBe(at("2026-11-11 00:30"));
+    expect(parseDate("11/11/2026")).toBeNull();
+    expect(formatDate(at("2026-11-11"))).toBe("2026-11-11");
+    expect(formatDate(at("2026-11-11 09:30:15.5"))).toBe("2026-11-11 09:30:15.500");
+  });
+
+  it("puts ticks on round clock times within a day", () => {
+    const ticks = dateTicks(at("2026-11-11 08:10"), at("2026-11-11 11:50"), 5)!;
+    expect(labels(ticks)).toEqual(["09:00", "10:00", "11:00"]);
+    expect(ticks.context).toBe("2026-11-11 UTC");
+  });
+
+  it("puts ticks on days, months and years as the range grows", () => {
+    const days = dateTicks(at("2026-11-01"), at("2026-11-08"), 4)!;
+    expect(labels(days)).toEqual(["11-01", "11-03", "11-05", "11-07"]);
+    expect(days.context).toBe("2026");
+    expect(labels(dateTicks(at("2026-01-10"), at("2026-12-20"), 4)!)).toEqual([
+      "2026-04",
+      "2026-07",
+      "2026-10",
+    ]);
+    expect(labels(dateTicks(at("2001-06-01"), at("2026-01-01"), 5)!)).toEqual([
+      "2005",
+      "2010",
+      "2015",
+      "2020",
+      "2025",
+    ]);
+  });
+
+  it("leaves very short ranges to ordinary ticks", () => {
+    expect(dateTicks(100, 101, 5)).toBeNull();
+  });
+});
+
+describe("category ticks", () => {
+  it("labels the categories in view and thins them evenly", () => {
+    const names = ["a", "b", "c", "d", "e"];
+    expect(labels(categoryTicks(-0.5, 4.5, 5, names))).toEqual(names);
+    expect(labels(categoryTicks(-0.5, 4.5, 2, names))).toEqual(["a", "d"]);
+    expect(labels(categoryTicks(0.6, 2.4, 5, names))).toEqual(["b", "c"]);
   });
 });
 
@@ -334,11 +394,11 @@ describe("layoutGraph", () => {
     // The bottom-left pixel is element [0][0], the lowest value: the dark end of viridis.
     const rgba = (image as Extract<Prim, { kind: "image" }>).rgba;
     expect(Array.from(rgba.slice(2 * 4 * 4, 2 * 4 * 4 + 4))).toEqual([68, 1, 84, 255]);
-    expect(
-      lines(layout.prims).some(
-        (prim) => prim.stroke === "#000000" && prim.crisp !== true && prim.points.length >= 4,
-      ),
-    ).toBe(true);
+    const contour = layout.prims
+      .flatMap((prim) => (prim.kind === "clip" ? prim.children : []))
+      .filter((prim) => prim.kind === "polyline");
+    expect(contour.length).toBeGreaterThan(0);
+    expect(contour[0]).toMatchObject({ stroke: "#000000" });
     expect(toSvg(layout.prims, 400, 300)).toContain("data:image/png;base64,");
   });
 
@@ -357,5 +417,81 @@ describe("layoutGraph", () => {
       cursors: false,
     });
     expect(exported.cursors).toEqual([]);
+  });
+
+  it("makes a category axis from a text X wave and draws bars side by side", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "names", text: ["Mon", "Tue", "Wed"] });
+    doc.dispatch({ op: "makeWave", name: "a", data: new Float64Array([1, 3, 2]) });
+    doc.dispatch({ op: "makeWave", name: "b", data: new Float64Array([2, 1, 4]) });
+    doc.dispatch({ op: "display", y: ["a", "b"], x: "names" });
+    for (const trace of ["a", "b"]) {
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace, props: { mode: "bars" } });
+    }
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    const bottom = layout.axes.bottom!;
+    expect(bottom.kind).toBe("category");
+    expect([bottom.scale.min, bottom.scale.max]).toEqual([-0.5, 2.5]);
+    // Bars start at zero, so zero is in view.
+    expect(layout.axes.left!.scale.min).toBe(0);
+    expect(texts(layout.prims)).toEqual(expect.arrayContaining(["Mon", "Tue", "Wed"]));
+    const bars = layout.prims
+      .flatMap((prim) => (prim.kind === "clip" ? prim.children : []))
+      .filter((prim) => prim.kind === "rect");
+    expect(bars).toHaveLength(6);
+    const [first, , , fourth] = bars as Extract<Prim, { kind: "rect" }>[];
+    // The first bars of the two traces sit next to each other around the first category.
+    expect(first!.x + first!.w).toBeCloseTo(fourth!.x);
+    expect((first!.x + fourth!.x + fourth!.w) / 2).toBeCloseTo(bottom.scale.toPixel(0));
+  });
+
+  it("labels a date axis with clock times and names the day once", () => {
+    const doc = new Doc();
+    const start = parseDate("2026-11-11 08:00")!;
+    const data = new Float64Array(240).map((_, index) => Math.sin(index / 20));
+    doc.dispatch({ op: "makeWave", name: "log", data, x0: start, dx: 60, xUnit: "dat" });
+    doc.dispatch({ op: "display", y: ["log"] });
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 500, 300, measure);
+    expect(layout.axes.bottom!.kind).toBe("date");
+    const all = texts(layout.prims);
+    expect(all).toEqual(expect.arrayContaining(["08:00", "09:00", "10:00", "11:00"]));
+    expect(all).toContain("2026-11-11 UTC");
+    expect(all).not.toContain("dat");
+  });
+
+  it("shows one plane of a 3-D wave and writes contour levels on the lines", () => {
+    const doc = new Doc();
+    // 12 x 10 x 2: layer 0 is a ramp along X, layer 1 is constant.
+    const data = new Float64Array(12 * 10 * 2);
+    for (let i = 0; i < 12; i += 1) {
+      for (let j = 0; j < 10; j += 1) {
+        data[(i * 10 + j) * 2] = i;
+        data[(i * 10 + j) * 2 + 1] = 7;
+      }
+    }
+    doc.dispatch({ op: "makeWave", name: "cube", data, shape: [12, 10, 2] });
+    doc.dispatch({ op: "display", y: [] });
+    doc.dispatch({ op: "appendContour", graph: "Graph0", wave: "cube", props: { levels: [5.5] } });
+    doc.dispatch({ op: "appendImage", graph: "Graph0", wave: "cube", props: { layer: 1 } });
+    expect(() =>
+      doc.dispatch({ op: "modifyImage", graph: "Graph0", image: "cube", props: { layer: 2 } }),
+    ).toThrow(/has 2 layers/);
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    const children = layout.prims.flatMap((prim) => (prim.kind === "clip" ? prim.children : []));
+    // The straight contour is broken in two around its label.
+    const parts = children.filter((prim) => prim.kind === "polyline");
+    expect(parts).toHaveLength(2);
+    const label = children.find((prim) => prim.kind === "text");
+    // The line is vertical here, so the label reads upward along it.
+    expect(label).toMatchObject({ text: "5.5", rotate: -90 });
+    // Layer 1 is constant, so every pixel of the image has the same color.
+    const image = children.find((prim) => prim.kind === "image") as Extract<
+      Prim,
+      { kind: "image" }
+    >;
+    expect(new Set(Array.from(image.rgba.filter((_, index) => index % 4 === 0))).size).toBe(1);
   });
 });

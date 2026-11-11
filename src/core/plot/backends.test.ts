@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { colorAt } from "./colorTables";
-import { contourLevels, contourSegments } from "./contour";
+import { chainSegments, contourLevels, contourSegments } from "./contour";
 import type { Prim } from "./displayList";
 import { toPdf } from "./pdf";
 import { crc32, encodePng } from "./png";
@@ -28,6 +28,25 @@ describe("contours", () => {
     expect(segments.length).toBe(8);
     for (let index = 0; index < segments.length; index += 2)
       expect(segments[index]).toBeCloseTo(0.5);
+  });
+
+  it("joins segments into one line per contour", () => {
+    // A cone: every level is a closed ring.
+    const size = 21;
+    const data = new Float64Array(size * size);
+    for (let i = 0; i < size; i += 1) {
+      for (let j = 0; j < size; j += 1) data[i * size + j] = Math.hypot(i - 10, j - 10);
+    }
+    const chains = chainSegments(contourSegments(data, size, size, 5.3));
+    expect(chains).toHaveLength(1);
+    const ring = chains[0]!;
+    expect(ring.length).toBeGreaterThan(40);
+    // Closed: it ends where it began, and every point is about 5.3 from the centre.
+    expect(ring[0]).toBeCloseTo(ring.at(-2)!);
+    expect(ring[1]).toBeCloseTo(ring.at(-1)!);
+    for (let at = 0; at < ring.length; at += 2) {
+      expect(Math.abs(Math.hypot(ring[at]! - 10, ring[at + 1]! - 10) - 5.3)).toBeLessThan(0.2);
+    }
   });
 
   it("skips cells that touch NaN", () => {

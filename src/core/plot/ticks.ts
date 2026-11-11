@@ -185,3 +185,165 @@ export function formatNumber(value: number, digits = 6): string {
     .replace(/\.?0+e/, "e")
     .replace("e+", "e");
 }
+
+const MINUTE = 60;
+const HOUR = 3600;
+const DAY = 86400;
+/** Tick spacings for time axes that land on round clock and calendar values. */
+const TIME_STEPS = [
+  1,
+  2,
+  5,
+  10,
+  15,
+  30,
+  MINUTE,
+  2 * MINUTE,
+  5 * MINUTE,
+  10 * MINUTE,
+  15 * MINUTE,
+  30 * MINUTE,
+  HOUR,
+  2 * HOUR,
+  3 * HOUR,
+  6 * HOUR,
+  12 * HOUR,
+  DAY,
+  2 * DAY,
+  7 * DAY,
+];
+
+const two = (value: number): string => String(value).padStart(2, "0");
+const dayOf = (date: Date): string =>
+  `${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())}`;
+
+/**
+ * Formats seconds since 1970-01-01 UTC as `YYYY-MM-DD HH:MM:SS`, leaving out
+ * a time of midnight and adding milliseconds only when there are some.
+ */
+export function formatDate(seconds: number): string {
+  if (!Number.isFinite(seconds) || Math.abs(seconds) > 8.64e12) return formatNumber(seconds);
+  const date = new Date(Math.round(seconds * 1000));
+  const millis = date.getUTCMilliseconds();
+  const time = `${two(date.getUTCHours())}:${two(date.getUTCMinutes())}:${two(date.getUTCSeconds())}`;
+  if (time === "00:00:00" && millis === 0) return dayOf(date);
+  return `${dayOf(date)} ${time}${millis ? `.${String(millis).padStart(3, "0")}` : ""}`;
+}
+
+const DATE_PATTERN =
+  /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * Parses `YYYY-MM-DD`, optionally with a time and a UTC offset, to seconds
+ * since 1970-01-01 UTC. A time without an offset is taken as UTC. Returns
+ * null for anything else.
+ */
+export function parseDate(text: string): number | null {
+  const match = DATE_PATTERN.exec(text.trim());
+  if (!match) return null;
+  const [, year, month, day, hour = "0", minute = "0", second = "0", zone] = match;
+  const millis = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+  );
+  let seconds = millis / 1000 + Number(second);
+  if (zone && zone.toUpperCase() !== "Z") {
+    const sign = zone[0] === "-" ? -1 : 1;
+    const digits = zone.slice(1).replace(":", "");
+    seconds -= sign * (Number(digits.slice(0, 2)) * HOUR + Number(digits.slice(2)) * MINUTE);
+  }
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+export interface DateTickSet extends TickSet {
+  /** What the labels leave out, for the axis label: the day, or the year. */
+  context: string;
+}
+
+/**
+ * Ticks for an axis of dates (seconds since 1970-01-01 UTC) on round clock
+ * or calendar values. Returns null when the range is too short for that
+ * (under a few seconds), where ordinary numeric ticks serve better.
+ */
+export function dateTicks(lo: number, hi: number, maxCount: number): DateTickSet | null {
+  const min = Math.min(lo, hi);
+  const max = Math.max(lo, hi);
+  const target = (max - min) / Math.max(1, maxCount);
+  if (!(target >= 0.5) || !Number.isFinite(target) || Math.abs(max) > 8.64e12) return null;
+  const major: Tick[] = [];
+  const first = new Date(min * 1000);
+  const last = new Date(max * 1000);
+  const sameDay = dayOf(first) === dayOf(last);
+  const sameYear = first.getUTCFullYear() === last.getUTCFullYear();
+  let context = "";
+
+  const step = TIME_STEPS.find((candidate) => candidate >= target);
+  if (step !== undefined) {
+    for (let value = Math.ceil(min / step) * step; value <= max; value += step) {
+      const date = new Date(value * 1000);
+      const clock = `${two(date.getUTCHours())}:${two(date.getUTCMinutes())}`;
+      const label =
+        step < MINUTE
+          ? `${clock}:${two(date.getUTCSeconds())}`
+          : step < DAY
+            ? sameDay
+              ? clock
+              : `${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())} ${clock}`
+            : `${two(date.getUTCMonth() + 1)}-${two(date.getUTCDate())}`;
+      major.push({ value, label });
+    }
+    context =
+      step < DAY && sameDay
+        ? `${dayOf(first)} UTC`
+        : sameYear
+          ? `${first.getUTCFullYear()}${step < DAY ? " UTC" : ""}`
+          : `${first.getUTCFullYear()}–${last.getUTCFullYear()}${step < DAY ? " UTC" : ""}`;
+    return { major, minor: [], exponent: 0, context };
+  }
+
+  const months = [1, 3, 6].find((candidate) => candidate * 30.44 * DAY >= target);
+  if (months !== undefined) {
+    let year = first.getUTCFullYear();
+    let month = Math.ceil(first.getUTCMonth() / months) * months;
+    for (;;) {
+      const value = Date.UTC(year, month, 1) / 1000;
+      if (value > max) break;
+      if (value >= min) {
+        const date = new Date(value * 1000);
+        major.push({ value, label: `${date.getUTCFullYear()}-${two(date.getUTCMonth() + 1)}` });
+      }
+      month += months;
+      year += Math.floor(month / 12);
+      month %= 12;
+    }
+    return { major, minor: [], exponent: 0, context };
+  }
+
+  const years = Math.max(1, niceStep((max - min) / (365.25 * DAY), maxCount));
+  for (let year = Math.ceil(first.getUTCFullYear() / years) * years; ; year += years) {
+    const value = Date.UTC(year, 0, 1) / 1000;
+    if (value > max) break;
+    if (value >= min) major.push({ value, label: String(year) });
+  }
+  return { major, minor: [], exponent: 0, context };
+}
+
+/** Ticks for a category axis: one per category in view, thinned to at most `maxCount`. */
+export function categoryTicks(
+  lo: number,
+  hi: number,
+  maxCount: number,
+  categories: readonly string[],
+): TickSet {
+  const first = Math.max(0, Math.ceil(Math.min(lo, hi)));
+  const last = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
+  const stride = Math.max(1, Math.ceil((last - first + 1) / Math.max(1, maxCount)));
+  const major: Tick[] = [];
+  for (let index = first; index <= last; index += stride) {
+    major.push({ value: index, label: categories[index] ?? "" });
+  }
+  return { major, minor: [], exponent: 0 };
+}

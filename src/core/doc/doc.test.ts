@@ -249,7 +249,7 @@ describe("multi-dimensional and text waves", () => {
     expect(() => doc.dispatch({ op: "display", y: ["m"] })).toThrow(/image or contour/);
     doc.dispatch({ op: "display", y: [] });
     expect(() => doc.dispatch({ op: "appendImage", graph: "Graph0", wave: "signal" })).toThrow(
-      /not a 2-D wave/,
+      /has one dimension/,
     );
     expect(doc.dispatch({ op: "appendImage", graph: "Graph0", wave: "m" })).toBe("m");
   });

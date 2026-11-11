@@ -333,14 +333,41 @@ function nextItemName(taken: readonly { name: string }[], base: string): string 
 function requireNumeric(state: DocState, name: string, dimensions: 1 | 2, use: string): Wave {
   const wave = requireWave(state, name);
   if (wave.text) throw new DocError(`${wave.name} is a text wave and cannot be ${use}.`);
-  if (wave.shape.length !== dimensions) {
+  // Images and contours show one plane, so anything from 2-D up will do.
+  if (dimensions === 1 ? wave.shape.length !== 1 : wave.shape.length < 2) {
     throw new DocError(
       dimensions === 1
         ? `${wave.name} has ${wave.shape.length} dimensions; a trace needs a 1-D wave. Show it as an image or contour instead.`
-        : `${wave.name} is not a 2-D wave and cannot be ${use}.`,
+        : `${wave.name} has one dimension and cannot be ${use}.`,
     );
   }
   return wave;
+}
+
+/** The X wave of a trace: numbers, or text for a category plot. */
+function requireXWave(state: DocState, name: string): Wave {
+  const wave = requireWave(state, name);
+  if (wave.shape.length !== 1)
+    throw new DocError(`${wave.name} is not 1-D and cannot be an X wave.`);
+  return wave;
+}
+
+/** Checks that an image's or contour's plane exists in its wave. */
+function checkPlane(wave: Wave, item: { layer: number; chunk: number }): void {
+  const layers = wave.shape[2] ?? 1;
+  const chunks = wave.shape[3] ?? 1;
+  if (item.layer >= layers || item.chunk >= chunks) {
+    throw new DocError(
+      `${wave.name} has ${layers} layer${layers === 1 ? "" : "s"} and ${chunks} chunk${chunks === 1 ? "" : "s"}; layer ${item.layer}, chunk ${item.chunk} does not exist.`,
+    );
+  }
+}
+
+function index(value: unknown, what: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new DocError(`${what} must be a whole number, 0 or more.`);
+  }
+  return value;
 }
 
 function requireAxis(graph: GraphSpec, name: string, vertical: boolean): string {
@@ -369,13 +396,13 @@ function addTraces(
   if (y.length === 0) throw new DocError("Give at least one wave to plot.");
   requireAxis(graph, vAxis, true);
   requireAxis(graph, hAxis, false);
-  const xWave = x === null ? null : requireNumeric(state, x, 1, "plotted");
+  const xWave = x === null ? null : requireXWave(state, x);
   const traces = [...graph.traces];
   for (const name of y) {
     const wave = requireNumeric(state, name, 1, "plotted");
-    if (xWave && xWave.data.length !== wave.data.length) {
+    if (xWave && xWave.shape[0] !== wave.data.length) {
       throw new DocError(
-        `X wave ${JSON.stringify(xWave.name)} has ${xWave.data.length} points but ${JSON.stringify(wave.name)} has ${wave.data.length}.`,
+        `X wave ${JSON.stringify(xWave.name)} has ${xWave.shape[0]} points but ${JSON.stringify(wave.name)} has ${wave.data.length}.`,
       );
     }
     traces.push({
@@ -450,15 +477,20 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
   showInfo: (value) => bool(value, "showInfo"),
 };
 
-type ImageProps = Pick<ImageSpec, "colorTable" | "zMin" | "zMax" | "reverse">;
+type ImageProps = Pick<ImageSpec, "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk">;
 const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProps[K] } = {
   colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
   zMin: nullableNumber("zMin"),
   zMax: nullableNumber("zMax"),
   reverse: (value) => bool(value, "reverse"),
+  layer: (value) => index(value, "layer"),
+  chunk: (value) => index(value, "chunk"),
 };
 
-type ContourProps = Pick<ContourSpec, "levels" | "color" | "lineSize" | "colorTable">;
+type ContourProps = Pick<
+  ContourSpec,
+  "levels" | "color" | "lineSize" | "colorTable" | "labels" | "layer" | "chunk"
+>;
 const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => ContourProps[K] } = {
   levels: (value) => {
     if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 200) {
@@ -472,6 +504,9 @@ const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => Conto
   color: normalizeColor,
   lineSize: (value) => positive(value, "lineSize"),
   colorTable: (value) => (value === null ? null : oneOf(value, COLOR_TABLES, "colorTable")),
+  labels: (value) => bool(value, "labels"),
+  layer: (value) => index(value, "layer"),
+  chunk: (value) => index(value, "chunk"),
 };
 
 type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame">;
@@ -960,8 +995,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         zMin: null,
         zMax: null,
         reverse: false,
+        layer: 0,
+        chunk: 0,
         ...validateProps<ImageProps>(command.props ?? {}, IMAGE_VALIDATORS, "image"),
       };
+      checkPlane(wave, image);
       return {
         state: putGraph(state, { ...graph, images: [...graph.images, image] }),
         result: image.name,
@@ -970,8 +1008,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "modifyImage": {
       const graph = requireGraph(state, command.graph);
       const image = requireItem(graph.images, command.image, graph.name, "image");
-      const props = validateProps<ImageProps>(command.props, IMAGE_VALIDATORS, "image");
-      const images = graph.images.map((item) => (item === image ? { ...item, ...props } : item));
+      const next = {
+        ...image,
+        ...validateProps<ImageProps>(command.props, IMAGE_VALIDATORS, "image"),
+      };
+      checkPlane(requireWave(state, image.wave), next);
+      const images = graph.images.map((item) => (item === image ? next : item));
       return { state: putGraph(state, { ...graph, images }), result: null };
     }
     case "removeImage": {
@@ -992,8 +1034,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         color: "#000000",
         lineSize: 1,
         colorTable: null,
+        labels: true,
+        layer: 0,
+        chunk: 0,
         ...validateProps<ContourProps>(command.props ?? {}, CONTOUR_VALIDATORS, "contour"),
       };
+      checkPlane(wave, contour);
       return {
         state: putGraph(state, { ...graph, contours: [...graph.contours, contour] }),
         result: contour.name,
@@ -1002,10 +1048,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "modifyContour": {
       const graph = requireGraph(state, command.graph);
       const contour = requireItem(graph.contours, command.contour, graph.name, "contour");
-      const props = validateProps<ContourProps>(command.props, CONTOUR_VALIDATORS, "contour");
-      const contours = graph.contours.map((item) =>
-        item === contour ? { ...item, ...props } : item,
-      );
+      const next = {
+        ...contour,
+        ...validateProps<ContourProps>(command.props, CONTOUR_VALIDATORS, "contour"),
+      };
+      checkPlane(requireWave(state, contour.wave), next);
+      const contours = graph.contours.map((item) => (item === contour ? next : item));
       return { state: putGraph(state, { ...graph, contours }), result: null };
     }
     case "removeContour": {

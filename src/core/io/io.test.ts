@@ -45,6 +45,14 @@ describe("parseDelimited", () => {
     expect([...result.columns[2]!]).toEqual([Number.NaN, 5]);
   });
 
+  it("reads a column of dates as seconds, marked as dates", () => {
+    const result = parseDelimited("when,value\n2026-11-11 09:00,1\n2026-11-11 09:30,2\n", free);
+    expect(result.dates).toEqual([true, false]);
+    const [first, second] = result.columns[0] as Float64Array;
+    expect(second! - first!).toBe(1800);
+    expect(new Date(first! * 1000).toISOString()).toBe("2026-11-11T09:00:00.000Z");
+  });
+
   it("avoids names that are taken", () => {
     const result = parseDelimited("x,x\n1,2\n", (name) => name === "x");
     expect(result.names).toEqual(["x_1", "x_2"]);
