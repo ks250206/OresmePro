@@ -28,7 +28,7 @@ import {
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
 import { useEffect, useRef } from "react";
-import { history, kernel, ui, useUi } from "../app/session";
+import { history, kernel, ui, useKernelState, useUi } from "../app/session";
 import { recallList, stepRecall, suggestCompletion } from "../core/history/history";
 import { isCompleteInput } from "../core/history/inputState";
 
@@ -74,7 +74,7 @@ class GhostText extends WidgetType {
 /** The greyed-out remainder of the latest matching command, when the cursor is at the end. */
 function suggestionFor(state: EditorState): string {
   const { main } = state.selection;
-  if (!main.empty || main.head !== state.doc.length) return "";
+  if (!main.empty || main.head !== state.doc.length || kernel.getState().input !== null) return "";
   return suggestCompletion(commands(), state.doc.toString());
 }
 
@@ -156,6 +156,11 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
   const openSearch = useRef(onOpenSearch);
   openSearch.current = onOpenSearch;
   const insert = useUi((state) => state.commandLineInsert);
+  const waitingForInput = useKernelState().input !== null;
+
+  useEffect(() => {
+    if (waitingForInput) viewRef.current?.focus();
+  }, [waitingForInput]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -175,6 +180,7 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
 
     const step = (view: EditorView, direction: -1 | 1): boolean => {
       if (view.composing || completionStatus(view.state) === "active") return false;
+      if (kernel.getState().input !== null) return false;
       const { doc, selection } = view.state;
       const line = doc.lineAt(selection.main.head).number;
       if (!recall && (direction === -1 ? line !== 1 : line !== doc.lines)) return false;
@@ -196,6 +202,12 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
     };
 
     const submit = (view: EditorView): boolean => {
+      if (kernel.getState().input !== null) {
+        // Python is waiting in input(): the line goes to it, not to the interpreter.
+        kernel.answerInput(view.state.doc.toString());
+        setText(view, "", false);
+        return true;
+      }
       const code = view.state.doc.toString().replace(/\s+$/, "");
       if (!code) return true;
       kernel.execute(code);
@@ -236,6 +248,7 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
                   if (target.composing) return false;
                   const { doc, selection } = target.state;
                   const atEnd = selection.main.empty && selection.main.head === doc.length;
+                  if (kernel.getState().input !== null) return submit(target);
                   if ((atEnd || doc.lines === 1) && isCompleteInput(doc.toString())) {
                     return submit(target);
                   }
@@ -320,7 +333,7 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
       }}
     >
       <span className="select-none py-[5px] pl-2 pr-1.5 font-mono text-[12.5px] leading-[1.45] text-accent">
-        {">>>"}
+        {waitingForInput ? "?" : ">>>"}
       </span>
       <div ref={hostRef} className="selectable min-w-0 flex-1" />
     </div>

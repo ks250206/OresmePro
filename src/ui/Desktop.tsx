@@ -180,7 +180,9 @@ export function Desktop() {
       {ordered.map((window) => {
         const graph = graphs[window.name];
         const table = tables[window.name];
-        const names = graph ? graph.traces.map((trace) => trace.name) : (table?.columns ?? []);
+        const names = graph
+          ? [...graph.traces, ...graph.images, ...graph.contours].map((item) => item.name)
+          : (table?.columns ?? []);
         return (
           <WindowFrame
             key={window.name}

@@ -3,10 +3,11 @@ import {
   activeGraph,
   autoscaleGraph,
   EXAMPLE,
-  exportGraphPng,
-  exportGraphSvg,
+  exportGraph,
   loadDelimitedText,
-  loadTextFile,
+  loadFile,
+  openExperiment,
+  saveExperiment,
 } from "./app/actions";
 import { ensureIsolated } from "./app/isolate";
 import { autosave, restore } from "./app/persist";
@@ -79,8 +80,10 @@ function newExperiment() {
 
 function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
+  const graphs = useDoc((state) => state.graphs);
   const top = windows.at(-1);
   const graph = top?.kind === "graph" ? top.name : null;
+  const spec = graph ? graphs[graph] : undefined;
   const showBrowser = useUi((state) => state.showBrowser);
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
@@ -97,16 +100,25 @@ function useMenus(): MenuDefinition[] {
     disabled: !graph,
     onSelect: () => graph && action(graph),
   });
+  const graphDialog = (label: string, dialog: (name: string) => NonNullable<UiDialog>): MenuItem =>
+    graphItem(label, (name) => ui.set({ dialog: dialog(name) }));
+  const analysis = (label: string, operation: string): MenuItem => ({
+    label,
+    onSelect: open({ kind: "analysis", operation }),
+  });
   return [
     {
       title: "File",
       items: [
         { label: "New Experiment", onSelect: newExperiment },
+        { label: "Open Experiment…", onSelect: openExperiment },
+        { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { separator: true },
-        graphItem("Save Graph as SVG", exportGraphSvg),
-        graphItem("Save Graph as PNG", exportGraphPng),
+        graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
+        graphItem("Save Graph as SVG", (name) => exportGraph(name, `${name}.svg`)),
+        graphItem("Save Graph as PNG", (name) => exportGraph(name, `${name}.png`)),
       ],
     },
     {
@@ -125,6 +137,7 @@ function useMenus(): MenuDefinition[] {
       title: "Data",
       items: [
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
+        { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
         { separator: true },
         {
           label: "Change Wave Scaling…",
@@ -132,7 +145,7 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => ui.set({ dialog: { kind: "waveScaling", wave: selected[0]! } }),
         },
         {
-          label: "Rename Wave…",
+          label: "Rename or Move Wave…",
           disabled: selected.length !== 1,
           onSelect: () => ui.set({ dialog: { kind: "renameWave", wave: selected[0]! } }),
         },
@@ -144,32 +157,61 @@ function useMenus(): MenuDefinition[] {
       ],
     },
     {
+      title: "Analysis",
+      items: [
+        { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
+        { separator: true },
+        analysis("Wave Stats…", "stats"),
+        analysis("Differentiate…", "differentiate"),
+        analysis("Integrate…", "integrate"),
+        analysis("Smooth…", "smooth"),
+        analysis("FFT Magnitude…", "fft"),
+        analysis("Histogram…", "histogram"),
+      ],
+    },
+    {
       title: "Graph",
       items: [
-        graphItem("Append Traces…", (name) =>
-          ui.set({ dialog: { kind: "appendTraces", graph: name } }),
-        ),
-        graphItem("Modify Trace Appearance…", (name) =>
-          ui.set({ dialog: { kind: "modifyTrace", graph: name } }),
-        ),
-        graphItem("Modify Axis…", (name) =>
-          ui.set({ dialog: { kind: "modifyAxis", graph: name } }),
-        ),
-        graphItem("Modify Graph…", (name) =>
-          ui.set({ dialog: { kind: "modifyGraph", graph: name } }),
-        ),
+        graphDialog("Append Traces…", (name) => ({ kind: "appendTraces", graph: name })),
+        graphDialog("Append Image…", (name) => ({
+          kind: "matrixPlot",
+          plot: "image",
+          graph: name,
+        })),
+        graphDialog("Append Contour…", (name) => ({
+          kind: "matrixPlot",
+          plot: "contour",
+          graph: name,
+        })),
+        graphDialog("Add Axis…", (name) => ({ kind: "addAxis", graph: name })),
+        { separator: true },
+        graphDialog("Modify Trace Appearance…", (name) => ({ kind: "modifyTrace", graph: name })),
+        graphDialog("Modify Axis…", (name) => ({ kind: "modifyAxis", graph: name })),
+        graphDialog("Modify Graph…", (name) => ({ kind: "modifyGraph", graph: name })),
         { separator: true },
         graphItem("Autoscale Axes", autoscaleGraph, `${MOD}A`),
+        {
+          ...graphItem("Show Cursor Info", toggleInfo, `${MOD}I`),
+          checked: spec?.showInfo ?? false,
+        },
         graphItem("Add Legend", (name) =>
           runGui({ op: "addAnnotation", graph: name, kind: "legend" }),
         ),
-        graphItem("Add Text…", (name) => ui.set({ dialog: { kind: "addText", graph: name } })),
+        graphDialog("Add Text…", (name) => ({ kind: "addText", graph: name })),
+        {
+          ...graphItem("Add Color Scale", (name) =>
+            runGui({ op: "addAnnotation", graph: name, kind: "colorscale" }),
+          ),
+          disabled: !spec || spec.images.length === 0,
+        },
       ],
     },
     {
       title: "Windows",
       items: [
         { label: "New Graph…", onSelect: open({ kind: "newGraph" }) },
+        { label: "New Image Plot…", onSelect: open({ kind: "matrixPlot", plot: "image" }) },
+        { label: "New Contour Plot…", onSelect: open({ kind: "matrixPlot", plot: "contour" }) },
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
         { separator: true },
         {
@@ -196,7 +238,7 @@ function useMenus(): MenuDefinition[] {
       title: "Python",
       items: [
         {
-          label: "Interrupt",
+          label: kernelState.interrupting ? "Interrupt Again (Restarts Python)" : "Interrupt",
           shortcut: "Ctrl+C",
           disabled: kernelState.status !== "busy",
           onSelect: () => kernel.interruptExecution(),
@@ -217,6 +259,13 @@ function useMenus(): MenuDefinition[] {
   ];
 }
 
+type UiDialog = ReturnType<typeof ui.get>["dialog"];
+
+function toggleInfo(name: string) {
+  const graph = doc.getState().graphs[name];
+  if (graph) runGui({ op: "modifyGraph", graph: name, props: { showInfo: !graph.showInfo } });
+}
+
 /** Shortcuts that act on the document rather than on a text field. */
 function onGlobalKey(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null;
@@ -226,8 +275,14 @@ function onGlobalKey(event: KeyboardEvent) {
     target instanceof HTMLSelectElement ||
     target?.isContentEditable;
   const mod = event.metaKey || event.ctrlKey;
-  if (!mod || typing || ui.get().dialog) return;
   const key = event.key.toLowerCase();
+  if (mod && key === "s") {
+    // Everywhere, so the browser's own "save page" never takes over.
+    event.preventDefault();
+    saveExperiment();
+    return;
+  }
+  if (!mod || typing || ui.get().dialog) return;
   if (key === "z") {
     event.preventDefault();
     if (event.shiftKey) doc.redo();
@@ -235,11 +290,12 @@ function onGlobalKey(event: KeyboardEvent) {
   } else if (key === "y") {
     event.preventDefault();
     doc.redo();
-  } else if (key === "a") {
+  } else if (key === "a" || key === "i") {
     const graph = activeGraph();
     if (graph) {
       event.preventDefault();
-      autoscaleGraph(graph);
+      if (key === "a") autoscaleGraph(graph);
+      else toggleInfo(graph);
     }
   }
 }
@@ -285,7 +341,7 @@ export function App() {
       }}
       onDrop={(event) => {
         event.preventDefault();
-        for (const file of event.dataTransfer.files) void loadTextFile(file);
+        for (const file of event.dataTransfer.files) void loadFile(file);
       }}
     >
       <MenuBar menus={menus} />

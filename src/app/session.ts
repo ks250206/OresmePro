@@ -1,7 +1,7 @@
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
-import type { AxisName, DocState } from "../core/doc/types";
+import type { DocState } from "../core/doc/types";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
 import { toSvg } from "../core/plot/svg";
@@ -14,13 +14,21 @@ export type DialogRequest =
   | { kind: "newGraph" }
   | { kind: "newTable" }
   | { kind: "appendTraces"; graph: string }
+  | { kind: "matrixPlot"; plot: "image" | "contour"; graph?: string }
   | { kind: "modifyTrace"; graph: string; trace?: string }
-  | { kind: "modifyAxis"; graph: string; axis?: AxisName }
+  | { kind: "modifyAxis"; graph: string; axis?: string }
+  | { kind: "modifyImage"; graph: string; image: string }
+  | { kind: "modifyContour"; graph: string; contour: string }
+  | { kind: "addAxis"; graph: string }
   | { kind: "modifyGraph"; graph: string }
   | { kind: "addText"; graph: string }
   | { kind: "renameWave"; wave: string }
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
+  | { kind: "newFolder"; parent: string }
+  | { kind: "renameFolder"; folder: string }
+  | { kind: "curveFit"; wave?: string }
+  | { kind: "analysis"; operation: string; wave?: string }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -45,6 +53,8 @@ export interface UiState {
   commandHeight: number;
   /** Waves selected in the data browser. */
   selectedWaves: readonly string[];
+  /** Data folders shown collapsed in the data browser. */
+  collapsedFolders: readonly string[];
   /** Text waiting to be placed in the command line; the editor consumes it. */
   commandLineInsert: { text: string; token: number } | null;
 }
@@ -61,23 +71,45 @@ export const ui = createStore<UiState>({
   browserWidth: 220,
   commandHeight: 240,
   selectedWaves: [],
+  collapsedFolders: [],
   commandLineInsert: null,
 });
 
-/** Renders a graph to SVG at a given size, defaulting to its window's plot size. */
-export function renderGraphSvg(name: string, width: number | null, height: number | null): string {
+/** Height of a window's title bar; the content area is the window minus this. */
+export const TITLE_BAR_HEIGHT = 24;
+/** Height of the cursor readout bar under a graph. */
+export const INFO_BAR_HEIGHT = 56;
+
+/** The size at which a graph is drawn in its window. */
+export function graphSize(state: DocState, name: string): { width: number; height: number } {
+  const window = state.windows.find((item) => item.name === name);
+  const info = state.graphs[name]?.showInfo ? INFO_BAR_HEIGHT : 0;
+  return window
+    ? { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info }
+    : { width: 440, height: 280 };
+}
+
+/** Lays a graph out for export: at its window's size unless told otherwise, without cursors. */
+export function exportLayout(name: string, width: number | null, height: number | null) {
   const state = doc.getState();
   const graph = state.graphs[name];
   if (!graph) throw new Error(`No graph named ${JSON.stringify(name)}.`);
-  const window = state.windows.find((item) => item.name === name);
-  const w = width ?? (window ? window.w : 440);
-  const h = height ?? (window ? window.h - TITLE_BAR_HEIGHT : 280);
-  const layout = layoutGraph(graph, state.waves, w, h, measureText);
+  const size = graphSize(state, name);
+  return layoutGraph(graph, state.waves, width ?? size.width, height ?? size.height, measureText, {
+    cursors: false,
+  });
+}
+
+export function renderGraphSvg(name: string, width: number | null, height: number | null): string {
+  const layout = exportLayout(name, width, height);
   return toSvg(layout.prims, layout.width, layout.height);
 }
 
-/** Height of a window's title bar; the content area is the window minus this. */
-export const TITLE_BAR_HEIGHT = 24;
+let exportHandler: (graph: string, filename: string) => void = () => {};
+/** Lets the export code (which depends on this module) serve Python's g.save(). */
+export function setExportHandler(handler: typeof exportHandler): void {
+  exportHandler = handler;
+}
 
 const PYODIDE_URL =
   (import.meta.env.VITE_PYODIDE_URL as string | undefined) ??
@@ -87,6 +119,7 @@ export const kernel = new KernelClient({
   doc,
   history,
   renderSvg: renderGraphSvg,
+  exportGraph: (graph, filename) => exportHandler(graph, filename),
   indexURL: PYODIDE_URL,
 });
 
