@@ -165,6 +165,7 @@ function useMenus(): MenuDefinition[] {
       title: "Analysis",
       items: [
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
+        analysis("Multi-peak Fit…", "fit_peaks"),
         { separator: true },
         analysis("Wave Stats…", "stats"),
         analysis("Differentiate…", "differentiate"),
@@ -172,6 +173,9 @@ function useMenus(): MenuDefinition[] {
         analysis("Smooth…", "smooth"),
         analysis("FFT Magnitude…", "fft"),
         analysis("Histogram…", "histogram"),
+        analysis("Interpolate…", "interpolate"),
+        { separator: true },
+        analysis("Filter Image…", "filter_image"),
       ],
     },
     {

@@ -618,4 +618,112 @@ describe("oresme Python API", () => {
     expect(errors[0]).toContain("is not a time zone");
     doc.dispatch({ op: "setTimeZone", zone: "UTC" });
   });
+
+  it("fits with residuals and a confidence band", async () => {
+    expect(
+      await run(
+        [
+          "rng = np.random.default_rng(3)",
+          "lx = np.linspace(0, 10, 60)",
+          'ly = op.make("ly", 2 + 0.5 * lx + rng.normal(scale=0.2, size=60), dx=lx[1] - lx[0])',
+          'lg = op.display(ly, name="Resid")',
+          'r = op.fit("line", ly, residuals=True, band=0.95, quiet=True)',
+          "lo, hi = r.band",
+          "inside = np.mean((2 + 0.5 * lo.x > lo.data) & (2 + 0.5 * hi.x < hi.data))",
+          "print(r.residuals.name, lo.name, hi.name, len(r.residuals), round(float(abs(r.residuals.data.mean())), 6))",
+          "print(bool(inside > 0.9), bool(np.all(hi.data > lo.data)), round(float((hi.data - lo.data).mean()), 2))",
+          "print([t.name for t in lg.traces], sorted(lg._info()['axes']), lg.axis('res_left').span, lg.left.span)",
+          "print(lg.trace('fit_ly_hi').fill, lg.trace('res_ly')._get()['vAxis'])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("res_ly fit_ly_lo fit_ly_hi 60 0.0");
+    // The true line lies within the band, which is a fraction of the noise wide.
+    expect(lines[1]).toMatch(/^True True 0\.[12]\d?$/);
+    expect(lines[2]).toBe(
+      "['ly', 'fit_ly_hi', 'fit_ly_lo', 'fit_ly', 'res_ly'] ['bottom', 'left', 'res_left', 'right', 'top'] [0.78, 1] [0, 0.72]",
+    );
+    expect(lines[3]).toBe("next res_left");
+    // Fitting again reuses what is there.
+    expect(
+      await run('op.fit("line", ly, residuals=True, band=True, quiet=True); print(len(lg.traces))'),
+    ).toBe(true);
+    expect(stdout).toBe("5\n");
+  });
+
+  it("finds and fits several peaks", async () => {
+    expect(
+      await run(
+        [
+          "px = np.linspace(0, 20, 800)",
+          "clean = 0.5 + 0.02 * px + 3 * np.exp(-((px - 6) / 0.8) ** 2) + 1.5 * np.exp(-((px - 11) / 1.2) ** 2) + 2 * np.exp(-((px - 12.8) / 0.5) ** 2)",
+          'pk = op.make("mpk", clean + np.random.default_rng(5).normal(scale=0.02, size=800), x0=0, dx=px[1] - px[0])',
+          'pg = op.display(pk, name="Peaks")',
+          "found = op.find_peaks(pk, smooth=5)",
+          "print(len(found), [round(p['x'], 1) for p in sorted(found, key=lambda p: p['x'])])",
+          'res = op.fit_peaks(pk, baseline="linear", smooth=5, quiet=True)',
+          "print(len(res), [round(p['x'], 2) for p in res], [round(p['height'], 1) for p in res], [round(float(p['width']), 2) for p in res])",
+          "print(round(res.baseline['offset'], 1), round(res.baseline['slope'], 2), res.converged, op.wave('W_peaks').data.shape)",
+          "print([t.name for t in pg.traces])",
+          "print(str(res).splitlines()[0][:38])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "3 [6.0, 11.0, 12.8]",
+      // FWHM is 2*sqrt(ln 2) = 1.665 times the width parameter.
+      "3 [6.0, 11.0, 12.8] [3.0, 1.5, 2.0] [1.34, 2.0, 0.83]",
+      "0.5 0.02 True (3, 4)",
+      "['mpk', 'fit_mpk_p1', 'fit_mpk_p2', 'fit_mpk_p3', 'fit_mpk']",
+      "Multi-peak fit: 3 gauss peaks, 800 poi",
+    ]);
+    // Positions given by hand, Lorentzian shape.
+    expect(
+      await run(
+        [
+          'lz = op.make("lz", 4 / (1 + ((px - 9) / 0.7) ** 2), x0=0, dx=px[1] - px[0])',
+          'one = op.fit_peaks(lz, peaks=[8.5], shape="lor", baseline=None, components=False, quiet=True)',
+          "print(round(one[0]['x'], 3), round(one[0]['height'], 3), round(float(one[0]['width']), 3), round(float(one[0]['area']), 2))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("9.0 4.0 1.4 8.8\n");
+    expect(await run('op.fit_peaks(op.make("flat", np.zeros(50)))')).toBe(false);
+    expect(errors[0]).toContain("No peaks were found");
+  });
+
+  it("interpolates, filters images and takes line profiles", async () => {
+    expect(
+      await run(
+        [
+          'ix = op.make("ix", [0.0, 1.0, 2.0, 4.0]); iy = op.make("iy", [0.0, 1.0, 4.0, 16.0])',
+          "lin = op.interpolate(iy, ix, n=5)",
+          'cub = op.interpolate(iy, ix, at=[0.5, 3.0, 9.0], kind="cubic", name="cub")',
+          "print(lin.name, lin.data.tolist(), lin.x0, lin.dx)",
+          "print(cub.name, [round(float(v), 2) for v in cub.data[:2]], bool(np.isnan(cub.data[2])))",
+          // A cubic spline reproduces a cubic's interior closely and passes through the knots.
+          "kx = np.linspace(0, 3, 13); ks = op.interpolate(op.make('ky', kx ** 3, dx=0.25), at=kx, kind='cubic', name='kn')",
+          "print(bool(np.allclose(ks.data, kx ** 3)))",
+          'im = op.make("im", np.zeros((9, 9)), x0=10, dx=2, y0=-4, dy=1); im[4, 4] = 81.0',
+          'ga = op.filter_image(im, "gauss", 1); me = op.filter_image(im, "mean", 3, name="im_mean"); md = op.filter_image(im, "median", 3, name="im_med")',
+          "print(ga.name, round(float(ga.data.sum()), 6), float(ga.data[4, 4]) < 81, ga.x0, ga.dy)",
+          "print(float(me.data[4, 4]), float(me.data[3, 3]), float(me.data[0, 0]), float(md.data.max()))",
+          'ramp = op.make("ramp", np.add.outer(np.arange(5.0), 10 * np.arange(4.0)), dx=2)',
+          "pr = op.line_profile(ramp, (0, 0), (8, 3))",
+          "print(pr.name, len(pr), pr.data[0], pr.data[-1], round(pr.dx * (len(pr) - 1), 4))",
+          "print(op.line_profile(ramp, (0, 1), (8, 1), n=3, name='row').data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "iy_interp [0.0, 1.0, 4.0, 10.0, 16.0] 0.0 1.0",
+      "cub [0.35, 9.35] True",
+      "True",
+      "im_filt 81.0 True 10.0 1.0",
+      "9.0 9.0 0.0 0.0",
+      "ramp_prof 6 0.0 34.0 8.544",
+      "[10.0, 12.0, 14.0]",
+    ]);
+  });
 });

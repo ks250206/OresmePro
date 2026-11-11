@@ -94,7 +94,7 @@ test.describe("axis and trace options", () => {
     await app.menu("Graph", "Modify Axis…");
     const dialog = page.getByRole("dialog", { name: /Modify Axis/ });
     await dialog.getByLabel("Axis", { exact: true }).selectOption("bottom");
-    await dialog.getByLabel("Reversed", { exact: true }).check();
+    await dialog.getByLabel("Reversed").check();
     await dialog.getByLabel("Tick step").fill("2.5");
     await dialog.getByLabel("Tick labels").selectOption(".1f");
     await app.doIt();

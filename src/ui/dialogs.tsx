@@ -750,7 +750,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           Autoscale
         </Button>
       </Field>
-      <Field label="Scale">
+      <Field label="Scale" group>
         <Checkbox
           label="Logarithmic"
           checked={current.log}
@@ -1497,6 +1497,8 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const [hold, setHold] = useState("");
   const [constraints, setConstraints] = useState("");
   const [weight, setWeight] = useState("");
+  const [residuals, setResiduals] = useState(false);
+  const [band, setBand] = useState(false);
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
   const graph = [...windows]
     .reverse()
@@ -1514,6 +1516,8 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     ...(limits ? [`bounds=${limits}`] : []),
     ...(weight === "" ? [] : [`sigma=${pyName(weight)}`]),
     ...(useCursors && hasCursors ? ["cursors=True"] : []),
+    ...(residuals ? ["residuals=True"] : []),
+    ...(band ? ["band=0.95"] : []),
   ];
   return (
     <Dialog
@@ -1601,6 +1605,18 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
           onChange={(event) => setUseCursors(event.target.checked)}
         />
       </Field>
+      <Field label="Also make" group>
+        <Checkbox
+          label="Residuals"
+          checked={residuals}
+          onChange={(event) => setResiduals(event.target.checked)}
+        />
+        <Checkbox
+          label="95% confidence band"
+          checked={band}
+          onChange={(event) => setBand(event.target.checked)}
+        />
+      </Field>
       <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
         Makes <code>fit_{leafName(y) || "wave"}</code>, <code>W_coef</code> and <code>W_sigma</code>
         , and adds the fitted curve to the graph showing the data. For your own function, call{" "}
@@ -1610,30 +1626,131 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   );
 }
 
-const ANALYSES: Record<string, { title: string; parameter?: [string, string, string] }> = {
+interface AnalysisField {
+  /** The keyword argument. */
+  key: string;
+  label: string;
+  initial: string;
+  /** integer and number are typed in; anything else is a list of choices. */
+  kind: "integer" | "number" | readonly string[];
+  /** May be left empty, which leaves the argument out. */
+  optional?: boolean;
+  hint?: string;
+}
+
+const ANALYSES: Record<
+  string,
+  { title: string; dimensions?: 1 | 2; fields?: AnalysisField[]; note?: string }
+> = {
   stats: { title: "Wave Stats" },
   differentiate: { title: "Differentiate" },
   integrate: { title: "Integrate" },
-  smooth: { title: "Smooth", parameter: ["n", "Points", "5"] },
+  smooth: {
+    title: "Smooth",
+    fields: [{ key: "n", label: "Points", initial: "5", kind: "integer" }],
+  },
   fft: { title: "FFT Magnitude" },
-  histogram: { title: "Histogram", parameter: ["bins", "Bins", "50"] },
+  histogram: {
+    title: "Histogram",
+    fields: [{ key: "bins", label: "Bins", initial: "50", kind: "integer" }],
+  },
+  interpolate: {
+    title: "Interpolate",
+    fields: [
+      { key: "n", label: "Points", initial: "200", kind: "integer" },
+      { key: "kind", label: "Method", initial: "linear", kind: ["linear", "cubic"] },
+    ],
+    note: "Makes a wave with evenly spaced points over the same X range.",
+  },
+  fit_peaks: {
+    title: "Multi-peak Fit",
+    fields: [
+      { key: "shape", label: "Peak shape", initial: "gauss", kind: ["gauss", "lor"] },
+      {
+        key: "baseline",
+        label: "Baseline",
+        initial: "constant",
+        kind: ["constant", "linear", "None"],
+      },
+      {
+        key: "peaks",
+        label: "Peaks",
+        initial: "",
+        kind: "integer",
+        optional: true,
+        hint: "how many of the tallest; empty finds them",
+      },
+      {
+        key: "smooth",
+        label: "Smooth first",
+        initial: "",
+        kind: "integer",
+        optional: true,
+        hint: "points, for noisy data",
+      },
+    ],
+    note: "Fits a sum of peaks and lists position, height, width and area of each.",
+  },
+  filter_image: {
+    title: "Filter Image",
+    dimensions: 2,
+    fields: [
+      {
+        key: "kind",
+        label: "Filter",
+        initial: "gauss",
+        kind: ["gauss", "mean", "median", "sharpen"],
+      },
+      {
+        key: "size",
+        label: "Size",
+        initial: "3",
+        kind: "number",
+        hint: "pixels (odd, for mean and median)",
+      },
+    ],
+  },
 };
 
 function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?: string }) {
-  const waves = useNumericWaves(1);
-  const preselected = useUi((state) => state.selectedWaves);
   const spec = ANALYSES[operation]!;
+  const waves = useNumericWaves(spec.dimensions ?? 1);
+  const preselected = useUi((state) => state.selectedWaves);
   const [wave, setWave] = useState(
     initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
   );
-  const [value, setValue] = useState(spec.parameter?.[2] ?? "");
-  const number = Number(value);
-  const invalid = spec.parameter !== undefined && (!Number.isInteger(number) || number < 1);
-  const args = [pyName(wave), ...(spec.parameter ? [`${spec.parameter[0]}=${number}`] : [])];
+  const fields = spec.fields ?? [];
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((field) => [field.key, field.initial])),
+  );
+  const args = [pyName(wave)];
+  let invalid = false;
+  const bad = new Set<string>();
+  for (const field of fields) {
+    const text = (values[field.key] ?? "").trim();
+    if (typeof field.kind !== "string") {
+      // The Python None is the one choice that is not a string.
+      args.push(`${field.key}=${text === "None" ? "None" : JSON.stringify(text)}`);
+      continue;
+    }
+    if (text === "" && field.optional) continue;
+    const number = Number(text);
+    const ok =
+      text !== "" &&
+      Number.isFinite(number) &&
+      number > 0 &&
+      (field.kind === "number" || Number.isInteger(number));
+    if (!ok) {
+      invalid = true;
+      bad.add(field.key);
+    } else {
+      args.push(`${field.key}=${number}`);
+    }
+  }
   return (
     <Dialog
       title={spec.title}
-      width={360}
+      width={400}
       onClose={close}
       submitDisabled={wave === "" || invalid}
       onSubmit={() => {
@@ -1653,16 +1770,32 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
           ))}
         </Select>
       </Field>
-      {spec.parameter ? (
-        <Field label={spec.parameter[1]}>
-          <TextInput
-            aria-label={spec.parameter[1]}
-            aria-invalid={invalid}
-            className="w-20"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-          />
+      {fields.map((field) => (
+        <Field key={field.key} label={field.label}>
+          {typeof field.kind === "string" ? (
+            <TextInput
+              aria-label={field.label}
+              aria-invalid={bad.has(field.key)}
+              className="w-20"
+              value={values[field.key] ?? ""}
+              onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            />
+          ) : (
+            <Select
+              aria-label={field.label}
+              value={values[field.key]}
+              onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            >
+              {field.kind.map((choice) => (
+                <option key={choice}>{choice}</option>
+              ))}
+            </Select>
+          )}
+          {field.hint ? <span className="text-muted">{field.hint}</span> : null}
         </Field>
+      ))}
+      {spec.note ? (
+        <div className="pl-[104px] text-[11px] leading-relaxed text-muted">{spec.note}</div>
       ) : null}
     </Dialog>
   );

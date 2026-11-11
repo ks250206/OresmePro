@@ -151,7 +151,11 @@ wave を列として表示・編集します。行も列も仮想スクロール
   初期値は自動で推定します。カーソル A–B 間だけを対象にもできます。
   係数の**固定**(`y0=0`)、**制約**(`A > 0, 2 < x0 < 5`)、点ごとの標準偏差による**重み付け**を指定できます。
   結果は `fit_<wave名>`(当てはめた曲線。元データのグラフに追加されます)、`W_coef`(係数)、`W_sigma`(標準偏差)に入ります。
-- Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル)、ヒストグラム。
+  **残差**(`res_<wave名>`。データの上に専用の軸を作って表示)と、当てはめた曲線の**信頼帯**(`fit_<wave名>_lo` / `_hi`。網掛けで表示)も出せます。
+- **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウスまたはローレンツの和とベースライン(定数・直線)を同時に当てはめます。
+  各ピークの位置・高さ・半値全幅・面積を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
+- Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
+- 画像: **フィルタ**(ガウス・平均・メディアン・シャープ化)、任意の直線に沿った**ラインプロファイル**。
 
 ### プロシージャウィンドウ
 
@@ -259,7 +263,12 @@ r = op.fit("gauss", w)                         # r.coef, r.sigma, r["x0"], r.wav
 op.fit(lambda x, a, k: a * np.exp(k * x), w, guess=[1, 0.1])
 op.fit("exp", w, cursors=True)                 # カーソル A–B 間
 op.fit("gauss", w, hold={"y0": 0}, bounds={"A": (0, None)}, sigma="err")   # 固定・制約・重み
+r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band = (下, 上)
+peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
+op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
+op.interpolate(y, x, n=200, kind="cubic")                    # at=[...] で指定した X の値も
+op.filter_image(m, "gauss", 1.5); op.line_profile(m, (x0, y0), (x1, y1))
 
 # 表
 t = op.edit(w, labels)
