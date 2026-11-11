@@ -149,9 +149,11 @@ function WindowFrame({
 }
 
 function windowTitle(window: WindowState, names: readonly string[]): string {
-  if (names.length === 0) return window.name;
-  const shown = names.slice(0, 4).join(", ");
-  return `${window.name}: ${shown}${names.length > 4 ? ", …" : ""}`;
+  // An image and its contours share a name; say it once.
+  const unique = [...new Set(names)];
+  if (unique.length === 0) return window.name;
+  const shown = unique.slice(0, 4).join(", ");
+  return `${window.name}: ${shown}${unique.length > 4 ? ", \u2026" : ""}`;
 }
 
 /** The area where graph and table windows live. */
