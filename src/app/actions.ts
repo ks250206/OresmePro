@@ -1,7 +1,8 @@
 import { type Command, uniqueName } from "../core/doc/commands";
 import { DATE_UNIT, leafName } from "../core/doc/types";
-import { parseDelimited } from "../core/io/delimited";
+import { columnsFromRows, parseDelimited, type DelimitedResult } from "../core/io/delimited";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
+import { readXlsx } from "../core/io/xlsx";
 import { drawPrims } from "../core/plot/canvas";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { timeZone } from "../core/plot/ticks";
@@ -125,10 +126,29 @@ export async function loadFiles(files: Iterable<File>): Promise<void> {
   for (const file of files) await loadFile(file);
 }
 
-/** Loads a dropped or chosen file: an experiment, or delimited text. */
+/** Loads a dropped or chosen file: an experiment, an Excel workbook, or delimited text. */
 export async function loadFile(file: File): Promise<void> {
   if (/\.oresme$/i.test(file.name)) await openExperimentFile(file);
+  else if (/\.(xlsx|xlsm|xls)$/i.test(file.name)) await loadExcelFile(file);
   else await loadTextFile(file);
+}
+
+/** The commands that make a wave of each column and a table showing them. */
+function columnCommands(result: DelimitedResult, source: string): Command[] {
+  const commands: Command[] = result.names.map((name, index) => {
+    const column = result.columns[index]!;
+    const loaded = {
+      op: "makeWave" as const,
+      name,
+      note: `Loaded from ${source}`,
+      ...(result.dates[index] ? { unit: DATE_UNIT } : {}),
+    };
+    return column instanceof Float64Array
+      ? { ...loaded, data: column }
+      : { ...loaded, text: column };
+  });
+  commands.push({ op: "edit", waves: result.names });
+  return commands;
 }
 
 async function loadTextFile(file: File): Promise<void> {
@@ -141,21 +161,48 @@ async function loadTextFile(file: File): Promise<void> {
       showError("Nothing to load", `${file.name} has no columns.`);
       return;
     }
-    const commands: Command[] = result.names.map((name, index) => {
-      const column = result.columns[index]!;
-      const loaded = {
-        op: "makeWave" as const,
-        name,
-        note: `Loaded from ${file.name}`,
-        ...(result.dates[index] ? { unit: DATE_UNIT } : {}),
-      };
-      return column instanceof Float64Array
-        ? { ...loaded, data: column }
-        : { ...loaded, text: column };
-    });
-    commands.push({ op: "edit", waves: result.names });
-    if (runGui(commands) === undefined) return;
+    if (runGui(columnCommands(result, file.name)) === undefined) return;
     note(`Loaded ${result.names.join(", ")} (${result.rows} points each) from ${file.name}.`);
+  } catch (error) {
+    showError(`Could not load ${file.name}`, error);
+  }
+}
+
+/** Asks for Excel workbooks and loads the columns of their sheets as waves. */
+export function loadExcelWorkbook(): void {
+  pickFile(".xlsx,.xlsm", true, (picked) => void loadFiles(picked));
+}
+
+/** Loads every sheet of a workbook that has cells: a wave per column and a table per sheet. */
+async function loadExcelFile(file: File): Promise<void> {
+  try {
+    const sheets = readXlsx(new Uint8Array(await file.arrayBuffer()));
+    if (sheets.length === 0) {
+      showError("Nothing to load", `${file.name} has no cells.`);
+      return;
+    }
+    const { waves, timeZone: zone } = doc.getState();
+    // Columns of later sheets are named to avoid those of the sheets before.
+    const taken = new Set<string>();
+    const commands: Command[] = [];
+    const lines: string[] = [];
+    for (const sheet of sheets) {
+      const result = columnsFromRows(
+        sheet.rows,
+        (name) => name in waves || taken.has(name),
+        timeZone(zone),
+      );
+      if (result.names.length === 0) continue;
+      for (const name of result.names) taken.add(name);
+      commands.push(...columnCommands(result, `${file.name}, sheet ${sheet.name}`));
+      lines.push(`${sheet.name}: ${result.names.join(", ")} (${result.rows} points each)`);
+    }
+    if (commands.length === 0) {
+      showError("Nothing to load", `${file.name} has no columns.`);
+      return;
+    }
+    if (runGui(commands) === undefined) return;
+    note(`Loaded from ${file.name}:\n${lines.join("\n")}`);
   } catch (error) {
     showError(`Could not load ${file.name}`, error);
   }

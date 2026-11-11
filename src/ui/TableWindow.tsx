@@ -55,18 +55,28 @@ export function TableWindow({ name }: { name: string }) {
 
   const waveNames = useMemo(() => table?.columns ?? [], [table]);
   // The column layout depends on each wave's shape, not on its values.
-  const shapeKey = waveNames.map((wave) => waves[wave]?.shape.join("x")).join(",");
+  const shapeKey = waveNames
+    .map((wave) => `${waves[wave]?.shape.join("x")}${waves[wave]?.imag ? "c" : ""}`)
+    .join(",");
   const columnInfos = useMemo<ColumnInfo[]>(
     () =>
       waveNames.flatMap((wave): ColumnInfo[] => {
-        const shape = doc.getState().waves[wave]?.shape ?? [0];
-        if (shape.length < 2) return [{ id: wave, wave, title: leafName(wave), j: null }];
-        return Array.from({ length: shape[1]! }, (_, j) => ({
-          id: `${wave}[${j}]`,
-          wave,
-          title: `${leafName(wave)}[][${j}]`,
-          j,
-        }));
+        const source = doc.getState().waves[wave];
+        const shape = source?.shape ?? [0];
+        // A complex wave has a column for each part of its values.
+        const parts = source?.imag ? [false, true] : [false];
+        const columnsOf = (j: number | null, title: string): ColumnInfo[] =>
+          parts.map((imag) => ({
+            id: `${wave}${j === null ? "" : `[${j}]`}${imag ? ".imag" : ""}`,
+            wave,
+            title: parts.length > 1 ? `${title}.${imag ? "imag" : "real"}` : title,
+            j,
+            imag,
+          }));
+        if (shape.length < 2) return columnsOf(null, leafName(wave));
+        return Array.from({ length: shape[1]! }, (_, j) =>
+          columnsOf(j, `${leafName(wave)}[][${j}]`),
+        ).flat();
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- shapeKey stands in for the shapes
     [waveNames, shapeKey],
@@ -170,7 +180,9 @@ export function TableWindow({ name }: { name: string }) {
     const wave = info ? waves[info.wave] : undefined;
     if (!wave || index >= (wave.shape[0] ?? 0)) return "";
     if (wave.text) return wave.text[index] ?? "";
-    const value = wave.data[cellIndex(wave, index, info!.j, plane)]!;
+    const value = (info!.imag && wave.imag ? wave.imag : wave.data)[
+      cellIndex(wave, index, info!.j, plane)
+    ]!;
     return wave.unit === DATE_UNIT ? formatDate(value, zone) : formatNumber(value, precision);
   };
 
@@ -194,7 +206,13 @@ export function TableWindow({ name }: { name: string }) {
     // Compare at full precision: the cell may show fewer digits than it holds.
     const unchanged = !appending && editing.text === cellText(activeInfo, active.row, 17);
     if (!unchanged && !(appending && editing.text.trim() === "")) {
-      const edit = { wave: activeInfo.wave, j: activeInfo.j, row: active.row, text: editing.text };
+      const edit = {
+        wave: activeInfo.wave,
+        j: activeInfo.j,
+        row: active.row,
+        text: editing.text,
+        imag: activeInfo.imag,
+      };
       const commands = tableEditCommands(waves, [edit], plane, zone);
       if (!commands) {
         setEditing({ ...editing, invalid: true });
@@ -294,7 +312,7 @@ export function TableWindow({ name }: { name: string }) {
         if (!info || !wave) return;
         // A paste below the end of a 1-D wave starts at its first free point.
         const start = wave.shape.length === 1 ? Math.min(range.top, wave.shape[0] ?? 0) : range.top;
-        edits.push({ wave: info.wave, j: info.j, row: start + down, text: value });
+        edits.push({ wave: info.wave, j: info.j, row: start + down, text: value, imag: info.imag });
       });
     });
     const commands = tableEditCommands(waves, edits, plane, zone);

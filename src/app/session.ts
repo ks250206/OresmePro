@@ -27,6 +27,7 @@ export type DialogRequest =
   | { kind: "renameWave"; wave: string }
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
+  | { kind: "waveType"; wave: string }
   | { kind: "newFolder"; parent: string }
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }

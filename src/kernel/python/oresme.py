@@ -61,6 +61,7 @@ __all__ = [
     "procedures",
     "time_zone",
     "set_time_zone",
+    "WAVE_TYPES",
 ]
 
 
@@ -110,8 +111,25 @@ def _is_text(values):
     )
 
 
+#: The number types a wave can have, by their NumPy names.
+WAVE_TYPES = (
+    "float64",
+    "float32",
+    "int8",
+    "uint8",
+    "int16",
+    "uint16",
+    "int32",
+    "uint32",
+    "complex128",
+    "complex64",
+)
+
+
 def _as_array(values):
-    array = np.asarray(values, dtype=np.float64)
+    array = np.asarray(values)
+    if array.dtype.kind not in "biufc":
+        array = np.asarray(values, dtype=np.float64)
     if array.ndim == 0:
         array = array.reshape(1)
     if array.ndim > 4:
@@ -119,7 +137,30 @@ def _as_array(values):
     return array
 
 
-def _content(command, values):
+def _wave_type(array, dtype=None):
+    """The type of wave to hold an array: the one asked for, else the array's own.
+
+    Whole numbers of NumPy's default integer type become float64: that is
+    what ``[1, 2, 3]`` and ``np.arange(10)`` are, and a wave of them should
+    not start rounding what is later assigned to it. Other types a wave
+    cannot have become float64 or complex128.
+    """
+    if dtype is not None:
+        name = np.dtype(dtype).name
+        if name not in WAVE_TYPES:
+            raise OresmeError(f"A wave cannot be {name}. Types: {', '.join(WAVE_TYPES)}.")
+        return name
+    name = array.dtype.name
+    if array.dtype in (np.dtype(np.int_), np.dtype(np.int64)):
+        return "float64"
+    if name in WAVE_TYPES:
+        return name
+    if array.dtype.kind == "c":
+        return "complex128"
+    return "uint8" if array.dtype.kind == "b" else "float64"
+
+
+def _content(command, values, dtype=None):
     """Add the values to a command: text goes in the command, numbers alongside it."""
     if _is_text(values):
         items = [values] if isinstance(values, str) else [str(item) for item in values]
@@ -130,8 +171,18 @@ def _content(command, values):
         values = values.astype("datetime64[ms]").astype(np.float64) / 1000.0
         command.setdefault("unit", "dat")
     array = _as_array(values)
+    kind = _wave_type(array, dtype)
+    command["type"] = kind
     command["shape"] = list(array.shape)
-    return array.ravel()
+    flat = array.ravel()
+    # Numbers travel as float64 (which holds every other type exactly); a
+    # complex wave as its real parts followed by its imaginary parts.
+    if kind.startswith("complex"):
+        command["complex"] = True
+        return np.concatenate([flat.real, flat.imag]).astype(np.float64)
+    if flat.dtype.kind == "c":
+        flat = flat.real
+    return flat.astype(np.float64)
 
 
 def _wave_name(obj):
@@ -158,6 +209,12 @@ def _wave_data(name):
     elif array is None:
         return cached[1]
     else:
+        kind = info["type"]
+        if kind.startswith("complex"):
+            half = len(array) // 2
+            array = array[:half] + 1j * array[half:]
+        if kind != "float64":
+            array = array.astype(kind)
         array = array.reshape(info["shape"])
     array.flags.writeable = False
     if len(_data_cache) > 64:
@@ -264,7 +321,35 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     @data.setter
     def data(self, values):
         command = {"op": "setWaveData", "name": self._name}
-        _dispatch(command, _content(command, values))
+        info = self._info()
+        keep = None
+        if info["kind"] == "numeric" and not _is_text(values):
+            # The wave keeps its type, as in Igor: values are converted to it.
+            # Complex values make a real wave complex rather than lose half of them.
+            keep = info["type"]
+            if np.asarray(values).dtype.kind == "c" and not keep.startswith("complex"):
+                keep = "complex64" if keep == "float32" else "complex128"
+        _dispatch(command, _content(command, values, keep))
+
+    @property
+    def dtype(self):
+        """The wave's number type, as a NumPy dtype."""
+        info = self._info()
+        return np.dtype(str) if info["kind"] == "text" else np.dtype(info["type"])
+
+    @property
+    def is_complex(self):
+        return self._info()["type"].startswith("complex")
+
+    def redimension(self, dtype):
+        """Change the number type, converting the values (Igor's Redimension).
+
+        Into an integer type they are rounded and held at the ends of its
+        range. A real wave made complex gets zero imaginary parts; a complex
+        wave made real keeps its real parts.
+        """
+        _dispatch({"op": "redimension", "name": self._name, "type": np.dtype(dtype).name})
+        return self
 
     @property
     def shape(self):
@@ -410,8 +495,10 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             values[key] = [value] if isinstance(value, str) else [str(item) for item in value]
             self.data = values
             return
-        if len(info["shape"]) > 1:
+        if len(info["shape"]) > 1 or info["type"].startswith("complex") or np.iscomplexobj(value):
             values = self.data.copy()
+            if np.iscomplexobj(value) and not np.iscomplexobj(values):
+                values = values.astype(np.complex128)
             values[key] = value
             self.data = values
             return
@@ -490,7 +577,9 @@ class Trace(_Props):
     style it. ``x_offset`` and ``y_offset`` shift the trace where it is
     drawn without changing its waves. ``color_wave`` colors the trace point
     by point from another wave, through ``color_table`` (over ``color_min``
-    to ``color_max``, or the wave's own range).
+    to ``color_max``, or the wave's own range). For a complex wave, ``part``
+    chooses what is plotted: ``"real"``, ``"imag"``, ``"magnitude"`` or
+    ``"phase"`` (radians).
     """
 
     _props = (
@@ -513,6 +602,7 @@ class Trace(_Props):
         "color_table",
         "color_min",
         "color_max",
+        "part",
     )
 
     def __init__(self, graph, name):
@@ -672,7 +762,7 @@ class Annotation(_Props):
 class Image(_Props):
     """A 2-D wave shown as an image in a graph."""
 
-    _props = ("color_table", "z_min", "z_max", "reverse", "layer", "chunk")
+    _props = ("color_table", "z_min", "z_max", "reverse", "layer", "chunk", "part")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -1153,13 +1243,19 @@ class Table(_Props):
         return f"Table({self._name!r})"
 
 
-def make(name, data=None, *, n=128, x0=None, dx=None, x_unit=None, y0=None, dy=None,
-         y_unit=None, unit=None, note=None, overwrite=True):
+def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y0=None,
+         dy=None, y_unit=None, unit=None, note=None, overwrite=True):
     """Create a wave (or replace an existing one) and return it.
 
     ``data`` may be numbers with up to 4 dimensions, or a list of strings for
     a text wave. Without ``data`` the wave has ``n`` zeros. An existing wave
     keeps its scaling and units unless new ones are given.
+
+    The wave takes the type of the data when it is one a wave can have:
+    float64 or float32, int8 to int32 and uint8 to uint32, complex128 or
+    complex64. Plain whole numbers (a list of them, ``np.arange(10)``) are
+    float64, like any other numbers. ``dtype`` asks for a type by name:
+    ``dtype="int32"``.
     """
     command = {"op": "makeWave", "name": name, "overwrite": bool(overwrite)}
     for key, value in (("x0", x0), ("dx", dx), ("y0", y0), ("dy", dy)):
@@ -1169,7 +1265,7 @@ def make(name, data=None, *, n=128, x0=None, dx=None, x_unit=None, y0=None, dy=N
         if value is not None:
             command[key] = str(value)
     values = np.zeros(int(n)) if data is None else data
-    return Wave(_dispatch(command, _content(command, values)))
+    return Wave(_dispatch(command, _content(command, values, dtype)))
 
 
 def wave(name):

@@ -1,9 +1,14 @@
+import { zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
-import { parseDelimited } from "./delimited";
+import { timeZone } from "../plot/ticks";
+import { columnsFromRows, parseDelimited } from "./delimited";
 import { Doc } from "../doc/doc";
 import { History } from "../history/history";
 import { unzipExperiment, zipExperiment } from "./experiment";
 import { decodeNpy, encodeNpy } from "./npy";
+import excelWorkbook from "./testdata/excel.xlsx?inline";
+import openpyxlWorkbook from "./testdata/openpyxl.xlsx?inline";
+import { readXlsx } from "./xlsx";
 
 describe("npy", () => {
   it("round-trips float64 data with an aligned header", () => {
@@ -19,6 +24,48 @@ describe("npy", () => {
     const matrix = decodeNpy(encodeNpy(new Float64Array(6), [2, 3]));
     expect(matrix.shape).toEqual([2, 3]);
     expect(() => decodeNpy(new Uint8Array([1, 2, 3]))).toThrow(/Not a .npy/);
+  });
+
+  it("keeps every wave type, and complex values as pairs", () => {
+    const cases = [
+      ["float32", Float32Array.of(0.5, -1.25)],
+      ["int8", Int8Array.of(-128, 127)],
+      ["uint8", Uint8Array.of(0, 255)],
+      ["int16", Int16Array.of(-32768, 32767)],
+      ["uint16", Uint16Array.of(0, 65535)],
+      ["int32", Int32Array.of(-2147483648, 2147483647)],
+      ["uint32", Uint32Array.of(0, 4294967295)],
+    ] as const;
+    for (const [type, data] of cases) {
+      const file = encodeNpy(data, [2], type);
+      const back = decodeNpy(file);
+      expect([back.type, back.data.constructor, Array.from(back.data)]).toEqual([
+        type,
+        data.constructor,
+        Array.from(data),
+      ]);
+      // Sized to the type: the header, then one element's bytes per value.
+      expect((file.length - 2 * data.BYTES_PER_ELEMENT) % 64).toBe(0);
+    }
+    const file = encodeNpy(
+      Float64Array.of(1, 2, 3),
+      [3],
+      "complex128",
+      Float64Array.of(-1, -2, -3),
+    );
+    expect(new TextDecoder().decode(file.subarray(10, 60))).toContain("'descr': '<c16'");
+    // Interleaved real and imaginary parts, as NumPy stores them.
+    expect(Array.from(new Float64Array(file.slice(-48).buffer))).toEqual([1, -1, 2, -2, 3, -3]);
+    const back = decodeNpy(file);
+    expect([back.type, Array.from(back.data), Array.from(back.imag!)]).toEqual([
+      "complex128",
+      [1, 2, 3],
+      [-1, -2, -3],
+    ]);
+    const single = decodeNpy(
+      encodeNpy(Float32Array.of(1.5), [1], "complex64", Float32Array.of(2.5)),
+    );
+    expect([single.type, single.data[0], single.imag![0]]).toEqual(["complex64", 1.5, 2.5]);
   });
 });
 
@@ -86,6 +133,13 @@ describe("experiment files", () => {
     });
     doc.dispatch({ op: "makeWave", name: "m", data: new Float64Array(6), shape: [2, 3], dy: 4 });
     doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });
+    doc.dispatch({ op: "makeWave", name: "counts", data: Uint16Array.of(7, 65535) });
+    doc.dispatch({
+      op: "makeWave",
+      name: "spectrum",
+      data: Float32Array.of(1, 2),
+      imag: Float32Array.of(0.5, -0.5),
+    });
     doc.dispatch({ op: "newFolder", path: "empty" });
     doc.dispatch({ op: "display", y: ["run1:signal"] });
     doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "B", trace: "signal", point: 1 });
@@ -112,6 +166,17 @@ describe("experiment files", () => {
     expect(restored.state.waves["run1:signal"]).toMatchObject({ dx: 0.5, unit: "V" });
     expect(restored.state.waves.m).toMatchObject({ shape: [2, 3], dy: 4 });
     expect(restored.state.waves.labels!.text).toEqual(["a", "b"]);
+    const { counts, spectrum } = restored.state.waves;
+    expect([counts!.type, counts!.data.constructor, Array.from(counts!.data)]).toEqual([
+      "uint16",
+      Uint16Array,
+      [7, 65535],
+    ]);
+    expect([spectrum!.type, Array.from(spectrum!.data), Array.from(spectrum!.imag!)]).toEqual([
+      "complex64",
+      [1, 2],
+      [0.5, -0.5],
+    ]);
     expect(restored.state.graphs).toEqual(before.graphs);
     expect(restored.state.tables).toEqual(before.tables);
     expect(restored.state.procedures).toEqual(before.procedures);
@@ -125,5 +190,67 @@ describe("experiment files", () => {
 
   it("rejects other files", () => {
     expect(() => unzipExperiment(new Uint8Array([1, 2, 3]))).toThrow(/not an OresmePro experiment/);
+  });
+});
+
+describe("Excel workbooks", () => {
+  // Two real files: one laid out as Excel writes them (shared strings, a
+  // formula with its cached result, a title above the table that starts at
+  // B4), one as openpyxl does (inline strings, a gap in the columns).
+  // (They are imported as data URLs, which is how Vite hands a test a binary file.)
+  const load = (dataUrl: string) =>
+    readXlsx(
+      Uint8Array.from(atob(dataUrl.slice(dataUrl.indexOf(",") + 1)), (char) => char.charCodeAt(0)),
+    );
+
+  it("reads the sheets that have cells, as rows of text", () => {
+    const sheets = load(excelWorkbook);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(["Run 1", "Second"]);
+    expect(sheets[0]!.rows).toEqual([
+      ["time", "temp (°C)", "sample", "count", "ok", "double", "day"],
+      ["2026-01-15 09:00:00", "20.5", "alpha", "3", "1", "41.0", "2026-01-15"],
+      ["2026-01-15 09:30:00", "21.25", "β & <tag>", "14", "0", "42.5", "2026-01-16"],
+      ["2026-01-15 10:00:00", "0.3", "試料 3", "159", "1", "0.6000000000000001", "2026-02-01"],
+    ]);
+    expect(sheets[1]!.rows).toEqual([
+      ["1", "2", "3"],
+      ["4", "5", "6"],
+    ]);
+  });
+
+  it("turns a sheet into waves: numbers, dates and text", () => {
+    const [sheet] = load(excelWorkbook);
+    const result = columnsFromRows(sheet!.rows, () => false);
+    expect(result.names).toEqual(["time", "temp_C", "sample", "count", "ok", "double", "day"]);
+    expect(result.dates).toEqual([true, false, false, false, false, false, true]);
+    expect(Array.from(result.columns[0] as Float64Array)).toEqual(
+      [9, 9.5, 10].map((hour) => Date.UTC(2026, 0, 15) / 1000 + hour * 3600),
+    );
+    // The number as stored, not as its format shows it.
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([20.5, 21.25, 0.3]);
+    expect(result.columns[2]).toEqual(["alpha", "β & <tag>", "試料 3"]);
+    expect(Array.from(result.columns[5] as Float64Array)).toEqual([41, 42.5, 0.6000000000000001]);
+    // Dates without an offset are on the clock of the zone asked for.
+    const tokyo = columnsFromRows(sheet!.rows, () => false, timeZone("Asia/Tokyo"));
+    expect((tokyo.columns[0] as Float64Array)[0]).toBe(Date.UTC(2026, 0, 15, 0) / 1000);
+  });
+
+  it("reads inline strings, empty cells and skips empty columns", () => {
+    const [sheet] = load(openpyxlWorkbook);
+    expect(sheet!.rows).toEqual([
+      ["x", "y", "note", "when"],
+      ["1", "1.5", "one", "2026-03-01 12:00:00"],
+      ["2", "", "two", "2026-03-02 12:00:00"],
+      ["3", "4.5", "", "2026-03-03 12:00:00"],
+    ]);
+    const result = columnsFromRows(sheet!.rows, (name) => name === "x");
+    expect(result.names).toEqual(["x_1", "y", "note", "when"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([1.5, NaN, 4.5]);
+    expect(result.columns[2]).toEqual(["one", "two", ""]);
+  });
+
+  it("says what is wrong with a file that is not a workbook", () => {
+    expect(() => readXlsx(new Uint8Array([1, 2, 3, 4]))).toThrow(/not an Excel workbook/);
+    expect(() => readXlsx(zipSync({ "hello.txt": new Uint8Array(1) }))).toThrow(/\.xlsx/);
   });
 });

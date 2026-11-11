@@ -1,7 +1,30 @@
 import type { Command } from "./commands";
 
+/** Python source to be written as it is, where a literal would otherwise go. */
+class PyExpression {
+  readonly source: string;
+
+  constructor(source: string) {
+    this.source = source;
+  }
+}
+
+const same = (a: unknown, b: unknown): boolean =>
+  a instanceof PyExpression && b instanceof PyExpression ? a.source === b.source : Object.is(a, b);
+
+/** A number as an argument of float() or complex(): plain, or a quoted nan or inf. */
+const pyNumber = (value: number): string =>
+  Number.isFinite(value)
+    ? String(value)
+    : Number.isNaN(value)
+      ? '"nan"'
+      : value > 0
+        ? '"inf"'
+        : '"-inf"';
+
 /** Formats a JavaScript value as a Python literal. */
 export function pyLiteral(value: unknown): string {
+  if (value instanceof PyExpression) return value.source;
   if (value === null || value === undefined) return "None";
   if (typeof value === "boolean") return value ? "True" : "False";
   if (typeof value === "number") {
@@ -72,9 +95,19 @@ export function echoPython(
       return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
     case "modifyTable":
       return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
+    case "redimension":
+      return `op.wave(${pyLiteral(command.name)}).redimension(${pyLiteral(command.type)})`;
     case "setWavePoints": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
-      const { start, values } = command;
+      const { start } = command;
+      // Complex points are written as complex(re, im), which also takes nan and inf.
+      const { imag } = command;
+      const values: ArrayLike<number | PyExpression> = imag
+        ? Array.from(
+            command.values,
+            (re, index) => new PyExpression(`complex(${pyNumber(re)}, ${pyNumber(imag[index]!)})`),
+          )
+        : command.values;
       const shape = shapeOf?.(command.name) ?? [];
       if (values.length === 1) {
         // A cell of a matrix is written by its indices, not its place in memory.
@@ -84,7 +117,7 @@ export function echoPython(
       const target = `${shape.length > 1 ? `${wave}.flat` : wave}[${start}:${start + values.length}]`;
       const list = Array.from(values);
       // A run of one value (clearing a range to NaN) is written once, not per point.
-      if (list.every((value) => Object.is(value, list[0]))) {
+      if (list.every((value) => same(value, list[0]))) {
         return `${target} = ${pyLiteral(list[0])}`;
       }
       return `${target} = ${pyLiteral(list)}`;

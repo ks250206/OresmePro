@@ -119,6 +119,20 @@ export function parseDelimited(
     typeof delimiter === "string"
       ? splitRecords(lines, delimiter)
       : lines.map((line) => line.trim().split(delimiter));
+  return columnsFromRows(rows, taken, zone);
+}
+
+/**
+ * Turns rows of cells (from delimited text or a spreadsheet) into columns:
+ * numbers, dates or text, named from a header row if there is one.
+ */
+export function columnsFromRows(
+  rows: string[][],
+  taken: (name: string) => boolean,
+  zone: TimeZone = UTC,
+): DelimitedResult {
+  if (rows.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
+  rows = [...rows];
   const hasHeader = rows[0]!.some((cell) => cell.trim() !== "" && !isNumeric(cell));
   const header = hasHeader ? rows.shift()! : [];
   // A loop, not Math.max(...): a file can have more rows than a call can take arguments.

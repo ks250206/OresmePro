@@ -726,4 +726,72 @@ describe("oresme Python API", () => {
       "[10.0, 12.0, 14.0]",
     ]);
   });
+
+  it("keeps the number type of waves, and complex values", async () => {
+    expect(
+      await run(
+        [
+          'f4 = op.make("f4", np.arange(4, dtype=np.float32) / 3)',
+          'u1 = op.make("u1", np.array([1, 2, 250], dtype=np.uint8))',
+          'ints = op.make("ints", [1, 2, 3]); op.make("ar", np.arange(3)); op.make("i4", np.arange(3), dtype="int32")',
+          'i2 = op.make("i2", [1.6, -2.4, 1e6], dtype="int16")',
+          'cx = op.make("cx", np.array([1 + 2j, 3 - 4j]))',
+          "print(f4.dtype, u1.dtype, ints.dtype, op.wave('ar').dtype, op.wave('i4').dtype, i2.dtype, cx.dtype, cx.is_complex, f4.is_complex)",
+          "print(f4.data.dtype, bool(f4.data[1] == np.float32(1 / 3)), u1.data.tolist(), i2.data.tolist(), cx.data.tolist())",
+          // Arithmetic follows NumPy, and assigning keeps the wave's type.
+          "u1.data = u1.data + 10; f4[0] = 0.1; i2[0:2] = [7.5, 8.4]",
+          "print(u1.data.tolist(), u1.dtype, float(f4.data[0]) == float(np.float32(0.1)), i2.data.tolist())",
+          "cx[0] = 5j; cx.data = cx.data * 2",
+          "print(cx.data.tolist(), abs(cx).tolist())",
+          'f4.redimension("complex64"); u1.redimension(np.float64)',
+          "print(f4.dtype, f4.data[1], u1.dtype, u1.data.tolist())",
+          "ints.data = np.array([1j, 2])",
+          "print(ints.dtype, ints.data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "float32 uint8 float64 float64 int32 int16 complex128 True False",
+      "float32 True [1, 2, 250] [2, -2, 32767] [(1+2j), (3-4j)]",
+      // 250 + 10 does not fit in a byte: NumPy wraps it round to 4 before it is stored.
+      "[11, 12, 4] uint8 True [8, 8, 32767]",
+      "[10j, (6-8j)] [10.0, 10.0]",
+      "complex64 (0.33333334+0j) float64 [11.0, 12.0, 4.0]",
+      "complex128 [1j, (2+0j)]",
+    ]);
+    const { f4, i2, cx } = doc.getState().waves;
+    expect(f4!.data).toBeInstanceOf(Float32Array);
+    expect(i2!.data).toBeInstanceOf(Int16Array);
+    expect([Array.from(cx!.data), Array.from(cx!.imag!)]).toEqual([
+      [0, 6],
+      [10, -8],
+    ]);
+    expect(await run('op.make("bad", [1], dtype="int64")')).toBe(false);
+    expect(errors[0]).toContain("A wave cannot be int64");
+  });
+
+  it("keeps a spectrum complex and inverts it", async () => {
+    expect(
+      await run(
+        [
+          "ft = np.arange(101) * 0.01",
+          'sg = op.make("sg", np.sin(2 * np.pi * 5 * ft) + 0.5, x0=0, dx=0.01, x_unit="s", unit="V")',
+          'sp = op.fft(sg, output="complex")',
+          "print(sp.name, sp.dtype, len(sp), sp.x_unit, round(sp.dx, 4), int(np.argmax(np.abs(sp.data[1:])) + 1))",
+          "back = op.ifft(sp)",
+          "print(back.name, len(back), back.x_unit, round(back.dx, 6), bool(np.allclose(back.data, sg.data)))",
+          'mag = op.fft(sg, name="sg_mag")',
+          "print(mag.dtype, round(float(mag.data[0]), 2))",
+          'gz = op.display(sp, name="Spectrum"); gz.trace("sg_FFT").part = "magnitude"',
+          "print(gz.trace('sg_FFT').part, 'sg_FFT' in gz.script(), 'part=\"magnitude\"' in gz.script())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "sg_FFT complex128 51 Hz 0.9901 5",
+      "sg_FFT_IFFT 101 s 0.01 True",
+      "float64 1.0",
+      "magnitude True True",
+    ]);
+  });
 });

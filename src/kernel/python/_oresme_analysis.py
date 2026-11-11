@@ -25,6 +25,7 @@ __all__ = [
     "integrate",
     "smooth",
     "fft",
+    "ifft",
     "histogram",
 ]
 
@@ -522,8 +523,10 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
 
 
 def _numeric(wave_):
+    """A wave and its values as real numbers (the real parts of a complex wave)."""
     source = _op.wave(_op._wave_name(wave_))
-    values = np.asarray(source.data, dtype=float)
+    values = np.asarray(source.data)
+    values = np.asarray(values.real if values.dtype.kind == "c" else values, dtype=float)
     return source, values
 
 
@@ -598,10 +601,22 @@ def smooth(wave_, n=5, name=None):
     )
 
 
-def fft(wave_, name=None):
-    """The magnitude spectrum, as a new wave ``<name>_FFT`` scaled in frequency."""
+def fft(wave_, name=None, output="magnitude"):
+    """The spectrum of a wave, as a new wave ``<name>_FFT`` scaled in frequency.
+
+    ``output="magnitude"`` gives the amplitude of each frequency component.
+    ``output="complex"`` keeps the spectrum itself as a complex wave: the
+    non-negative frequencies, not normalized (``np.fft.rfft``), which
+    ``op.ifft`` turns back into the signal.
+    """
     source, values = _numeric(wave_)
-    spectrum = np.abs(np.fft.rfft(values)) * 2 / max(1, len(values))
+    if values.ndim != 1:
+        raise _op.OresmeError("The FFT here is for 1-D waves.")
+    if output not in ("magnitude", "complex"):
+        raise _op.OresmeError('output must be "magnitude" or "complex".')
+    spectrum = np.fft.rfft(values)
+    if output == "magnitude":
+        spectrum = np.abs(spectrum) * 2 / max(1, len(values))
     spacing = abs(source.dx)
     unit = "Hz" if source.x_unit == "s" else (f"1/{source.x_unit}" if source.x_unit else "")
     return _op.make(
@@ -610,6 +625,37 @@ def fft(wave_, name=None):
         x0=0,
         dx=1 / (len(values) * spacing),
         x_unit=unit,
+        unit=source.unit,
+        # So the inverse can restore an odd number of points.
+        note=f"points={len(values)}" if output == "complex" else "",
+    )
+
+
+def ifft(wave_, name=None, n=None):
+    """The signal whose spectrum a complex wave holds, as ``<name>_IFFT``.
+
+    The inverse of ``op.fft(w, output="complex")``. ``n`` is the number of
+    points of the result; by default the number the spectrum was made from.
+    """
+    source = _op.wave(_op._wave_name(wave_))
+    spectrum = np.asarray(source.data)
+    if spectrum.ndim != 1:
+        raise _op.OresmeError("The inverse FFT here is for 1-D waves.")
+    if n is None:
+        note = source.note
+        n = int(note[7:]) if note.startswith("points=") and note[7:].isdigit() else 2 * (len(spectrum) - 1)
+    n = int(n)
+    if n < 1:
+        raise _op.OresmeError("There are not enough points for an inverse FFT.")
+    signal = np.fft.irfft(spectrum, n)
+    unit = source.x_unit
+    back = "s" if unit == "Hz" else (unit[2:] if unit.startswith("1/") else "")
+    return _op.make(
+        _sibling(source, "_IFFT", name),
+        signal,
+        x0=0,
+        dx=1 / (n * abs(source.dx)),
+        x_unit=back,
         unit=source.unit,
     )
 

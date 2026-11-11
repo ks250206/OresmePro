@@ -99,6 +99,7 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       ...image,
       layer: image.layer ?? 0,
       chunk: image.chunk ?? 0,
+      part: image.part ?? "real",
     })),
     contours: (saved.contours ?? []).map((contour) => ({
       ...contour,
@@ -194,7 +195,7 @@ export function zipExperiment(
   const saved = describeExperiment(state, (wave) => {
     counter += 1;
     const file = `waves/${counter}.npy`;
-    files[file] = encodeNpy(wave.data, wave.shape);
+    files[file] = encodeNpy(wave.data, wave.shape, wave.type, wave.imag);
     return file;
   });
   files["experiment.json"] = strToU8(JSON.stringify(saved));

@@ -91,6 +91,7 @@ function WaveInfo({ wave }: { wave: Wave }) {
   const unit = (value: string) => (value ? ` ${value}` : "");
   const rows: [string, string][] = [[wave.text ? "Text points" : "Points", sizeLabel(wave)]];
   if (!wave.text) {
+    rows.push(["Type", wave.type]);
     rows.push([
       "X start, step",
       `${formatNumber(wave.x0)}, ${formatNumber(wave.dx)}${unit(wave.xUnit)}`,
@@ -308,6 +309,11 @@ export function DataBrowser() {
         label: "Change Wave Scaling…",
         disabled: !single || Boolean(kinds[0]!.text),
         onSelect: open({ kind: "waveScaling", wave: name }),
+      },
+      {
+        label: "Change Wave Type…",
+        disabled: !single || Boolean(kinds[0]!.text),
+        onSelect: open({ kind: "waveType", wave: name }),
       },
       {
         label: "Rename or Move…",

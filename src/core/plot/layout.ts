@@ -6,11 +6,14 @@ import {
   type AnnotationSpec,
   type AxisSide,
   type AxisSpec,
+  type ComplexPart,
   type CursorName,
   type GraphSpec,
   type ImageSpec,
   type TraceSpec,
   type Wave,
+  type WaveData,
+  wavePart,
 } from "../doc/types";
 import { colorAt, renderMatrix } from "./colorTables";
 import { chainSegments, contourLevels, contourSegments } from "./contour";
@@ -218,7 +221,7 @@ function ticksFor(
 }
 
 /** The extent of values that are drawn shifted by an offset. */
-function shiftExtent(extent: Extent, offset: number, data: Float64Array): Extent {
+function shiftExtent(extent: Extent, offset: number, data: WaveData): Extent {
   if (offset === 0 || !Number.isFinite(extent.min)) return extent;
   const min = extent.min + offset;
   const max = extent.max + offset;
@@ -263,7 +266,7 @@ function barSpacing(y: Wave, x: Wave | null): number {
   return count > 1 && Number.isFinite(extent.min) ? (extent.max - extent.min) / (count - 1) : 1;
 }
 
-const planeCache = new WeakMap<Float64Array, Map<string, Float64Array>>();
+const planeCache = new WeakMap<WaveData, Map<string, WaveData>>();
 
 /**
  * The 2-D plane of a wave that an image or contour shows: the wave itself
@@ -273,7 +276,7 @@ export function planeOf(
   wave: Wave,
   layer: number,
   chunk: number,
-): { data: Float64Array; nx: number; ny: number } | null {
+): { data: WaveData; nx: number; ny: number } | null {
   const [nx, ny, nz = 1, nc = 1] = wave.shape;
   if (wave.shape.length < 2 || nx === undefined || ny === undefined) return null;
   if (layer >= nz || chunk >= nc) return null;
@@ -365,11 +368,11 @@ interface ImageInfo {
   zMax: number;
 }
 
-const imageCache = new WeakMap<Float64Array, Map<string, Uint8ClampedArray<ArrayBuffer>>>();
-const contourCache = new WeakMap<Float64Array, Map<number, Float64Array[]>>();
+const imageCache = new WeakMap<WaveData, Map<string, Uint8ClampedArray<ArrayBuffer>>>();
+const contourCache = new WeakMap<WaveData, Map<number, Float64Array[]>>();
 
 function cachedMatrix(
-  data: Float64Array,
+  data: WaveData,
   nx: number,
   ny: number,
   cols: number,
@@ -388,7 +391,7 @@ function cachedMatrix(
   return rgba;
 }
 
-function cachedContour(data: Float64Array, nx: number, ny: number, level: number): Float64Array[] {
+function cachedContour(data: WaveData, nx: number, ny: number, level: number): Float64Array[] {
   let entries = contourCache.get(data);
   if (!entries) contourCache.set(data, (entries = new Map()));
   let chains = entries.get(level);
@@ -738,11 +741,13 @@ function errorAt(source: string | number | null, waves: Readonly<Record<string, 
  * wave) the points sit at 0, 1, 2, ..., expressed here as X scaling.
  */
 export function tracePosition(
-  trace: { y: string; x: string | null },
+  trace: { y: string; x: string | null; part?: ComplexPart },
   waves: Readonly<Record<string, Wave>>,
 ): { y: Wave; x: Wave | null; categories: readonly string[] | null } | null {
-  const y = waves[trace.y];
-  if (!y) return null;
+  const source = waves[trace.y];
+  if (!source) return null;
+  // What is plotted of a complex wave is one real number per point.
+  const y = wavePart(source, trace.part ?? "real");
   const x = trace.x === null ? null : waves[trace.x];
   if (x === undefined) return null;
   if (x?.text) return { y: { ...y, x0: 0, dx: 1 }, x: null, categories: x.text };
@@ -789,9 +794,10 @@ export function layoutGraph(
     if (!yOk || !xOk || !axisOk(spec) || spec.hidden) continue;
     // A text X wave makes a category plot: the points sit at 0, 1, 2, ...
     const categories = xWave?.text ?? null;
+    const shown = wavePart(yWave, spec.part);
     traces.push({
       spec,
-      y: categories ? { ...yWave, x0: 0, dx: 1 } : yWave,
+      y: categories ? { ...shown, x0: 0, dx: 1 } : shown,
       x: categories ? null : (xWave ?? null),
       categories,
       xUnit: categories ? "" : xWave ? xWave.unit : yWave.xUnit,
@@ -803,7 +809,8 @@ export function layoutGraph(
     items: readonly T[],
   ) =>
     items.flatMap((spec) => {
-      const wave = waves[spec.wave];
+      const source = waves[spec.wave];
+      const wave = source && wavePart(source, "part" in spec ? (spec.part as ComplexPart) : "real");
       const plane = wave && !wave.text ? planeOf(wave, spec.layer, spec.chunk) : null;
       if (!wave || !plane) {
         missing.add(spec.wave);

@@ -40,6 +40,10 @@ g.legend()
 CSV / TSV ファイルは、ウィンドウにドロップするか **File › Load Delimited Text…** で読み込めます。
 列が 1 列ずつ wave になります(数値の列は数値 wave、文字列の列はテキスト wave)。
 
+**Excel のブック**(`.xlsx` / `.xlsm`)も、ドロップするか **File › Load Excel Workbook…** で読み込めます。
+セルのあるシートごとに、列が wave になり、表が 1 つ開きます。数値は表示形式ではなく保存されている値そのもの、数式は計算済みの値、
+日付の書式のセルは日付 wave になります。表の上にあるタイトル行や、空の行・列は読み飛ばします。古い `.xls` は `.xlsx` に保存し直してください。
+
 Python 本体(Pyodide)と NumPy・IPython はアプリと一緒に配信され、起動に数秒かかります。
 グラフや表の操作は Python の起動を待たずに使えます。
 
@@ -52,7 +56,15 @@ Igor と同じく、データの単位は **wave**(名前・スケーリング�
 グラフや表で使用中の wave は削除できません。
 
 - 数値の wave は 1〜4 次元です。最初の 2 次元には X・Y のスケーリング(開始値・刻み・単位)があります。
-  2 次元 wave は `w[i, j]` の `i` が X 方向(横)です。3〜4 次元の wave は、表・画像・等高線で 1 面(レイヤーとチャンク)ずつ表示します。
+- 数値の**型**は `float64`(既定)、`float32`、`int8`〜`int32`、`uint8`〜`uint32`、複素数の `complex128` / `complex64` です。
+  メモリ上もその型の配列で持つので、`uint16` の画像は `float64` の 1/4 で済みます。`.oresme` の中の `.npy` もその型で保存されます。
+  - 型は NumPy の配列からそのまま引き継ぎます(`op.make("img", frame)` で `uint16` の配列を渡せば `uint16` の wave)。
+    ただしリストや `np.arange(10)` のような既定の整数は、ほかの数と同じく `float64` になります。型を指定するには `dtype="int32"` です。
+  - wave に値を代入しても型は変わりません(Igor と同じ)。整数の wave では四捨五入され、範囲の端で止まります。NaN は持てないので 0 になります。
+  - 型の変更は **Data › Change Wave Type…**(`w.redimension("float32")`)です。
+  - **複素数**の wave は、表では実部・虚部の 2 列になります。グラフでは実部・虚部・絶対値・位相のどれを描くかを trace ごとに選べます。
+    `op.fft(w, output="complex")` はスペクトルを複素数のまま返し、`op.ifft` で元の信号に戻せます。
+    2 次元 wave は `w[i, j]` の `i` が X 方向(横)です。3〜4 次元の wave は、表・画像・等高線で 1 面(レイヤーとチャンク)ずつ表示します。
 - **日付**は 1970-01-01 UTC からの秒数として持ち、単位を `dat` にします(Igor と同じ流儀です)。
   CSV の日付の列(`2026-11-11 09:00` など)や NumPy の `datetime64` は自動でこの形になり、表では日付として表示・編集できます。
   どの時計で読むかは **Data › Time Zone for Dates…**(`op.set_time_zone("Asia/Tokyo")`)で決めます。UTC(既定)、このコンピュータのタイムゾーン(`"local"`)、または IANA 名です。
@@ -154,7 +166,7 @@ wave を列として表示・編集します。行も列も仮想スクロール
   **残差**(`res_<wave名>`。データの上に専用の軸を作って表示)と、当てはめた曲線の**信頼帯**(`fit_<wave名>_lo` / `_hi`。網掛けで表示)も出せます。
 - **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウスまたはローレンツの和とベースライン(定数・直線)を同時に当てはめます。
   各ピークの位置・高さ・半値全幅・面積を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
-- Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
+- Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル、または複素数のまま)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
 - 画像: **フィルタ**(ガウス・平均・メディアン・シャープ化)、任意の直線に沿った**ラインプロファイル**。
 
 ### プロシージャウィンドウ
@@ -210,6 +222,8 @@ w = op.wave("signal")            # 既存の wave
 w.data                           # 読み取り専用の NumPy 配列(コピー)
 w.data = w.data * 2              # 全体を書き換え
 w[10:20] = 0                     # 一部を書き換え
+w.dtype; w.redimension("float32")                        # 型。op.make(..., dtype="uint16") で指定して作る
+z = op.make("z", np.exp(1j * np.linspace(0, 6, 100)))    # 複素数。z.data.real、abs(z)、z.is_complex
 np.sqrt(w), w + 1, np.mean(w)    # NumPy の関数や演算はそのまま使える
 w.set_scale(x0=0, dx=0.5, unit="s"); w.unit = "V"; w.note = "..."
 w.rename("volts"); w.duplicate("copy"); op.kill("copy")
@@ -267,6 +281,8 @@ r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band =
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
 op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
+spec = op.fft(w, output="complex"); op.ifft(spec)            # 複素スペクトルと逆変換
+g.trace("w_FFT").part = "magnitude"                          # 複素 wave の描く部分: real / imag / magnitude / phase
 op.interpolate(y, x, n=200, kind="cubic")                    # at=[...] で指定した X の値も
 op.filter_image(m, "gauss", 1.5); op.line_profile(m, (x0, y0), (x1, y1))
 
@@ -322,7 +338,7 @@ SciPy や pandas など Pyodide に含まれるパッケージは、`import` し
 | `src/core/doc/`     | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                |
 | `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算 |
 | `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                     |
-| `src/core/io/`      | `.npy` の読み書き、区切りテキストの読み込み、実験ファイル(`.oresme`)            |
+| `src/core/io/`      | `.npy` の読み書き、区切りテキストと Excel の読み込み、実験ファイル(`.oresme`)   |
 | `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                         |
 | `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                |
 | `src/app/`          | アプリの状態、自動保存、書き出し                                                |
@@ -376,6 +392,8 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 
 ## 制限
 
+- 64 ビット整数の wave はありません(`float64` になります。2⁵³ までの整数は正確に入ります)。
+- Excel は `.xlsx` / `.xlsm` の読み込みだけです。書き出しと、古い `.xls` は対応していません。
 - Python を 1 回の長い計算の途中で止めることはできません(上の「コマンドウィンドウ」を参照)。
 - タイムゾーンは実験全体で 1 つです。夏時間の切り替わりで時計が飛ぶ・戻る 1 時間の中の時刻は、どちらか一方として解釈されます。
 - 目盛りの間隔と書式の指定は、数値の軸だけに効きます(日付軸・カテゴリ軸は自動)。

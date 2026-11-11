@@ -16,6 +16,7 @@ import {
   ANCHORS,
   AXIS_SIDES,
   COLOR_TABLES,
+  COMPLEX_PARTS,
   DEFAULT_FONT_FAMILY,
   GRID_MODES,
   LINE_STYLES,
@@ -24,6 +25,7 @@ import {
   TICK_MODES,
   TRACE_COLORS,
   TRACE_MODES,
+  WAVE_TYPES,
   isVerticalSide,
   leafName,
   type AxisSpec,
@@ -32,6 +34,7 @@ import {
   type GraphSpec,
   type ImageSpec,
   type TraceStyle,
+  type WaveType,
 } from "../core/doc/types";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
@@ -418,6 +421,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   });
   const [opacity, setOpacity] = useState<string | null>(null);
   const colorWaves = useNumericWaves(1);
+  const complexWaves = useDoc((state) => state.waves);
   const base = graph?.traces.find((item) => item.name === selected[0]);
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -545,6 +549,20 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
             value={current.xError}
             onChange={(xError) => set({ xError })}
           />
+          {complexWaves[base.y]?.imag ? (
+            <Field label="Complex part">
+              <Select
+                aria-label="Complex part"
+                value={current.part}
+                onChange={(event) => set({ part: event.target.value as TraceStyle["part"] })}
+              >
+                {COMPLEX_PARTS.map((part) => (
+                  <option key={part}>{part}</option>
+                ))}
+              </Select>
+              <span className="text-muted">of each value</span>
+            </Field>
+          ) : null}
           <Field label="Fill">
             <Select
               aria-label="Fill"
@@ -1260,6 +1278,55 @@ function NameDialog({ target, mode }: { target: string; mode: NameMode }) {
   );
 }
 
+const TYPE_NOTES: Record<WaveType, string> = {
+  float64: "double precision, 8 bytes a point",
+  float32: "single precision, 4 bytes a point",
+  int8: "whole numbers −128 to 127",
+  uint8: "whole numbers 0 to 255",
+  int16: "whole numbers −32768 to 32767",
+  uint16: "whole numbers 0 to 65535",
+  int32: "whole numbers to ±2.1 billion",
+  uint32: "whole numbers 0 to 4.3 billion",
+  complex128: "complex, double precision",
+  complex64: "complex, single precision",
+};
+
+/** Changes the number type of a wave, as Igor's Redimension does. */
+function WaveTypeDialog({ wave: name }: { wave: string }) {
+  const wave = useDoc((state) => state.waves[name]);
+  const [type, setType] = useState<string>(wave?.type ?? "float64");
+  if (!wave || wave.text) return null;
+  const loses =
+    (wave.imag !== null && !type.startsWith("complex")) ||
+    (type.includes("int") && !wave.type.includes("int")) ||
+    (type.endsWith("32") && wave.type.endsWith("64")) ||
+    (type === "complex64" && wave.type === "complex128");
+  return (
+    <Dialog
+      title={`Change Wave Type — ${leafName(name)}`}
+      width={400}
+      onClose={close}
+      submitDisabled={type === wave.type}
+      onSubmit={() => submit({ op: "redimension", name, type })}
+    >
+      <Field label="Type">
+        <Select aria-label="Type" value={type} onChange={(event) => setType(event.target.value)}>
+          {WAVE_TYPES.map((item) => (
+            <option key={item}>{item}</option>
+          ))}
+        </Select>
+        <span className="truncate text-muted">{TYPE_NOTES[type as WaveType]}</span>
+      </Field>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Now {wave.type}.{" "}
+        {loses
+          ? "Values the new type cannot hold are rounded, held at its limits, or lose their imaginary part."
+          : "Every value is kept as it is."}
+      </div>
+    </Dialog>
+  );
+}
+
 function WaveScalingDialog({ wave: name }: { wave: string }) {
   const wave = useDoc((state) => state.waves[name]);
   const [fields, setFields] = useState(() => ({
@@ -1649,7 +1716,13 @@ const ANALYSES: Record<
     title: "Smooth",
     fields: [{ key: "n", label: "Points", initial: "5", kind: "integer" }],
   },
-  fft: { title: "FFT Magnitude" },
+  fft: {
+    title: "FFT",
+    fields: [
+      { key: "output", label: "Result", initial: "magnitude", kind: ["magnitude", "complex"] },
+    ],
+    note: "The complex result keeps the spectrum itself, which op.ifft turns back into the signal.",
+  },
   histogram: {
     title: "Histogram",
     fields: [{ key: "bins", label: "Bins", initial: "50", kind: "integer" }],
@@ -1837,6 +1910,8 @@ function renderDialog(dialog: DialogRequest) {
       return <NameDialog target={dialog.folder} mode="renameFolder" />;
     case "waveScaling":
       return <WaveScalingDialog wave={dialog.wave} />;
+    case "waveType":
+      return <WaveTypeDialog wave={dialog.wave} />;
     case "curveFit":
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":

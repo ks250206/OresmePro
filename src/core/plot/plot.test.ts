@@ -28,6 +28,8 @@ const measure: MeasureText = (text, size) => text.length * size * 0.55;
 const makeWave = (data: number[], extra: Partial<Wave> = {}): Wave => ({
   name: "w",
   data: new Float64Array(data),
+  imag: null,
+  type: "float64",
   text: null,
   shape: [data.length],
   x0: 0,
@@ -718,6 +720,32 @@ describe("layoutGraph", () => {
     // Twice the size: each ring is long enough for more than one label.
     const large = layoutGraph(state.graphs.Graph0!, state.waves, 1400, 1100, measure);
     expect(texts(large.prims).filter((text) => text === "0.5").length).toBeGreaterThan(2);
+  });
+
+  it("plots a part of a complex wave, and any number type", () => {
+    const doc = new Doc();
+    doc.dispatch({
+      op: "makeWave",
+      name: "z",
+      data: Float64Array.of(3, 0, -1),
+      imag: Float64Array.of(4, 2, 0),
+    });
+    doc.dispatch({ op: "makeWave", name: "counts", data: Uint8Array.of(0, 100, 200) });
+    doc.dispatch({ op: "display", y: ["z", "counts"] });
+    const top = () => lay(doc).axes.left!.scale;
+    // The real parts by default; with the bytes on the same axis, 0 to 200... and -1.
+    expect([top().min, top().max]).toEqual([-1, 200]);
+    doc.dispatch({ op: "removeTraces", graph: "Graph0", traces: ["counts"] });
+    expect([top().min, top().max]).toEqual([-1, 3]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "magnitude" } });
+    expect([top().min, top().max]).toEqual([1, 5]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "imag" } });
+    expect([top().min, top().max]).toEqual([0, 4]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "phase" } });
+    expect(top().max).toBeCloseTo(Math.PI, 12);
+    expect(() =>
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "abs" } }),
+    ).toThrow();
   });
 
   it("reports missing waves instead of failing", () => {

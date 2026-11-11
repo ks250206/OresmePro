@@ -1,4 +1,4 @@
-import type { Wave } from "../doc/types";
+import type { Wave, WaveData } from "../doc/types";
 import type { Scale } from "./scale";
 
 export interface Extent {
@@ -8,10 +8,10 @@ export interface Extent {
   minPositive: number;
 }
 
-const extentCache = new WeakMap<Float64Array, Extent>();
+const extentCache = new WeakMap<WaveData, Extent>();
 
 /** Finite range of an array, ignoring NaN and infinities. Cached per array. */
-export function extentOf(data: Float64Array): Extent {
+export function extentOf(data: WaveData): Extent {
   const cached = extentCache.get(data);
   if (cached) return cached;
   let min = Infinity;
@@ -28,10 +28,10 @@ export function extentOf(data: Float64Array): Extent {
   return extent;
 }
 
-const orderCache = new WeakMap<Float64Array, -1 | 0 | 1>();
+const orderCache = new WeakMap<WaveData, -1 | 0 | 1>();
 
 /** 1 if non-decreasing, -1 if non-increasing, 0 otherwise (or if it has NaN). */
-export function monotonicity(data: Float64Array): -1 | 0 | 1 {
+export function monotonicity(data: WaveData): -1 | 0 | 1 {
   const cached = orderCache.get(data);
   if (cached !== undefined) return cached;
   let rising = true;
@@ -68,7 +68,7 @@ export function xExtentOf(y: Wave, x: Wave | null): Extent {
 }
 
 /** Index of the first element >= value (rising) or <= value (falling). */
-function lowerBound(data: Float64Array, value: number, order: 1 | -1): number {
+function lowerBound(data: WaveData, value: number, order: 1 | -1): number {
   let lo = 0;
   let hi = data.length;
   while (lo < hi) {

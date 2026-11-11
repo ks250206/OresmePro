@@ -186,3 +186,50 @@ describe("ranges of cells", () => {
     ).toEqual([]);
   });
 });
+
+describe("complex and integer waves in a table", () => {
+  it("writes the real and imaginary columns of a complex wave together", () => {
+    const doc = new Doc();
+    doc.dispatch({
+      op: "makeWave",
+      name: "c",
+      data: Float64Array.of(1, 2, 3),
+      imag: Float64Array.of(10, 20, 30),
+    });
+    apply(doc, [
+      { wave: "c", j: null, row: 0, text: "7" },
+      { wave: "c", j: null, row: 2, text: "-1", imag: true },
+      // A new point below the end: its other part is NaN (real) or 0 (imaginary).
+      { wave: "c", j: null, row: 3, text: "5", imag: true },
+    ]);
+    const c = doc.getState().waves.c!;
+    expect(Array.from(c.data)).toEqual([7, 2, 3, NaN]);
+    expect(Array.from(c.imag!)).toEqual([10, 20, -1, 5]);
+
+    const columns: TableColumn[] = [
+      { wave: "c", j: null },
+      { wave: "c", j: null, imag: true },
+    ];
+    for (const command of clearCommands(
+      doc.getState().waves,
+      columns,
+      { top: 0, bottom: 0, left: 1, right: 1 },
+      plane,
+    )) {
+      doc.dispatch(command);
+    }
+    expect(doc.getState().waves.c!.imag![0]).toBeNaN();
+    expect(doc.getState().waves.c!.data[0]).toBe(7);
+  });
+
+  it("rounds what is typed into an integer wave", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "n", data: Int32Array.of(1, 2) });
+    apply(doc, [
+      { wave: "n", j: null, row: 0, text: "2.6" },
+      { wave: "n", j: null, row: 1, text: "" },
+    ]);
+    expect(Array.from(doc.getState().waves.n!.data)).toEqual([3, 0]);
+    expect(doc.getState().waves.n!.type).toBe("int32");
+  });
+});

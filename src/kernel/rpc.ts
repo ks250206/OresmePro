@@ -24,6 +24,7 @@ export interface RpcReply {
 const waveInfo = (wave: Wave) => ({
   name: wave.name,
   kind: wave.text ? "text" : "numeric",
+  type: wave.type,
   shape: wave.shape,
   x0: wave.x0,
   dx: wave.dx,
@@ -35,6 +36,17 @@ const waveInfo = (wave: Wave) => ({
   note: wave.note,
   rev: wave.rev,
 });
+
+/** A wave's numbers as they are sent to Python: float64, real parts then imaginary parts. */
+function transportData(wave: Wave): Float64Array {
+  if (!wave.imag) {
+    return wave.data instanceof Float64Array ? wave.data : Float64Array.from(wave.data);
+  }
+  const both = new Float64Array(wave.data.length * 2);
+  both.set(wave.data);
+  both.set(wave.imag, wave.data.length);
+  return both;
+}
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
 
@@ -62,7 +74,15 @@ export function handleRpc(
       const command = { ...params } as Record<string, unknown>;
       if (command.op === "makeWave" || command.op === "setWaveData") {
         // Numbers arrive as binary data; a text wave's values are in the command.
-        if (data) command.data = data;
+        // They travel as float64 whatever the wave's type (which the command
+        // names), a complex wave as its real parts followed by its imaginary parts.
+        if (data && command.complex === true) {
+          command.data = data.subarray(0, data.length / 2);
+          command.imag = data.subarray(data.length / 2);
+        } else if (data) {
+          command.data = data;
+        }
+        delete command.complex;
       } else if (command.op === "setWavePoints") {
         if (!data) throw new DocError("Missing point values.");
         command.values = data;
@@ -77,7 +97,7 @@ export function handleRpc(
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
         ? { result: waveInfo(wave) }
-        : { result: waveInfo(wave), data: wave.data };
+        : { result: waveInfo(wave), data: transportData(wave) };
     }
     case "listWaves":
       return { result: state.waveOrder };

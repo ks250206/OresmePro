@@ -29,6 +29,8 @@ export default defineConfig({
   },
   server: { headers: isolationHeaders },
   preview: { headers: isolationHeaders },
+  // Tests import workbook fixtures as binary assets.
+  assetsInclude: ["**/*.xlsx"],
   worker: { format: "es" },
   build: {
     rolldownOptions: {

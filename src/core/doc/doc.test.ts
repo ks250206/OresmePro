@@ -461,3 +461,107 @@ describe("time zone", () => {
     expect(echoPython({ op: "setTimeZone", zone: "local" })).toBe('op.set_time_zone("local")');
   });
 });
+
+describe("wave types", () => {
+  it("takes the type of the data and converts to a type asked for", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "f", data: Float32Array.of(0.1, 2) });
+    doc.dispatch({
+      op: "makeWave",
+      name: "i",
+      data: Float64Array.of(1.6, -2.5, 70000, NaN),
+      type: "int16",
+    });
+    doc.dispatch({
+      op: "makeWave",
+      name: "c",
+      data: Float64Array.of(1, 2),
+      imag: Float64Array.of(3, 4),
+    });
+    const { f, i, c } = doc.getState().waves;
+    expect([f!.type, f!.data.constructor.name]).toEqual(["float32", "Float32Array"]);
+    // Rounded to the nearest whole number and held at the ends of the range.
+    expect([i!.type, Array.from(i!.data)]).toEqual(["int16", [2, -2, 32767, 0]]);
+    expect(i!.data).toBeInstanceOf(Int16Array);
+    expect([c!.type, Array.from(c!.data), Array.from(c!.imag!)]).toEqual([
+      "complex128",
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(() =>
+      doc.dispatch({ op: "makeWave", name: "bad", data: Float64Array.of(1), type: "int64" }),
+    ).toThrow(/type/);
+    expect(() =>
+      doc.dispatch({
+        op: "makeWave",
+        name: "bad",
+        data: Float64Array.of(1),
+        imag: Float64Array.of(1, 2),
+      }),
+    ).toThrow(/different lengths/);
+  });
+
+  it("writes points in the wave's own type, growing both parts of a complex wave", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "b", data: Uint8Array.of(1, 2) });
+    doc.dispatch({ op: "setWavePoints", name: "b", start: 1, values: [300, 2.5, -4] });
+    expect(Array.from(doc.getState().waves.b!.data)).toEqual([1, 255, 3, 0]);
+    expect(doc.getState().waves.b!.data).toBeInstanceOf(Uint8Array);
+    doc.dispatch({ op: "insertPoints", name: "b", at: 1, count: 2 });
+    // An integer wave has no NaN: new points are 0.
+    expect(Array.from(doc.getState().waves.b!.data)).toEqual([1, 0, 0, 255, 3, 0]);
+
+    doc.dispatch({
+      op: "makeWave",
+      name: "c",
+      data: Float64Array.of(1),
+      imag: Float64Array.of(-1),
+    });
+    doc.dispatch({ op: "setWavePoints", name: "c", start: 1, values: [2, 3], imag: [5, 6] });
+    doc.dispatch({ op: "setWavePoints", name: "c", start: 0, values: [9] });
+    let c = doc.getState().waves.c!;
+    expect([Array.from(c.data), Array.from(c.imag!), c.shape]).toEqual([
+      [9, 2, 3],
+      [-1, 5, 6],
+      [3],
+    ]);
+    doc.dispatch({ op: "deletePoints", name: "c", at: 0, count: 1 });
+    c = doc.getState().waves.c!;
+    expect([Array.from(c.data), Array.from(c.imag!)]).toEqual([
+      [2, 3],
+      [5, 6],
+    ]);
+    expect(() =>
+      doc.dispatch({ op: "setWavePoints", name: "b", start: 0, values: [1], imag: [1] }),
+    ).toThrow(/not a complex wave/);
+    expect(
+      echoPython({ op: "setWavePoints", name: "c", start: 0, values: [1, NaN], imag: [2, 0] }),
+    ).toBe('op.wave("c")[0:2] = [complex(1, 2), complex("nan", 0)]');
+  });
+
+  it("changes a wave's type, keeping what the new type can hold", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "w", data: Float64Array.of(1.25, -3.75) });
+    doc.dispatch({ op: "redimension", name: "w", type: "complex64" });
+    let w = doc.getState().waves.w!;
+    expect([w.type, Array.from(w.data), Array.from(w.imag!)]).toEqual([
+      "complex64",
+      [1.25, -3.75],
+      [0, 0],
+    ]);
+    expect(w.imag).toBeInstanceOf(Float32Array);
+    doc.dispatch({ op: "redimension", name: "w", type: "int8" });
+    w = doc.getState().waves.w!;
+    expect([w.type, Array.from(w.data), w.imag]).toEqual(["int8", [1, -4], null]);
+    doc.undo();
+    expect(doc.getState().waves.w!.type).toBe("complex64");
+    doc.dispatch({ op: "duplicateWave", name: "w", newName: "copy" });
+    expect(doc.getState().waves.copy).toMatchObject({ type: "complex64" });
+    expect(doc.getState().waves.copy!.imag).not.toBe(doc.getState().waves.w!.imag);
+    expect(echoPython({ op: "redimension", name: "w", type: "float32" })).toBe(
+      'op.wave("w").redimension("float32")',
+    );
+    doc.dispatch({ op: "makeWave", name: "t", text: ["a"] });
+    expect(() => doc.dispatch({ op: "redimension", name: "t", type: "float32" })).toThrow(/text/);
+  });
+});

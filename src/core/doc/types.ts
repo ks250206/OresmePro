@@ -1,3 +1,101 @@
+/** The number types a wave can hold, named as NumPy names them. */
+export const WAVE_TYPES = [
+  "float64",
+  "float32",
+  "int8",
+  "uint8",
+  "int16",
+  "uint16",
+  "int32",
+  "uint32",
+  "complex128",
+  "complex64",
+] as const;
+export type WaveType = (typeof WAVE_TYPES)[number];
+
+/** How a wave's numbers are held in memory: one typed array per type. */
+export type WaveData =
+  | Float64Array
+  | Float32Array
+  | Int8Array
+  | Uint8Array
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array;
+
+const ARRAY_OF = {
+  float64: Float64Array,
+  float32: Float32Array,
+  int8: Int8Array,
+  uint8: Uint8Array,
+  int16: Int16Array,
+  uint16: Uint16Array,
+  int32: Int32Array,
+  uint32: Uint32Array,
+  // A complex wave keeps its real and imaginary parts in two arrays.
+  complex128: Float64Array,
+  complex64: Float32Array,
+} as const;
+
+/** The smallest and largest value of each integer type. */
+const INTEGER_RANGE: Partial<Record<WaveType, readonly [number, number]>> = {
+  int8: [-128, 127],
+  uint8: [0, 255],
+  int16: [-32768, 32767],
+  uint16: [0, 65535],
+  int32: [-2147483648, 2147483647],
+  uint32: [0, 4294967295],
+};
+
+export const isComplexType = (type: WaveType): boolean => type.startsWith("complex");
+export const isIntegerType = (type: WaveType): boolean => type in INTEGER_RANGE;
+
+/** An array of zeros of the kind that holds a type (one part of it, for a complex type). */
+export function newWaveData(type: WaveType, length: number): WaveData {
+  return new ARRAY_OF[type](length);
+}
+
+/**
+ * Writes values into wave data. Into an integer type they are rounded to the
+ * nearest whole number and held at the ends of its range, as Igor does; what
+ * is not a number becomes 0.
+ */
+export function storeValues(
+  target: WaveData,
+  type: WaveType,
+  values: ArrayLike<number>,
+  start = 0,
+): void {
+  const range = INTEGER_RANGE[type];
+  if (!range) {
+    target.set(values, start);
+    return;
+  }
+  const [low, high] = range;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = Math.round(values[index]!);
+    target[start + index] = value < low ? low : value > high ? high : value || 0;
+  }
+}
+
+/** Values as wave data of a type; the same array if it is of that kind already. */
+export function toWaveData(values: ArrayLike<number>, type: WaveType): WaveData {
+  if (values instanceof ARRAY_OF[type]) return values;
+  const data = newWaveData(type, values.length);
+  storeValues(data, type, values);
+  return data;
+}
+
+/** The type that a typed array holds, real or as one part of a complex wave. */
+export function typeOfData(data: WaveData, complex = false): WaveType {
+  if (complex) return data instanceof Float32Array ? "complex64" : "complex128";
+  for (const type of WAVE_TYPES) {
+    if (data instanceof ARRAY_OF[type]) return type;
+  }
+  return "float64";
+}
+
 /**
  * A named array with scaling, in the style of an Igor wave.
  *
@@ -9,8 +107,15 @@
 export interface Wave {
   /** Path below root, with ":" between data folders: "signal" or "run1:signal". */
   readonly name: string;
-  /** Numeric values. Empty for a text wave. */
-  readonly data: Float64Array;
+  /**
+   * Numeric values, in the typed array of the wave's type; for a complex
+   * wave, the real parts. Empty for a text wave.
+   */
+  readonly data: WaveData;
+  /** The imaginary parts of a complex wave, as long as `data`; null otherwise. */
+  readonly imag: WaveData | null;
+  /** The number type. "float64" for a text wave, where it means nothing. */
+  readonly type: WaveType;
   /** Text values, or null for a numeric wave. */
   readonly text: readonly string[] | null;
   readonly shape: readonly number[];
@@ -55,6 +160,38 @@ export type LineStyle = (typeof LINE_STYLES)[number];
 export const MARKER_SHAPES = ["circle", "square", "triangle", "diamond", "cross", "plus"] as const;
 export type MarkerShape = (typeof MARKER_SHAPES)[number];
 
+/** Which real number a complex value is shown as. */
+export const COMPLEX_PARTS = ["real", "imag", "magnitude", "phase"] as const;
+export type ComplexPart = (typeof COMPLEX_PARTS)[number];
+
+const partCache = new WeakMap<Wave, Map<ComplexPart, Float64Array>>();
+
+/**
+ * A wave as the real numbers to show for it: itself, unless it is complex
+ * and another part than the real one is wanted. Phase is in radians.
+ */
+export function wavePart(wave: Wave, part: ComplexPart): Wave {
+  const { imag } = wave;
+  if (part === "real" || !imag) return wave.imag ? { ...wave, imag: null } : wave;
+  let parts = partCache.get(wave);
+  if (!parts) partCache.set(wave, (parts = new Map()));
+  let data = parts.get(part);
+  if (!data) {
+    const real = wave.data;
+    data = new Float64Array(real.length);
+    for (let index = 0; index < data.length; index += 1) {
+      data[index] =
+        part === "imag"
+          ? imag[index]!
+          : part === "magnitude"
+            ? Math.hypot(real[index]!, imag[index]!)
+            : Math.atan2(imag[index]!, real[index]!);
+    }
+    parts.set(part, data);
+  }
+  return { ...wave, data, imag: null };
+}
+
 /** What the area under a trace is filled down (or up) to. */
 export const FILL_MODES = ["none", "zero", "next"] as const;
 export type FillMode = (typeof FILL_MODES)[number];
@@ -95,6 +232,8 @@ export interface TraceStyle {
   colorTable: ColorTable;
   colorMin: number | null;
   colorMax: number | null;
+  /** For a complex Y wave: the part of each value that is plotted. */
+  part: ComplexPart;
 }
 
 export interface TraceSpec extends TraceStyle {
@@ -132,6 +271,8 @@ export interface ImageSpec {
   zMin: number | null;
   zMax: number | null;
   reverse: boolean;
+  /** For a complex wave: the part of each value that is shown. */
+  part: ComplexPart;
 }
 
 /** Contour lines of one plane of a wave (see {@link ImageSpec}). */
@@ -370,6 +511,7 @@ export const defaultTraceStyle = (index: number): TraceStyle => ({
   colorTable: "rainbow",
   colorMin: null,
   colorMax: null,
+  part: "real",
 });
 
 /** The last component of a wave or folder path. */

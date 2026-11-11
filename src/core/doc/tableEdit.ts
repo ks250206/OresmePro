@@ -9,6 +9,8 @@ export interface CellEdit {
   j: number | null;
   row: number;
   text: string;
+  /** Set for a cell of the imaginary column of a complex wave. */
+  imag?: boolean;
 }
 
 export interface TablePlane {
@@ -84,7 +86,7 @@ export function tableEditCommands(
 
     let first = Infinity;
     let last = -Infinity;
-    const writes: [number, number][] = [];
+    const writes: { at: number; value: number; imag: boolean }[] = [];
     for (const cell of inside) {
       // Dates are typed as dates and stored as seconds.
       const value =
@@ -93,17 +95,27 @@ export function tableEditCommands(
           : parseCell(cell.text);
       if (value === null) return null;
       const at = flat ? cell.row : cellIndex(wave, cell.row, cell.j, plane);
-      writes.push([at, value]);
+      writes.push({ at, value, imag: cell.imag === true && wave.imag !== null });
       first = Math.min(first, at);
       last = Math.max(last, at);
     }
     // One stretch from the first to the last cell touched, holding the
-    // current values (NaN beyond the end of a growing wave) with the edits on top.
-    const values = Array.from({ length: last - first + 1 }, (_, offset) =>
-      first + offset < wave.data.length ? wave.data[first + offset]! : Number.NaN,
-    );
-    for (const [at, value] of writes) values[at - first] = value;
-    commands.push({ op: "setWavePoints", name, start: first, values });
+    // current values (NaN beyond the end of a growing wave) with the edits on
+    // top. A complex wave has such a stretch for each of its two parts.
+    const stretch = (source: ArrayLike<number>, beyond: number) =>
+      Array.from({ length: last - first + 1 }, (_, offset) =>
+        first + offset < source.length ? source[first + offset]! : beyond,
+      );
+    const values = stretch(wave.data, Number.NaN);
+    const imag = wave.imag ? stretch(wave.imag, 0) : null;
+    for (const write of writes) (write.imag ? imag! : values)[write.at - first] = write.value;
+    commands.push({
+      op: "setWavePoints",
+      name,
+      start: first,
+      values,
+      ...(imag ? { imag } : {}),
+    });
   }
   return commands;
 }
@@ -118,6 +130,8 @@ export interface Cell {
 export interface TableColumn {
   wave: string;
   j: number | null;
+  /** Set for the column of imaginary parts of a complex wave. */
+  imag?: boolean;
 }
 
 /** A rectangle of cells; all four edges are inside it. */
@@ -146,10 +160,10 @@ export function clearCommands(
   plane: TablePlane,
 ): Command[] {
   const edits: CellEdit[] = [];
-  for (const { wave, j } of columns.slice(range.left, range.right + 1)) {
+  for (const { wave, j, imag } of columns.slice(range.left, range.right + 1)) {
     // Only points that exist: clearing must not grow a wave.
     const last = Math.min(range.bottom, (waves[wave]?.shape[0] ?? 0) - 1);
-    for (let row = range.top; row <= last; row += 1) edits.push({ wave, j, row, text: "" });
+    for (let row = range.top; row <= last; row += 1) edits.push({ wave, j, row, text: "", imag });
   }
   return tableEditCommands(waves, edits, plane) ?? [];
 }

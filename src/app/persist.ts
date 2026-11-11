@@ -132,7 +132,7 @@ export function autosave(
           let file = written.get(wave.rev);
           if (!file) {
             file = `wave-${wave.rev}.npy`;
-            await writeFile(dir, file, encodeNpy(wave.data, wave.shape));
+            await writeFile(dir, file, encodeNpy(wave.data, wave.shape, wave.type, wave.imag));
             written.set(wave.rev, file);
           }
           live.add(file);

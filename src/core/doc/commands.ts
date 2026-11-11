@@ -5,6 +5,7 @@ import {
   ANNOTATION_KINDS,
   AXIS_SIDES,
   COLOR_TABLES,
+  COMPLEX_PARTS,
   CURSOR_NAMES,
   DEFAULT_FONT_FAMILY,
   DEFAULT_TABLE_DIGITS,
@@ -17,6 +18,13 @@ import {
   TAG_OFFSET,
   TICK_MODES,
   TRACE_MODES,
+  WAVE_TYPES,
+  isComplexType,
+  newWaveData,
+  storeValues,
+  toWaveData,
+  typeOfData,
+  type WaveData,
   defaultAxis,
   defaultTraceStyle,
   isVerticalSide,
@@ -50,7 +58,11 @@ export type Command =
       op: "makeWave";
       name: string;
       /** Numeric values in C order. Give either this or `text`. */
-      data?: Float64Array;
+      data?: WaveData;
+      /** The imaginary parts, for a complex wave. */
+      imag?: WaveData;
+      /** The number type; by default the type of `data`. Values are converted to it. */
+      type?: string;
       text?: readonly string[];
       /** Defaults to one dimension. */
       shape?: readonly number[];
@@ -68,11 +80,25 @@ export type Command =
   | {
       op: "setWaveData";
       name: string;
-      data?: Float64Array;
+      data?: WaveData;
+      imag?: WaveData;
+      type?: string;
       text?: readonly string[];
       shape?: readonly number[];
     }
-  | { op: "setWavePoints"; name: string; start: number; values: ArrayLike<number> }
+  | {
+      /**
+       * Writes a run of points from `start`. `imag` holds the imaginary parts
+       * for a complex wave; left out, they stay as they are.
+       */
+      op: "setWavePoints";
+      name: string;
+      start: number;
+      values: ArrayLike<number>;
+      imag?: ArrayLike<number>;
+    }
+  /** Changes a wave's number type, converting its values (Igor's Redimension). */
+  | { op: "redimension"; name: string; type: string }
   | { op: "setWaveText"; name: string; start: number; values: readonly string[] }
   | { op: "insertPoints"; name: string; at: number; count: number }
   | { op: "deletePoints"; name: string; at: number; count: number }
@@ -317,19 +343,58 @@ function checkShape(shape: readonly number[] | undefined, length: number): reado
 }
 
 /** The values a command carries: numeric data with a shape, or text. */
+const isWaveData = (value: unknown): value is WaveData =>
+  ArrayBuffer.isView(value) &&
+  !(value instanceof DataView) &&
+  !(value instanceof Uint8ClampedArray);
+
 function contentOf(command: {
-  data?: Float64Array;
+  data?: WaveData;
+  imag?: WaveData;
+  type?: string;
   text?: readonly string[];
   shape?: readonly number[];
-}): Pick<Wave, "data" | "text" | "shape"> {
+}): Pick<Wave, "data" | "imag" | "type" | "text" | "shape"> {
   if (command.text !== undefined) {
     if (!Array.isArray(command.text) || command.text.some((item) => typeof item !== "string")) {
       throw new DocError("A text wave holds a list of strings.");
     }
-    return { data: NO_DATA, text: [...command.text], shape: [command.text.length] };
+    return {
+      data: NO_DATA,
+      imag: null,
+      type: "float64",
+      text: [...command.text],
+      shape: [command.text.length],
+    };
   }
-  if (!(command.data instanceof Float64Array)) throw new DocError("Missing wave data.");
-  return { data: command.data, text: null, shape: checkShape(command.shape, command.data.length) };
+  if (!isWaveData(command.data)) throw new DocError("Missing wave data.");
+  const given = command.imag;
+  if (given !== undefined && !isWaveData(given)) throw new DocError("imag must be numbers.");
+  const type =
+    command.type === undefined
+      ? typeOfData(command.data, given !== undefined)
+      : oneOf(command.type, WAVE_TYPES, "type");
+  const data = toWaveData(command.data, type);
+  let imag: WaveData | null = null;
+  if (isComplexType(type)) {
+    if (given && given.length !== data.length) {
+      throw new DocError("The real and imaginary parts have different lengths.");
+    }
+    imag = given ? toWaveData(given, type) : newWaveData(type, data.length);
+  } else if (given) {
+    throw new DocError(`A wave of type ${type} has no imaginary part.`);
+  }
+  return { data, imag, type, text: null, shape: checkShape(command.shape, data.length) };
+}
+
+/** A copy of wave data with points removed and added at a position; new points hold `fill`. */
+function resized(source: WaveData, at: number, removed: number, added: number, fill: number) {
+  const data = source.slice(0, 0).constructor as new (length: number) => WaveData;
+  const next = new data(source.length - removed + added);
+  next.set(source.subarray(0, at));
+  next.fill(fill, at, at + added);
+  next.set(source.subarray(at + removed), at + added);
+  return next;
 }
 
 const windowTaken = (state: DocState) => (name: string) =>
@@ -478,6 +543,7 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
   colorMin: (value) => (value === null ? null : finite(value, "colorMin")),
   colorMax: (value) => (value === null ? null : finite(value, "colorMax")),
+  part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
 };
 
 const nullableNumber = (what: string) => (value: unknown) =>
@@ -528,7 +594,10 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
   showInfo: (value) => bool(value, "showInfo"),
 };
 
-type ImageProps = Pick<ImageSpec, "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk">;
+type ImageProps = Pick<
+  ImageSpec,
+  "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk" | "part"
+>;
 const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProps[K] } = {
   colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
   zMin: nullableNumber("zMin"),
@@ -536,6 +605,7 @@ const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProp
   reverse: (value) => bool(value, "reverse"),
   layer: (value) => index(value, "layer"),
   chunk: (value) => index(value, "chunk"),
+  part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
 };
 
 type ContourProps = Pick<
@@ -770,6 +840,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const wave = requireWave(state, command.name);
       if (wave.text) throw new DocError(`${wave.name} is a text wave.`);
       const { start, values } = command;
+      if (command.imag && !wave.imag) {
+        throw new DocError(`${wave.name} is not a complex wave.`);
+      }
+      if (command.imag && command.imag.length !== values.length) {
+        throw new DocError("The real and imaginary parts have different lengths.");
+      }
       const growable = wave.shape.length === 1;
       const limit = growable ? wave.data.length : wave.data.length - values.length;
       if (!Number.isInteger(start) || start < 0 || start > limit) {
@@ -777,11 +853,30 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Point ${start} is out of range for ${JSON.stringify(wave.name)} (${wave.data.length} points).`,
         );
       }
-      const data = new Float64Array(Math.max(wave.data.length, start + values.length));
-      data.set(wave.data);
-      data.set(values, start);
+      const grown = Math.max(0, start + values.length - wave.data.length);
+      const data = resized(wave.data, wave.data.length, 0, grown, 0);
+      storeValues(data, wave.type, values, start);
+      let { imag } = wave;
+      if (imag && (grown > 0 || command.imag)) {
+        imag = resized(imag, imag.length, 0, grown, 0);
+        if (command.imag) storeValues(imag, wave.type, command.imag, start);
+      }
       const shape = growable ? [data.length] : wave.shape;
-      return { state: putWave(state, changed(wave, { data, shape })), result: null };
+      return { state: putWave(state, changed(wave, { data, imag, shape })), result: null };
+    }
+    case "redimension": {
+      const wave = requireWave(state, command.name);
+      if (wave.text) throw new DocError(`${wave.name} is a text wave; it has no number type.`);
+      const type = oneOf(command.type, WAVE_TYPES, "type");
+      if (type === wave.type) return { state, result: null };
+      const data = toWaveData(wave.data, type);
+      // Becoming complex adds a zero imaginary part; becoming real keeps the real part.
+      const imag = isComplexType(type)
+        ? wave.imag
+          ? toWaveData(wave.imag, type)
+          : newWaveData(type, data.length)
+        : null;
+      return { state: putWave(state, changed(wave, { data, imag, type })), result: null };
     }
     case "setWaveText": {
       const wave = requireWave(state, command.name);
@@ -823,11 +918,13 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         };
       }
       const added = inserting ? count : 0;
-      const data = new Float64Array(length - (end - at) + added);
-      data.set(wave.data.subarray(0, at));
-      data.fill(Number.NaN, at, at + added);
-      data.set(wave.data.subarray(end), at + added);
-      return { state: putWave(state, changed(wave, { data, shape: [data.length] })), result: null };
+      // New points are NaN (0 in an integer wave, which has no NaN).
+      const data = resized(wave.data, at, end - at, added, Number.NaN);
+      const imag = wave.imag ? resized(wave.imag, at, end - at, added, Number.NaN) : null;
+      return {
+        state: putWave(state, changed(wave, { data, imag, shape: [data.length] })),
+        result: null,
+      };
     }
     case "setWaveScale": {
       const wave = requireWave(state, command.name);
@@ -883,7 +980,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       return {
-        state: putWave(state, changed(wave, { name: newName, data: wave.data.slice() })),
+        state: putWave(
+          state,
+          changed(wave, {
+            name: newName,
+            data: wave.data.slice(),
+            imag: wave.imag?.slice() ?? null,
+          }),
+        ),
         result: newName,
       };
     }
@@ -1082,6 +1186,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         reverse: false,
         layer: 0,
         chunk: 0,
+        part: "real",
         ...validateProps<ImageProps>(command.props ?? {}, IMAGE_VALIDATORS, "image"),
       };
       checkPlane(wave, image);
