@@ -9,8 +9,8 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { doc, runGui, ui, useDoc } from "../app/session";
 import type { Command } from "../core/doc/commands";
-import { leafName } from "../core/doc/types";
-import { formatNumber } from "../core/plot/ticks";
+import { DATE_UNIT, leafName, type Wave } from "../core/doc/types";
+import { formatDate, formatNumber, parseDate } from "../core/plot/ticks";
 import { openContextMenu } from "./Menu";
 
 const features = tableFeatures({ columnSizingFeature, columnResizingFeature });
@@ -53,6 +53,8 @@ export function TableWindow({ name }: { name: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<Cell>({ row: 0, column: 0 });
   const [editing, setEditing] = useState<{ text: string; invalid: boolean } | null>(null);
+  /** Which plane of 3-D and 4-D waves the table shows. */
+  const [plane, setPlane] = useState({ layer: 0, chunk: 0 });
 
   const waveNames = useMemo(() => table?.columns ?? [], [table]);
   // The column layout depends on each wave's shape, not on its values.
@@ -111,18 +113,26 @@ export function TableWindow({ name }: { name: string }) {
     virtualizer.scrollToIndex(clamped.row);
   };
 
+  /** Position in the wave's data of a table cell, on the plane being shown. */
+  const flatIndex = (wave: Wave, index: number, j: number | null): number => {
+    const [, ny = 1, nz = 1, nc = 1] = wave.shape;
+    const layer = Math.min(plane.layer, nz - 1);
+    const chunk = Math.min(plane.chunk, nc - 1);
+    return ((index * ny + (j ?? 0)) * nz + layer) * nc + chunk;
+  };
+
   const cellText = (info: ColumnInfo | undefined, index: number): string => {
     const wave = info ? waves[info.wave] : undefined;
     if (!wave || index >= (wave.shape[0] ?? 0)) return "";
     if (wave.text) return wave.text[index] ?? "";
-    const at = info!.j === null ? index : index * wave.shape[1]! + info!.j;
-    return formatNumber(wave.data[at]!, 8);
+    const value = wave.data[flatIndex(wave, index, info!.j)]!;
+    return wave.unit === DATE_UNIT ? formatDate(value) : formatNumber(value, 8);
   };
 
   /** A cell can be edited if it is an existing point or, in a 1-D wave, the first empty one. */
   const editable = (info: ColumnInfo | undefined, index: number): boolean => {
     const wave = info ? waves[info.wave] : undefined;
-    if (!wave || wave.shape.length > 2) return false;
+    if (!wave) return false;
     const rows = wave.shape[0] ?? 0;
     return wave.shape.length === 1 ? index <= rows : index < rows;
   };
@@ -132,19 +142,24 @@ export function TableWindow({ name }: { name: string }) {
     const wave = waves[info.wave];
     if (!wave) return null;
     if (wave.text) return { op: "setWaveText", name: wave.name, start, values: texts };
-    const values = texts.map(parseCell);
+    // Dates are typed as dates and stored as seconds.
+    const values = texts.map((text) =>
+      wave.unit === DATE_UNIT && text.trim() !== "" ? parseDate(text) : parseCell(text),
+    );
     if (values.some((value) => value === null)) return null;
-    if (info.j === null) {
+    if (wave.shape.length === 1) {
       return { op: "setWavePoints", name: wave.name, start, values: values as number[] };
     }
-    // A column of a matrix is not contiguous in memory: rewrite the affected stretch.
-    const ny = wave.shape[1]!;
+    // A column of a matrix is not contiguous in memory: rewrite the stretch it spans.
     const count = Math.min(values.length, wave.shape[0]! - start);
     if (count <= 0) return null;
-    const stretch = Array.from(wave.data.subarray(start * ny, (start + count) * ny));
-    for (let offset = 0; offset < count; offset += 1)
-      stretch[offset * ny + info.j] = values[offset]!;
-    return { op: "setWavePoints", name: wave.name, start: start * ny, values: stretch };
+    const first = flatIndex(wave, start, info.j);
+    const last = flatIndex(wave, start + count - 1, info.j);
+    const stretch = Array.from(wave.data.subarray(first, last + 1));
+    for (let offset = 0; offset < count; offset += 1) {
+      stretch[flatIndex(wave, start + offset, info.j) - first] = values[offset]!;
+    }
+    return { op: "setWavePoints", name: wave.name, start: first, values: stretch };
   };
 
   const beginEdit = (text: string) => {
@@ -279,139 +294,181 @@ export function TableWindow({ name }: { name: string }) {
     ]);
   };
 
+  // Waves with more than two dimensions are shown one plane at a time.
+  const deep = waveNames.map((wave) => waves[wave]).filter((wave) => wave && wave.shape.length > 2);
+  const layers = Math.max(1, ...deep.map((wave) => wave!.shape[2] ?? 1));
+  const chunks = Math.max(1, ...deep.map((wave) => wave!.shape[3] ?? 1));
+  const stepper = (label: string, key: "layer" | "chunk", count: number) => (
+    <label className="flex items-center gap-1">
+      {label}
+      <input
+        type="number"
+        aria-label={label}
+        min={0}
+        max={count - 1}
+        value={Math.min(plane[key], count - 1)}
+        className="h-5 w-14 rounded border border-line bg-paper px-1 font-mono"
+        onChange={(event) => {
+          const value = Math.max(
+            0,
+            Math.min(count - 1, Math.round(Number(event.target.value) || 0)),
+          );
+          setPlane({ ...plane, [key]: value });
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+      />
+      <span className="text-muted">of {count}</span>
+    </label>
+  );
+
   const totalWidth = headers.reduce((sum, header) => sum + header.getSize(), 0);
 
   return (
-    <div
-      ref={scrollRef}
-      tabIndex={0}
-      role="grid"
-      aria-label={name}
-      aria-rowcount={rowCount}
-      className="absolute inset-0 overflow-auto bg-paper font-mono text-[11.5px] outline-none"
-      onKeyDown={onKeyDown}
-      onPaste={onPaste}
-      onCopy={onCopy}
-    >
-      <div
-        role="row"
-        className="sticky top-0 z-10 flex border-b border-line bg-chrome font-sans text-[11.5px]"
-        style={{ width: totalWidth, height: ROW_HEIGHT + 2 }}
-      >
-        {headers.map((header) => {
-          const isPoint = header.column.id === POINT_COLUMN;
-          return (
-            <div
-              key={header.id}
-              role="columnheader"
-              className={`relative flex shrink-0 items-center border-r border-line-soft px-1.5 font-medium ${
-                isPoint ? "sticky left-0 z-10 justify-center bg-chrome text-muted" : ""
-              } ${!isPoint && header.column.id === selectedInfo?.id ? "bg-accent-soft" : ""}`}
-              style={{ width: header.getSize() }}
-              onContextMenu={
-                isPoint
-                  ? undefined
-                  : (event) => {
-                      const info = columnInfos.find((item) => item.id === header.column.id);
-                      if (info) headerMenu(event, info);
-                    }
-              }
-            >
-              <span className="truncate">{String(header.column.columnDef.header)}</span>
-              {header.column.getCanResize() ? (
-                <div
-                  className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize"
-                  onPointerDown={header.getResizeHandler()}
-                  onDoubleClick={() => header.column.resetSize()}
-                />
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      <div className="relative" style={{ height: virtualizer.getTotalSize(), width: totalWidth }}>
-        {virtualizer.getVirtualItems().map((item) => (
+    <div className="absolute inset-0 flex flex-col">
+      {deep.length > 0 ? (
+        <div className="flex h-7 shrink-0 items-center gap-4 border-b border-line bg-chrome px-2 text-[11.5px]">
+          {stepper("Layer", "layer", layers)}
+          {chunks > 1 ? stepper("Chunk", "chunk", chunks) : null}
+        </div>
+      ) : null}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          tabIndex={0}
+          role="grid"
+          aria-label={name}
+          aria-rowcount={rowCount}
+          className="absolute inset-0 overflow-auto bg-paper font-mono text-[11.5px] outline-none"
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          onCopy={onCopy}
+        >
           <div
-            key={item.key}
             role="row"
-            aria-rowindex={item.index + 1}
-            className="absolute left-0 flex"
-            style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+            className="sticky top-0 z-10 flex border-b border-line bg-chrome font-sans text-[11.5px]"
+            style={{ width: totalWidth, height: ROW_HEIGHT + 2 }}
           >
-            {headers.map((header, index) => {
-              if (header.column.id === POINT_COLUMN) {
-                return (
-                  <div
-                    key={header.id}
-                    role="rowheader"
-                    className={`sticky left-0 flex shrink-0 items-center justify-end border-b border-r border-line-soft px-1.5 text-muted ${
-                      item.index === row ? "bg-accent-soft" : "bg-chrome"
-                    }`}
-                    style={{ width: header.getSize() }}
-                  >
-                    {item.index}
-                  </div>
-                );
-              }
-              const cell = { row: item.index, column: index - 1 };
-              const info = columnInfos[index - 1];
-              const wave = info?.wave ?? "";
-              const isText = Boolean(waves[wave]?.text);
-              const active = cell.row === row && cell.column === column;
-              const open = editable(info, item.index);
+            {headers.map((header) => {
+              const isPoint = header.column.id === POINT_COLUMN;
               return (
                 <div
                   key={header.id}
-                  role="gridcell"
-                  aria-selected={active}
-                  className={`relative flex shrink-0 items-center ${isText ? "justify-start" : "justify-end"} border-b border-r border-line-soft px-1.5 ${
-                    open ? "" : "bg-chrome/60"
-                  } ${active ? "outline outline-2 -outline-offset-2 outline-accent" : ""}`}
+                  role="columnheader"
+                  className={`relative flex shrink-0 items-center border-r border-line-soft px-1.5 font-medium ${
+                    isPoint ? "sticky left-0 z-10 justify-center bg-chrome text-muted" : ""
+                  } ${!isPoint && header.column.id === selectedInfo?.id ? "bg-accent-soft" : ""}`}
                   style={{ width: header.getSize() }}
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    if (editing) commit(null);
-                    select(cell);
-                  }}
-                  onDoubleClick={() => {
-                    if (open) setEditing({ text: cellText(info, item.index), invalid: false });
-                  }}
-                  onContextMenu={(event) => cellMenu(event, cell)}
-                >
-                  {active && editing ? (
-                    <input
-                      autoFocus
-                      aria-label={`${wave} point ${item.index}`}
-                      aria-invalid={editing.invalid}
-                      value={editing.text}
-                      spellCheck={false}
-                      className={`absolute inset-0 w-full bg-paper px-1.5 ${isText ? "text-left" : "text-right"} outline outline-2 -outline-offset-2 ${
-                        editing.invalid ? "outline-danger" : "outline-accent"
-                      }`}
-                      onChange={(event) => setEditing({ text: event.target.value, invalid: false })}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onBlur={() => commit(null)}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          commit({ row: row + 1, column });
-                        } else if (event.key === "Tab") {
-                          event.preventDefault();
-                          commit({ row, column: column + (event.shiftKey ? -1 : 1) });
-                        } else if (event.key === "Escape") {
-                          setEditing(null);
+                  onContextMenu={
+                    isPoint
+                      ? undefined
+                      : (event) => {
+                          const info = columnInfos.find((item) => item.id === header.column.id);
+                          if (info) headerMenu(event, info);
                         }
-                      }}
+                  }
+                >
+                  <span className="truncate">{String(header.column.columnDef.header)}</span>
+                  {header.column.getCanResize() ? (
+                    <div
+                      className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize"
+                      onPointerDown={header.getResizeHandler()}
+                      onDoubleClick={() => header.column.resetSize()}
                     />
-                  ) : (
-                    <span className="truncate">{cellText(info, item.index)}</span>
-                  )}
+                  ) : null}
                 </div>
               );
             })}
           </div>
-        ))}
+          <div
+            className="relative"
+            style={{ height: virtualizer.getTotalSize(), width: totalWidth }}
+          >
+            {virtualizer.getVirtualItems().map((item) => (
+              <div
+                key={item.key}
+                role="row"
+                aria-rowindex={item.index + 1}
+                className="absolute left-0 flex"
+                style={{ height: ROW_HEIGHT, transform: `translateY(${item.start}px)` }}
+              >
+                {headers.map((header, index) => {
+                  if (header.column.id === POINT_COLUMN) {
+                    return (
+                      <div
+                        key={header.id}
+                        role="rowheader"
+                        className={`sticky left-0 flex shrink-0 items-center justify-end border-b border-r border-line-soft px-1.5 text-muted ${
+                          item.index === row ? "bg-accent-soft" : "bg-chrome"
+                        }`}
+                        style={{ width: header.getSize() }}
+                      >
+                        {item.index}
+                      </div>
+                    );
+                  }
+                  const cell = { row: item.index, column: index - 1 };
+                  const info = columnInfos[index - 1];
+                  const wave = info?.wave ?? "";
+                  const isText = Boolean(waves[wave]?.text);
+                  const active = cell.row === row && cell.column === column;
+                  const open = editable(info, item.index);
+                  return (
+                    <div
+                      key={header.id}
+                      role="gridcell"
+                      aria-selected={active}
+                      className={`relative flex shrink-0 items-center ${isText ? "justify-start" : "justify-end"} border-b border-r border-line-soft px-1.5 ${
+                        open ? "" : "bg-chrome/60"
+                      } ${active ? "outline outline-2 -outline-offset-2 outline-accent" : ""}`}
+                      style={{ width: header.getSize() }}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        if (editing) commit(null);
+                        select(cell);
+                      }}
+                      onDoubleClick={() => {
+                        if (open) setEditing({ text: cellText(info, item.index), invalid: false });
+                      }}
+                      onContextMenu={(event) => cellMenu(event, cell)}
+                    >
+                      {active && editing ? (
+                        <input
+                          autoFocus
+                          aria-label={`${wave} point ${item.index}`}
+                          aria-invalid={editing.invalid}
+                          value={editing.text}
+                          spellCheck={false}
+                          className={`absolute inset-0 w-full bg-paper px-1.5 ${isText ? "text-left" : "text-right"} outline outline-2 -outline-offset-2 ${
+                            editing.invalid ? "outline-danger" : "outline-accent"
+                          }`}
+                          onChange={(event) =>
+                            setEditing({ text: event.target.value, invalid: false })
+                          }
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onBlur={() => commit(null)}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commit({ row: row + 1, column });
+                            } else if (event.key === "Tab") {
+                              event.preventDefault();
+                              commit({ row, column: column + (event.shiftKey ? -1 : 1) });
+                            } else if (event.key === "Escape") {
+                              setEditing(null);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <span className="truncate">{cellText(info, item.index)}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import type { Command } from "../core/doc/commands";
 import { leafName, parentFolder, type Wave } from "../core/doc/types";
 import { renderMatrix } from "../core/plot/colorTables";
 import { extentOf, tracePixels } from "../core/plot/decimate";
+import { planeOf } from "../core/plot/layout";
 import { makeScale } from "../core/plot/scale";
 import { formatNumber } from "../core/plot/ticks";
 import { openContextMenu } from "./Menu";
@@ -28,12 +29,13 @@ function Preview({ wave }: { wave: Wave }) {
     context.clearRect(0, 0, width, height);
     const extent = extentOf(wave.data);
     if (!Number.isFinite(extent.min)) return;
-    if (wave.shape.length === 2) {
-      const [nx, ny] = wave.shape as [number, number];
+    const plane = planeOf(wave, 0, 0);
+    if (plane) {
+      const { nx, ny } = plane;
       const cols = Math.min(nx, canvas.width);
       const rows = Math.min(ny, canvas.height);
       if (cols === 0 || rows === 0) return;
-      const rgba = renderMatrix(wave.data, nx, ny, cols, rows, {
+      const rgba = renderMatrix(plane.data, nx, ny, cols, rows, {
         table: "viridis",
         zMin: extent.min,
         zMax: extent.max,
@@ -222,7 +224,7 @@ export function DataBrowser() {
     const single = targets.length === 1;
     const kinds = targets.map((target) => waves[target]!);
     const allCurves = kinds.every((wave) => !wave.text && wave.shape.length === 1);
-    const matrix = single && !kinds[0]!.text && kinds[0]!.shape.length === 2;
+    const matrix = single && !kinds[0]!.text && kinds[0]!.shape.length >= 2;
     const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
       ui.set({ dialog });
     const items: MenuItem[] = [];

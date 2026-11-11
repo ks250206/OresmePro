@@ -1,5 +1,5 @@
 import { type Command, uniqueName } from "../core/doc/commands";
-import { leafName } from "../core/doc/types";
+import { DATE_UNIT, leafName } from "../core/doc/types";
 import { parseDelimited } from "../core/io/delimited";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { drawPrims } from "../core/plot/canvas";
@@ -64,13 +64,16 @@ function rasterizeText(
 }
 
 /** Saves a graph as .pdf, .svg or .png, chosen by the file name. */
-export function exportGraph(name: string, filename: string): void {
+export function exportGraph(name: string, filename: string, cursors = false): void {
   try {
     const extension = filename.slice(filename.lastIndexOf(".") + 1).toLowerCase();
     if (extension === "svg") {
-      download(new Blob([renderGraphSvg(name, null, null)], { type: "image/svg+xml" }), filename);
+      download(
+        new Blob([renderGraphSvg(name, null, null, cursors)], { type: "image/svg+xml" }),
+        filename,
+      );
     } else if (extension === "pdf") {
-      const layout = exportLayout(name, null, null);
+      const layout = exportLayout(name, null, null, cursors);
       const pdf = toPdf(layout.prims, layout.width, layout.height, {
         rasterizeText,
       }) as Uint8Array<ArrayBuffer>;
@@ -78,7 +81,7 @@ export function exportGraph(name: string, filename: string): void {
     } else {
       // Three times screen resolution, enough for print at typical sizes.
       const scale = 3;
-      const layout = exportLayout(name, null, null);
+      const layout = exportLayout(name, null, null, cursors);
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(layout.width * scale);
       canvas.height = Math.round(layout.height * scale);
@@ -129,7 +132,12 @@ async function loadTextFile(file: File): Promise<void> {
     }
     const commands: Command[] = result.names.map((name, index) => {
       const column = result.columns[index]!;
-      const loaded = { op: "makeWave" as const, name, note: `Loaded from ${file.name}` };
+      const loaded = {
+        op: "makeWave" as const,
+        name,
+        note: `Loaded from ${file.name}`,
+        ...(result.dates[index] ? { unit: DATE_UNIT } : {}),
+      };
       return column instanceof Float64Array
         ? { ...loaded, data: column }
         : { ...loaded, text: column };

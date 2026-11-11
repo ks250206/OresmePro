@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { newMatrixPlot, pyName, runPython } from "../app/actions";
+import { parseConstraints, parseHold } from "../app/fitOptions";
 import { runGui, ui, useDoc, useUi, type DialogRequest } from "../app/session";
 import type { Command } from "../core/doc/commands";
 import {
@@ -41,10 +42,14 @@ const parseNumber = (text: string): number | null => {
 const CALCULATED = "_calculated_";
 
 /** Names of the numeric waves with the given number of dimensions. */
-function useNumericWaves(dimensions: number): string[] {
+function useNumericWaves(dimensions: 1 | 2): string[] {
   const waves = useDoc((state) => state.waves);
   const order = useDoc((state) => state.waveOrder);
-  return order.filter((name) => !waves[name]!.text && waves[name]!.shape.length === dimensions);
+  // "2" means anything that has a plane to show: two dimensions or more.
+  return order.filter((name) => {
+    const wave = waves[name]!;
+    return !wave.text && (dimensions === 1 ? wave.shape.length === 1 : wave.shape.length >= 2);
+  });
 }
 
 function AxisSelects({
@@ -86,8 +91,20 @@ function AxisSelects({
   );
 }
 
-function XWaveSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const order = useNumericWaves(1);
+function XWaveSelect({
+  value,
+  onChange,
+  categories,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  /** Also offer text waves, which make category plots. */
+  categories?: boolean;
+}) {
+  const numeric = useNumericWaves(1);
+  const waves = useDoc((state) => state.waves);
+  const order = useDoc((state) => state.waveOrder);
+  const text = categories ? order.filter((name) => waves[name]!.text) : [];
   return (
     <Select
       aria-label="X wave"
@@ -96,10 +113,59 @@ function XWaveSelect({ value, onChange }: { value: string; onChange: (value: str
       className="flex-1"
     >
       <option value={CALCULATED}>_calculated_ (from wave scaling)</option>
-      {order.map((name) => (
+      {numeric.map((name) => (
         <option key={name}>{name}</option>
       ))}
+      {text.map((name) => (
+        <option key={name} value={name}>
+          {name} (categories)
+        </option>
+      ))}
     </Select>
+  );
+}
+
+/** Layer and chunk fields, shown for waves with more than two dimensions. */
+function PlaneFields({
+  wave,
+  layer,
+  chunk,
+  onChange,
+}: {
+  wave: string;
+  layer: number;
+  chunk: number;
+  onChange: (plane: { layer?: number; chunk?: number }) => void;
+}) {
+  const shape = useDoc((state) => state.waves[wave]?.shape);
+  if (!shape || shape.length < 3) return null;
+  const field = (label: string, value: number, count: number, set: (value: number) => void) => (
+    <>
+      <input
+        type="number"
+        aria-label={label}
+        min={0}
+        max={count - 1}
+        value={value}
+        className="h-6 w-16 rounded border border-line bg-paper px-1.5"
+        onChange={(event) =>
+          set(Math.max(0, Math.min(count - 1, Math.round(Number(event.target.value) || 0))))
+        }
+      />
+      <span className="text-muted">of {count}</span>
+    </>
+  );
+  return (
+    <>
+      <Field label="Layer">
+        {field("Layer", layer, shape[2]!, (value) => onChange({ layer: value }))}
+      </Field>
+      {shape.length > 3 ? (
+        <Field label="Chunk">
+          {field("Chunk", chunk, shape[3]!, (value) => onChange({ chunk: value }))}
+        </Field>
+      ) : null}
+    </>
   );
 }
 
@@ -127,7 +193,7 @@ function NewGraphDialog({ append }: { append?: string }) {
       <div className="text-muted">Y waves</div>
       <NameList label="Y waves" names={order} selected={y} onChange={setY} />
       <Field label="X wave">
-        <XWaveSelect value={x} onChange={setX} />
+        <XWaveSelect value={x} onChange={setX} categories />
       </Field>
       {graph ? <AxisSelects graph={graph} {...axes} onChange={setAxes} /> : null}
     </Dialog>
@@ -731,6 +797,12 @@ function ModifyImageDialog({
           onChange={(event) => setChanges({ ...changes, reverse: event.target.checked })}
         />
       </Field>
+      <PlaneFields
+        wave={image.wave}
+        layer={current.layer}
+        chunk={current.chunk}
+        onChange={(plane) => setChanges({ ...changes, ...plane })}
+      />
       <Field label="Z range">
         <TextInput
           aria-label="Z minimum"
@@ -842,6 +914,19 @@ function ModifyContourDialog({
           onChange={(event) => setLineSize(event.target.value)}
         />
       </Field>
+      <Field label="Labels">
+        <Checkbox
+          label="Write each level's value on its line"
+          checked={current.labels}
+          onChange={(event) => setChanges({ ...changes, labels: event.target.checked })}
+        />
+      </Field>
+      <PlaneFields
+        wave={contour.wave}
+        layer={current.layer}
+        chunk={current.chunk}
+        onChange={(plane) => setChanges({ ...changes, ...plane })}
+      />
     </Dialog>
   );
 }
@@ -1118,6 +1203,9 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   );
   const [x, setX] = useState(CALCULATED);
   const [useCursors, setUseCursors] = useState(false);
+  const [hold, setHold] = useState("");
+  const [constraints, setConstraints] = useState("");
+  const [weight, setWeight] = useState("");
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
   const graph = [...windows]
     .reverse()
@@ -1125,17 +1213,22 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     .find((candidate) => candidate?.traces.some((trace) => trace.y === y));
   const hasCursors = Boolean(graph?.cursors.A && graph.cursors.B);
   const formula = FIT_FUNCTIONS.find(([name]) => name === func)?.[1] ?? "";
+  const held = parseHold(hold);
+  const limits = parseConstraints(constraints);
   const args = [
     pyName(func),
     pyName(y),
     ...(x === CALCULATED ? [] : [`x=${pyName(x)}`]),
+    ...(held ? [`hold=${held}`] : []),
+    ...(limits ? [`bounds=${limits}`] : []),
+    ...(weight === "" ? [] : [`sigma=${pyName(weight)}`]),
     ...(useCursors && hasCursors ? ["cursors=True"] : []),
   ];
   return (
     <Dialog
       title="Curve Fitting"
       onClose={close}
-      submitDisabled={y === ""}
+      submitDisabled={y === "" || held === null || limits === null}
       onSubmit={() => {
         runPython(`op.fit(${args.join(", ")})`);
         close();
@@ -1167,6 +1260,43 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
       </Field>
       <Field label="X data">
         <XWaveSelect value={x} onChange={setX} />
+      </Field>
+      <Field label="Weighting">
+        <Select
+          aria-label="Weighting"
+          value={weight}
+          onChange={(event) => setWeight(event.target.value)}
+          className="flex-1"
+        >
+          <option value="">none</option>
+          {waves
+            .filter((name) => name !== y)
+            .map((name) => (
+              <option key={name} value={name}>
+                {name} (standard deviations)
+              </option>
+            ))}
+        </Select>
+      </Field>
+      <Field label="Hold">
+        <TextInput
+          aria-label="Hold"
+          aria-invalid={held === null}
+          className="flex-1"
+          placeholder="e.g. y0=0, width=1.5"
+          value={hold}
+          onChange={(event) => setHold(event.target.value)}
+        />
+      </Field>
+      <Field label="Constraints">
+        <TextInput
+          aria-label="Constraints"
+          aria-invalid={limits === null}
+          className="flex-1"
+          placeholder="e.g. A > 0, 2 < x0 < 5"
+          value={constraints}
+          onChange={(event) => setConstraints(event.target.value)}
+        />
       </Field>
       <Field label="Range">
         <Checkbox

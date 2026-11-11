@@ -89,23 +89,36 @@ export function graphSize(state: DocState, name: string): { width: number; heigh
     : { width: 440, height: 280 };
 }
 
-/** Lays a graph out for export: at its window's size unless told otherwise, without cursors. */
-export function exportLayout(name: string, width: number | null, height: number | null) {
+/**
+ * Lays a graph out for export, at its window's size unless told otherwise.
+ * Cursors are left out unless asked for, as in Igor.
+ */
+export function exportLayout(
+  name: string,
+  width: number | null,
+  height: number | null,
+  cursors = false,
+) {
   const state = doc.getState();
   const graph = state.graphs[name];
   if (!graph) throw new Error(`No graph named ${JSON.stringify(name)}.`);
   const size = graphSize(state, name);
   return layoutGraph(graph, state.waves, width ?? size.width, height ?? size.height, measureText, {
-    cursors: false,
+    cursors,
   });
 }
 
-export function renderGraphSvg(name: string, width: number | null, height: number | null): string {
-  const layout = exportLayout(name, width, height);
+export function renderGraphSvg(
+  name: string,
+  width: number | null,
+  height: number | null,
+  cursors = false,
+): string {
+  const layout = exportLayout(name, width, height, cursors);
   return toSvg(layout.prims, layout.width, layout.height);
 }
 
-let exportHandler: (graph: string, filename: string) => void = () => {};
+let exportHandler: (graph: string, filename: string, cursors: boolean) => void = () => {};
 /** Lets the export code (which depends on this module) serve Python's g.save(). */
 export function setExportHandler(handler: typeof exportHandler): void {
   exportHandler = handler;
@@ -119,7 +132,7 @@ export const kernel = new KernelClient({
   doc,
   history,
   renderSvg: renderGraphSvg,
-  exportGraph: (graph, filename) => exportHandler(graph, filename),
+  exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
   indexURL: PYODIDE_URL,
 });
 

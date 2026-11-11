@@ -21,6 +21,7 @@ import type { Command } from "../core/doc/commands";
 import { echoPython } from "../core/doc/echo";
 import {
   CURSOR_NAMES,
+  DATE_UNIT,
   isVerticalSide,
   type CursorName,
   type GraphSpec,
@@ -32,10 +33,11 @@ import {
   distanceToTrace,
   layoutGraph,
   nearestPoint,
+  tracePosition,
   traceX,
   type GraphLayout,
 } from "../core/plot/layout";
-import { formatNumber } from "../core/plot/ticks";
+import { formatDate, formatNumber } from "../core/plot/ticks";
 import { marqueeZoom, panBy, tidy, zoomAbout } from "../core/plot/zoom";
 import { openContextMenu } from "./Menu";
 
@@ -73,9 +75,13 @@ function readout(layout: GraphLayout, x: number, y: number): string {
     const value = scale.toValue(at);
     const perPixel = Math.abs(scale.toValue(at + 1) - value);
     const label = name === "bottom" ? "x" : name === "left" ? "y" : name;
-    parts.push(
-      `${label} = ${formatNumber(tidy(value, perPixel * 100))}${axis.unit ? ` ${axis.unit}` : ""}`,
-    );
+    const text =
+      axis.kind === "category"
+        ? (axis.categories?.[Math.round(value)] ?? "")
+        : axis.kind === "date"
+          ? formatDate(Math.round(value))
+          : `${formatNumber(tidy(value, perPixel * 100))}${axis.unit ? ` ${axis.unit}` : ""}`;
+    parts.push(`${label} = ${text}`);
   }
   return parts.join("    ");
 }
@@ -96,6 +102,9 @@ interface CursorValues {
   point: number;
   x: number;
   y: number;
+  /** The values as shown: dates and category names are not plain numbers. */
+  xText: string;
+  yText: string;
 }
 
 function cursorValues(
@@ -105,14 +114,20 @@ function cursorValues(
 ): CursorValues | null {
   const cursor = graph.cursors[name];
   const trace = cursor && graph.traces.find((item) => item.name === cursor.trace);
-  const y = trace && waves[trace.y];
-  if (!cursor || !trace || !y || cursor.point >= y.data.length) return null;
-  const x = trace.x ? (waves[trace.x] ?? null) : null;
+  const position = trace && tracePosition(trace, waves);
+  if (!cursor || !position || cursor.point >= position.y.data.length) return null;
+  const x = traceX(position.y, position.x, cursor.point);
+  const y = position.y.data[cursor.point]!;
+  const xUnit = position.x ? position.x.unit : position.y.xUnit;
+  const show = (value: number, unit: string) =>
+    unit === DATE_UNIT ? formatDate(value) : formatNumber(value, 7);
   return {
     trace: cursor.trace,
     point: cursor.point,
-    x: traceX(y, x, cursor.point),
-    y: y.data[cursor.point]!,
+    x,
+    y,
+    xText: position.categories ? (position.categories[cursor.point] ?? "") : show(x, xUnit),
+    yText: show(y, position.y.unit),
   };
 }
 
@@ -129,8 +144,8 @@ function CursorInfo({ graph }: { graph: GraphSpec }) {
           <span className="truncate">
             {values.trace}[{values.point}]
           </span>
-          <span>X: {formatNumber(values.x, 7)}</span>
-          <span>Y: {formatNumber(values.y, 7)}</span>
+          <span>X: {values.xText}</span>
+          <span>Y: {values.yText}</span>
         </>
       ) : (
         <span className="col-span-3 text-muted">right-click a trace to place</span>
@@ -261,10 +276,10 @@ export function GraphWindow({ name }: { name: string }) {
   /** The point of a trace under a horizontal pixel position. */
   const pointAt = (traceName: string, x: number): number | null => {
     const trace = graph.traces.find((item) => item.name === traceName);
-    const y = trace && waves[trace.y];
+    const position = trace && tracePosition(trace, waves);
     const scale = trace && layout?.axes[trace.hAxis]?.scale;
-    if (!trace || !y || !scale) return null;
-    return nearestPoint(y, trace.x ? (waves[trace.x] ?? null) : null, scale, x);
+    if (!position || !scale) return null;
+    return nearestPoint(position.y, position.x, scale, x);
   };
 
   const setCursor = (cursor: CursorName, trace: string, point: number, coalesce: boolean) => {
