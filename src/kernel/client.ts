@@ -161,7 +161,9 @@ export class KernelClient {
       return;
     }
     this.interruptAcked = false;
-    this.send({ type: "interrupt" });
+    // Executions run in order, so the first one still pending is the one running.
+    const [current] = this.running.keys();
+    this.send({ type: "interrupt", id: current! });
     setTimeout(() => {
       if (!this.interruptAcked && this.interrupt && this.running.size > 0) this.interrupt[0] = 2;
     }, 150);

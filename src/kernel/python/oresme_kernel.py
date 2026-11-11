@@ -108,6 +108,17 @@ shell.run_cell("import numpy as np\nimport oresme as op", store_history=False, s
 
 
 _current_task = None
+# idle: nothing to interrupt. pending: an input has been handed over but its
+# task has not started. running: the task is executing the input.
+_state = "idle"
+_interrupt_requested = False
+
+
+def prepare():
+    """Announce that execute() is about to be called."""
+    global _state, _interrupt_requested
+    _state = "pending"
+    _interrupt_requested = False
 
 
 def interrupt():
@@ -116,22 +127,35 @@ def interrupt():
     Synchronous code is interrupted separately, through Pyodide's interrupt
     buffer; this covers the case where Python is idle inside the event loop
     and a signal would have nowhere sensible to land.
+
+    A request that arrives after the input was handed over but before its
+    task starts is remembered and honoured when the task begins. One that
+    arrives after the input has finished is for nothing, and is dropped: it
+    must not be left to hit whatever runs next.
     """
-    if _current_task is not None and not _current_task.done():
+    global _interrupt_requested
+    if _state == "running" and _current_task is not None and not _current_task.done():
         _current_task.cancel()
+    elif _state == "pending":
+        _interrupt_requested = True
 
 
 async def execute(code):
     """Run one input. Returns True if it finished without an error."""
-    global _current_task
+    global _current_task, _state, _interrupt_requested
     _current_task = asyncio.current_task()
+    _state = "running"
     try:
+        if _interrupt_requested:
+            raise asyncio.CancelledError
         return await _execute(code)
     except asyncio.CancelledError:
         _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
         return False
     finally:
         _current_task = None
+        _state = "idle"
+        _interrupt_requested = False
 
 
 async def _execute(code):

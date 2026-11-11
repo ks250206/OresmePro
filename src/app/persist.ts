@@ -43,27 +43,34 @@ async function readFile(dir: FileSystemDirectoryHandle, name: string): Promise<F
   }
 }
 
-/** Loads the saved experiment into the document and history, if there is one. */
-export async function restore(doc: Doc, history: History): Promise<boolean> {
+/**
+ * Loads what was saved into the document and the history. The two are
+ * restored independently: a session that only ran commands has a history
+ * to bring back even though no document was ever written.
+ */
+export async function restore(doc: Doc, history: History): Promise<void> {
   const dir = await directory();
-  if (!dir) return false;
-  const index = await readFile(dir, "experiment.json");
-  if (!index) return false;
+  if (!dir) return;
   try {
-    const saved = JSON.parse(await index.text()) as SavedExperiment;
-    const files = new Map<string, Uint8Array>();
-    for (const wave of saved.waves) {
-      if (!wave.file) continue;
-      const file = await readFile(dir, wave.file);
-      if (file) files.set(wave.file, new Uint8Array(await file.arrayBuffer()));
+    const index = await readFile(dir, "experiment.json");
+    if (index) {
+      const saved = JSON.parse(await index.text()) as SavedExperiment;
+      const files = new Map<string, Uint8Array>();
+      for (const wave of saved.waves) {
+        if (!wave.file) continue;
+        const file = await readFile(dir, wave.file);
+        if (file) files.set(wave.file, new Uint8Array(await file.arrayBuffer()));
+      }
+      doc.load(buildState(saved, files));
     }
-    doc.load(buildState(saved, files));
-    const savedHistory = await readFile(dir, "history.json");
-    if (savedHistory) history.load(JSON.parse(await savedHistory.text()) as HistoryEntry[]);
-    return true;
   } catch (error) {
     console.warn("Could not restore the saved experiment:", error);
-    return false;
+  }
+  try {
+    const savedHistory = await readFile(dir, "history.json");
+    if (savedHistory) history.load(JSON.parse(await savedHistory.text()) as HistoryEntry[]);
+  } catch (error) {
+    console.warn("Could not restore the command history:", error);
   }
 }
 
