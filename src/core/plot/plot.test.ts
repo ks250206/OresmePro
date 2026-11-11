@@ -14,9 +14,14 @@ const measure: MeasureText = (text, size) => text.length * size * 0.55;
 const makeWave = (data: number[], extra: Partial<Wave> = {}): Wave => ({
   name: "w",
   data: new Float64Array(data),
+  text: null,
+  shape: [data.length],
   x0: 0,
   dx: 1,
   xUnit: "",
+  y0: 0,
+  dy: 1,
+  yUnit: "",
   unit: "",
   note: "",
   rev: 1,
@@ -171,6 +176,8 @@ describe("decimation", () => {
 
 describe("axisRange", () => {
   const axis = {
+    side: "left",
+    span: [0, 1],
     label: null,
     min: null,
     max: null,
@@ -197,6 +204,11 @@ describe("axisRange", () => {
 });
 
 describe("layoutGraph", () => {
+  const lines = (prims: readonly Prim[]): Extract<Prim, { kind: "segments" }>[] =>
+    prims.flatMap((prim) =>
+      prim.kind === "segments" ? [prim] : prim.kind === "clip" ? lines(prim.children) : [],
+    );
+
   function graphDoc() {
     const doc = new Doc();
     const data = new Float64Array(200).map((_, index) => Math.sin(index / 10) * 0.002);
@@ -263,5 +275,87 @@ describe("layoutGraph", () => {
     expect(svg).toContain('stroke="#ff0000"');
     expect(svg).toContain(">signal</text>");
     expect(svg).toContain("clip-path");
+  });
+
+  it("stacks axes with separate spans in one lane and overlapping ones side by side", () => {
+    const doc = graphDoc();
+    doc.dispatch({ op: "makeWave", name: "other", data: new Float64Array([1, 2, 3]) });
+    doc.dispatch({ op: "addAxis", graph: "Graph0", name: "L2", side: "left" });
+    doc.dispatch({ op: "appendTraces", graph: "Graph0", y: ["other"], vAxis: "L2" });
+    const overlapping = layoutGraph(
+      doc.getState().graphs.Graph0!,
+      doc.getState().waves,
+      400,
+      300,
+      measure,
+    );
+    expect(overlapping.axes.L2!.hit.x).toBeLessThan(overlapping.axes.left!.hit.x);
+
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { span: [0, 0.45] } });
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "L2", props: { span: [0.55, 1] } });
+    const stacked = layoutGraph(
+      doc.getState().graphs.Graph0!,
+      doc.getState().waves,
+      400,
+      300,
+      measure,
+    );
+    const left = stacked.axes.left!.scale;
+    const upper = stacked.axes.L2!.scale;
+    // Same lane: both axis lines are at the same X.
+    const lineOf = (name: string) => stacked.axes[name]!.hit.x + stacked.axes[name]!.hit.w;
+    expect(lineOf("L2")).toBe(lineOf("left"));
+    expect(upper.p0).toBeLessThan(left.p1);
+    expect(stacked.plot.x).toBeLessThan(overlapping.plot.x);
+  });
+
+  it("draws an image covering its pixels, and contour lines", () => {
+    const doc = new Doc();
+    const data = new Float64Array(12).map((_, index) => index);
+    doc.dispatch({ op: "makeWave", name: "m", data, shape: [4, 3], x0: 10, dx: 2 });
+    doc.dispatch({ op: "display", y: [] });
+    doc.dispatch({
+      op: "appendImage",
+      graph: "Graph0",
+      wave: "m",
+      props: { colorTable: "viridis" },
+    });
+    doc.dispatch({ op: "appendContour", graph: "Graph0", wave: "m", props: { levels: [5.5] } });
+    doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "colorscale" });
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    // Pixels are centred on their X values: 10, 12, 14, 16 -> 9..17.
+    expect([layout.axes.bottom!.scale.min, layout.axes.bottom!.scale.max]).toEqual([9, 17]);
+    expect([layout.axes.left!.scale.min, layout.axes.left!.scale.max]).toEqual([-0.5, 2.5]);
+    const image = layout.prims
+      .flatMap((prim) => (prim.kind === "clip" ? prim.children : []))
+      .find((prim) => prim.kind === "image");
+    expect(image).toMatchObject({ cols: 4, rows: 3, x: layout.plot.x, w: layout.plot.w });
+    // The bottom-left pixel is element [0][0], the lowest value: the dark end of viridis.
+    const rgba = (image as Extract<Prim, { kind: "image" }>).rgba;
+    expect(Array.from(rgba.slice(2 * 4 * 4, 2 * 4 * 4 + 4))).toEqual([68, 1, 84, 255]);
+    expect(
+      lines(layout.prims).some(
+        (prim) => prim.stroke === "#000000" && prim.crisp !== true && prim.points.length >= 4,
+      ),
+    ).toBe(true);
+    expect(toSvg(layout.prims, 400, 300)).toContain("data:image/png;base64,");
+  });
+
+  it("draws error bars and cursors, and leaves cursors out when asked", () => {
+    const doc = graphDoc();
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "signal", props: { yError: 0.001 } });
+    doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "A", trace: "signal", point: 50 });
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    expect(layout.cursors).toHaveLength(1);
+    expect(layout.cursors[0]).toMatchObject({ name: "A", point: 50 });
+    expect(layout.cursors[0]!.x).toBeCloseTo(layout.axes.bottom!.scale.toPixel(0.5));
+    const bars = lines(layout.prims).find((prim) => prim.points.length === 200 * 12);
+    expect(bars).toBeDefined();
+    const exported = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure, {
+      cursors: false,
+    });
+    expect(exported.cursors).toEqual([]);
   });
 });

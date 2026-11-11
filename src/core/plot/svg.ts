@@ -1,5 +1,6 @@
 import type { MarkerShape } from "../doc/types";
 import type { Prim } from "./displayList";
+import { encodePng, toBase64 } from "./png";
 
 const num = (value: number): string => String(Math.round(value * 100) / 100);
 
@@ -103,6 +104,11 @@ function render(prims: readonly Prim[], state: { clips: number }, out: string[])
         );
         break;
       }
+      case "image":
+        out.push(
+          `<image x="${num(prim.x)}" y="${num(prim.y)}" width="${num(prim.w)}" height="${num(prim.h)}" preserveAspectRatio="none" style="image-rendering:pixelated" href="data:image/png;base64,${toBase64(encodePng(prim.rgba, prim.cols, prim.rows))}"/>`,
+        );
+        break;
       case "clip": {
         const id = `clip${(state.clips += 1)}`;
         out.push(

@@ -1,11 +1,10 @@
 import { sanitizeName } from "../doc/commands";
 
 export interface DelimitedResult {
-  /** Legal, unique wave names, one per numeric column. */
+  /** Legal, unique wave names, one per column. */
   names: string[];
-  columns: Float64Array[];
-  /** Headers of columns left out because they hold text, not numbers. */
-  skipped: string[];
+  /** Numeric columns as numbers; columns that hold text as strings. */
+  columns: (Float64Array | string[])[];
   rows: number;
 }
 
@@ -34,15 +33,15 @@ const isNumeric = (cell: string): boolean => {
 };
 
 /**
- * Parses delimited text (CSV, TSV, whitespace-separated) into numeric
- * columns. The delimiter and the presence of a header row are detected.
+ * Parses delimited text (CSV, TSV, whitespace-separated) into columns of
+ * numbers or text. The delimiter and the presence of a header row are detected.
  * Lines starting with `#` are ignored.
  */
 export function parseDelimited(text: string, taken: (name: string) => boolean): DelimitedResult {
   const lines = text
     .split(/\r\n|\n|\r/)
     .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
-  if (lines.length === 0) return { names: [], columns: [], skipped: [], rows: 0 };
+  if (lines.length === 0) return { names: [], columns: [], rows: 0 };
 
   const delimiter = detectDelimiter(lines);
   const split = (line: string): string[] => {
@@ -55,8 +54,7 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
   const width = Math.max(header.length, ...rows.map((row) => row.length));
 
   const names: string[] = [];
-  const columns: Float64Array[] = [];
-  const skipped: string[] = [];
+  const columns: (Float64Array | string[])[] = [];
   const used = new Set<string>();
   for (let column = 0; column < width; column += 1) {
     const title = header[column]?.trim() || `column${column}`;
@@ -72,16 +70,13 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
       }
     });
     // A column counts as text when most of its filled cells are not numbers.
-    if (filled > 0 && numeric < filled / 2) {
-      skipped.push(title);
-      continue;
-    }
+    const isText = filled > 0 && numeric < filled / 2;
     const base = sanitizeName(title, "wave");
     let name = base;
     for (let suffix = 1; used.has(name) || taken(name); suffix += 1) name = `${base}_${suffix}`;
     used.add(name);
     names.push(name);
-    columns.push(data);
+    columns.push(isText ? rows.map((row) => row[column] ?? "") : data);
   }
-  return { names, columns, skipped, rows: rows.length };
+  return { names, columns, rows: rows.length };
 }

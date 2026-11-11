@@ -59,6 +59,18 @@ export type Prim =
       /** Clockwise rotation in degrees about (x, y). */
       rotate?: number;
     }
+  | {
+      kind: "image";
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      /** Pixel dimensions of `rgba`; it is stretched over the rectangle unsmoothed. */
+      cols: number;
+      rows: number;
+      /** Row 0 is the top. */
+      rgba: Uint8ClampedArray<ArrayBuffer>;
+    }
   | { kind: "clip"; x: number; y: number; w: number; h: number; children: Prim[] };
 
 export interface Rect {

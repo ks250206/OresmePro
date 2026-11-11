@@ -1,7 +1,10 @@
 import { normalizeColor } from "./colors";
 import {
   ANCHORS,
-  AXIS_NAMES,
+  ANNOTATION_KINDS,
+  AXIS_SIDES,
+  COLOR_TABLES,
+  CURSOR_NAMES,
   DEFAULT_FONT_FAMILY,
   DocError,
   GRID_MODES,
@@ -12,20 +15,26 @@ import {
   TRACE_MODES,
   defaultAxis,
   defaultTraceStyle,
+  isVerticalSide,
+  leafName,
+  parentFolder,
   type AnnotationSpec,
-  type AxisName,
   type AxisSpec,
+  type ContourSpec,
+  type CursorName,
   type DocState,
+  type ErrorSource,
   type GraphSpec,
   type GraphStyle,
-  type HorizontalAxis,
+  type ImageSpec,
   type TableSpec,
   type TraceSpec,
   type TraceStyle,
-  type VerticalAxis,
   type Wave,
   type WindowState,
 } from "./types";
+
+type Props = Readonly<Record<string, unknown>>;
 
 /**
  * Every change to the document is one of these. GUI actions and the Python
@@ -35,51 +44,96 @@ export type Command =
   | {
       op: "makeWave";
       name: string;
-      data: Float64Array;
+      /** Numeric values in C order. Give either this or `text`. */
+      data?: Float64Array;
+      text?: readonly string[];
+      /** Defaults to one dimension. */
+      shape?: readonly number[];
       x0?: number;
       dx?: number;
       xUnit?: string;
+      y0?: number;
+      dy?: number;
+      yUnit?: string;
       unit?: string;
       note?: string;
       /** Defaults to true, like Igor's Make/O. */
       overwrite?: boolean;
     }
-  | { op: "setWaveData"; name: string; data: Float64Array }
+  | {
+      op: "setWaveData";
+      name: string;
+      data?: Float64Array;
+      text?: readonly string[];
+      shape?: readonly number[];
+    }
   | { op: "setWavePoints"; name: string; start: number; values: ArrayLike<number> }
+  | { op: "setWaveText"; name: string; start: number; values: readonly string[] }
   | { op: "insertPoints"; name: string; at: number; count: number }
   | { op: "deletePoints"; name: string; at: number; count: number }
-  | { op: "setWaveScale"; name: string; x0?: number; dx?: number; xUnit?: string }
+  | {
+      op: "setWaveScale";
+      name: string;
+      x0?: number;
+      dx?: number;
+      xUnit?: string;
+      y0?: number;
+      dy?: number;
+      yUnit?: string;
+    }
   | { op: "setWaveMeta"; name: string; unit?: string; note?: string }
   | { op: "renameWave"; name: string; newName: string }
   | { op: "duplicateWave"; name: string; newName: string; overwrite?: boolean }
   | { op: "killWaves"; names: readonly string[] }
+  | { op: "newFolder"; path: string }
+  | { op: "renameFolder"; path: string; newPath: string }
+  | { op: "killFolder"; path: string }
   | { op: "display"; y: readonly string[]; x?: string | null; name?: string }
   | {
       op: "appendTraces";
       graph: string;
       y: readonly string[];
       x?: string | null;
-      vAxis?: VerticalAxis;
-      hAxis?: HorizontalAxis;
+      vAxis?: string;
+      hAxis?: string;
     }
   | { op: "removeTraces"; graph: string; traces: readonly string[] }
-  | { op: "modifyTrace"; graph: string; trace: string; props: Readonly<Record<string, unknown>> }
-  | { op: "modifyAxis"; graph: string; axis: AxisName; props: Readonly<Record<string, unknown>> }
-  | { op: "modifyGraph"; graph: string; props: Readonly<Record<string, unknown>> }
+  | { op: "modifyTrace"; graph: string; trace: string; props: Props }
+  | { op: "addAxis"; graph: string; name: string; side: string }
+  | { op: "removeAxis"; graph: string; axis: string }
+  | { op: "modifyAxis"; graph: string; axis: string; props: Props }
+  | { op: "modifyGraph"; graph: string; props: Props }
+  | {
+      op: "appendImage";
+      graph: string;
+      wave: string;
+      vAxis?: string;
+      hAxis?: string;
+      props?: Props;
+    }
+  | { op: "modifyImage"; graph: string; image: string; props: Props }
+  | { op: "removeImage"; graph: string; image: string }
+  | {
+      op: "appendContour";
+      graph: string;
+      wave: string;
+      vAxis?: string;
+      hAxis?: string;
+      props?: Props;
+    }
+  | { op: "modifyContour"; graph: string; contour: string; props: Props }
+  | { op: "removeContour"; graph: string; contour: string }
+  | { op: "setCursor"; graph: string; cursor: string; trace: string; point: number }
+  | { op: "removeCursor"; graph: string; cursor: string }
   | {
       op: "addAnnotation";
       graph: string;
-      kind: "legend" | "text";
+      kind: string;
       text?: string;
       anchor?: string;
       frame?: boolean;
     }
-  | {
-      op: "modifyAnnotation";
-      graph: string;
-      annotation: string;
-      props: Readonly<Record<string, unknown>>;
-    }
+  | { op: "modifyAnnotation"; graph: string; annotation: string; props: Props }
   | { op: "removeAnnotation"; graph: string; annotation: string }
   | { op: "edit"; waves: readonly string[]; name?: string }
   | { op: "appendToTable"; table: string; waves: readonly string[] }
@@ -99,6 +153,7 @@ export interface CommandOutcome {
 }
 
 const NAME_PATTERN = /^[\p{L}][\p{L}\p{N}_]*$/u;
+const NO_DATA = new Float64Array(0);
 
 export function checkName(name: unknown, what: string): string {
   if (typeof name !== "string" || !NAME_PATTERN.test(name) || name.length > 255) {
@@ -107,6 +162,17 @@ export function checkName(name: unknown, what: string): string {
     );
   }
   return name;
+}
+
+/**
+ * Checks a wave or folder path and returns it without the optional leading
+ * "root:". Folders are separated by ":", as in Igor.
+ */
+export function checkPath(path: unknown, what: string): string {
+  if (typeof path !== "string") throw new DocError(`A ${what} name must be text.`);
+  const relative = path.startsWith("root:") ? path.slice(5) : path;
+  for (const part of relative.split(":")) checkName(part, what);
+  return relative;
 }
 
 /** Turns arbitrary text (a file column header, say) into a legal name. */
@@ -129,7 +195,8 @@ export function uniqueName(base: string, taken: (name: string) => boolean): stri
 }
 
 function requireWave(state: DocState, name: string): Wave {
-  const wave = state.waves[name];
+  const key = typeof name === "string" && name.startsWith("root:") ? name.slice(5) : name;
+  const wave = state.waves[key];
   if (!wave) throw new DocError(`No wave named ${JSON.stringify(name)}.`);
   return wave;
 }
@@ -159,6 +226,12 @@ function positive(value: unknown, what: string): number {
   return number;
 }
 
+function step(value: unknown, what: string): number {
+  const number = finite(value, what);
+  if (number === 0) throw new DocError(`${what} must not be 0.`);
+  return number;
+}
+
 function bool(value: unknown, what: string): boolean {
   if (typeof value !== "boolean") throw new DocError(`${what} must be true or false.`);
   return value;
@@ -171,12 +244,29 @@ function oneOf<T extends string>(value: unknown, choices: readonly T[], what: st
   return value as T;
 }
 
+// Revisions are unique across all waves and never reused, so a (name, rev)
+// pair identifies one exact state of a wave even after kill-and-remake or undo.
+let lastRev = 0;
+const nextRev = (): number => (lastRev += 1);
+
+function withFolders(state: DocState, folder: string): DocState {
+  if (folder === "" || state.folders.includes(folder)) return state;
+  const added: string[] = [];
+  const parts = folder.split(":");
+  for (let depth = 1; depth <= parts.length; depth += 1) {
+    const path = parts.slice(0, depth).join(":");
+    if (!state.folders.includes(path)) added.push(path);
+  }
+  return { ...state, folders: [...state.folders, ...added] };
+}
+
 function putWave(state: DocState, wave: Wave): DocState {
   const known = wave.name in state.waves;
+  const next = withFolders(state, parentFolder(wave.name));
   return {
-    ...state,
-    waves: { ...state.waves, [wave.name]: wave },
-    waveOrder: known ? state.waveOrder : [...state.waveOrder, wave.name],
+    ...next,
+    waves: { ...next.waves, [wave.name]: wave },
+    waveOrder: known ? next.waveOrder : [...next.waveOrder, wave.name],
   };
 }
 
@@ -188,6 +278,39 @@ function putTable(state: DocState, table: TableSpec): DocState {
   return { ...state, tables: { ...state.tables, [table.name]: table } };
 }
 
+function checkShape(shape: readonly number[] | undefined, length: number): readonly number[] {
+  if (shape === undefined) return [length];
+  if (
+    !Array.isArray(shape) ||
+    shape.length < 1 ||
+    shape.length > 4 ||
+    shape.some((size) => !Number.isInteger(size) || size < 0)
+  ) {
+    throw new DocError("A wave has 1 to 4 dimensions, each a whole number of points.");
+  }
+  const total = shape.reduce((product, size) => product * size, 1);
+  if (total !== length) {
+    throw new DocError(`Shape (${shape.join(", ")}) does not match ${length} values.`);
+  }
+  return [...shape];
+}
+
+/** The values a command carries: numeric data with a shape, or text. */
+function contentOf(command: {
+  data?: Float64Array;
+  text?: readonly string[];
+  shape?: readonly number[];
+}): Pick<Wave, "data" | "text" | "shape"> {
+  if (command.text !== undefined) {
+    if (!Array.isArray(command.text) || command.text.some((item) => typeof item !== "string")) {
+      throw new DocError("A text wave holds a list of strings.");
+    }
+    return { data: NO_DATA, text: [...command.text], shape: [command.text.length] };
+  }
+  if (!(command.data instanceof Float64Array)) throw new DocError("Missing wave data.");
+  return { data: command.data, text: null, shape: checkShape(command.shape, command.data.length) };
+}
+
 const windowTaken = (state: DocState) => (name: string) =>
   name in state.graphs || name in state.tables;
 
@@ -197,13 +320,42 @@ function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): 
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
-function nextTraceName(traces: readonly TraceSpec[], y: string): string {
-  const taken = new Set(traces.map((trace) => trace.name));
-  if (!taken.has(y)) return y;
+function nextItemName(taken: readonly { name: string }[], base: string): string {
+  const names = new Set(taken.map((item) => item.name));
+  if (!names.has(base)) return base;
   for (let index = 1; ; index += 1) {
-    const candidate = `${y}#${index}`;
-    if (!taken.has(candidate)) return candidate;
+    const candidate = `${base}#${index}`;
+    if (!names.has(candidate)) return candidate;
   }
+}
+
+/** A numeric wave with exactly `dimensions` dimensions, or an error saying why not. */
+function requireNumeric(state: DocState, name: string, dimensions: 1 | 2, use: string): Wave {
+  const wave = requireWave(state, name);
+  if (wave.text) throw new DocError(`${wave.name} is a text wave and cannot be ${use}.`);
+  if (wave.shape.length !== dimensions) {
+    throw new DocError(
+      dimensions === 1
+        ? `${wave.name} has ${wave.shape.length} dimensions; a trace needs a 1-D wave. Show it as an image or contour instead.`
+        : `${wave.name} is not a 2-D wave and cannot be ${use}.`,
+    );
+  }
+  return wave;
+}
+
+function requireAxis(graph: GraphSpec, name: string, vertical: boolean): string {
+  const axis = graph.axes[name];
+  if (!axis) {
+    throw new DocError(
+      `${graph.name} has no axis named ${JSON.stringify(name)}. Axes: ${Object.keys(graph.axes).join(", ")}.`,
+    );
+  }
+  if (isVerticalSide(axis.side) !== vertical) {
+    throw new DocError(
+      `Axis ${JSON.stringify(name)} is ${vertical ? "horizontal" : "vertical"}; a ${vertical ? "vertical" : "horizontal"} axis is needed here.`,
+    );
+  }
+  return name;
 }
 
 function addTraces(
@@ -211,30 +363,40 @@ function addTraces(
   graph: GraphSpec,
   y: readonly string[],
   x: string | null,
-  vAxis: VerticalAxis,
-  hAxis: HorizontalAxis,
+  vAxis: string,
+  hAxis: string,
 ): GraphSpec {
   if (y.length === 0) throw new DocError("Give at least one wave to plot.");
-  if (x !== null) requireWave(state, x);
+  requireAxis(graph, vAxis, true);
+  requireAxis(graph, hAxis, false);
+  const xWave = x === null ? null : requireNumeric(state, x, 1, "plotted");
   const traces = [...graph.traces];
   for (const name of y) {
-    const wave = requireWave(state, name);
-    if (x !== null && state.waves[x]!.data.length !== wave.data.length) {
+    const wave = requireNumeric(state, name, 1, "plotted");
+    if (xWave && xWave.data.length !== wave.data.length) {
       throw new DocError(
-        `X wave ${JSON.stringify(x)} has ${state.waves[x]!.data.length} points but ${JSON.stringify(name)} has ${wave.data.length}.`,
+        `X wave ${JSON.stringify(xWave.name)} has ${xWave.data.length} points but ${JSON.stringify(wave.name)} has ${wave.data.length}.`,
       );
     }
     traces.push({
       ...defaultTraceStyle(traces.length),
-      name: nextTraceName(traces, name),
-      y: name,
-      x,
+      name: nextItemName(traces, leafName(wave.name)),
+      y: wave.name,
+      x: xWave?.name ?? null,
       vAxis,
       hAxis,
     });
   }
   return { ...graph, traces };
 }
+
+const errorSource =
+  (what: string) =>
+  (value: unknown): ErrorSource => {
+    if (value === null || typeof value === "string") return value;
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+    throw new DocError(`${what} must be a wave name, a number that is not negative, or null.`);
+  };
 
 const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyle[K] } = {
   mode: (value) => oneOf(value, TRACE_MODES, "mode"),
@@ -245,21 +407,35 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   markerSize: (value) => positive(value, "markerSize"),
   markerFill: (value) => bool(value, "markerFill"),
   hidden: (value) => bool(value, "hidden"),
+  yError: errorSource("yError"),
+  xError: errorSource("xError"),
 };
 
-const AXIS_VALIDATORS: { [K in keyof AxisSpec]: (value: unknown) => AxisSpec[K] } = {
-  label: (value) => {
-    if (value === null || typeof value === "string") return value;
-    throw new DocError("label must be text, or null for the automatic label.");
-  },
-  min: (value) => (value === null ? null : finite(value, "min")),
-  max: (value) => (value === null ? null : finite(value, "max")),
-  log: (value) => bool(value, "log"),
-  mirror: (value) => oneOf(value, MIRROR_MODES, "mirror"),
-  ticks: (value) => oneOf(value, TICK_MODES, "ticks"),
-  minor: (value) => bool(value, "minor"),
-  grid: (value) => oneOf(value, GRID_MODES, "grid"),
-};
+const nullableNumber = (what: string) => (value: unknown) =>
+  value === null ? null : finite(value, what);
+
+const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown) => AxisSpec[K] } =
+  {
+    label: (value) => {
+      if (value === null || typeof value === "string") return value;
+      throw new DocError("label must be text, or null for the automatic label.");
+    },
+    min: nullableNumber("min"),
+    max: nullableNumber("max"),
+    log: (value) => bool(value, "log"),
+    mirror: (value) => oneOf(value, MIRROR_MODES, "mirror"),
+    ticks: (value) => oneOf(value, TICK_MODES, "ticks"),
+    minor: (value) => bool(value, "minor"),
+    grid: (value) => oneOf(value, GRID_MODES, "grid"),
+    span: (value) => {
+      if (Array.isArray(value) && value.length === 2) {
+        const lo = finite(value[0], "span");
+        const hi = finite(value[1], "span");
+        if (lo >= 0 && hi <= 1 && hi - lo >= 0.02) return [lo, hi];
+      }
+      throw new DocError("span must be (low, high) with 0 <= low < high <= 1.");
+    },
+  };
 
 const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyle[K] } = {
   fontSize: (value) => {
@@ -271,19 +447,47 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
     if (typeof value !== "string" || !value.trim()) throw new DocError("fontFamily must be text.");
     return value;
   },
+  showInfo: (value) => bool(value, "showInfo"),
 };
 
-const ANNOTATION_VALIDATORS = {
-  text: (value: unknown): string => {
+type ImageProps = Pick<ImageSpec, "colorTable" | "zMin" | "zMax" | "reverse">;
+const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProps[K] } = {
+  colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
+  zMin: nullableNumber("zMin"),
+  zMax: nullableNumber("zMax"),
+  reverse: (value) => bool(value, "reverse"),
+};
+
+type ContourProps = Pick<ContourSpec, "levels" | "color" | "lineSize" | "colorTable">;
+const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => ContourProps[K] } = {
+  levels: (value) => {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 200) {
+      return value;
+    }
+    if (Array.isArray(value) && value.length > 0 && value.length <= 200) {
+      return value.map((level) => finite(level, "A contour level"));
+    }
+    throw new DocError("levels must be a count from 1 to 200, or a list of level values.");
+  },
+  color: normalizeColor,
+  lineSize: (value) => positive(value, "lineSize"),
+  colorTable: (value) => (value === null ? null : oneOf(value, COLOR_TABLES, "colorTable")),
+};
+
+type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame">;
+const ANNOTATION_VALIDATORS: {
+  [K in keyof AnnotationProps]: (value: unknown) => AnnotationProps[K];
+} = {
+  text: (value) => {
     if (typeof value !== "string") throw new DocError("text must be text.");
     return value;
   },
-  anchor: (value: unknown) => oneOf(value, ANCHORS, "anchor"),
-  frame: (value: unknown) => bool(value, "frame"),
+  anchor: (value) => oneOf(value, ANCHORS, "anchor"),
+  frame: (value) => bool(value, "frame"),
 };
 
 function validateProps<T>(
-  props: Readonly<Record<string, unknown>>,
+  props: Props,
   validators: { [K in keyof T]: (value: unknown) => T[K] },
   what: string,
 ): Partial<T> {
@@ -300,30 +504,58 @@ function validateProps<T>(
   return result;
 }
 
-function renameInGraphs(state: DocState, from: string, to: string): DocState["graphs"] {
+/** Rewrites every reference to a wave after waves have been renamed or moved. */
+function renameReferences(state: DocState, rename: (name: string) => string): DocState {
   const graphs: Record<string, GraphSpec> = {};
   for (const graph of Object.values(state.graphs)) {
-    if (!graph.traces.some((trace) => trace.y === from || trace.x === from)) {
-      graphs[graph.name] = graph;
-      continue;
-    }
     const traces: TraceSpec[] = [];
+    const traceNames = new Map<string, string>();
     for (const trace of graph.traces) {
-      const y = trace.y === from ? to : trace.y;
-      const x = trace.x === from ? to : trace.x;
-      // A trace is named after its Y wave, so it follows the rename.
-      const name = trace.y === from ? nextTraceName(traces, to) : trace.name;
-      traces.push({ ...trace, name, y, x });
+      const y = rename(trace.y);
+      // A trace is named after its Y wave, so it follows a rename.
+      const name = y === trace.y ? trace.name : nextItemName(traces, leafName(y));
+      traceNames.set(trace.name, name);
+      traces.push({
+        ...trace,
+        name,
+        y,
+        x: trace.x === null ? null : rename(trace.x),
+        yError: typeof trace.yError === "string" ? rename(trace.yError) : trace.yError,
+        xError: typeof trace.xError === "string" ? rename(trace.xError) : trace.xError,
+      });
     }
-    graphs[graph.name] = { ...graph, traces };
+    const cursors: GraphSpec["cursors"] = Object.fromEntries(
+      Object.entries(graph.cursors).map(([key, cursor]) => [
+        key,
+        { ...cursor, trace: traceNames.get(cursor.trace) ?? cursor.trace },
+      ]),
+    );
+    graphs[graph.name] = {
+      ...graph,
+      traces,
+      cursors,
+      images: graph.images.map((image) => ({ ...image, wave: rename(image.wave) })),
+      contours: graph.contours.map((contour) => ({ ...contour, wave: rename(contour.wave) })),
+    };
   }
-  return graphs;
+  const tables: Record<string, TableSpec> = {};
+  for (const table of Object.values(state.tables)) {
+    tables[table.name] = { ...table, columns: table.columns.map(rename) };
+  }
+  return { ...state, graphs, tables };
 }
 
 function waveUsers(state: DocState, name: string): string[] {
   const users: string[] = [];
   for (const graph of Object.values(state.graphs)) {
-    if (graph.traces.some((trace) => trace.y === name || trace.x === name)) users.push(graph.name);
+    const used =
+      graph.traces.some(
+        (trace) =>
+          trace.y === name || trace.x === name || trace.yError === name || trace.xError === name,
+      ) ||
+      graph.images.some((image) => image.wave === name) ||
+      graph.contours.some((contour) => contour.wave === name);
+    if (used) users.push(graph.name);
   }
   for (const table of Object.values(state.tables)) {
     if (table.columns.includes(name)) users.push(table.name);
@@ -331,32 +563,82 @@ function waveUsers(state: DocState, name: string): string[] {
   return users;
 }
 
-// Revisions are unique across all waves and never reused, so a (name, rev)
-// pair identifies one exact state of a wave even after kill-and-remake or undo.
-let lastRev = 0;
-const nextRev = (): number => (lastRev += 1);
+function removeWaves(state: DocState, names: readonly string[]): DocState {
+  const waves = { ...state.waves };
+  for (const name of names) {
+    const users = waveUsers(state, name);
+    if (users.length > 0) {
+      throw new DocError(
+        `Wave ${JSON.stringify(name)} is in use by ${users.join(", ")}. Remove it from there first.`,
+      );
+    }
+    delete waves[name];
+  }
+  return { ...state, waves, waveOrder: state.waveOrder.filter((name) => name in waves) };
+}
 
-function resized(wave: Wave, data: Float64Array): Wave {
-  return { ...wave, data, rev: nextRev() };
+function changed(wave: Wave, change: Partial<Wave>): Wave {
+  return { ...wave, ...change, rev: nextRev() };
+}
+
+function emptyGraph(name: string): GraphSpec {
+  return {
+    name,
+    traces: [],
+    images: [],
+    contours: [],
+    axes: Object.fromEntries(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
+    annotations: [],
+    cursors: {},
+    fontSize: 12,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    showInfo: false,
+  };
+}
+
+function requireItem<T extends { name: string }>(
+  items: readonly T[],
+  name: string,
+  graph: string,
+  what: string,
+): T {
+  const item = items.find((candidate) => candidate.name === name);
+  if (!item) throw new DocError(`${graph} has no ${what} named ${JSON.stringify(name)}.`);
+  return item;
+}
+
+/** Checks that an error-bar wave exists and matches its trace. */
+function checkErrorWaves(state: DocState, trace: TraceSpec): void {
+  const length = state.waves[trace.y]?.data.length;
+  for (const source of [trace.yError, trace.xError]) {
+    if (typeof source !== "string") continue;
+    const wave = requireNumeric(state, source, 1, "used for error bars");
+    if (length !== undefined && wave.data.length !== length) {
+      throw new DocError(
+        `Error wave ${wave.name} has ${wave.data.length} points but ${trace.y} has ${length}.`,
+      );
+    }
+  }
 }
 
 /** Applies one command. Pure: returns a new state, or throws {@link DocError}. */
 export function applyCommand(state: DocState, command: Command): CommandOutcome {
   switch (command.op) {
     case "makeWave": {
-      const name = checkName(command.name, "wave");
+      const name = checkPath(command.name, "wave");
       const existing = state.waves[name];
       if (existing && command.overwrite === false) {
         throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
       }
-      const dx = command.dx ?? existing?.dx ?? 1;
-      if (!Number.isFinite(dx) || dx === 0) throw new DocError("dx must be finite and non-zero.");
       const wave: Wave = {
         name,
-        data: command.data,
+        ...contentOf(command),
         x0: finite(command.x0 ?? existing?.x0 ?? 0, "x0"),
-        dx,
+        dx: step(command.dx ?? existing?.dx ?? 1, "dx"),
         xUnit: command.xUnit ?? existing?.xUnit ?? "",
+        y0: finite(command.y0 ?? existing?.y0 ?? 0, "y0"),
+        dy: step(command.dy ?? existing?.dy ?? 1, "dy"),
+        yUnit: command.yUnit ?? existing?.yUnit ?? "",
         unit: command.unit ?? existing?.unit ?? "",
         note: command.note ?? existing?.note ?? "",
         rev: nextRev(),
@@ -365,12 +647,21 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "setWaveData": {
       const wave = requireWave(state, command.name);
-      return { state: putWave(state, resized(wave, command.data)), result: null };
+      // New values of the same total size keep the wave's shape.
+      const sameSize = command.data !== undefined && command.data.length === wave.data.length;
+      const content = contentOf({
+        ...command,
+        shape: command.shape ?? (sameSize && !wave.text ? wave.shape : undefined),
+      });
+      return { state: putWave(state, changed(wave, content)), result: null };
     }
     case "setWavePoints": {
       const wave = requireWave(state, command.name);
+      if (wave.text) throw new DocError(`${wave.name} is a text wave.`);
       const { start, values } = command;
-      if (!Number.isInteger(start) || start < 0 || start > wave.data.length) {
+      const growable = wave.shape.length === 1;
+      const limit = growable ? wave.data.length : wave.data.length - values.length;
+      if (!Number.isInteger(start) || start < 0 || start > limit) {
         throw new DocError(
           `Point ${start} is out of range for ${JSON.stringify(wave.name)} (${wave.data.length} points).`,
         );
@@ -378,124 +669,160 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const data = new Float64Array(Math.max(wave.data.length, start + values.length));
       data.set(wave.data);
       data.set(values, start);
-      return { state: putWave(state, resized(wave, data)), result: null };
+      const shape = growable ? [data.length] : wave.shape;
+      return { state: putWave(state, changed(wave, { data, shape })), result: null };
     }
-    case "insertPoints": {
+    case "setWaveText": {
       const wave = requireWave(state, command.name);
-      const { at, count } = command;
-      if (!Number.isInteger(at) || at < 0 || at > wave.data.length) {
-        throw new DocError(`Point ${at} is out of range.`);
+      if (!wave.text) throw new DocError(`${wave.name} is not a text wave.`);
+      const { start, values } = command;
+      if (!Number.isInteger(start) || start < 0 || start > wave.text.length) {
+        throw new DocError(`Point ${start} is out of range for ${JSON.stringify(wave.name)}.`);
       }
-      if (!Number.isInteger(count) || count < 1) throw new DocError("count must be at least 1.");
-      const data = new Float64Array(wave.data.length + count);
-      data.set(wave.data.subarray(0, at));
-      data.fill(Number.NaN, at, at + count);
-      data.set(wave.data.subarray(at), at + count);
-      return { state: putWave(state, resized(wave, data)), result: null };
+      const text = [...wave.text];
+      values.forEach((value, offset) => {
+        text[start + offset] = String(value);
+      });
+      return { state: putWave(state, changed(wave, { text, shape: [text.length] })), result: null };
     }
+    case "insertPoints":
     case "deletePoints": {
       const wave = requireWave(state, command.name);
+      if (wave.shape.length !== 1) {
+        throw new DocError("Points can be inserted or deleted only in a 1-D wave.");
+      }
+      const length = wave.shape[0]!;
       const { at, count } = command;
-      if (!Number.isInteger(at) || at < 0 || at >= wave.data.length) {
+      const inserting = command.op === "insertPoints";
+      if (!Number.isInteger(at) || at < 0 || (inserting ? at > length : at >= length)) {
         throw new DocError(`Point ${at} is out of range.`);
       }
       if (!Number.isInteger(count) || count < 1) throw new DocError("count must be at least 1.");
-      const end = Math.min(wave.data.length, at + count);
-      const data = new Float64Array(wave.data.length - (end - at));
+      const end = inserting ? at : Math.min(length, at + count);
+      if (wave.text) {
+        const text = [...wave.text];
+        text.splice(at, end - at, ...(inserting ? Array.from({ length: count }, () => "") : []));
+        return {
+          state: putWave(state, changed(wave, { text, shape: [text.length] })),
+          result: null,
+        };
+      }
+      const added = inserting ? count : 0;
+      const data = new Float64Array(length - (end - at) + added);
       data.set(wave.data.subarray(0, at));
-      data.set(wave.data.subarray(end), at);
-      return { state: putWave(state, resized(wave, data)), result: null };
+      data.fill(Number.NaN, at, at + added);
+      data.set(wave.data.subarray(end), at + added);
+      return { state: putWave(state, changed(wave, { data, shape: [data.length] })), result: null };
     }
     case "setWaveScale": {
       const wave = requireWave(state, command.name);
-      const dx = command.dx ?? wave.dx;
-      if (!Number.isFinite(dx) || dx === 0) throw new DocError("dx must be finite and non-zero.");
       return {
-        state: putWave(state, {
-          ...wave,
-          x0: finite(command.x0 ?? wave.x0, "x0"),
-          dx,
-          xUnit: command.xUnit ?? wave.xUnit,
-          rev: nextRev(),
-        }),
+        state: putWave(
+          state,
+          changed(wave, {
+            x0: finite(command.x0 ?? wave.x0, "x0"),
+            dx: step(command.dx ?? wave.dx, "dx"),
+            xUnit: command.xUnit ?? wave.xUnit,
+            y0: finite(command.y0 ?? wave.y0, "y0"),
+            dy: step(command.dy ?? wave.dy, "dy"),
+            yUnit: command.yUnit ?? wave.yUnit,
+          }),
+        ),
         result: null,
       };
     }
     case "setWaveMeta": {
       const wave = requireWave(state, command.name);
       return {
-        state: putWave(state, {
-          ...wave,
-          unit: command.unit ?? wave.unit,
-          note: command.note ?? wave.note,
-          rev: nextRev(),
-        }),
+        state: putWave(
+          state,
+          changed(wave, { unit: command.unit ?? wave.unit, note: command.note ?? wave.note }),
+        ),
         result: null,
       };
     }
     case "renameWave": {
       const wave = requireWave(state, command.name);
-      const newName = checkName(command.newName, "wave");
+      const newName = checkPath(command.newName, "wave");
       if (newName === wave.name) return { state, result: null };
       if (newName in state.waves) {
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       const waves = { ...state.waves };
       delete waves[wave.name];
-      waves[newName] = { ...wave, name: newName, rev: nextRev() };
-      const tables: Record<string, TableSpec> = {};
-      for (const table of Object.values(state.tables)) {
-        tables[table.name] = {
-          ...table,
-          columns: table.columns.map((column) => (column === wave.name ? newName : column)),
-        };
-      }
-      return {
-        state: {
-          ...state,
+      waves[newName] = changed(wave, { name: newName });
+      const renamed = renameReferences(
+        {
+          ...withFolders(state, parentFolder(newName)),
           waves,
           waveOrder: state.waveOrder.map((name) => (name === wave.name ? newName : name)),
-          graphs: renameInGraphs(state, wave.name, newName),
-          tables,
         },
-        result: newName,
-      };
+        (name) => (name === wave.name ? newName : name),
+      );
+      return { state: renamed, result: newName };
     }
     case "duplicateWave": {
       const wave = requireWave(state, command.name);
-      const newName = checkName(command.newName, "wave");
-      const existing = state.waves[newName];
-      if (existing && command.overwrite === false) {
+      const newName = checkPath(command.newName, "wave");
+      if (newName in state.waves && command.overwrite === false) {
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       return {
-        state: putWave(state, {
-          ...wave,
-          name: newName,
-          data: wave.data.slice(),
-          rev: nextRev(),
-        }),
+        state: putWave(state, changed(wave, { name: newName, data: wave.data.slice() })),
         result: newName,
       };
     }
     case "killWaves": {
-      const waves = { ...state.waves };
-      for (const name of command.names) {
-        requireWave(state, name);
-        const users = waveUsers(state, name);
-        if (users.length > 0) {
-          throw new DocError(
-            `Wave ${JSON.stringify(name)} is in use by ${users.join(", ")}. Remove it from there first.`,
-          );
-        }
-        delete waves[name];
+      const names = command.names.map((name) => requireWave(state, name).name);
+      return { state: removeWaves(state, names), result: null };
+    }
+    case "newFolder": {
+      const path = checkPath(command.path, "data folder");
+      if (state.folders.includes(path)) {
+        throw new DocError(`Data folder ${JSON.stringify(path)} already exists.`);
       }
-      return {
-        state: {
+      return { state: withFolders(state, path), result: path };
+    }
+    case "renameFolder": {
+      const path = checkPath(command.path, "data folder");
+      const newPath = checkPath(command.newPath, "data folder");
+      if (!state.folders.includes(path)) {
+        throw new DocError(`No data folder named ${JSON.stringify(path)}.`);
+      }
+      if (newPath === path) return { state, result: null };
+      if (state.folders.includes(newPath) || newPath.startsWith(`${path}:`)) {
+        throw new DocError(`Cannot move ${path} to ${newPath}.`);
+      }
+      const move = (name: string) =>
+        name === path || name.startsWith(`${path}:`) ? newPath + name.slice(path.length) : name;
+      const waves: Record<string, Wave> = {};
+      for (const wave of Object.values(state.waves)) {
+        const name = move(wave.name);
+        if (name !== wave.name && name in state.waves) {
+          throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
+        }
+        waves[name] = name === wave.name ? wave : changed(wave, { name });
+      }
+      const moved = renameReferences(
+        {
           ...state,
           waves,
-          waveOrder: state.waveOrder.filter((name) => name in waves),
+          waveOrder: state.waveOrder.map(move),
+          folders: state.folders.map(move),
         },
+        move,
+      );
+      return { state: withFolders(moved, parentFolder(newPath)), result: newPath };
+    }
+    case "killFolder": {
+      const path = checkPath(command.path, "data folder");
+      if (!state.folders.includes(path)) {
+        throw new DocError(`No data folder named ${JSON.stringify(path)}.`);
+      }
+      const inside = (name: string) => name === path || name.startsWith(`${path}:`);
+      const emptied = removeWaves(state, state.waveOrder.filter(inside));
+      return {
+        state: { ...emptied, folders: state.folders.filter((folder) => !inside(folder)) },
         result: null,
       };
     }
@@ -507,19 +834,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (windowTaken(state)(name)) {
         throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
       }
-      const empty: GraphSpec = {
-        name,
-        traces: [],
-        axes: {
-          left: defaultAxis(),
-          bottom: defaultAxis(),
-          right: defaultAxis(),
-          top: defaultAxis(),
-        },
-        annotations: [],
-        fontSize: 12,
-        fontFamily: DEFAULT_FONT_FAMILY,
-      };
+      const empty = emptyGraph(name);
       const graph =
         command.y.length === 0
           ? empty
@@ -539,50 +854,92 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         graph,
         command.y,
         command.x ?? null,
-        oneOf(command.vAxis ?? "left", ["left", "right"], "vAxis"),
-        oneOf(command.hAxis ?? "bottom", ["bottom", "top"], "hAxis"),
+        command.vAxis ?? "left",
+        command.hAxis ?? "bottom",
       );
       return { state: putGraph(state, next), result: next.traces.at(-1)!.name };
     }
     case "removeTraces": {
       const graph = requireGraph(state, command.graph);
-      for (const name of command.traces) {
-        if (!graph.traces.some((trace) => trace.name === name)) {
-          throw new DocError(`${graph.name} has no trace named ${JSON.stringify(name)}.`);
-        }
-      }
+      for (const name of command.traces) requireItem(graph.traces, name, graph.name, "trace");
       const traces = graph.traces.filter((trace) => !command.traces.includes(trace.name));
-      return { state: putGraph(state, { ...graph, traces }), result: null };
+      const cursors = Object.fromEntries(
+        Object.entries(graph.cursors).filter(
+          ([, cursor]) => !command.traces.includes(cursor.trace),
+        ),
+      );
+      return { state: putGraph(state, { ...graph, traces, cursors }), result: null };
     }
     case "modifyTrace": {
       const graph = requireGraph(state, command.graph);
-      if (!graph.traces.some((trace) => trace.name === command.trace)) {
-        throw new DocError(`${graph.name} has no trace named ${JSON.stringify(command.trace)}.`);
-      }
-      const props = validateProps<TraceStyle>(command.props, TRACE_VALIDATORS, "trace");
-      const traces = graph.traces.map((trace) =>
-        trace.name === command.trace ? { ...trace, ...props } : trace,
-      );
+      const trace = requireItem(graph.traces, command.trace, graph.name, "trace");
+      const next = {
+        ...trace,
+        ...validateProps<TraceStyle>(command.props, TRACE_VALIDATORS, "trace"),
+      };
+      checkErrorWaves(state, next);
+      const normalized: TraceSpec = {
+        ...next,
+        yError:
+          typeof next.yError === "string" ? requireWave(state, next.yError).name : next.yError,
+        xError:
+          typeof next.xError === "string" ? requireWave(state, next.xError).name : next.xError,
+      };
+      const traces = graph.traces.map((item) => (item === trace ? normalized : item));
       return { state: putGraph(state, { ...graph, traces }), result: null };
+    }
+    case "addAxis": {
+      const graph = requireGraph(state, command.graph);
+      const name = checkName(command.name, "axis");
+      if (name in graph.axes) {
+        throw new DocError(`${graph.name} already has an axis named ${JSON.stringify(name)}.`);
+      }
+      const axis = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
+      return {
+        state: putGraph(state, { ...graph, axes: { ...graph.axes, [name]: axis } }),
+        result: name,
+      };
+    }
+    case "removeAxis": {
+      const graph = requireGraph(state, command.graph);
+      if (!(command.axis in graph.axes)) {
+        throw new DocError(`${graph.name} has no axis named ${JSON.stringify(command.axis)}.`);
+      }
+      if ((AXIS_SIDES as readonly string[]).includes(command.axis)) {
+        throw new DocError("The left, bottom, right and top axes cannot be removed.");
+      }
+      const users = [...graph.traces, ...graph.images, ...graph.contours].filter(
+        (item) => item.vAxis === command.axis || item.hAxis === command.axis,
+      );
+      if (users.length > 0) {
+        throw new DocError(
+          `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
+        );
+      }
+      const axes = { ...graph.axes };
+      delete axes[command.axis];
+      return { state: putGraph(state, { ...graph, axes }), result: null };
     }
     case "modifyAxis": {
       const graph = requireGraph(state, command.graph);
-      const axisName = oneOf(command.axis, AXIS_NAMES, "axis");
+      const current = graph.axes[command.axis];
+      if (!current) {
+        throw new DocError(
+          `${graph.name} has no axis named ${JSON.stringify(command.axis)}. Axes: ${Object.keys(graph.axes).join(", ")}.`,
+        );
+      }
       const axis = {
-        ...graph.axes[axisName],
-        ...validateProps<AxisSpec>(command.props, AXIS_VALIDATORS, "axis"),
+        ...current,
+        ...validateProps<Omit<AxisSpec, "side">>(command.props, AXIS_VALIDATORS, "axis"),
       };
       if (axis.min !== null && axis.max !== null && axis.min === axis.max) {
         throw new DocError("The axis range must not be empty.");
       }
-      if (
-        axis.log &&
-        ((axis.min !== null && axis.min <= 0) || (axis.max !== null && axis.max <= 0))
-      ) {
+      if (axis.log && ((axis.min ?? 1) <= 0 || (axis.max ?? 1) <= 0)) {
         throw new DocError("A log axis needs a range greater than 0.");
       }
       return {
-        state: putGraph(state, { ...graph, axes: { ...graph.axes, [axisName]: axis } }),
+        state: putGraph(state, { ...graph, axes: { ...graph.axes, [command.axis]: axis } }),
         result: null,
       };
     }
@@ -591,14 +948,112 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const props = validateProps<GraphStyle>(command.props, GRAPH_VALIDATORS, "graph");
       return { state: putGraph(state, { ...graph, ...props }), result: null };
     }
+    case "appendImage": {
+      const graph = requireGraph(state, command.graph);
+      const wave = requireNumeric(state, command.wave, 2, "shown as an image");
+      const image: ImageSpec = {
+        name: nextItemName(graph.images, leafName(wave.name)),
+        wave: wave.name,
+        vAxis: requireAxis(graph, command.vAxis ?? "left", true),
+        hAxis: requireAxis(graph, command.hAxis ?? "bottom", false),
+        colorTable: "grays",
+        zMin: null,
+        zMax: null,
+        reverse: false,
+        ...validateProps<ImageProps>(command.props ?? {}, IMAGE_VALIDATORS, "image"),
+      };
+      return {
+        state: putGraph(state, { ...graph, images: [...graph.images, image] }),
+        result: image.name,
+      };
+    }
+    case "modifyImage": {
+      const graph = requireGraph(state, command.graph);
+      const image = requireItem(graph.images, command.image, graph.name, "image");
+      const props = validateProps<ImageProps>(command.props, IMAGE_VALIDATORS, "image");
+      const images = graph.images.map((item) => (item === image ? { ...item, ...props } : item));
+      return { state: putGraph(state, { ...graph, images }), result: null };
+    }
+    case "removeImage": {
+      const graph = requireGraph(state, command.graph);
+      const image = requireItem(graph.images, command.image, graph.name, "image");
+      const images = graph.images.filter((item) => item !== image);
+      return { state: putGraph(state, { ...graph, images }), result: null };
+    }
+    case "appendContour": {
+      const graph = requireGraph(state, command.graph);
+      const wave = requireNumeric(state, command.wave, 2, "shown as contours");
+      const contour: ContourSpec = {
+        name: nextItemName(graph.contours, leafName(wave.name)),
+        wave: wave.name,
+        vAxis: requireAxis(graph, command.vAxis ?? "left", true),
+        hAxis: requireAxis(graph, command.hAxis ?? "bottom", false),
+        levels: 10,
+        color: "#000000",
+        lineSize: 1,
+        colorTable: null,
+        ...validateProps<ContourProps>(command.props ?? {}, CONTOUR_VALIDATORS, "contour"),
+      };
+      return {
+        state: putGraph(state, { ...graph, contours: [...graph.contours, contour] }),
+        result: contour.name,
+      };
+    }
+    case "modifyContour": {
+      const graph = requireGraph(state, command.graph);
+      const contour = requireItem(graph.contours, command.contour, graph.name, "contour");
+      const props = validateProps<ContourProps>(command.props, CONTOUR_VALIDATORS, "contour");
+      const contours = graph.contours.map((item) =>
+        item === contour ? { ...item, ...props } : item,
+      );
+      return { state: putGraph(state, { ...graph, contours }), result: null };
+    }
+    case "removeContour": {
+      const graph = requireGraph(state, command.graph);
+      const contour = requireItem(graph.contours, command.contour, graph.name, "contour");
+      const contours = graph.contours.filter((item) => item !== contour);
+      return { state: putGraph(state, { ...graph, contours }), result: null };
+    }
+    case "setCursor": {
+      const graph = requireGraph(state, command.graph);
+      const cursor: CursorName = oneOf(command.cursor, CURSOR_NAMES, "cursor");
+      const trace = requireItem(graph.traces, command.trace, graph.name, "trace");
+      const length = state.waves[trace.y]?.data.length ?? 0;
+      if (!Number.isInteger(command.point) || command.point < 0 || command.point >= length) {
+        throw new DocError(
+          `Point ${command.point} is out of range for ${trace.name} (${length} points).`,
+        );
+      }
+      return {
+        state: putGraph(state, {
+          ...graph,
+          cursors: { ...graph.cursors, [cursor]: { trace: trace.name, point: command.point } },
+        }),
+        result: null,
+      };
+    }
+    case "removeCursor": {
+      const graph = requireGraph(state, command.graph);
+      const cursor: CursorName = oneOf(command.cursor, CURSOR_NAMES, "cursor");
+      const cursors = { ...graph.cursors };
+      delete cursors[cursor];
+      return { state: putGraph(state, { ...graph, cursors }), result: null };
+    }
     case "addAnnotation": {
       const graph = requireGraph(state, command.graph);
-      const kind = oneOf(command.kind, ["legend", "text"], "kind");
+      const kind = oneOf(command.kind, ANNOTATION_KINDS, "kind");
+      const text = ANNOTATION_VALIDATORS.text(command.text ?? "");
+      if (kind === "colorscale") {
+        if (graph.images.length === 0) throw new DocError(`${graph.name} has no image.`);
+        if (text !== "") requireItem(graph.images, text, graph.name, "image");
+      }
       const annotation: AnnotationSpec = {
         name: uniqueName(kind, (name) => graph.annotations.some((item) => item.name === name)),
         kind,
-        text: ANNOTATION_VALIDATORS.text(command.text ?? ""),
-        anchor: ANNOTATION_VALIDATORS.anchor(command.anchor ?? "RT"),
+        text,
+        anchor: ANNOTATION_VALIDATORS.anchor(
+          command.anchor ?? (kind === "colorscale" ? "RC" : "RT"),
+        ),
         frame: ANNOTATION_VALIDATORS.frame(command.frame ?? true),
       };
       return {
@@ -608,29 +1063,21 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "modifyAnnotation": {
       const graph = requireGraph(state, command.graph);
-      if (!graph.annotations.some((item) => item.name === command.annotation)) {
-        throw new DocError(
-          `${graph.name} has no annotation named ${JSON.stringify(command.annotation)}.`,
-        );
-      }
-      const props = validateProps<Pick<AnnotationSpec, "text" | "anchor" | "frame">>(
+      const target = requireItem(graph.annotations, command.annotation, graph.name, "annotation");
+      const props = validateProps<AnnotationProps>(
         command.props,
         ANNOTATION_VALIDATORS,
         "annotation",
       );
       const annotations = graph.annotations.map((item) =>
-        item.name === command.annotation ? { ...item, ...props } : item,
+        item === target ? { ...item, ...props } : item,
       );
       return { state: putGraph(state, { ...graph, annotations }), result: null };
     }
     case "removeAnnotation": {
       const graph = requireGraph(state, command.graph);
-      if (!graph.annotations.some((item) => item.name === command.annotation)) {
-        throw new DocError(
-          `${graph.name} has no annotation named ${JSON.stringify(command.annotation)}.`,
-        );
-      }
-      const annotations = graph.annotations.filter((item) => item.name !== command.annotation);
+      const target = requireItem(graph.annotations, command.annotation, graph.name, "annotation");
+      const annotations = graph.annotations.filter((item) => item !== target);
       return { state: putGraph(state, { ...graph, annotations }), result: null };
     }
     case "edit": {
@@ -641,11 +1088,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (windowTaken(state)(name)) {
         throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
       }
-      for (const wave of command.waves) requireWave(state, wave);
-      const table: TableSpec = { name, columns: [...new Set(command.waves)] };
+      const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
         state: {
-          ...putTable(state, table),
+          ...putTable(state, { name, columns }),
           windows: [...state.windows, placeWindow(state, name, "table")],
         },
         result: name,
@@ -653,8 +1099,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "appendToTable": {
       const table = requireTable(state, command.table);
-      for (const wave of command.waves) requireWave(state, wave);
-      const columns = [...new Set([...table.columns, ...command.waves])];
+      const added = command.waves.map((wave) => requireWave(state, wave).name);
+      const columns = [...new Set([...table.columns, ...added])];
       return { state: putTable(state, { ...table, columns }), result: null };
     }
     case "removeFromTable": {

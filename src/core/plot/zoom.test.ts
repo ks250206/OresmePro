@@ -6,8 +6,8 @@ import { marqueeZoom, panBy, tidy, zoomAbout } from "./zoom";
 const hit = { x: 0, y: 0, w: 0, h: 0 };
 // A 100x100 plot at the origin: X runs 0..10 left to right, Y 0..1 bottom to top.
 const axes: Record<"bottom" | "left", AxisGeometry> = {
-  bottom: { scale: makeScale(0, 10, false, 0, 100), hit, unit: "" },
-  left: { scale: makeScale(0, 1, false, 100, 0), hit, unit: "" },
+  bottom: { side: "bottom", scale: makeScale(0, 10, false, 0, 100), hit, unit: "" },
+  left: { side: "left", scale: makeScale(0, 1, false, 100, 0), hit, unit: "" },
 };
 const range = (commands: ReturnType<typeof marqueeZoom>, axis: string) => {
   const command = commands.find((item) => item.op === "modifyAxis" && item.axis === axis);
@@ -53,7 +53,9 @@ describe("marqueeZoom", () => {
   });
 
   it("keeps a reversed axis reversed", () => {
-    const reversed = { bottom: { scale: makeScale(10, 0, false, 0, 100), hit, unit: "" } };
+    const reversed = {
+      bottom: { side: "bottom" as const, scale: makeScale(10, 0, false, 0, 100), hit, unit: "" },
+    };
     const commands = marqueeZoom("G", reversed, marquee, "expand", {
       horizontal: true,
       vertical: true,
@@ -62,7 +64,9 @@ describe("marqueeZoom", () => {
   });
 
   it("works in decades on a log axis", () => {
-    const log = { bottom: { scale: makeScale(1, 10000, true, 0, 100), hit, unit: "" } };
+    const log = {
+      bottom: { side: "bottom" as const, scale: makeScale(1, 10000, true, 0, 100), hit, unit: "" },
+    };
     const commands = marqueeZoom("G", log, { x: 25, y: 0, w: 50, h: 10 }, "expand", {
       horizontal: true,
       vertical: true,
@@ -86,5 +90,21 @@ describe("zoomAbout and panBy", () => {
     const commands = panBy("G", axes, 10, 10);
     expect(range(commands, "bottom")).toEqual([-1, 9]);
     expect(range(commands, "left")).toEqual([0.1, 1.1]);
+  });
+
+  it("leaves alone axes whose part of the plot the gesture does not touch", () => {
+    const stacked = {
+      lower: { side: "left" as const, scale: makeScale(0, 1, false, 100, 55), hit, unit: "" },
+      upper: { side: "left" as const, scale: makeScale(0, 1, false, 45, 0), hit, unit: "" },
+    };
+    const zoomed = marqueeZoom("G", stacked, { x: 0, y: 60, w: 10, h: 30 }, "expand", {
+      horizontal: true,
+      vertical: true,
+    });
+    expect(zoomed.map((command) => (command.op === "modifyAxis" ? command.axis : ""))).toEqual([
+      "lower",
+    ]);
+    expect(zoomAbout("G", stacked, 5, 20, 2, null)).toHaveLength(1);
+    expect(panBy("G", stacked, 0, 5, { x: 5, y: 20 })).toHaveLength(1);
   });
 });

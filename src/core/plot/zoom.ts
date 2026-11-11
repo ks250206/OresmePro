@@ -1,5 +1,5 @@
 import type { Command } from "../doc/commands";
-import type { AxisName } from "../doc/types";
+import { isVerticalSide } from "../doc/types";
 import type { Rect } from "./displayList";
 import type { AxisGeometry } from "./layout";
 import type { Scale } from "./scale";
@@ -17,13 +17,7 @@ export function tidy(value: number, span: number): number {
 const forward = (scale: Scale, value: number): number => (scale.log ? Math.log10(value) : value);
 const inverse = (scale: Scale, t: number): number => (scale.log ? 10 ** t : t);
 
-function rangeCommand(
-  graph: string,
-  axis: AxisName,
-  scale: Scale,
-  t0: number,
-  t1: number,
-): Command {
+function rangeCommand(graph: string, axis: string, scale: Scale, t0: number, t1: number): Command {
   const min = inverse(scale, t0);
   const max = inverse(scale, t1);
   const span = Math.abs(max - min);
@@ -35,14 +29,20 @@ function rangeCommand(
   };
 }
 
-const isVertical = (axis: AxisName): boolean => axis === "left" || axis === "right";
+type Axes = Readonly<Record<string, AxisGeometry>>;
 
-type Axes = Partial<Record<AxisName, AxisGeometry>>;
+/** Does the pixel position lie along this axis's own stretch of the plot? */
+function covers(geometry: AxisGeometry, px: number, py: number): boolean {
+  const at = isVerticalSide(geometry.side) ? py : px;
+  const { p0, p1 } = geometry.scale;
+  return at >= Math.min(p0, p1) - 1 && at <= Math.max(p0, p1) + 1;
+}
 
 /**
  * Commands that zoom to (expand) or out from (shrink) a marquee rectangle,
  * like the marquee menu in an Igor graph. Shrinking makes the current view
- * fit into the marquee.
+ * fit into the marquee. Only axes whose stretch of the plot the marquee
+ * touches are affected, which matters when axes are stacked.
  */
 export function marqueeZoom(
   graph: string,
@@ -52,15 +52,17 @@ export function marqueeZoom(
   directions: { horizontal: boolean; vertical: boolean },
 ): Command[] {
   const commands: Command[] = [];
-  for (const [name, geometry] of Object.entries(axes) as [AxisName, AxisGeometry][]) {
-    const vertical = isVertical(name);
+  for (const [name, geometry] of Object.entries(axes)) {
+    const vertical = isVerticalSide(geometry.side);
     if (vertical ? !directions.vertical : !directions.horizontal) continue;
     const { scale } = geometry;
+    const low = Math.min(scale.p0, scale.p1);
+    const high = Math.max(scale.p0, scale.p1);
+    const from = Math.max(low, vertical ? marquee.y : marquee.x);
+    const to = Math.min(high, vertical ? marquee.y + marquee.h : marquee.x + marquee.w);
+    if (to - from < 1) continue;
     // Marquee edges in the order of the axis: the one nearer `min` first.
-    const edges = vertical
-      ? [marquee.y + marquee.h, marquee.y]
-      : [marquee.x, marquee.x + marquee.w];
-    if (scale.p0 > scale.p1 !== vertical) edges.reverse();
+    const edges = scale.p0 <= scale.p1 ? [from, to] : [to, from];
     const m0 = forward(scale, scale.toValue(edges[0]!));
     const m1 = forward(scale, scale.toValue(edges[1]!));
     if (!Number.isFinite(m0) || !Number.isFinite(m1) || m0 === m1) continue;
@@ -78,20 +80,23 @@ export function marqueeZoom(
   return commands;
 }
 
-/** Commands that zoom by `factor` (>1 zooms out) about a pixel position. */
+/**
+ * Commands that zoom by `factor` (>1 zooms out) about a pixel position: one
+ * named axis, or every axis under the pointer.
+ */
 export function zoomAbout(
   graph: string,
   axes: Axes,
   px: number,
   py: number,
   factor: number,
-  only: AxisName | null,
+  only: string | null,
 ): Command[] {
   const commands: Command[] = [];
-  for (const [name, geometry] of Object.entries(axes) as [AxisName, AxisGeometry][]) {
-    if (only && only !== name) continue;
+  for (const [name, geometry] of Object.entries(axes)) {
+    if (only ? only !== name : !covers(geometry, px, py)) continue;
     const { scale } = geometry;
-    const pivot = forward(scale, scale.toValue(isVertical(name) ? py : px));
+    const pivot = forward(scale, scale.toValue(isVerticalSide(geometry.side) ? py : px));
     const t0 = forward(scale, scale.min);
     const t1 = forward(scale, scale.max);
     if (!Number.isFinite(pivot)) continue;
@@ -108,12 +113,22 @@ export function zoomAbout(
   return commands;
 }
 
-/** Commands that shift the view by a pixel offset (dragging the data). */
-export function panBy(graph: string, axes: Axes, dx: number, dy: number): Command[] {
+/**
+ * Commands that shift the view by a pixel offset (dragging the data), for
+ * the axes under the point where the drag started.
+ */
+export function panBy(
+  graph: string,
+  axes: Axes,
+  dx: number,
+  dy: number,
+  start?: { x: number; y: number },
+): Command[] {
   const commands: Command[] = [];
-  for (const [name, geometry] of Object.entries(axes) as [AxisName, AxisGeometry][]) {
+  for (const [name, geometry] of Object.entries(axes)) {
+    if (start && !covers(geometry, start.x, start.y)) continue;
     const { scale } = geometry;
-    const pixels = isVertical(name) ? dy : dx;
+    const pixels = isVerticalSide(geometry.side) ? dy : dx;
     if (pixels === 0) continue;
     const t0 = forward(scale, scale.min);
     const t1 = forward(scale, scale.max);

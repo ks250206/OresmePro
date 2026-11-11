@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { parseDelimited } from "./delimited";
+import { Doc } from "../doc/doc";
+import { History } from "../history/history";
+import { unzipExperiment, zipExperiment } from "./experiment";
 import { decodeNpy, encodeNpy } from "./npy";
 
 describe("npy", () => {
@@ -8,11 +11,13 @@ describe("npy", () => {
     const bytes = encodeNpy(data);
     expect((bytes.length - data.byteLength) % 64).toBe(0);
     expect(new TextDecoder().decode(bytes.subarray(1, 6))).toBe("NUMPY");
-    expect([...decodeNpy(bytes)]).toEqual([...data]);
+    expect([...decodeNpy(bytes).data]).toEqual([...data]);
   });
 
   it("round-trips an empty array and rejects other files", () => {
-    expect(decodeNpy(encodeNpy(new Float64Array(0)))).toHaveLength(0);
+    expect(decodeNpy(encodeNpy(new Float64Array(0))).data).toHaveLength(0);
+    const matrix = decodeNpy(encodeNpy(new Float64Array(6), [2, 3]));
+    expect(matrix.shape).toEqual([2, 3]);
     expect(() => decodeNpy(new Uint8Array([1, 2, 3]))).toThrow(/Not a .npy/);
   });
 });
@@ -33,15 +38,54 @@ describe("parseDelimited", () => {
     expect([...result.columns[0]!]).toEqual([1, 3]);
   });
 
-  it("reads tab-separated data, leaving text columns out", () => {
+  it("reads tab-separated data, keeping text columns as text", () => {
     const result = parseDelimited("x\tlabel\ty\n1\ta\t\n2\tb\t5\n", free);
-    expect(result.names).toEqual(["x", "y"]);
-    expect(result.skipped).toEqual(["label"]);
-    expect([...result.columns[1]!]).toEqual([Number.NaN, 5]);
+    expect(result.names).toEqual(["x", "label", "y"]);
+    expect(result.columns[1]).toEqual(["a", "b"]);
+    expect([...result.columns[2]!]).toEqual([Number.NaN, 5]);
   });
 
   it("avoids names that are taken", () => {
     const result = parseDelimited("x,x\n1,2\n", (name) => name === "x");
     expect(result.names).toEqual(["x_1", "x_2"]);
+  });
+});
+
+describe("experiment files", () => {
+  it("round-trips waves, folders, graphs, tables and history through one file", () => {
+    const doc = new Doc();
+    doc.dispatch({
+      op: "makeWave",
+      name: "run1:signal",
+      data: new Float64Array([1, 2, 3]),
+      dx: 0.5,
+      unit: "V",
+    });
+    doc.dispatch({ op: "makeWave", name: "m", data: new Float64Array(6), shape: [2, 3], dy: 4 });
+    doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });
+    doc.dispatch({ op: "newFolder", path: "empty" });
+    doc.dispatch({ op: "display", y: ["run1:signal"] });
+    doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "B", trace: "signal", point: 1 });
+    doc.dispatch({ op: "edit", waves: ["labels", "run1:signal"] });
+    const history = new History();
+    history.add("user", "print(1)");
+
+    const file = zipExperiment(doc.getState(), history.getEntries());
+    expect(new TextDecoder().decode(file.subarray(0, 2))).toBe("PK");
+    const restored = unzipExperiment(file);
+    const before = doc.getState();
+    expect(restored.state.waveOrder).toEqual(before.waveOrder);
+    expect(restored.state.folders).toEqual(["run1", "empty"]);
+    expect([...restored.state.waves["run1:signal"]!.data]).toEqual([1, 2, 3]);
+    expect(restored.state.waves["run1:signal"]).toMatchObject({ dx: 0.5, unit: "V" });
+    expect(restored.state.waves.m).toMatchObject({ shape: [2, 3], dy: 4 });
+    expect(restored.state.waves.labels!.text).toEqual(["a", "b"]);
+    expect(restored.state.graphs).toEqual(before.graphs);
+    expect(restored.state.tables).toEqual(before.tables);
+    expect(restored.history[0]!.code).toBe("print(1)");
+  });
+
+  it("rejects other files", () => {
+    expect(() => unzipExperiment(new Uint8Array([1, 2, 3]))).toThrow(/not an OresmePro experiment/);
   });
 });

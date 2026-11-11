@@ -44,6 +44,24 @@ function traceMarker(ctx: Ctx, shape: MarkerShape, x: number, y: number, s: numb
   }
 }
 
+const sources = new WeakMap<Uint8ClampedArray, OffscreenCanvas | HTMLCanvasElement>();
+
+/** A canvas holding the pixels, so they can be drawn scaled. Cached per pixel buffer. */
+function imageSource(rgba: Uint8ClampedArray<ArrayBuffer>, cols: number, rows: number) {
+  const cached = sources.get(rgba);
+  if (cached) return cached;
+  if (cols === 0 || rows === 0) return null;
+  const canvas =
+    typeof OffscreenCanvas === "undefined"
+      ? Object.assign(document.createElement("canvas"), { width: cols, height: rows })
+      : new OffscreenCanvas(cols, rows);
+  const context = canvas.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!context) return null;
+  context.putImageData(new ImageData(rgba, cols, rows), 0, 0);
+  sources.set(rgba, canvas);
+  return canvas;
+}
+
 const isOpenShape = (shape: MarkerShape): boolean => shape === "cross" || shape === "plus";
 
 /**
@@ -160,6 +178,15 @@ export function drawPrims(ctx: Ctx, prims: readonly Prim[], dpr: number): void {
           ctx.fillText(prim.text, prim.x, prim.y);
         }
         break;
+      case "image": {
+        const source = imageSource(prim.rgba, prim.cols, prim.rows);
+        if (!source) break;
+        const smoothing = ctx.imageSmoothingEnabled;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(source, prim.x, prim.y, prim.w, prim.h);
+        ctx.imageSmoothingEnabled = smoothing;
+        break;
+      }
       case "clip":
         ctx.save();
         ctx.beginPath();
