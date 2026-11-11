@@ -271,15 +271,30 @@ SciPy や pandas など Pyodide に含まれるパッケージは、`import` し
 ```sh
 pnpm dev        # 開発サーバー
 pnpm check      # フォーマット、lint、型チェック
-pnpm test       # テスト
+pnpm test       # 単体テスト
 pnpm build      # dist/ にビルド
 pnpm preview    # ビルド結果を配信
+pnpm e2e        # E2E テスト(先に pnpm build が必要)
 ```
 
-`pnpm test` のうち `src/kernel/kernel.test.ts` は、本物の Pyodide を Node 上で起動して Python API を実際のドキュメントに対して動かします。
-初回は NumPy と IPython を取得するためネットワークが必要です(`node_modules/.cache/pyodide` にキャッシュされます)。
+### Pyodide の同梱
 
-Pyodide の取得元は環境変数 `VITE_PYODIDE_URL` で変更できます(既定は jsDelivr)。
+Python(Pyodide)本体と、起動時に使う NumPy・IPython とその依存パッケージは、アプリと一緒に配信します。
+`pnpm dev` / `pnpm build` / `pnpm test` の前に `scripts/fetch-pyodide.mjs` が走り、`public/pyodide/` に用意します
+(本体は npm パッケージから、パッケージは初回だけダウンロードしてハッシュを検証。このディレクトリはリポジトリには入れません)。
+これにより、ビルドしたアプリは起動に外部への接続を必要としません。
+
+SciPy や pandas など起動時に使わないパッケージは同梱せず、`import` した時点で CDN(jsDelivr)から取得します。
+Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できます。
+
+### テスト
+
+- **単体テスト**(`pnpm test`、Vitest): `src/core/` のロジックと、Python API。
+  `src/kernel/kernel.test.ts` は本物の Pyodide を Node 上で起動し、Python API を実際のドキュメントに対して動かします。
+- **E2E テスト**(`pnpm e2e`、Playwright): ビルドしたアプリを Chromium で操作します。コマンドウィンドウのキー操作、
+  グラフのマウス操作、表、ファイルの読み込みと保存、Python の中断などを、テストごとに新しいブラウザ(と Python)で確認します。
+  既にインストール済みの Chromium を使うときは `PLAYWRIGHT_CHROMIUM_PATH` にそのパスを指定します。
+- **CI**(`.github/workflows/ci.yml`): push のたびに、チェック、単体テスト、ビルド、E2E テストを順に実行します。
 
 ## 制限
 
