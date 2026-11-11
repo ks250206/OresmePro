@@ -44,7 +44,8 @@ beforeAll(async () => {
             );
             return toSvg(layout.prims, layout.width, layout.height);
           },
-          exportGraph: (name, filename) => exported.push(`${name}:${filename}`),
+          exportGraph: (name, filename, cursors) =>
+            exported.push(`${name}:${filename}${cursors ? ":cursors" : ""}`),
         },
         method,
         paramsJson,
@@ -235,7 +236,7 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe("viridis 4 [1, 2] ['left', 'bottom', 'right', 'top', 'R2'] right\n");
     expect(await run("op.image(w)")).toBe(false);
-    expect(errors[0]).toMatch(/not a 2-D wave/);
+    expect(errors[0]).toMatch(/has one dimension/);
     expect(Object.keys(doc.getState().graphs)).not.toContain("Graph4");
   });
 
@@ -320,5 +321,91 @@ describe("oresme Python API", () => {
     expect(exported).toEqual(["Graph0:figure.pdf"]);
     expect(await run('g.save("figure.bmp")')).toBe(false);
     expect(errors[0]).toMatch(/\.pdf, \.svg or \.png/);
+  });
+
+  it("holds, bounds and weights fit parameters", async () => {
+    expect(
+      await run(
+        [
+          "xs = np.linspace(-5, 5, 201)",
+          'pk = op.make("pk", 0.5 + 3 * np.exp(-((xs - 1.2) / 0.8) ** 2), x0=xs[0], dx=xs[1] - xs[0])',
+          'r = op.fit("gauss", pk, hold={"y0": 0.4}, quiet=True)',
+          "print(r.held, r['y0'], r.sigma[0], round(r['A'], 1) != 3.0)",
+          'r = op.fit("gauss", pk, hold=["width"], guess=[0.5, 3, 1.2, 0.8], quiet=True)',
+          "print(np.round(r.coef, 3).tolist(), r.sigma[3])",
+          'r = op.fit("gauss", pk, bounds={"A": (None, 2.5), "x0": (0, 5)}, quiet=True)',
+          "print(round(r['A'], 6), 0 <= r['x0'] <= 5)",
+          "print(str(op.fit('gauss', pk, hold={'y0': 0.5}, quiet=True)).splitlines()[1])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "('y0',) 0.4 0.0 True\n[0.5, 3.0, 1.2, 0.8] 0.0\n2.5 True\n  y0    = 0.5 (held)\n",
+    );
+    expect(await run('op.fit("gauss", pk, hold={"nope": 1})')).toBe(false);
+    expect(errors[0]).toMatch(/hold: no parameter named 'nope'/);
+  });
+
+  it("uses per-point uncertainties as weights and for the reported errors", async () => {
+    expect(
+      await run(
+        [
+          "rng = np.random.default_rng(5)",
+          "xl = np.arange(50.0)",
+          "err = np.where(xl < 25, 0.1, 5.0)",
+          'ln = op.make("ln", 2 + 0.5 * xl + rng.normal(scale=err))',
+          'op.make("ln_err", err)',
+          'weighted = op.fit("line", ln, sigma="ln_err", quiet=True)',
+          'plain = op.fit("line", ln, quiet=True)',
+          "print(abs(weighted['b'] - 0.5) < 0.02, weighted.sigma[1] < plain.sigma[1], 20 < weighted.chisq < 90)",
+          'same = op.fit("line", ln, sigma=2.0, quiet=True)',
+          "print(np.allclose(same.coef, plain.coef))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("True True True\nTrue\n");
+  });
+
+  it("stores dates as seconds marked with the date unit", async () => {
+    expect(
+      await run(
+        [
+          'when = op.make("when", np.array(["2026-11-11T09:00", "2026-11-11T09:30"], dtype="datetime64[m]"))',
+          "print(when.unit, when.data[1] - when.data[0], when.data[0])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("dat 1800.0 1794387600.0\n");
+  });
+
+  it("makes category plots, shows planes of 3-D waves and labels contours", async () => {
+    expect(
+      await run(
+        [
+          'names = op.make("days", ["Mon", "Tue", "Wed"])',
+          'counts = op.make("counts", [3, 5, 2])',
+          "gb = op.display(counts, x=names)",
+          'gb.trace().mode = "bars"',
+          "print(gb.trace().mode, gb.trace().x.is_text)",
+          'cube = op.make("cube", np.arange(24.0).reshape(3, 4, 2))',
+          "gq = op.image(cube, layer=1)",
+          "cq = gq.append_contour(cube, layer=1, labels=False)",
+          "print(gq.image().layer, cq.labels, cq.layer)",
+          "cq.labels = True; print(cq.labels)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("bars True\n1 False 1\nTrue\n");
+    expect(await run("gq.image().layer = 2")).toBe(false);
+    expect(errors[0]).toMatch(/has 2 layers/);
+    expect(await run("op.display(names)")).toBe(false);
+    expect(errors[0]).toMatch(/text wave/);
+  });
+
+  it("can include cursors when saving a graph", async () => {
+    expect(
+      await run('g.save("with.svg", cursors=True); print("clip" in g.svg(cursors=True))'),
+    ).toBe(true);
+    expect(exported.at(-1)).toBe("Graph0:with.svg:cursors");
   });
 });

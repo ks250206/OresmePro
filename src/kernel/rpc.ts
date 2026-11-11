@@ -2,13 +2,14 @@ import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
 import { DocError, type Wave } from "../core/doc/types";
+import { tracePosition, traceX } from "../core/plot/layout";
 
 export interface RpcContext {
   doc: Doc;
   /** Renders a graph as SVG at the given size (or its window's size). */
-  renderSvg(graph: string, width: number | null, height: number | null): string;
+  renderSvg(graph: string, width: number | null, height: number | null, cursors: boolean): string;
   /** Saves a graph to a file the user downloads; the format follows the extension. */
-  exportGraph(graph: string, filename: string): void;
+  exportGraph(graph: string, filename: string, cursors: boolean): void;
 }
 
 export interface RpcReply {
@@ -88,15 +89,14 @@ export function handleRpc(
       const cursor = graph.cursors[params.cursor as "A" | "B"];
       if (!cursor) throw new DocError(`Cursor ${String(params.cursor)} is not on ${graph.name}.`);
       const trace = graph.traces.find((item) => item.name === cursor.trace);
-      const y = trace ? state.waves[trace.y] : undefined;
-      const x = trace?.x ? state.waves[trace.x] : null;
-      if (!trace || !y) throw new DocError(`Cursor ${String(params.cursor)} has lost its trace.`);
+      const position = trace ? tracePosition(trace, state.waves) : null;
+      if (!position) throw new DocError(`Cursor ${String(params.cursor)} has lost its trace.`);
       return {
         result: {
           trace: cursor.trace,
           point: cursor.point,
-          x: x ? (x.data[cursor.point] ?? null) : y.x0 + cursor.point * y.dx,
-          y: y.data[cursor.point] ?? null,
+          x: traceX(position.y, position.x, cursor.point) ?? null,
+          y: position.y.data[cursor.point] ?? null,
         },
       };
     }
@@ -108,7 +108,7 @@ export function handleRpc(
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
         throw new DocError("The file name must end in .pdf, .svg or .png.");
       }
-      context.exportGraph(params.name, filename);
+      context.exportGraph(params.name, filename, params.cursors === true);
       return { result: null };
     }
     case "listWindows":
@@ -132,7 +132,14 @@ export function handleRpc(
         throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
       }
       const size = (value: unknown) => (typeof value === "number" && value > 0 ? value : null);
-      return { result: context.renderSvg(params.name, size(params.width), size(params.height)) };
+      return {
+        result: context.renderSvg(
+          params.name,
+          size(params.width),
+          size(params.height),
+          params.cursors === true,
+        ),
+      };
     }
     default:
       throw new DocError(`Unknown request ${JSON.stringify(method)}.`);

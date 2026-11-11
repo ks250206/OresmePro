@@ -119,6 +119,10 @@ def _content(command, values):
         items = [values] if isinstance(values, str) else [str(item) for item in values]
         command["text"] = items
         return None
+    if isinstance(values, np.ndarray) and values.dtype.kind == "M":
+        # Dates are stored as seconds since 1970-01-01 UTC, with the unit "dat".
+        values = values.astype("datetime64[ms]").astype(np.float64) / 1000.0
+        command.setdefault("unit", "dat")
     array = _as_array(values)
     command["shape"] = list(array.shape)
     return array.ravel()
@@ -597,7 +601,7 @@ class Annotation(_Props):
 class Image(_Props):
     """A 2-D wave shown as an image in a graph."""
 
-    _props = ("color_table", "z_min", "z_max", "reverse")
+    _props = ("color_table", "z_min", "z_max", "reverse", "layer", "chunk")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -628,7 +632,7 @@ class Image(_Props):
 class Contour(_Props):
     """Contour lines of a 2-D wave in a graph."""
 
-    _props = ("levels", "color", "line_size", "color_table")
+    _props = ("levels", "color", "line_size", "color_table", "labels", "layer", "chunk")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -788,7 +792,10 @@ class Graph(_Props):
         _dispatch({"op": "removeAxis", "graph": self._name, "axis": name})
 
     def append_image(self, wave_, *, axis="left", haxis="bottom", **props):
-        """Show a 2-D wave as an image. ``color_table``, ``z_min``, ``z_max``, ``reverse``."""
+        """Show a wave as an image. ``color_table``, ``z_min``, ``z_max``, ``reverse``.
+
+        For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
+        """
         command = {
             "op": "appendImage",
             "graph": self._name,
@@ -800,7 +807,10 @@ class Graph(_Props):
         return Image(self, _dispatch(command))
 
     def append_contour(self, wave_, *, axis="left", haxis="bottom", **props):
-        """Draw contour lines of a 2-D wave. ``levels``, ``color``, ``line_size``, ``color_table``."""
+        """Draw contour lines. ``levels``, ``labels``, ``color``, ``line_size``, ``color_table``.
+
+        For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
+        """
         command = {
             "op": "appendContour",
             "graph": self._name,
@@ -859,9 +869,15 @@ class Graph(_Props):
             image = image.name
         return self._annotate("colorscale", image, anchor, frame)
 
-    def save(self, filename):
-        """Download the graph as a file: .pdf, .svg or .png, chosen by the name."""
-        _call("exportGraph", {"name": self._name, "filename": str(filename)})
+    def save(self, filename, cursors=False):
+        """Download the graph as a file: .pdf, .svg or .png, chosen by the name.
+
+        Cursors are left out unless ``cursors=True``.
+        """
+        _call(
+            "exportGraph",
+            {"name": self._name, "filename": str(filename), "cursors": bool(cursors)},
+        )
 
     left = property(lambda self: Axis(self, "left"))
     bottom = property(lambda self: Axis(self, "bottom"))
@@ -906,9 +922,12 @@ class Graph(_Props):
     def annotation(self, name):
         return Annotation(self, name)
 
-    def svg(self, width=None, height=None):
+    def svg(self, width=None, height=None, cursors=False):
         """The graph as an SVG document; by default at its window's size."""
-        return _call("graphSvg", {"name": self._name, "width": width, "height": height})[0]
+        return _call(
+            "graphSvg",
+            {"name": self._name, "width": width, "height": height, "cursors": bool(cursors)},
+        )[0]
 
     def kill(self):
         kill_window(self._name)
@@ -1076,7 +1095,8 @@ def kill(*waves_):
 def display(*y, x=None, name=None):
     """Make a new graph of the given waves (or arrays) and return it.
 
-    ``x`` plots them against an X wave instead of their own X scaling.
+    ``x`` plots them against an X wave instead of their own X scaling. A text
+    wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
     """
     command = {
         "op": "display",

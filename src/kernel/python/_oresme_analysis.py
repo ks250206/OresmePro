@@ -166,18 +166,34 @@ def _jacobian(model, x, params):
     return np.column_stack(columns)
 
 
-def _least_squares(model, x, y, start, max_iterations=200):
-    """Levenberg-Marquardt. Returns (parameters, covariance, chi-square, converged)."""
+def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max_iterations=200):
+    """Levenberg-Marquardt. Returns (parameters, covariance, chi-square, converged).
+
+    ``weights`` multiply the residuals (1/sigma per point). ``lower`` and
+    ``upper`` bound the parameters; steps are clipped to stay inside them.
+    """
     params = np.array(start, dtype=float)
+    lower = np.full(len(params), -np.inf) if lower is None else np.asarray(lower, dtype=float)
+    upper = np.full(len(params), np.inf) if upper is None else np.asarray(upper, dtype=float)
+    params = np.clip(params, lower, upper)
+    scale = 1.0 if weights is None else weights
+
+    def residuals(values):
+        return (y - model(x, *values)) * scale
+
+    def jacobian_at(values):
+        jacobian = _jacobian(model, x, values)
+        return jacobian if weights is None else jacobian * weights[:, None]
+
     with np.errstate(all="ignore"):
-        residual = y - model(x, *params)
+        residual = residuals(params)
         chi = float(residual @ residual)
         if not np.isfinite(chi):
             raise _op.OresmeError("The fit function is not finite at the starting guess.")
         damping = 1e-3
         converged = False
         for _ in range(max_iterations):
-            jacobian = _jacobian(model, x, params)
+            jacobian = jacobian_at(params)
             normal = jacobian.T @ jacobian
             gradient = jacobian.T @ residual
             improved = False
@@ -189,8 +205,8 @@ def _least_squares(model, x, y, start, max_iterations=200):
                 except np.linalg.LinAlgError:
                     damping *= 10
                     continue
-                trial = params + step
-                trial_residual = y - model(x, *trial)
+                trial = np.clip(params + step, lower, upper)
+                trial_residual = residuals(trial)
                 trial_chi = float(trial_residual @ trial_residual)
                 if np.isfinite(trial_chi) and trial_chi <= chi:
                     change = chi - trial_chi
@@ -203,19 +219,29 @@ def _least_squares(model, x, y, start, max_iterations=200):
             if not improved or converged:
                 converged = converged or not improved
                 break
-        jacobian = _jacobian(model, x, params)
+        jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))
         try:
-            covariance = np.linalg.inv(jacobian.T @ jacobian) * chi / freedom
+            covariance = np.linalg.inv(jacobian.T @ jacobian)
+            # Without per-point uncertainties, they are estimated from the scatter.
+            if weights is None:
+                covariance = covariance * chi / freedom
         except np.linalg.LinAlgError:
             covariance = np.full((len(params), len(params)), np.nan)
     return params, covariance, chi, converged
 
 
+def _index_of(names, name, what):
+    if name not in names:
+        raise _op.OresmeError(f"{what}: no parameter named {name!r}. Parameters: {', '.join(names)}.")
+    return names.index(name)
+
+
 class FitResult:
     """The outcome of ``op.fit``: coefficients, their uncertainties and the fit wave."""
 
-    def __init__(self, function, names, coef, sigma, chisq, points, wave, converged):
+    def __init__(self, function, names, coef, sigma, chisq, points, wave, converged, held=()):
+        self.held = tuple(held)
         self.function = function
         self.names = tuple(names)
         self.coef = coef
@@ -237,17 +263,29 @@ class FitResult:
             lines.append("  (did not converge; showing the best parameters found)")
         width = max(len(name) for name in self.names)
         for name, value, error in zip(self.names, self.coef, self.sigma):
+            if name in self.held:
+                lines.append(f"  {name:<{width}} = {value:.6g} (held)")
+                continue
             lines.append(f"  {name:<{width}} = {value:.6g} ± {error:.3g}")
         return "\n".join(lines)
 
 
-def fit(function, y, x=None, *, guess=None, range=None, cursors=False, graph=None, name=None,
-        quiet=False):
+def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None,
+        cursors=False, graph=None, name=None, quiet=False):
     """Fit a function to a wave by least squares.
 
     ``function`` is the name of a built-in function (see ``op.fit_functions()``),
     ``"polyN"`` for a polynomial with N terms, or your own
     ``f(x, p1, p2, ...)`` together with ``guess=[...]``.
+
+    ``hold`` keeps parameters fixed: ``hold={"y0": 0}`` at a value, or
+    ``hold=["y0"]`` at its starting guess. ``bounds={"A": (0, None)}`` keeps a
+    parameter within limits (None for no limit on that side).
+
+    ``sigma`` weights the points by their standard deviations: a wave or array
+    with one value per point, or a single number. The parameter uncertainties
+    are then taken from those; without ``sigma`` they are estimated from the
+    scatter of the data around the fit.
 
     ``x`` is an X wave; without it the wave's X scaling is used. ``range=(a, b)``
     limits the fit to points a..b inclusive; ``cursors=True`` uses the points
@@ -289,15 +327,52 @@ def fit(function, y, x=None, *, guess=None, range=None, cursors=False, graph=Non
     x_fit = x_values[first : last + 1]
     y_fit = y_values[first : last + 1]
     keep = np.isfinite(x_fit) & np.isfinite(y_fit)
+    weights = None
+    if sigma is not None:
+        if isinstance(sigma, (str, _op.Wave)):
+            sigma = _op.wave(_op._wave_name(sigma)).data
+        errors = np.broadcast_to(np.asarray(sigma, dtype=float), y_values.shape)[first : last + 1]
+        keep &= np.isfinite(errors) & (errors > 0)
+        weights = 1.0 / errors[keep]
     x_fit, y_fit = x_fit[keep], y_fit[keep]
     model, names, start, label = _resolve(function, x_fit, y_fit, guess)
     if len(start) != len(names):
         raise _op.OresmeError(f"{label} has {len(names)} parameters; the guess has {len(start)}.")
-    if len(y_fit) <= len(names):
-        raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {len(names)} parameters.")
 
-    params, covariance, chisq, converged = _least_squares(model, x_fit, y_fit, start)
-    sigma = np.sqrt(np.abs(np.diag(covariance)))
+    full = np.array(start, dtype=float)
+    held = []
+    if isinstance(hold, dict):
+        for key, value in hold.items():
+            full[_index_of(names, key, "hold")] = float(value)
+            held.append(key)
+    elif hold is not None:
+        held = [names[_index_of(names, key, "hold")] for key in hold]
+    free = [index for index, key in enumerate(names) if key not in held]
+    if not free:
+        raise _op.OresmeError("Every parameter is held; there is nothing to fit.")
+    if len(y_fit) <= len(free):
+        raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {len(free)} parameters.")
+    lower = np.full(len(names), -np.inf)
+    upper = np.full(len(names), np.inf)
+    for key, (low, high) in (bounds or {}).items():
+        at = _index_of(names, key, "bounds")
+        lower[at] = -np.inf if low is None else float(low)
+        upper[at] = np.inf if high is None else float(high)
+        if lower[at] >= upper[at]:
+            raise _op.OresmeError(f"bounds: the limits for {key!r} are empty.")
+
+    def reduced(x_, *values):
+        trial = full.copy()
+        trial[free] = values
+        return model(x_, *trial)
+
+    best, free_covariance, chisq, converged = _least_squares(
+        reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free]
+    )
+    params = full.copy()
+    params[free] = best
+    sigma = np.zeros(len(names))
+    sigma[free] = np.sqrt(np.abs(np.diag(free_covariance)))
 
     fit_name = name or (y_wave.name.rsplit(":", 1)[0] + ":" if ":" in y_wave.name else "") + f"fit_{leaf}"
     with np.errstate(all="ignore"):
@@ -325,7 +400,9 @@ def fit(function, y, x=None, *, guess=None, range=None, cursors=False, graph=Non
             target.append(fit_wave, x=x_wave, axis=source["vAxis"], haxis=source["hAxis"])
             target.trace(fit_name.rsplit(":", 1)[-1]).set(color="black")
 
-    result = FitResult(f"{label}({leaf})", names, params, sigma, chisq, len(y_fit), fit_wave, converged)
+    result = FitResult(
+        f"{label}({leaf})", names, params, sigma, chisq, len(y_fit), fit_wave, converged, held
+    )
     if not quiet:
         print(result)
     return result
