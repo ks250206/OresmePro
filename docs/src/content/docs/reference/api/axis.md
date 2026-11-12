@@ -25,6 +25,15 @@ major ticks that far apart. ``tick_format`` writes the tick labels like
 Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
 goes back to automatic labels.
 
+``label_size`` and ``tick_label_size`` are the font sizes of the axis
+label and of the tick labels (``None``: the graph's ``font_size``).
+``label_style`` sets the whole label in ``"plain"``, ``"italic"``,
+``"bold"`` or ``"bold italic"``. Codes in the label change part of it,
+as in Igor: ``r"Voltage (\f02V\f00)"`` has an italic V, ``\Z14``
+makes what follows 14 high, ``\u`` puts the units there. Write such
+labels as raw strings (``r"..."``), or Python reads ``\f`` and ``\u``
+as its own escapes.
+
 `graph.axis(name)` で取得するか、`graph.left` などを使います。`axis.range = (0, 10)` で表示範囲を固定し、`axis.autoscale()` で自動設定に戻せます。
 
 **プロパティ**
@@ -33,7 +42,7 @@ goes back to automatic labels.
 - `range` (read/write) · (min, max); None for a limit that follows the data.
 - `side` (read-only)
 
-**設定可能なプロパティ** · `label`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `tick_label_size`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 
