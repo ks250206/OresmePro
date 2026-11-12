@@ -2043,12 +2043,17 @@ const FIT_FUNCTIONS: [string, string][] = [
   ["poly4", "K0 + K1·x + K2·x² + K3·x³"],
   ["gauss", "y0 + A·exp(−((x−x0)/width)²)"],
   ["lor", "y0 + A/((x−x0)² + B)"],
+  ["voigt", "y0 + A·V(x−x0): Gaussian (gwidth) ∗ Lorentzian (lwidth), height A"],
+  ["pseudo_voigt", "y0 + A·(eta·L + (1−eta)·G), half width at half max: width"],
   ["exp", "y0 + A·exp(−x/tau)"],
   ["dblexp", "y0 + A1·exp(−x/tau1) + A2·exp(−x/tau2)"],
   ["sin", "y0 + A·sin(f·x + phi)"],
   ["power", "y0 + A·x^pow"],
   ["sigmoid", "base + max/(1 + exp((xhalf−x)/rate))"],
 ];
+
+/** Constraints a function starts with in the dialog: the range in which its parameters mean anything. */
+const FIT_CONSTRAINTS: Record<string, string> = { pseudo_voigt: "0 <= eta <= 1" };
 
 /** Builds an `op.fit(...)` call; the fit itself runs in Python and reports in the history. */
 function CurveFitDialog({ wave: initial }: { wave?: string }) {
@@ -2101,7 +2106,14 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
         <Select
           aria-label="Function"
           value={func}
-          onChange={(event) => setFunc(event.target.value)}
+          onChange={(event) => {
+            const next = event.target.value;
+            // The constraints a function brings go with it, unless they have been edited.
+            if (constraints.trim() === "" || constraints === FIT_CONSTRAINTS[func]) {
+              setConstraints(FIT_CONSTRAINTS[next] ?? "");
+            }
+            setFunc(next);
+          }}
         >
           {FIT_FUNCTIONS.map(([name]) => (
             <option key={name}>{name}</option>
@@ -2247,7 +2259,12 @@ const ANALYSES: Record<
   fit_peaks: {
     title: "Multi-peak Fit",
     fields: [
-      { key: "shape", label: "Peak shape", initial: "gauss", kind: ["gauss", "lor"] },
+      {
+        key: "shape",
+        label: "Peak shape",
+        initial: "gauss",
+        kind: ["gauss", "lor", "voigt", "pseudo_voigt"],
+      },
       {
         key: "baseline",
         label: "Baseline",

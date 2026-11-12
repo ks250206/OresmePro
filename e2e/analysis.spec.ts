@@ -132,6 +132,40 @@ g = op.display(spectrum)`);
     ]);
   });
 
+  test("Voigt and pseudo-Voigt peaks are fitted from the menus", async ({ app, page }) => {
+    await app.run(`import _oresme_analysis as oa
+xv = np.linspace(0, 20, 801)
+vs = op.make("vs", 0.4 + 2 * oa._voigt(xv - 6, 0.5, 0.3) + 1.5 * oa._voigt(xv - 13, 0.4, 0.5), dx=xv[1] - xv[0])
+pv = op.make("pv", 0.1 + 3 * oa._pseudo_voigt(xv - 9, 0.8, 0.4), dx=xv[1] - xv[0])
+g = op.display(vs)`);
+    await app.menu("Analysis", "Curve Fitting…");
+    await page.getByLabel("Function").selectOption("pseudo_voigt");
+    // eta means something only between 0 and 1: the dialog starts with that constraint.
+    await expect(page.getByLabel("Constraints")).toHaveValue("0 <= eta <= 1");
+    await page.getByLabel("Y data").selectOption("pv");
+    await app.doIt();
+    await app.idle();
+    const fit = await app.lastEntry();
+    expect(fit.code).toBe('op.fit("pseudo_voigt", "pv", bounds={"eta": (0, 1)})');
+    expect(fit.output).toMatch(/eta += 0\.4\d* ±/);
+
+    await app.menu("Analysis", "Multi-peak Fit…");
+    const dialog = page.getByRole("dialog", { name: "Multi-peak Fit" });
+    await dialog.getByLabel("Wave").selectOption("vs");
+    await dialog.getByLabel("Peak shape").selectOption("voigt");
+    await app.doIt();
+    await app.idle();
+    const peaks = await app.lastEntry();
+    expect(peaks.code).toBe('op.fit_peaks("vs", shape="voigt", baseline="constant")');
+    expect(peaks.output).toContain("Multi-peak fit: 2 voigt peaks");
+    expect(peaks.output).toContain("Gauss FWHM");
+    // Position, height, FWHM, area, Gaussian FWHM and Lorentzian FWHM of each peak.
+    const table = (await app.wave("W_peaks"))!;
+    expect(table.shape).toEqual([2, 6]);
+    expect(table.data[0]).toBeCloseTo(6, 3);
+    expect(table.data[5]).toBeCloseTo(0.6, 3);
+  });
+
   test("an image is filtered from the menu", async ({ app, page }) => {
     await app.run('img = op.make("img", np.random.default_rng(1).normal(size=(40, 30)))');
     await app.menu("Analysis", "Filter Image…");

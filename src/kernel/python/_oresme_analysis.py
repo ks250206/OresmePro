@@ -60,6 +60,100 @@ def _guess_exp(x, y):
     return [float(y[-1]), float(y[0] - y[-1]), _span(x) / 3]
 
 
+def _weideman(terms):
+    """The expansion point and coefficients of Weideman's approximation with ``terms`` terms."""
+    count = 2 * terms
+    scale = np.sqrt(terms / np.sqrt(2))
+    t = scale * np.tan(np.arange(-count + 1, count) * np.pi / (2 * count))
+    samples = np.concatenate(([0.0], np.exp(-t * t) * (scale * scale + t * t)))
+    coefficients = np.real(np.fft.fft(np.fft.fftshift(samples))) / (2 * count)
+    return scale, coefficients[1 : terms + 1][::-1]
+
+
+_FADDEEVA_SCALE, _FADDEEVA_TERMS = _weideman(40)
+
+
+def _faddeeva(z):
+    """The Faddeeva function w(z) = exp(-z^2) erfc(-iz), for Im z >= 0.
+
+    By the rational approximation of J. A. C. Weideman, "Computation of the
+    complex error function", SIAM J. Numer. Anal. 31, 1497 (1994), with 40
+    terms. Checked against mpmath at 40 digits at 4000 points with
+    0 <= Re z <= 1e6 and 0 <= Im z <= 1e7: the error is below 1e-15 of |w|,
+    and below 1e-15 of the peak value Re w(i Im z) of the Voigt profile the
+    point belongs to. (With 32 terms, as often quoted, it is 3e-13.)
+    """
+    z = np.asarray(z, dtype=complex)
+    below = _FADDEEVA_SCALE - 1j * z
+    series = np.polyval(_FADDEEVA_TERMS, (_FADDEEVA_SCALE + 1j * z) / below)
+    return 2 * series / below**2 + 1 / (np.sqrt(np.pi) * below)
+
+
+def _voigt(u, gauss, lorentz):
+    """The Voigt profile of unit height at offset u from its centre.
+
+    The convolution of exp(-(u/gauss)^2) with 1/(1 + (u/lorentz)^2): the
+    widths mean what they mean in the Gaussian and Lorentzian shapes.
+    """
+    u = np.asarray(u, dtype=float)
+    gauss, lorentz = abs(float(gauss)), abs(float(lorentz))
+    # Once the Gaussian is this much narrower, the profile is the Lorentzian
+    # to rounding, and the argument of w would grow without bound.
+    if gauss == 0 or lorentz > 1e8 * gauss:
+        if lorentz == 0:
+            return (u == 0).astype(float)
+        return 1 / (1 + (u / lorentz) ** 2)
+    return _faddeeva((u + 1j * lorentz) / gauss).real / _faddeeva(1j * lorentz / gauss).real
+
+
+def _voigt_area(gauss, lorentz):
+    """The area under the Voigt profile of unit height."""
+    gauss, lorentz = abs(float(gauss)), abs(float(lorentz))
+    if gauss == 0 or lorentz > 1e8 * gauss:
+        return np.pi * lorentz
+    # The normalized profile Re w(z) / (gauss sqrt(pi)) has unit area.
+    return gauss * np.sqrt(np.pi) / float(_faddeeva(1j * lorentz / gauss).real)
+
+
+def _voigt_fwhm(gauss, lorentz):
+    """The full width at half maximum of the Voigt profile.
+
+    Olivero and Longbothum's formula (J. Quant. Spectrosc. Radiat. Transfer
+    17, 233 (1977); within 0.02%) brackets it, and bisection on the profile
+    itself makes it exact.
+    """
+    gauss_fwhm, lorentz_fwhm = 2 * np.sqrt(np.log(2)) * abs(gauss), 2 * abs(lorentz)
+    estimate = 0.5346 * lorentz_fwhm + np.sqrt(0.2166 * lorentz_fwhm**2 + gauss_fwhm**2)
+    if estimate == 0:
+        return 0.0
+    low, high = 0.49 * estimate, 0.51 * estimate
+    while _voigt(low, gauss, lorentz) < 0.5:
+        low /= 2
+    while _voigt(high, gauss, lorentz) > 0.5:
+        high *= 2
+    for _ in range(60):
+        middle = (low + high) / 2
+        if _voigt(middle, gauss, lorentz) > 0.5:
+            low = middle
+        else:
+            high = middle
+    return float(low + high)
+
+
+def _pseudo_voigt(u, width, eta):
+    """eta * Lorentzian + (1 - eta) * Gaussian, both of half width ``width`` at half maximum."""
+    ratio = np.asarray(u, dtype=float) / width
+    return eta / (1 + ratio**2) + (1 - eta) * np.exp(-np.log(2) * ratio**2)
+
+
+def _guess_voigt(x, y):
+    """Equal Gaussian and Lorentzian FWHMs that together make the measured FWHM."""
+    base, height, centre, half_width = _peak(x, y)
+    # By Olivero and Longbothum, equal widths f give a Voigt FWHM of 1.6376 f.
+    each = 2 * half_width / 1.6376
+    return [base, height, centre, each / (2 * np.sqrt(np.log(2))), each / 2]
+
+
 def _guess_sigmoid(x, y):
     rising = y[-1] >= y[0]
     return [
@@ -89,6 +183,20 @@ _FUNCTIONS = {
         ("y0", "A", "x0", "B"),
         lambda x, y: (lambda b, h, c, w: [b, h * w * w, c, w * w])(*_peak(x, y)),
         "y0 + A/((x-x0)^2 + B)",
+    ),
+    "voigt": (
+        lambda x, y0, A, x0, gwidth, lwidth: y0 + A * _voigt(x - x0, gwidth, lwidth),
+        ("y0", "A", "x0", "gwidth", "lwidth"),
+        _guess_voigt,
+        "y0 + A*V(x-x0), V of height 1: exp(-(x/gwidth)^2) convolved with 1/(1+(x/lwidth)^2)",
+    ),
+    "pseudo_voigt": (
+        # eta is used within 0..1 whatever its value, so the curve is always a
+        # pseudo-Voigt; bounds={"eta": (0, 1)} keeps the parameter there too.
+        lambda x, y0, A, x0, width, eta: y0 + A * _pseudo_voigt(x - x0, width, np.clip(eta, 0, 1)),
+        ("y0", "A", "x0", "width", "eta"),
+        lambda x, y: (lambda b, h, c, w: [b, h, c, w, 0.5])(*_peak(x, y)),
+        "y0 + A*(eta/(1+((x-x0)/width)^2) + (1-eta)*exp(-ln2*((x-x0)/width)^2))",
     ),
     "exp": (
         lambda x, y0, A, tau: y0 + A * np.exp(-x / tau),
@@ -893,11 +1001,85 @@ def histogram(wave_, bins=50, name=None):
 
 # --- Peaks -----------------------------------------------------------------
 
+class _Shape:
+    """A peak shape of ``fit_peaks``, given by its width parameters.
+
+    ``profile(u, *widths)`` is the peak of unit height at offset u = x - x0.
+    The first width parameter is the one the shape is named for; ``more``
+    names the others, which are reported with each peak. ``fwhm`` and
+    ``area`` are those of the peak of unit height, ``start`` makes the width
+    parameters from a measured FWHM, and ``bounds`` gives their limits for
+    data spanning ``span`` in X.
+    """
+
+    def __init__(self, profile, fwhm, area, start, bounds, more=(), report=None):
+        self.profile = profile
+        self.fwhm = fwhm
+        self.area = area
+        self.start = start
+        self.bounds = bounds
+        self.more = more
+        # (key, heading, value from the width parameters) for each extra column.
+        self.report = report or ()
+
+
+_GAUSS_FWHM = 2 * np.sqrt(np.log(2))
+
 _SHAPES = {
-    # name: (shape of unit height at offset u = (x - x0) / width, FWHM / width, area / (height * width))
-    "gauss": (lambda u: np.exp(-u * u), 2 * np.sqrt(np.log(2)), np.sqrt(np.pi)),
-    "lor": (lambda u: 1 / (1 + u * u), 2.0, np.pi),
+    "gauss": _Shape(
+        lambda u, width: np.exp(-((u / width) ** 2)),
+        lambda width: _GAUSS_FWHM * width,
+        lambda width: np.sqrt(np.pi) * width,
+        lambda fwhm: [fwhm / _GAUSS_FWHM],
+        lambda span: [(span * 1e-6, span)],
+    ),
+    "lor": _Shape(
+        lambda u, width: 1 / (1 + (u / width) ** 2),
+        lambda width: 2.0 * width,
+        lambda width: np.pi * width,
+        lambda fwhm: [fwhm / 2.0],
+        lambda span: [(span * 1e-6, span)],
+    ),
+    # Gaussian width as in "gauss", Lorentzian half width as in "lor".
+    "voigt": _Shape(
+        _voigt,
+        _voigt_fwhm,
+        _voigt_area,
+        # Equal Gaussian and Lorentzian FWHMs f make a Voigt FWHM of 1.6376 f.
+        lambda fwhm: [fwhm / 1.6376 / _GAUSS_FWHM, fwhm / 1.6376 / 2],
+        lambda span: [(span * 1e-6, span), (0.0, span)],
+        more=("lorentz",),
+        report=(
+            ("gauss_fwhm", "Gauss FWHM", lambda gauss, lorentz: _GAUSS_FWHM * gauss),
+            ("lorentz_fwhm", "Lor. FWHM", lambda gauss, lorentz: 2 * lorentz),
+        ),
+    ),
+    # The width is the half width at half maximum that both parts share.
+    "pseudo_voigt": _Shape(
+        _pseudo_voigt,
+        lambda width, eta: 2 * width,
+        lambda width, eta: width * (eta * np.pi + (1 - eta) * np.sqrt(np.pi / np.log(2))),
+        lambda fwhm: [fwhm / 2, 0.5],
+        lambda span: [(span * 1e-6, span), (0.0, 1.0)],
+        more=("eta",),
+        report=(("eta", "eta", lambda width, eta: eta),),
+    ),
 }
+
+
+def _spread(function, values, covariance):
+    """The standard deviation of function(*values), by linear propagation."""
+    values = np.asarray(values, dtype=float)
+    slopes = np.zeros(len(values))
+    for index, value in enumerate(values):
+        step = 1e-6 * max(abs(value), 1e-12)
+        up, down = values.copy(), values.copy()
+        up[index] += step
+        # A width resting on 0 is not stepped through it, where only its size counts.
+        if not 0 <= value < step:
+            down[index] -= step
+        slopes[index] = (function(*up) - function(*down)) / (up[index] - down[index])
+    return float(np.sqrt(abs(slopes @ covariance @ slopes)))
 
 
 def find_peaks(wave_, x=None, *, min_height=None, min_prominence=None, smooth=0, negative=False):
@@ -993,10 +1175,15 @@ def _find_peaks(x_values, values, min_height=None, min_prominence=None, smooth=0
 class PeakFitResult:
     """The outcome of ``op.fit_peaks``: one row per peak, and the waves it made."""
 
-    def __init__(self, shape, peaks, baseline, chisq, points, wave, components, converged):
+    def __init__(self, shape, peaks, baseline, chisq, points, wave, components, converged,
+                 columns=()):
         self.shape = shape
-        #: A list of dicts: x, height, width (FWHM), area, and their uncertainties.
+        #: A list of dicts: x, height, width (FWHM), area, their uncertainties,
+        #: and what the shape adds (the Gaussian and Lorentzian FWHMs of a
+        #: Voigt peak, eta of a pseudo-Voigt).
         self.peaks = peaks
+        #: (key, heading) of the columns the shape adds to the table.
+        self.columns = tuple(columns)
         self.baseline = baseline
         self.chisq = chisq
         self.points = points
@@ -1020,11 +1207,13 @@ class PeakFitResult:
         ]
         if not self.converged:
             lines.append("  (did not converge; showing the best parameters found)")
-        lines.append(f"  {'#':>2}  {'position':>12}  {'height':>12}  {'FWHM':>12}  {'area':>12}")
+        extra = "".join(f"  {heading:>12}" for _, heading in self.columns)
+        lines.append(f"  {'#':>2}  {'position':>12}  {'height':>12}  {'FWHM':>12}  {'area':>12}{extra}")
         for number, peak in enumerate(self.peaks, 1):
+            extra = "".join(f"  {peak[key]:>12.6g}" for key, _ in self.columns)
             lines.append(
                 f"  {number:>2}  {peak['x']:>12.6g}  {peak['height']:>12.6g}  "
-                f"{peak['width']:>12.6g}  {peak['area']:>12.6g}"
+                f"{peak['width']:>12.6g}  {peak['area']:>12.6g}{extra}"
             )
         if self.baseline:
             terms = ", ".join(f"{key} = {value:.6g}" for key, value in self.baseline.items())
@@ -1034,23 +1223,33 @@ class PeakFitResult:
 
 def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", range=None,
               cursors=False, graph=None, components=True, quiet=False, **find):
-    """Fit several peaks at once: a sum of Gaussians or Lorentzians on a baseline.
+    """Fit several peaks at once: a sum of peaks of one shape on a baseline.
 
     ``peaks`` says where to start: nothing to find them (see ``op.find_peaks``,
     whose options can be given here), a number to take that many of the
-    tallest, or a list of X positions. ``shape`` is ``"gauss"`` or ``"lor"``;
-    ``baseline`` is ``"constant"``, ``"linear"`` or ``None``.
+    tallest, or a list of X positions. ``baseline`` is ``"constant"``,
+    ``"linear"`` or ``None``.
+
+    ``shape`` is ``"gauss"``, ``"lor"``, ``"voigt"`` or ``"pseudo_voigt"``.
+    A Voigt peak (a Gaussian convolved with a Lorentzian) has a Gaussian and
+    a Lorentzian width of its own, both fitted; each peak also reports their
+    FWHMs as ``gauss_fwhm`` and ``lorentz_fwhm``. A pseudo-Voigt peak is
+    ``eta * Lorentzian + (1 - eta) * Gaussian`` with one FWHM, and reports
+    ``eta`` (kept within 0..1).
 
     Makes ``fit_<name>`` (the sum), ``fit_<name>_p1``, ``_p2``, ... (each peak
     on the baseline, if ``components``), and ``W_peaks``: one row per peak with
-    position, height, full width at half maximum and area. Returns a
-    ``PeakFitResult`` listing the peaks from left to right.
+    position, height, full width at half maximum and area, then the columns
+    the shape adds. Returns a ``PeakFitResult`` listing the peaks from left to
+    right.
     """
     if shape not in _SHAPES:
         raise _op.OresmeError(f"shape must be one of {', '.join(_SHAPES)}.")
     if baseline not in ("constant", "linear", None):
         raise _op.OresmeError('baseline must be "constant", "linear" or None.')
-    profile, fwhm_factor, area_factor = _SHAPES[shape]
+    form = _SHAPES[shape]
+    # Height, position, then the width parameters.
+    size = 3 + len(form.more)
     y_wave = _op.wave(_op._wave_name(y))
     x_wave = None if x is None else _op.wave(_op._wave_name(x))
     y_values = np.asarray(y_wave.data, dtype=float)
@@ -1097,7 +1296,7 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
     starts.sort()
     count = len(starts)
     base_terms = {"constant": 1, "linear": 2, None: 0}[baseline]
-    if len(y_fit) <= 3 * count + base_terms:
+    if len(y_fit) <= size * count + base_terms:
         raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {count} peaks.")
     centre = float(x_fit.mean())
 
@@ -1108,8 +1307,8 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
         if base_terms == 2:
             total = total + values[1] * (x_ - centre)
         for number in np.arange(count):
-            height, position, width = values[base_terms + 3 * number : base_terms + 3 * number + 3]
-            total = total + height * profile((x_ - position) / width)
+            at = base_terms + size * number
+            total = total + values[at] * form.profile(x_ - values[at + 1], *values[at + 2 : at + size])
         return total
 
     start = []
@@ -1125,10 +1324,11 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
         lower.append(-np.inf)
         upper.append(np.inf)
     for position, height, width in starts:
-        start += [height, position, width / fwhm_factor]
+        start += [height, position, *form.start(width)]
         # A peak keeps its sign, stays in the data, and stays narrower than the data.
-        lower += [0.0 if height > 0 else -np.inf, float(x_fit.min()), span * 1e-6]
-        upper += [np.inf if height > 0 else 0.0, float(x_fit.max()), span]
+        limits = form.bounds(span)
+        lower += [0.0 if height > 0 else -np.inf, float(x_fit.min()), *(low for low, _ in limits)]
+        upper += [np.inf if height > 0 else 0.0, float(x_fit.max()), *(high for _, high in limits)]
     best, covariance, chisq, converged = _least_squares(
         model, x_fit, y_fit, start, None, lower, upper, max_iterations=400
     )
@@ -1136,20 +1336,27 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
 
     rows = []
     for number in np.arange(count):
-        at = base_terms + 3 * number
-        height, position, width = (float(value) for value in best[at : at + 3])
-        d_height, d_position, d_width = (float(value) for value in errors[at : at + 3])
-        rows.append(
-            {
-                "x": position,
-                "height": height,
-                "width": abs(width) * fwhm_factor,
-                "area": height * abs(width) * area_factor,
-                "x_sigma": d_position,
-                "height_sigma": d_height,
-                "width_sigma": d_width * fwhm_factor,
-            }
-        )
+        at = base_terms + size * number
+        height, position = float(best[at]), float(best[at + 1])
+        widths = np.abs(best[at + 2 : at + size])
+        block = covariance[at : at + size, at : at + size]
+        row = {
+            "x": position,
+            "height": height,
+            "width": float(form.fwhm(*widths)),
+            "area": height * float(form.area(*widths)),
+            "x_sigma": float(errors[at + 1]),
+            "height_sigma": float(errors[at]),
+            "width_sigma": _spread(form.fwhm, widths, block[2:, 2:]),
+            "area_sigma": _spread(
+                lambda h, *w: h * form.area(*w), np.concatenate(([height], widths)),
+                np.delete(np.delete(block, 1, 0), 1, 1),
+            ),
+        }
+        for key, _, value in form.report:
+            row[key] = float(value(*widths))
+            row[f"{key}_sigma"] = _spread(value, widths, block[2:, 2:])
+        rows.append(row)
     order = np.argsort([row["x"] for row in rows])
     rows = [rows[index] for index in order]
     base = {}
@@ -1184,14 +1391,17 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
             only = np.array(best, dtype=float)
             for other in np.arange(count):
                 if other != index:
-                    only[base_terms + 3 * other] = 0.0
+                    only[base_terms + size * other] = 0.0
             parts.append(
                 _op.make(f"{folder}fit_{leaf}_p{position_in_table}", curve(only), unit=y_wave.unit,
                          **scaling)
             )
     _op.make(
         "W_peaks",
-        np.array([[row["x"], row["height"], row["width"], row["area"]] for row in rows]),
+        np.array(
+            [[row["x"], row["height"], row["width"], row["area"]] + [row[key] for key, _, _ in form.report]
+             for row in rows]
+        ),
     )
 
     if target is not None:
@@ -1205,7 +1415,8 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
             target.append(fit_wave, x=x_wave, axis=source["vAxis"], haxis=source["hAxis"])
             target.trace(fit_wave.name.rsplit(":", 1)[-1]).set(color="black")
 
-    result = PeakFitResult(shape, rows, base, chisq, len(y_fit), fit_wave, parts, converged)
+    result = PeakFitResult(shape, rows, base, chisq, len(y_fit), fit_wave, parts, converged,
+                           [(key, heading) for key, heading, _ in form.report])
     if not quiet:
         print(result)
     return result

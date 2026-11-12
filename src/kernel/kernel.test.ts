@@ -750,6 +750,85 @@ describe("oresme Python API", () => {
     expect(errors[0]).toContain("No peaks were found");
   });
 
+  it("computes the Faddeeva function and the Voigt profile", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "def c(v): return f'{v.real:.13f}{v.imag:+.13f}j'",
+          "print(c(oa._faddeeva(0)), c(oa._faddeeva(1)), c(oa._faddeeva(1j)), c(oa._faddeeva(1 + 1j)), c(oa._faddeeva(-2.5 + 0.3j)))",
+          "vu = np.linspace(-30, 30, 6001)",
+          // The limits: a Gaussian when the Lorentzian width is 0, a Lorentzian when the Gaussian width is 0 or tiny.
+          "print(float(np.max(np.abs(oa._voigt(vu, 1.3, 0) - np.exp(-(vu / 1.3) ** 2)))) < 1e-14,",
+          "      bool(np.array_equal(oa._voigt(vu, 0, 0.7), 1 / (1 + (vu / 0.7) ** 2))),",
+          "      float(np.max(np.abs(oa._voigt(vu, 1e-6, 0.7) - 1 / (1 + (vu / 0.7) ** 2)))) < 1e-11)",
+          // The normalized profile Re w(z) / (gauss sqrt(pi)) has unit area; the tails past +-L hold 2 lorentz / (pi L).
+          "big = np.linspace(-2000, 2000, 400001); g_, l_ = 0.8, 0.5",
+          "total = np.trapezoid(oa._voigt(big, g_, l_), big) / oa._voigt_area(g_, l_) + 2 * l_ / (np.pi * 2000)",
+          "print(abs(total - 1) < 1e-7, round(oa._voigt_area(1, 0), 12) == round(np.sqrt(np.pi), 12), round(oa._voigt_area(0, 1), 12) == round(np.pi, 12))",
+          // The FWHM is exact for the pure shapes, and within 0.02% of Olivero and Longbothum's formula between them.
+          "fg, fl = 2 * np.sqrt(np.log(2)), 2.0",
+          "print(round(oa._voigt_fwhm(1, 0), 12) == round(fg, 12), oa._voigt_fwhm(0, 1), abs(oa._voigt_fwhm(1, 1) / (0.5346 * fl + np.sqrt(0.2166 * fl ** 2 + fg ** 2)) - 1) < 2e-4,",
+          "      round(float(oa._voigt(oa._voigt_fwhm(0.6, 0.9) / 2, 0.6, 0.9)), 12))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      // w(0) = 1, w(1) = exp(-1) + 2i/sqrt(pi) D(1), w(i) = erfcx(1); mpmath at 40 digits for the others.
+      "1.0000000000000+0.0000000000000j 0.3678794411714+0.6071577058414j 0.4275835761558+0.0000000000000j 0.3047442052569+0.2082189382028j 0.0382265062607-0.2430420085310j",
+      "True True True",
+      "True True True",
+      "True 2.0 True 0.5",
+    ]);
+  });
+
+  it("fits Voigt and pseudo-Voigt peaks", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "vx = np.linspace(-6, 8, 701); vrng = np.random.default_rng(11)",
+          'vw = op.make("voigtpk", 0.2 + 3 * oa._voigt(vx - 1.0, 0.6, 0.4) + vrng.normal(scale=0.002, size=vx.size), x0=vx[0], dx=vx[1] - vx[0])',
+          'r = op.fit("voigt", vw, quiet=True)',
+          "print(r.names, np.round(r.coef, 2).tolist(), r.converged, bool(np.all(np.abs(r.coef - [0.2, 3, 1.0, 0.6, 0.4]) < 3 * r.sigma + 1e-9)))",
+          'pw = op.make("pvpk", 0.1 + 2 * oa._pseudo_voigt(vx + 0.5, 0.7, 0.3) + vrng.normal(scale=0.002, size=vx.size), x0=vx[0], dx=vx[1] - vx[0])',
+          'r = op.fit("pseudo_voigt", pw, quiet=True)',
+          "print(r.names, np.round(r.coef, 2).tolist(), r.converged)",
+          // Two Voigt peaks of different mixtures on a sloping baseline.
+          "mx = np.linspace(0, 20, 1001)",
+          "two = 0.5 + 0.01 * mx + 2 * oa._voigt(mx - 7, 0.5, 0.3) + 1.2 * oa._voigt(mx - 12, 0.3, 0.6)",
+          'mw = op.make("voigt2", two + vrng.normal(scale=0.002, size=mx.size), x0=0, dx=mx[1] - mx[0])',
+          'res = op.fit_peaks(mw, shape="voigt", baseline="linear", quiet=True)',
+          "print(len(res), res.converged, [round(p['x'], 2) for p in res], [round(p['height'], 2) for p in res])",
+          "print([round(p['gauss_fwhm'], 2) for p in res], [round(p['lorentz_fwhm'], 2) for p in res])",
+          // The FWHM and area of each peak against the profile they were made from.
+          "print([round(p['width'] / oa._voigt_fwhm(g, l), 3) for p, (g, l) in zip(res, [(0.5, 0.3), (0.3, 0.6)])],",
+          "      [round(float(p['area'] / (h * oa._voigt_area(g, l))), 3) for p, (h, g, l) in zip(res, [(2, 0.5, 0.3), (1.2, 0.3, 0.6)])],",
+          "      all(0 < p['area_sigma'] < 0.01 and 0 < p['lorentz_fwhm_sigma'] < 0.05 for p in res), op.wave('W_peaks').data.shape)",
+          "print(str(res).splitlines()[1])",
+          "pv2 = 0.3 + 2 * oa._pseudo_voigt(mx - 6, 0.6, 0.2) + 1.5 * oa._pseudo_voigt(mx - 13, 0.9, 0.8)",
+          'pm = op.make("pvoigt2", pv2 + vrng.normal(scale=0.002, size=mx.size), x0=0, dx=mx[1] - mx[0])',
+          'res = op.fit_peaks(pm, shape="pseudo_voigt", quiet=True)',
+          "print(len(res), [round(p['x'], 2) for p in res], [round(p['width'], 2) for p in res], [round(p['eta'], 2) for p in res], op.wave('W_peaks').data.shape)",
+          // A pure Lorentzian pushes eta to its bound, and the rest still fits.
+          'one = op.fit_peaks("lz", peaks=[8.5], shape="pseudo_voigt", baseline=None, components=False, quiet=True)[0]',
+          "print(round(one['eta'], 6), round(one['x'], 3), round(one['width'], 3), round(one['area'], 2))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('y0', 'A', 'x0', 'gwidth', 'lwidth') [0.2, 3.0, 1.0, 0.6, 0.4] True True",
+      "('y0', 'A', 'x0', 'width', 'eta') [0.1, 2.0, -0.5, 0.7, 0.3] True",
+      "2 True [7.0, 12.0] [2.0, 1.2]",
+      // Gaussian FWHM 1.665 times the Gaussian width, Lorentzian FWHM twice the half width.
+      "[0.83, 0.5] [0.6, 1.2]",
+      "[1.0, 1.0] [0.999, 1.001] True (2, 6)",
+      "   #      position        height          FWHM          area    Gauss FWHM     Lor. FWHM",
+      "2 [6.0, 13.0] [1.2, 1.8] [0.2, 0.8] (2, 5)",
+      "1.0 9.0 1.4 8.8",
+    ]);
+  });
+
   it("interpolates, filters images and takes line profiles", async () => {
     expect(
       await run(

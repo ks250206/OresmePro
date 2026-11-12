@@ -213,14 +213,21 @@ wave を列として表示・編集します。行も列も仮想スクロール
 
 **Analysis** メニューから実行できます。どれも Python の関数を呼び出すだけなので、実行したコマンドと結果は履歴に残ります。
 
-- **Curve Fitting…**: `line`、多項式、`gauss`、`lor`、`exp`、`dblexp`、`sin`、`power`、`sigmoid` を最小二乗法で当てはめます。
+- **Curve Fitting…**: `line`、多項式、`gauss`、`lor`、`voigt`、`pseudo_voigt`、`exp`、`dblexp`、`sin`、`power`、`sigmoid` を最小二乗法で当てはめます。
   `line` と多項式は線形最小二乗法で直接解き、そのほかは Levenberg–Marquardt で反復します。収束しなかったときは結果にそう表示されます(`r.converged` が `False`)。
   初期値は自動で推定します。カーソル A–B 間だけを対象にもできます。
   係数の**固定**(`y0=0`)、**制約**(`A > 0, 2 < x0 < 5`)、点ごとの標準偏差による**重み付け**を指定できます。
   結果は `fit_<wave名>`(当てはめた曲線。元データのグラフに追加されます)、`W_coef`(係数)、`W_sigma`(標準偏差)に入ります。
   **残差**(`res_<wave名>`。データの上に専用の軸を作って表示)と、当てはめた曲線の**信頼帯**(`fit_<wave名>_lo` / `_hi`。網掛けで表示)も出せます。
-- **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウスまたはローレンツの和とベースライン(定数・直線)を同時に当てはめます。
-  各ピークの位置・高さ・半値全幅・面積を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
+- **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウス・ローレンツ・Voigt・擬 Voigt のいずれかの和とベースライン(定数・直線)を同時に当てはめます。
+  各ピークの位置・高さ・半値全幅・面積(とそれぞれの標準偏差)を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
+- **Voigt と擬 Voigt**: Voigt はガウスとローレンツの畳み込みで、装置の分解能(ガウス)と寿命による広がり(ローレンツ)を分けて求めるのに使います。
+  幅はガウス幅 `gwidth`(`gauss` の `width` と同じく exp(−(x/gwidth)²))とローレンツ幅 `lwidth`(`lor` 形状と同じく半値半幅)の 2 つで、どちらも当てはめます。
+  `A`(マルチピークでは高さ)はピークの高さです。`lwidth` が 0 ならガウス、`gwidth` が 0 ならローレンツと一致します。
+  値は Faddeeva 関数 w(z) の実部から計算します(Weideman の有理近似、40 項。誤差はピーク値の 1e-15 以下。SciPy は使いません)。
+  マルチピークでは、全体の半値全幅(プロファイルから正確に求めます)と面積に加えて、ガウス成分とローレンツ成分の半値全幅(`gauss_fwhm`、`lorentz_fwhm`)を出し、`W_peaks` の 5・6 列目にも入れます。
+  擬 Voigt は `eta`·ローレンツ + (1 − `eta`)·ガウスで、両方が同じ半値全幅を持ちます(`width` は半値半幅)。`eta` は 0〜1 に制限し、`W_peaks` の 5 列目に入れます。
+  `op.fit` では `eta` を 0〜1 に丸めて曲線を計算します。パラメータ自体も 0〜1 に保つには `bounds={"eta": (0, 1)}` を付けます(ダイアログは最初からこの制約を入れます)。
 - Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル、または複素数のまま)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
 - **X wave に対する微分・積分**: 電流を時間で積分して電荷にする、容量を電圧で微分して dQ/dV を出す、といった XY データの計算です(ダイアログの「X data」で X wave を選びます)。
   X の間隔は不揃いでもよく、微分は内側の点で不等間隔の 3 点公式(2 次精度)、両端で片側差分(X のスケーリングを使うときと同じ)です。
@@ -396,6 +403,8 @@ op.fit("exp", w, cursors=True)                 # カーソル A–B 間
 op.fit("gauss", w, hold={"y0": 0}, bounds={"A": (0, None)}, sigma="err")   # 固定・制約・重み
 r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band = (下, 上)
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
+peaks = op.fit_peaks(w, shape="voigt")                       # peaks[0]["gauss_fwhm"], ["lorentz_fwhm"]。"pseudo_voigt" は ["eta"]
+op.fit("voigt", w)                                           # y0, A, x0, gwidth, lwidth
 op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
 op.integrate(current, x=time); op.differentiate(capacity, x=voltage)   # X wave に対して(結果は同じ X に対して描く)
