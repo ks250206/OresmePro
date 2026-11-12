@@ -180,5 +180,148 @@ li[aria-selected] .cm-completionDetail {
   color: var(--color-ink);
 }
 .procedure-editor .cm-activeLine {
-  background: rgb(0 0 0 / 0.03);
+  /* The color only: the indentation guides are a background image. */
+  background-color: rgb(0 0 0 / 0.03);
+}
+.procedure-editor .cm-foldGutter .cm-gutterElement {
+  padding: 0 2px;
+  color: #a3a9b3;
+  cursor: pointer;
+}
+.procedure-editor .cm-foldGutter .cm-gutterElement:hover {
+  color: var(--color-ink);
+}
+.procedure-editor .cm-foldPlaceholder {
+  border: 1px solid var(--color-line);
+  background: var(--color-chrome);
+  color: var(--color-muted);
+  padding: 0 4px;
+}
+
+/* Indentation guides: one faint line every four columns, as many as the line is indented. */
+.procedure-editor .cm-line[class*="cm-indent-"] {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.09) 0 1px,
+    transparent 1px 4ch
+  );
+  background-size: calc(var(--levels) * 4ch) 100%;
+  background-position: 6px 0;
+  background-repeat: no-repeat;
+}
+.cm-indent-1 {
+  --levels: 1;
+}
+.cm-indent-2 {
+  --levels: 2;
+}
+.cm-indent-3 {
+  --levels: 3;
+}
+.cm-indent-4 {
+  --levels: 4;
+}
+.cm-indent-5 {
+  --levels: 5;
+}
+.cm-indent-6 {
+  --levels: 6;
+}
+.cm-indent-7 {
+  --levels: 7;
+}
+.cm-indent-8 {
+  --levels: 8;
+}
+
+/* Unused imports and variables are shown faded, as in other editors. */
+.procedure-editor .cm-unnecessary {
+  opacity: 0.55;
+}
+.procedure-editor .cm-lintRange-hint {
+  background-image: none;
+  text-decoration: underline dotted #8c959f;
+}
+
+/* Panels of the editor (find and replace, go to line, problems), in the app's style. */
+.procedure-editor .cm-panels {
+  background: var(--color-chrome);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+.procedure-editor .cm-panels-top {
+  border-bottom: 1px solid var(--color-line);
+}
+.procedure-editor .cm-panels-bottom {
+  border-top: 1px solid var(--color-line);
+}
+.procedure-editor .cm-panel.cm-search,
+.procedure-editor .cm-panel.cm-gotoLine {
+  padding: 4px 24px 4px 6px;
+}
+.procedure-editor .cm-panel input[type="text"],
+.procedure-editor .cm-panel .cm-textfield {
+  height: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  background: var(--color-paper);
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  outline: none;
+}
+.procedure-editor .cm-panel .cm-textfield:focus {
+  border-color: var(--color-accent);
+}
+.procedure-editor .cm-panel .cm-button {
+  height: 20px;
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  background: var(--color-paper);
+  background-image: none;
+  padding: 0 8px;
+}
+.procedure-editor .cm-panel .cm-button:hover {
+  background: var(--color-chrome-2);
+}
+.procedure-editor .cm-panel label {
+  font-size: 11.5px;
+}
+.procedure-editor .cm-panel.cm-panel-lint ul {
+  max-height: 9em;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.procedure-editor .cm-panel.cm-panel-lint ul [aria-selected] {
+  background: var(--color-accent-soft);
+}
+.procedure-editor .cm-panel.cm-panel-lint ul:focus [aria-selected] {
+  background: var(--color-accent);
+  color: #fff;
+}
+.cm-diagnostic {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+}
+.cm-diagnosticSource {
+  font-family: var(--font-mono);
+}
+/* As specific as CodeMirror's own theme, which is added after this sheet. */
+.procedure-editor .cm-editor .cm-diagnosticAction {
+  border-radius: 4px;
+  background: var(--color-accent);
+  padding: 0 6px;
+  font-size: 11px;
+}
+.procedure-editor .cm-editor .cm-panel.cm-panel-lint ul:focus {
+  outline: none;
+}
+.cm-tooltip.cm-tooltip-lint,
+.cm-tooltip.cm-tooltip-hover {
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-paper);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.14);
+  max-width: 48ch;
 }

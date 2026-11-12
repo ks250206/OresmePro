@@ -8,7 +8,7 @@ import { ui, useUi, type MenuItem } from "../app/session";
 export const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
 
 const itemClass =
-  "flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60";
+  "flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60 disabled:opacity-50";
 
 /** How far a menu keeps from the edges of the window. */
 const EDGE = 4;

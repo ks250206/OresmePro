@@ -31,6 +31,7 @@ import { useEffect, useRef } from "react";
 import { history, kernel, ui, useKernelState, useUi } from "../app/session";
 import { recallList, stepRecall, suggestCompletion } from "../core/history/history";
 import { isCompleteInput } from "../core/history/inputState";
+import { editingItems, openEditorMenu, rightClickKeepsSelection } from "../editor/menu";
 
 /** Marks edits made by history recall, so they do not end the recall. */
 const fromRecall = Annotation.define<boolean>();
@@ -234,6 +235,7 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
           ),
           autocompletion({ override: [completeFromPython], activateOnTyping: false, icons: false }),
           ghost,
+          rightClickKeepsSelection,
           EditorView.updateListener.of((update) => {
             // Editing or moving the cursor ends recall; until then Up/Down keep
             // stepping through history even inside a multi-line entry.
@@ -341,7 +343,23 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
       <span className="select-none py-[5px] pl-2 pr-1.5 font-mono text-[12.5px] leading-[1.45] text-accent">
         {waitingForInput ? "?" : ">>>"}
       </span>
-      <div ref={hostRef} className="selectable min-w-0 flex-1" />
+      <div
+        ref={hostRef}
+        className="selectable min-w-0 flex-1"
+        onContextMenu={(event) =>
+          openEditorMenu(event, viewRef.current, (view) => [
+            ...editingItems(view, (message) =>
+              ui.set({ alert: { title: "Paste with the keyboard", message } }),
+            ),
+            { separator: true },
+            {
+              label: "Search History…",
+              shortcut: "Ctrl+R",
+              onSelect: () => openSearch.current(view.state.doc.toString()),
+            },
+          ])
+        }
+      />
     </div>
   );
 }

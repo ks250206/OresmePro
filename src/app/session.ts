@@ -221,15 +221,30 @@ export const runProcedureCode = (name: string): string =>
   `op.procedure(${JSON.stringify(name)}).run()`;
 
 /**
+ * The text of each procedure as it was when it was last run in this Python,
+ * so that its window can say whether it has been edited since. A new Python
+ * has run none of them.
+ */
+export const procedureRuns = createStore<{ code: Readonly<Record<string, string>> }>({ code: {} });
+
+/** Runs a procedure in the interactive namespace, through the history like a typed command. */
+export function runProcedure(name: string, source: "user" | "gui" = "user"): number {
+  const code = doc.getState().procedures[name]?.code;
+  if (code !== undefined) {
+    procedureRuns.set((state) => ({ code: { ...state.code, [name]: code } }));
+  }
+  return kernel.execute(runProcedureCode(name), source);
+}
+
+/**
  * Runs the procedures of the experiment, as Igor compiles its procedure
  * windows: what they define is there whenever Python is, after a restart or
  * after opening an experiment.
  */
 function runProcedures(): void {
+  procedureRuns.set({ code: {} });
   for (const procedure of Object.values(doc.getState().procedures)) {
-    if (procedure.autoRun && procedure.code.trim()) {
-      kernel.execute(runProcedureCode(procedure.name), "gui");
-    }
+    if (procedure.autoRun && procedure.code.trim()) runProcedure(procedure.name, "gui");
   }
 }
 

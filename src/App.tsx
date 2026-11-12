@@ -24,6 +24,7 @@ import {
   openLaunchedFiles,
 } from "./app/isolate";
 import { ruffFiles } from "./editor/loadRuff";
+import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
   activeWindow,
   doc,
@@ -147,12 +148,19 @@ function useMenus(): MenuDefinition[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", shortcut: `${MOD}Z`, disabled: !doc.canUndo, onSelect: () => doc.undo() },
+        // With an editor focused (the menu leaves the focus where it is), these
+        // act on its text, as its keys do.
+        {
+          label: "Undo",
+          shortcut: `${MOD}Z`,
+          disabled: !doc.canUndo && !focusedEditor(),
+          onSelect: () => editorUndo() || doc.undo(),
+        },
         {
           label: "Redo",
           shortcut: isMac ? "⇧⌘Z" : "Ctrl+Y",
-          disabled: !doc.canRedo,
-          onSelect: () => doc.redo(),
+          disabled: !doc.canRedo && !focusedEditor(),
+          onSelect: () => editorRedo() || doc.redo(),
         },
       ],
     },
@@ -338,7 +346,9 @@ function onGlobalKey(event: KeyboardEvent) {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
-    target?.isContentEditable;
+    target?.isContentEditable ||
+    // The panels of an editor (find, problems) are part of it: Ctrl+Z there is the editor's.
+    Boolean(target?.closest?.(".cm-editor"));
   const mod = event.metaKey || event.ctrlKey;
   const key = event.key.toLowerCase();
   if (mod && key === "s") {
