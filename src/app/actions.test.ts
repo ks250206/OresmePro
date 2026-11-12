@@ -8,7 +8,7 @@ import {
   selectItems,
 } from "./actions";
 import { igorFixture } from "../core/io/testdata/igor";
-import { doc, files, history, ui } from "./session";
+import { doc, files, flushEchoes, history, note, runGui, runGuiCoalesced, ui } from "./session";
 
 const csv = (name: string, value: number) => ({
   name,
@@ -190,5 +190,39 @@ describe("arranging a page layout from its window", () => {
     ).toBe(false);
     expect(ui.get().alert?.message).toMatch(/three or more/);
     expect(history.getEntries()).toHaveLength(entries);
+  });
+});
+
+describe("echoes of gestures", () => {
+  it("are written before whatever is recorded next, so the history keeps the order of events", () => {
+    doc.dispatch({ op: "makeWave", name: "echoed", data: Float64Array.of(1, 2) });
+    doc.dispatch({ op: "display", y: ["echoed"], name: "EchoGraph" });
+    const before = history.getEntries().length;
+    // A gesture still waiting to go quiet, then a menu command, a note and some Python.
+    runGuiCoalesced(
+      "zoom",
+      [{ op: "modifyAxis", graph: "EchoGraph", axis: "left", props: { min: 0, max: 5 } }],
+      () => "first",
+    );
+    runGui({ op: "modifyGraph", graph: "EchoGraph", props: { fontSize: 14 } });
+    runGuiCoalesced("drag", [], () => "third");
+    note("fourth");
+    runGuiCoalesced("zoom", [], () => "fifth");
+    // Another gesture does not hold back one that came before it.
+    runGuiCoalesced("drag", [], () => "sixth");
+    flushEchoes();
+    expect(
+      history
+        .getEntries()
+        .slice(before)
+        .map((entry) => entry.code),
+    ).toEqual([
+      "first",
+      'op.graph("EchoGraph").set(font_size=14)',
+      "third",
+      "fourth",
+      "fifth",
+      "sixth",
+    ]);
   });
 });

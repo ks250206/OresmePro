@@ -22,6 +22,8 @@ export interface KernelOptions {
   files: FileStore;
   /** Called each time Python is (re)started, once it can be given code to run. */
   onStart?: () => void;
+  /** Called before an input is entered in the history: what must be written first goes in here. */
+  onExecute?: () => void;
   renderSvg: RpcContext["renderSvg"];
   exportGraph: RpcContext["exportGraph"];
   renderPageSvg: RpcContext["renderPageSvg"];
@@ -114,6 +116,7 @@ export class KernelClient {
    */
   execute(code: string, source: "user" | "gui" = "user"): number {
     const { history } = this.options;
+    this.options.onExecute?.();
     const historyId = history.add(source, code, "queued");
     if (!this.worker || this.state.status === "unavailable" || this.state.status === "failed") {
       history.appendOutput(historyId, {

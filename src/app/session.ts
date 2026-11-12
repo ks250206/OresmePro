@@ -236,6 +236,7 @@ export const kernel: KernelClient = new KernelClient({
   history,
   files,
   onStart: runProcedures,
+  onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
   renderPageSvg,
@@ -267,6 +268,7 @@ export function runGui(
 ): string | null | undefined {
   const list: readonly Command[] = Array.isArray(commands) ? commands : [commands as Command];
   if (list.length === 0) return null;
+  flushEchoes();
   batchCounter += 1;
   const group = `gui${batchCounter}`;
   const echoes: string[] = [];
@@ -295,6 +297,21 @@ const pendingEchoes = new Map<
 >();
 
 /**
+ * Writes the echoes that are still waiting for their gesture to go quiet,
+ * except that of the gesture named. Whatever is written to the history next
+ * happened after them and must come after them: a drag followed at once by a
+ * menu command would otherwise be recorded in the wrong order.
+ */
+export function flushEchoes(except?: string): void {
+  for (const [key, pending] of pendingEchoes) {
+    if (key === except) continue;
+    clearTimeout(pending.timer);
+    pendingEchoes.delete(key);
+    history.add("gui", pending.text());
+  }
+}
+
+/**
  * Applies commands immediately but writes their echo only once the stream of
  * calls with the same key goes quiet. For continuous gestures such as wheel
  * zooming, where one history line for the final state is what is wanted.
@@ -310,6 +327,7 @@ export function runGuiCoalesced(
     showError("That did not work", error);
     return;
   }
+  flushEchoes(key);
   const previous = pendingEchoes.get(key);
   if (previous) clearTimeout(previous.timer);
   const timer = setTimeout(() => {
@@ -321,6 +339,7 @@ export function runGuiCoalesced(
 
 /** Records a note in the history (a file load, say) without running anything. */
 export function note(text: string): void {
+  flushEchoes();
   history.add("system", text);
 }
 
