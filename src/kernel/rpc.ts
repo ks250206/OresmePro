@@ -88,7 +88,13 @@ export function handleRpc(
         delete command.complex;
       } else if (command.op === "setWavePoints") {
         if (!data) throw new DocError("Missing point values.");
-        command.values = data;
+        if (command.complex === true) {
+          command.values = data.subarray(0, data.length / 2);
+          command.imag = data.subarray(data.length / 2);
+        } else {
+          command.values = data;
+        }
+        delete command.complex;
       }
       return { result: doc.dispatch(command as unknown as Command, { group }) };
     }

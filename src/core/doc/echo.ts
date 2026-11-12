@@ -12,16 +12,6 @@ class PyExpression {
 const same = (a: unknown, b: unknown): boolean =>
   a instanceof PyExpression && b instanceof PyExpression ? a.source === b.source : Object.is(a, b);
 
-/** A number as an argument of float() or complex(): plain, or a quoted nan or inf. */
-const pyNumber = (value: number): string =>
-  Number.isFinite(value)
-    ? String(value)
-    : Number.isNaN(value)
-      ? '"nan"'
-      : value > 0
-        ? '"inf"'
-        : '"-inf"';
-
 /** Formats a JavaScript value as a Python literal. */
 export function pyLiteral(value: unknown): string {
   if (value instanceof PyExpression) return value.source;
@@ -115,12 +105,14 @@ export function echoPython(
     case "setWavePoints": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
       const { start } = command;
-      // Complex points are written as complex(re, im), which also takes nan and inf.
+      // Complex points are written as complex(re, im). Its two arguments must be
+      // numbers, so nan and inf are float("nan") and float("inf"), not text.
       const { imag } = command;
       const values: ArrayLike<number | PyExpression> = imag
         ? Array.from(
             command.values,
-            (re, index) => new PyExpression(`complex(${pyNumber(re)}, ${pyNumber(imag[index]!)})`),
+            (re, index) =>
+              new PyExpression(`complex(${pyLiteral(re)}, ${pyLiteral(imag[index]!)})`),
           )
         : command.values;
       const shape = shapeOf?.(command.name) ?? [];

@@ -500,7 +500,9 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             values[key] = [value] if isinstance(value, str) else [str(item) for item in value]
             self.data = values
             return
-        if len(info["shape"]) > 1 or info["type"].startswith("complex") or np.iscomplexobj(value):
+        is_complex = info["type"].startswith("complex")
+        # A complex value turns a real wave complex, which only a copy of the whole wave can do.
+        if len(info["shape"]) > 1 or (np.iscomplexobj(value) and not is_complex):
             values = self.data.copy()
             if np.iscomplexobj(value) and not np.iscomplexobj(values):
                 values = values.astype(np.complex128)
@@ -508,27 +510,33 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             self.data = values
             return
         # Writing just past the end grows a 1-D wave, as typing below its last point in a table does.
+        kind = np.complex128 if is_complex else np.float64
         if isinstance(key, (int, np.integer)):
             index = int(key) + count if key < 0 else int(key)
             if not 0 <= index <= count:
                 raise IndexError(f"Point {key} is out of range for a wave of {count} points.")
-            _dispatch(
-                {"op": "setWavePoints", "name": self._name, "start": index},
-                np.array([value], dtype=np.float64),
-            )
+            self._write_points(index, np.array([value], dtype=kind))
             return
         if isinstance(key, slice) and key.step in (None, 1):
             start, stop, _ = key.indices(count)
             if key.stop is not None and key.stop > count and (key.start or 0) <= count:
                 stop = int(key.stop)
             if stop > start:
-                values = np.empty(stop - start, dtype=np.float64)
+                values = np.empty(stop - start, dtype=kind)
                 values[:] = value
-                _dispatch({"op": "setWavePoints", "name": self._name, "start": start}, values)
+                self._write_points(start, values)
                 return
         values = self.data.copy()
         values[key] = value
         self.data = values
+
+    def _write_points(self, start, values):
+        """Store a run of points from ``start``; complex ones go as real parts, then imaginary."""
+        command = {"op": "setWavePoints", "name": self._name, "start": start}
+        if np.iscomplexobj(values):
+            command["complex"] = True
+            values = np.concatenate([values.real, values.imag])
+        _dispatch(command, values.astype(np.float64))
 
     @property
     def flat(self):

@@ -1,6 +1,8 @@
 import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { Doc } from "../core/doc/doc";
+import { echoPython } from "../core/doc/echo";
+import { tableEditCommands, type CellEdit } from "../core/doc/tableEdit";
 import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
@@ -880,5 +882,77 @@ describe("oresme Python API", () => {
     doc.undo();
     expect(doc.getState().waveOrder).toContain("toLocaleString");
     expect(doc.getState().graphs["valueOf" as string]).toBeDefined();
+  });
+
+  it("replays table edits of complex waves from the history, appending points as well", async () => {
+    expect(
+      await run(
+        [
+          'op.make("ztab", np.array([1 + 2j, 3 - 4j]))',
+          'op.make("ztab32", np.array([5 + 6j], dtype=np.complex64))',
+          'op.make("ztab2", np.array([[1 + 1j, 2 + 2j], [3 + 3j, np.nan + 4j]]))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    /**
+     * Makes the edits as the table does, in a copy of the document, and runs
+     * the Python the table writes to the history against the document as it
+     * was. Both must end up the same.
+     */
+    async function replay(edits: CellEdit[]) {
+      const before = doc.getState();
+      const commands = tableEditCommands(before.waves, edits, { layer: 0, chunk: 0 })!;
+      expect(commands.length).toBeGreaterThan(0);
+      const gui = new Doc();
+      gui.load(before);
+      const lines = commands.map((command) => {
+        gui.dispatch(command);
+        return echoPython(command, (wave) => gui.getState().waves[wave]?.shape)!;
+      });
+      const code = lines.join("\n");
+      expect(await run(code), `${code}\n${errors.join("\n")}`).toBe(true);
+      for (const name of new Set(edits.map((edit) => edit.wave))) {
+        const replayed = doc.getState().waves[name]!;
+        const expected = gui.getState().waves[name]!;
+        const content = (wave: typeof replayed) => ({
+          type: wave.type,
+          shape: wave.shape,
+          data: Array.from(wave.data),
+          imag: Array.from(wave.imag ?? []),
+        });
+        expect(content(replayed), code).toEqual(content(expected));
+      }
+      return code;
+    }
+    // Typing the real part, then the imaginary part, into the row after the last point.
+    expect(await replay([{ wave: "ztab", j: null, row: 2, text: "7" }])).toBe(
+      'op.wave("ztab")[2] = complex(7, 0)',
+    );
+    expect(await replay([{ wave: "ztab", j: null, row: 3, text: "8", imag: true }])).toBe(
+      'op.wave("ztab")[3] = complex(float("nan"), 8)',
+    );
+    // A paste of two rows that extends several complex columns, one of them complex64.
+    await replay([
+      { wave: "ztab", j: null, row: 3, text: "9" },
+      { wave: "ztab", j: null, row: 4, text: "10" },
+      { wave: "ztab", j: null, row: 3, text: "-1", imag: true },
+      { wave: "ztab", j: null, row: 4, text: "nan", imag: true },
+      { wave: "ztab32", j: null, row: 1, text: "0.5" },
+      { wave: "ztab32", j: null, row: 2, text: "1.5" },
+      { wave: "ztab32", j: null, row: 1, text: "2.5", imag: true },
+    ]);
+    // A paste that starts inside a wave and runs past its end.
+    await replay([
+      { wave: "ztab32", j: null, row: 2, text: "3", imag: true },
+      { wave: "ztab32", j: null, row: 3, text: "4", imag: true },
+    ]);
+    expect(doc.getState().waves.ztab32!.shape).toEqual([4]);
+    // A matrix keeps its shape: cells inside it are written, cells below it are not.
+    await replay([
+      { wave: "ztab2", j: 1, row: 1, text: "6" },
+      { wave: "ztab2", j: 0, row: 0, text: "nan", imag: true },
+      { wave: "ztab2", j: 0, row: 2, text: "1" },
+    ]);
+    expect(doc.getState().waves.ztab2!.shape).toEqual([2, 2]);
   });
 });
