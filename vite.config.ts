@@ -31,15 +31,16 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  fmt: { ignorePatterns: [...GENERATED] },
+  // What scripts/igor-fixtures.py writes stays as it writes it, so that running it again changes nothing.
+  fmt: { ignorePatterns: [...GENERATED, "src/core/io/testdata/igor/expected.json"] },
   lint: {
     ignorePatterns: [...GENERATED],
     options: { typeAware: true, typeCheck: true },
   },
   server: { headers: isolationHeaders },
   preview: { headers: isolationHeaders },
-  // Tests import workbook fixtures as binary assets.
-  assetsInclude: ["**/*.xlsx"],
+  // Tests import workbook and Igor fixtures as binary assets.
+  assetsInclude: ["**/*.xlsx", "**/*.ibw", "**/*.pxp"],
   worker: { format: "es" },
   build: {
     rolldownOptions: {
