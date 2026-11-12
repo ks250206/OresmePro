@@ -49,13 +49,17 @@ export function splitQuoted(record: string, delimiter: string): string[] | null 
 }
 
 /**
- * Splits lines into records of fields. A quoted field can hold a line
- * break, so lines are joined until the quotes close.
+ * Splits lines into records of fields, at most `limit` of them. A quoted
+ * field can hold a line break, so lines are joined until the quotes close.
+ * Blank lines and comments are skipped only between records: inside a
+ * quoted field they are part of its text.
  */
-function splitRecords(lines: readonly string[], delimiter: string): string[][] {
+function splitRecords(lines: readonly string[], delimiter: string, limit = Infinity): string[][] {
   const rows: string[][] = [];
   let pending = "";
   for (const line of lines) {
+    if (rows.length >= limit) return rows;
+    if (pending === "" && skipped(line)) continue;
     const record = pending === "" ? line : `${pending}\n${line}`;
     const cells = splitQuoted(record, delimiter);
     if (cells) {
@@ -72,11 +76,13 @@ function splitRecords(lines: readonly string[], delimiter: string): string[][] {
 
 function detectDelimiter(lines: string[]): string | RegExp {
   // Judge by records, not lines, and by delimiters outside quotes, so that
-  // "a,b" and quoted line breaks do not disguise the structure.
-  const sample = lines.slice(0, 40);
+  // "a,b" and quoted line breaks do not disguise the structure. The lines
+  // read are bounded too, in case a quote that a wrong delimiter leaves open
+  // runs to the end of a long file.
+  const sample = lines.slice(0, 2000);
   const candidates = ["\t", ",", ";"].map((candidate) => ({
     candidate,
-    counts: splitRecords(sample, candidate).map((cells) => cells.length - 1),
+    counts: splitRecords(sample, candidate, 40).map((cells) => cells.length - 1),
   }));
   const regular = candidates.find(
     ({ counts }) => counts[0]! > 0 && counts.every((count) => count === counts[0]),
@@ -140,25 +146,28 @@ function isComment(line: string): boolean {
   return text.startsWith("#") && !EXCEL_ERRORS.test(/^[^\s,;]*/.exec(text)![0]);
 }
 
+/** A line that holds no record: blank, or a comment. */
+const skipped = (line: string): boolean => line.trim() === "" || isComment(line);
+
 /**
  * Parses delimited text (CSV, TSV, whitespace-separated) into columns of
  * numbers or text. The delimiter and the presence of a header row are detected.
- * Lines starting with `#` are ignored. Dates written without a UTC offset
- * are taken to be in `zone`.
+ * Blank lines and lines starting with `#` are ignored, except inside a
+ * quoted field. Dates written without a UTC offset are taken to be in `zone`.
  */
 export function parseDelimited(
   text: string,
   taken: (name: string) => boolean,
   zone: TimeZone = UTC,
 ): DelimitedResult {
-  const lines = text.split(/\r\n|\n|\r/).filter((line) => line.trim() !== "" && !isComment(line));
-  if (lines.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
+  const lines = text.split(/\r\n|\n|\r/);
+  if (lines.every(skipped)) return { names: [], columns: [], dates: [], rows: 0 };
 
   const delimiter = detectDelimiter(lines);
   const rows =
     typeof delimiter === "string"
       ? splitRecords(lines, delimiter)
-      : lines.map((line) => line.trim().split(delimiter));
+      : lines.filter((line) => !skipped(line)).map((line) => line.trim().split(delimiter));
   return columnsFromRows(rows, taken, zone);
 }
 

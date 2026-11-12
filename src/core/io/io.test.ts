@@ -107,6 +107,16 @@ describe("parseDelimited", () => {
     expect(Array.from(result.columns[1] as Float64Array)).toEqual([10, 20, 30]);
   });
 
+  it("keeps blank lines and lines starting with # inside quoted fields", () => {
+    const text = 'note,value\n# a comment\n"first\n\n# not a comment",1\n\n"second",2\n';
+    const result = parseDelimited(text, free);
+    expect(result.columns[0]).toEqual(["first\n\n# not a comment", "second"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([1, 2]);
+    // The delimiter is judged from records, past comments and blank lines.
+    const commented = `${"# header comment\n".repeat(50)}\na;b\n1;2\n"x\n\ny";3\n`;
+    expect(parseDelimited(commented, free).names).toEqual(["a", "b"]);
+  });
+
   it("loads files with more rows than a function call can take arguments", () => {
     const rows = 200_000;
     const text = `value\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
