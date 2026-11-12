@@ -1,6 +1,15 @@
+import {
+  arrangeLayout,
+  readingOrder,
+  type AlignEdge,
+  type Arrangement,
+  type DistributeDirection,
+  type MatchDimension,
+} from "../core/doc/arrange";
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
-import { DATE_UNIT, leafName } from "../core/doc/types";
+import { echoArrangement } from "../core/doc/echo";
+import { DATE_UNIT, leafName, type DocState, type PageSpec } from "../core/doc/types";
 import { columnsFromRows, parseDelimited, type DelimitedResult } from "../core/io/delimited";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { readXlsx } from "../core/io/xlsx";
@@ -9,6 +18,7 @@ import type { Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { timeZone } from "../core/plot/ticks";
+import { measureText } from "./measure";
 import {
   activeWindow,
   doc,
@@ -16,12 +26,16 @@ import {
   files,
   history,
   kernel,
+  MOD,
   note,
   pageLayout,
   runGui,
   setExportHandler,
   setPageExportHandler,
   showError,
+  ui,
+  type MenuItem,
+  type UiState,
 } from "./session";
 
 function download(blob: Blob, filename: string): void {
@@ -336,6 +350,116 @@ export function autoscaleGraph(name: string): void {
     }
   }
   runGui(commands);
+}
+
+/** A page layout by name; not one of Object's own properties for a name like "constructor". */
+const pageNamed = (state: DocState, name: string): PageSpec | undefined =>
+  Object.hasOwn(state.pages, name) ? state.pages[name] : undefined;
+
+/**
+ * The items selected on a page layout, in the order they were selected,
+ * leaving out any that have since gone (removed by Python, say, or undone).
+ */
+export function selectedItems(
+  layout: string,
+  state: DocState = doc.getState(),
+  selection: UiState["pageSelection"] = ui.get().pageSelection,
+): string[] {
+  const page = pageNamed(state, layout);
+  const chosen = Object.hasOwn(selection, layout) ? selection[layout]! : [];
+  return page ? chosen.filter((name) => page.items.some((item) => item.name === name)) : [];
+}
+
+export function selectItems(layout: string, items: readonly string[]): void {
+  ui.set((state) => ({ pageSelection: { ...state.pageSelection, [layout]: items } }));
+}
+
+/**
+ * Rearranges items on a page as one undo step, written into the history as
+ * the one Python call that does the same. Returns whether it was done.
+ */
+export function arrangeItems(layout: string, arrangement: Arrangement): boolean {
+  let commands: Command[];
+  try {
+    ({ commands } = arrangeLayout(doc.getState(), layout, arrangement, measureText));
+  } catch (error) {
+    showError("That did not work", error);
+    return false;
+  }
+  return runGui(commands, { echo: echoArrangement(layout, arrangement) }) !== undefined;
+}
+
+/**
+ * The graphs that "Arrange in Grid" places, in the order they fill the
+ * cells: the selected ones as they read on the page now, or none to mean
+ * every graph of the page.
+ */
+export function graphsToArrange(page: PageSpec, selection: readonly string[]): string[] {
+  const graphs = page.items.filter(
+    (item) => item.kind === "graph" && selection.includes(item.name),
+  );
+  return readingOrder(graphs).map((index) => graphs[index]!.name);
+}
+
+/**
+ * The commands for arranging the items of a page layout, for its window's
+ * context menu and for the Layout menu; each is enabled only where it applies
+ * to the selection. With no page, they are all there but disabled.
+ */
+export function pageMenuItems(page: PageSpec | null, selection: readonly string[]): MenuItem[] {
+  const layout = page?.name ?? "";
+  const items = page?.items ?? [];
+  const graphs = selection.filter(
+    (name) => items.find((item) => item.name === name)?.kind === "graph",
+  );
+  const run = (label: string, disabled: boolean, arrangement: Arrangement): MenuItem => ({
+    label,
+    disabled,
+    onSelect: () => arrangeItems(layout, arrangement),
+  });
+  const align = (label: string, edge: AlignEdge) =>
+    run(label, selection.length === 0, { action: "align", items: selection, edge });
+  const distribute = (label: string, direction: DistributeDirection) =>
+    run(label, selection.length < 3, { action: "distribute", items: selection, direction });
+  const match = (label: string, dimension: MatchDimension) =>
+    run(label, graphs.length < 2, { action: "matchSize", items: graphs, dimension });
+  return [
+    {
+      label: "Select All",
+      shortcut: `${MOD}A`,
+      disabled: items.length === 0,
+      onSelect: () =>
+        selectItems(
+          layout,
+          items.map((item) => item.name),
+        ),
+    },
+    { separator: true },
+    align("Align Left Edges", "left"),
+    align("Align Right Edges", "right"),
+    align("Align Top Edges", "top"),
+    align("Align Bottom Edges", "bottom"),
+    align("Align Horizontal Centers", "center"),
+    align("Align Vertical Centers", "middle"),
+    { separator: true },
+    distribute("Distribute Horizontally", "horizontal"),
+    distribute("Distribute Vertically", "vertical"),
+    { separator: true },
+    match("Make Same Width", "width"),
+    match("Make Same Height", "height"),
+    match("Make Same Size", "both"),
+    { separator: true },
+    {
+      label: "Arrange in Grid…",
+      disabled: !items.some((item) => item.kind === "graph"),
+      onSelect: () => {
+        if (!page) return;
+        ui.set({
+          dialog: { kind: "arrangeLayout", layout, items: graphsToArrange(page, selection) },
+        });
+      },
+    },
+  ];
 }
 
 /** Makes a new graph showing a 2-D wave as an image or as contours. */

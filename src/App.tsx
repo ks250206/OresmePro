@@ -9,7 +9,10 @@ import {
   loadExcelWorkbook,
   loadFiles,
   openExperiment,
+  pageMenuItems,
   saveExperiment,
+  selectedItems,
+  selectItems,
 } from "./app/actions";
 import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
 import { autosave, restore } from "./app/persist";
@@ -18,7 +21,9 @@ import {
   doc,
   files,
   history,
+  isMac,
   kernel,
+  MOD,
   PYODIDE_URL,
   requestCommandLine,
   runGui,
@@ -35,9 +40,6 @@ import { Desktop } from "./ui/Desktop";
 import { DialogHost } from "./ui/dialogs";
 import { ContextMenuHost, MenuBar, type MenuDefinition } from "./ui/Menu";
 import { StatusBar } from "./ui/StatusBar";
-
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const MOD = isMac ? "⌘" : "Ctrl+";
 
 function Splitter({
   vertical,
@@ -86,9 +88,17 @@ function newExperiment() {
 function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
+  const pages = useDoc((state) => state.pages);
+  const pageSelection = useUi((state) => state.pageSelection);
   const top = windows.at(-1);
   const graph = top?.kind === "graph" ? top.name : null;
   const spec = graph ? graphs[graph] : undefined;
+  // The Layout menu acts on the frontmost window when it is a page layout.
+  const page = top?.kind === "page" && Object.hasOwn(pages, top.name) ? pages[top.name] : undefined;
+  const layoutItems = pageMenuItems(
+    page ?? null,
+    page ? selectedItems(page.name, doc.getState(), pageSelection) : [],
+  );
   const showBrowser = useUi((state) => state.showBrowser);
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
@@ -226,6 +236,7 @@ function useMenus(): MenuDefinition[] {
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },
+    { title: "Layout", items: layoutItems },
     {
       title: "Windows",
       items: [
@@ -312,6 +323,17 @@ function onGlobalKey(event: KeyboardEvent) {
   } else if (key === "y") {
     event.preventDefault();
     doc.redo();
+  } else if (key === "a" && activeWindow(doc.getState())?.kind === "page") {
+    // Select All on a page layout selects its items, not the text of the app.
+    event.preventDefault();
+    const { pages } = doc.getState();
+    const name = activeWindow(doc.getState())!.name;
+    const page = Object.hasOwn(pages, name) ? pages[name] : undefined;
+    if (page)
+      selectItems(
+        name,
+        page.items.map((item) => item.name),
+      );
   } else if (key === "a" || key === "i") {
     const graph = activeGraph();
     if (graph) {

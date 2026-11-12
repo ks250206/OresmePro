@@ -36,6 +36,8 @@ export type DialogRequest =
   | { kind: "graphScript"; graph: string }
   | { kind: "timeZone" }
   | { kind: "pageText"; layout: string; item?: string }
+  /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
+  | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -62,6 +64,11 @@ export interface UiState {
   selectedWaves: readonly string[];
   /** Data folders shown collapsed in the data browser. */
   collapsedFolders: readonly string[];
+  /**
+   * The items selected on each page layout, by layout name, in the order they
+   * were selected: the first is what "same size" matches.
+   */
+  pageSelection: Readonly<Record<string, readonly string[]>>;
   /** Text waiting to be placed in the command line; the editor consumes it. */
   commandLineInsert: { text: string; token: number } | null;
 }
@@ -81,8 +88,13 @@ export const ui = createStore<UiState>({
   commandHeight: 240,
   selectedWaves: [],
   collapsedFolders: [],
+  pageSelection: {},
   commandLineInsert: null,
 });
+
+export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+/** How the command key is written in menus. */
+export const MOD = isMac ? "⌘" : "Ctrl+";
 
 /** Height of a window's title bar; the content area is the window minus this. */
 export const TITLE_BAR_HEIGHT = 24;
@@ -200,8 +212,15 @@ let batchCounter = 0;
  * equivalent Python into the history, as Igor does for its dialogs. Returns
  * the result of the last command, or undefined if a command was rejected (the
  * user is told why).
+ *
+ * `echo` is the Python to write instead of a line per command, for an action
+ * that Python does in one call although it takes several commands. Should a
+ * command fail midway, the lines for those that ran are written instead.
  */
-export function runGui(commands: Command | readonly Command[]): string | null | undefined {
+export function runGui(
+  commands: Command | readonly Command[],
+  options: { echo?: string } = {},
+): string | null | undefined {
   const list: readonly Command[] = Array.isArray(commands) ? commands : [commands as Command];
   if (list.length === 0) return null;
   batchCounter += 1;
@@ -221,7 +240,8 @@ export function runGui(commands: Command | readonly Command[]): string | null | 
     if (echoes.length > 0) history.add("gui", echoes.join("\n"));
     return undefined;
   }
-  if (echoes.length > 0) history.add("gui", echoes.join("\n"));
+  if (options.echo !== undefined) history.add("gui", options.echo);
+  else if (echoes.length > 0) history.add("gui", echoes.join("\n"));
   return result;
 }
 
