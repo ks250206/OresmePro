@@ -19,6 +19,7 @@ const PYTHON = `oresme-python-${params.get("python") ?? "dev"}`;
 // Origin" would otherwise make the copy fetched here (which has no Origin
 // header) invisible to the page's own requests for scripts (which have one).
 const SAME_URL = { ignoreVary: true };
+const DOCS_PATH = new URL("docs/", self.location.href).pathname;
 
 self.addEventListener("install", () => self.skipWaiting());
 
@@ -122,5 +123,13 @@ self.addEventListener("message", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.cache === "only-if-cached" && request.mode !== "same-origin") return;
+  // The Pages deployment serves the documentation under the app's scope.
+  // Let it reach the network so a new build's HTML and search index stay in sync.
+  const url = new URL(request.url);
+  if (
+    url.origin === self.location.origin &&
+    (url.pathname.startsWith(DOCS_PATH) || url.pathname === DOCS_PATH.slice(0, -1))
+  )
+    return;
   event.respondWith(respond(request).then(isolated));
 });
