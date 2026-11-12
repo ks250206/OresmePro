@@ -1087,4 +1087,17 @@ describe("oresme Python API", () => {
       "12.7062",
     ]);
   });
+
+  it("leaves infinities out of the statistics and of the positions of the extremes", async () => {
+    expect(
+      await run(
+        [
+          's = op.stats(op.make("infs", [1, np.inf, 4, -np.inf, np.nan, 2], x0=10, dx=0.5), quiet=True)',
+          "print(s['min'], s['min_x'], s['max'], s['max_x'], s['points'], s['nans'], s['mean'], s['sum'])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The finite values are 1, 4 and 2, at x = 10, 11 and 12.5.
+    expect(stdout).toBe("1.0 10.0 4.0 11.0 6 3 2.3333333333333335 7.0\n");
+  });
 });

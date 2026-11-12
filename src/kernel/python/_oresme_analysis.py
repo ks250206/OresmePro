@@ -642,8 +642,10 @@ def stats(wave_, quiet=False):
     }
     if values.ndim == 1:
         x = source.x
-        result["min_x"] = float(x[int(np.nanargmin(values))])
-        result["max_x"] = float(x[int(np.nanargmax(values))])
+        # Infinities are left out here too, so the positions belong to min and max.
+        counted = np.where(np.isfinite(values), values, np.nan)
+        result["min_x"] = float(x[int(np.nanargmin(counted))])
+        result["max_x"] = float(x[int(np.nanargmax(counted))])
     if not quiet:
         print(f"Stats of {source.name}:")
         for key, value in result.items():
