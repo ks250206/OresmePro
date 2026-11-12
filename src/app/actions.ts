@@ -1,4 +1,5 @@
 import { type Command, uniqueName } from "../core/doc/commands";
+import { dict } from "../core/doc/dict";
 import { DATE_UNIT, leafName } from "../core/doc/types";
 import { columnsFromRows, parseDelimited, type DelimitedResult } from "../core/io/delimited";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
@@ -275,7 +276,7 @@ async function openExperimentFile(file: File): Promise<void> {
       );
     const procedures = allowed
       ? opened.state.procedures
-      : Object.fromEntries(
+      : dict(
           Object.entries(opened.state.procedures).map(([name, procedure]) => [
             name,
             { ...procedure, autoRun: false },

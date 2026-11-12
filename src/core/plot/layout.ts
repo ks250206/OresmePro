@@ -15,6 +15,7 @@ import {
   type WaveData,
   wavePart,
 } from "../doc/types";
+import { dict } from "../doc/dict";
 import { colorAt, renderCells, renderMatrix } from "./colorTables";
 import { chainSegments, contourLevels, contourSegments } from "./contour";
 import {
@@ -104,7 +105,7 @@ export interface GraphLayout {
   annotations: AnnotationGeometry[];
   /** The data area. */
   plot: Rect;
-  /** The axes that carry something, by name. */
+  /** The axes that carry something, by name (a {@link dict}, as in the document). */
   axes: Record<string, AxisGeometry>;
   traces: TraceGeometry[];
   cursors: CursorGeometry[];
@@ -1749,7 +1750,7 @@ export function layoutGraph(
     }
   };
 
-  const axes: GraphLayout["axes"] = {};
+  const axes: GraphLayout["axes"] = dict();
   for (const axis of axisList) {
     const { side } = axis.spec;
     drawAxis(axis, side, axis.line, { ticks: true, labels: true, title: true });

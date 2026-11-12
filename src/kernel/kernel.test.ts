@@ -836,4 +836,49 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe("['graph1']\n[]\n");
   });
+
+  it("takes names that JavaScript objects inherit, such as constructor and toString", async () => {
+    expect(
+      await run(
+        [
+          'cw = op.make("constructor", [1.0, 2.0, 3.0], unit="V"); op.make("toString", [0.0, 1.0, 2.0])',
+          'cg = op.display(cw, x="toString", name="valueOf"); cg.add_axis("hasOwnProperty", "right")',
+          'cg.append(op.wave("toString").duplicate("toLocaleString"), axis="hasOwnProperty")',
+          'ct = op.edit("constructor", name="isPrototypeOf"); cp = op.new_layout("propertyIsEnumerable")',
+          "cp.add_graph(cg); cw[3] = 4",
+          'print(op.wave("constructor").data.tolist(), op.wave("constructor").unit, op.exists("toString"))',
+          "print([w.name for w in op.waves()][-3:], [a.name for a in cg.axes][-1], cg.axis('hasOwnProperty').side)",
+          'print(op.graph("valueOf"), op.table("isPrototypeOf").columns, op.layout("propertyIsEnumerable").items[0].graph)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[1.0, 2.0, 3.0, 4.0] V True",
+      "['constructor', 'toString', 'toLocaleString'] hasOwnProperty right",
+      "Graph('valueOf') [Wave('constructor', n=4, x0=0, dx=1, unit='V')] Graph('valueOf')",
+    ]);
+    expect(doc.getState().waveOrder).toContain("constructor");
+    expect(doc.getState().graphs["valueOf" as string]!.traces.map((trace) => trace.y)).toEqual([
+      "constructor",
+      "toLocaleString",
+    ]);
+    for (const [code, error] of [
+      ['op.wave("__proto__")', 'OresmeError: No wave named "__proto__".'],
+      ['op.wave("valueOf")', 'OresmeError: No wave named "valueOf".'],
+      ['op.make("__proto__", [1.0])', /OresmeError: "__proto__" is not a valid wave name/],
+      ['cw.rename("__proto__")', /OresmeError: "__proto__" is not a valid wave name/],
+      ['op.graph("constructor")', "OresmeError: No graph named 'constructor'."],
+      ['cg.axis("constructor")', /OresmeError: valueOf has no axis named 'constructor'/],
+      ['cg.axis("__proto__").label = "x"', /OresmeError: valueOf has no axis named '__proto__'/],
+      ['op.kill_window("__proto__")', 'OresmeError: No window named "__proto__".'],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+    expect(await run('op.kill_window("valueOf"); op.kill(op.wave("toLocaleString"))')).toBe(true);
+    expect(doc.getState().waveOrder).not.toContain("toLocaleString");
+    doc.undo();
+    expect(doc.getState().waveOrder).toContain("toLocaleString");
+    expect(doc.getState().graphs["valueOf" as string]).toBeDefined();
+  });
 });

@@ -1,3 +1,5 @@
+import { dict, type Dict } from "./dict";
+
 /** The number types a wave can hold, named as NumPy names them. */
 export const WAVE_TYPES = [
   "float64",
@@ -386,7 +388,7 @@ export interface GraphSpec extends GraphStyle {
   images: readonly ImageSpec[];
   contours: readonly ContourSpec[];
   /** Keyed by axis name. "left", "bottom", "right" and "top" always exist. */
-  axes: Readonly<Record<string, AxisSpec>>;
+  axes: Dict<AxisSpec>;
   annotations: readonly AnnotationSpec[];
   cursors: Readonly<Partial<Record<CursorName, CursorSpec>>>;
 }
@@ -398,7 +400,7 @@ export interface TableSpec {
   /** Significant digits numbers are shown with. */
   digits: number;
   /** Column widths in pixels, by wave, for columns the user has resized. */
-  widths: Readonly<Record<string, number>>;
+  widths: Dict<number>;
 }
 
 export const DEFAULT_TABLE_DIGITS = 8;
@@ -465,16 +467,17 @@ export interface WindowState {
   h: number;
 }
 
+/** Every record kept by name is a {@link Dict}, built with the functions of ./dict. */
 export interface DocState {
-  readonly waves: Readonly<Record<string, Wave>>;
+  readonly waves: Dict<Wave>;
   /** Creation order, for stable listing. */
   readonly waveOrder: readonly string[];
   /** Every data folder below root, as paths; a parent comes before its children. */
   readonly folders: readonly string[];
-  readonly graphs: Readonly<Record<string, GraphSpec>>;
-  readonly tables: Readonly<Record<string, TableSpec>>;
-  readonly procedures: Readonly<Record<string, ProcedureSpec>>;
-  readonly pages: Readonly<Record<string, PageSpec>>;
+  readonly graphs: Dict<GraphSpec>;
+  readonly tables: Dict<TableSpec>;
+  readonly procedures: Dict<ProcedureSpec>;
+  readonly pages: Dict<PageSpec>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -485,13 +488,13 @@ export interface DocState {
 }
 
 export const emptyDoc = (): DocState => ({
-  waves: {},
+  waves: dict(),
   waveOrder: [],
   folders: [],
-  graphs: {},
-  tables: {},
-  procedures: {},
-  pages: {},
+  graphs: dict(),
+  tables: dict(),
+  procedures: dict(),
+  pages: dict(),
   timeZone: "UTC",
   windows: [],
 });

@@ -1,10 +1,38 @@
 import { applyCommand, isTransient, type Command } from "./commands";
+import { dictFrom, filterDict, type Dict } from "./dict";
 import { emptyDoc, type DocState } from "./types";
 
 interface UndoEntry {
   state: DocState;
   /** Commands sharing a group (one Python execution, say) undo together. */
   group: string | null;
+}
+
+/** A record as it must be in the document: itself if it has no prototype, else a copy that has none. */
+const asDict = <T>(record: Dict<T>): Dict<T> =>
+  Object.getPrototypeOf(record) === null ? record : dictFrom(record);
+
+/**
+ * A document whose records kept by name all have no prototype (see ./dict).
+ * Commands keep them so; a document built elsewhere and loaded may not have.
+ */
+function withDicts(state: DocState): DocState {
+  const graphs = dictFrom(state.graphs);
+  for (const [name, graph] of Object.entries(graphs)) {
+    graphs[name] = { ...graph, axes: asDict(graph.axes), cursors: asDict(graph.cursors) };
+  }
+  const tables = dictFrom(state.tables);
+  for (const [name, table] of Object.entries(tables)) {
+    tables[name] = { ...table, widths: asDict(table.widths) };
+  }
+  return {
+    ...state,
+    waves: asDict(state.waves),
+    graphs,
+    tables,
+    procedures: asDict(state.procedures),
+    pages: asDict(state.pages),
+  };
 }
 
 const UNDO_LIMIT = 100;
@@ -93,7 +121,7 @@ export class Doc {
 
   /** Replaces the whole document, for opening an experiment. */
   load(state: DocState): void {
-    this.state = state;
+    this.state = withDicts(state);
     this.undoStack = [];
     this.redoStack = [];
     this.emit();
@@ -138,14 +166,16 @@ export class Doc {
   private keepViewState(target: DocState): DocState {
     const now = this.state;
     const current = new Map(now.windows.map((window) => [window.name, window]));
-    const tables = { ...target.tables };
+    const tables = dictFrom(target.tables);
     for (const [name, table] of Object.entries(tables)) {
       const widths = now.tables[name]?.widths;
       if (!widths || widths === table.widths) continue;
-      const kept = Object.entries(widths).filter(([wave]) => table.columns.includes(wave));
-      tables[name] = { ...table, widths: Object.fromEntries(kept) };
+      tables[name] = {
+        ...table,
+        widths: filterDict(widths, (_, wave) => table.columns.includes(wave)),
+      };
     }
-    const procedures = { ...target.procedures };
+    const procedures = dictFrom(target.procedures);
     for (const name of Object.keys(procedures)) {
       if (now.procedures[name]) procedures[name] = now.procedures[name];
     }

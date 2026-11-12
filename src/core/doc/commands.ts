@@ -1,5 +1,6 @@
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
+import { dict, filterDict, withEntry, withoutEntries } from "./dict";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
@@ -332,17 +333,17 @@ function putWave(state: DocState, wave: Wave): DocState {
   const next = withFolders(state, parentFolder(wave.name));
   return {
     ...next,
-    waves: { ...next.waves, [wave.name]: wave },
+    waves: withEntry(next.waves, wave.name, wave),
     waveOrder: known ? next.waveOrder : [...next.waveOrder, wave.name],
   };
 }
 
 function putGraph(state: DocState, graph: GraphSpec): DocState {
-  return { ...state, graphs: { ...state.graphs, [graph.name]: graph } };
+  return { ...state, graphs: withEntry(state.graphs, graph.name, graph) };
 }
 
 function putTable(state: DocState, table: TableSpec): DocState {
-  return { ...state, tables: { ...state.tables, [table.name]: table } };
+  return { ...state, tables: withEntry(state.tables, table.name, table) };
 }
 
 function checkShape(shape: readonly number[] | undefined, length: number): readonly number[] {
@@ -699,7 +700,7 @@ function requirePage(state: DocState, name: string): PageSpec {
 
 const putPage = (state: DocState, page: PageSpec): DocState => ({
   ...state,
-  pages: { ...state.pages, [page.name]: page },
+  pages: withEntry(state.pages, page.name, page),
 });
 
 function validateProps<T>(
@@ -709,7 +710,10 @@ function validateProps<T>(
 ): Partial<T> {
   const result: Partial<T> = {};
   for (const [key, value] of Object.entries(props)) {
-    const validate = (validators as Record<string, ((value: unknown) => unknown) | undefined>)[key];
+    // Own properties only: "constructor" is not a property, though every object has one.
+    const validate = Object.hasOwn(validators, key)
+      ? (validators as Record<string, (value: unknown) => unknown>)[key]
+      : undefined;
     if (!validate) {
       throw new DocError(
         `Unknown ${what} property ${JSON.stringify(key)}. Known properties: ${Object.keys(validators).join(", ")}.`,
@@ -722,7 +726,7 @@ function validateProps<T>(
 
 /** Rewrites every reference to a wave after waves have been renamed or moved. */
 function renameReferences(state: DocState, rename: (name: string) => string): DocState {
-  const graphs: Record<string, GraphSpec> = {};
+  const graphs = dict<GraphSpec>();
   for (const graph of Object.values(state.graphs)) {
     const traces: TraceSpec[] = [];
     const traceNames = new Map<string, string>();
@@ -741,7 +745,7 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
         colorWave: trace.colorWave === null ? null : rename(trace.colorWave),
       });
     }
-    const cursors: GraphSpec["cursors"] = Object.fromEntries(
+    const cursors: GraphSpec["cursors"] = dict(
       Object.entries(graph.cursors).map(([key, cursor]) => [
         key,
         { ...cursor, trace: traceNames.get(cursor.trace) ?? cursor.trace },
@@ -758,14 +762,12 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
       contours: graph.contours.map((contour) => ({ ...contour, wave: rename(contour.wave) })),
     };
   }
-  const tables: Record<string, TableSpec> = {};
+  const tables = dict<TableSpec>();
   for (const table of Object.values(state.tables)) {
     tables[table.name] = {
       ...table,
       columns: table.columns.map(rename),
-      widths: Object.fromEntries(
-        Object.entries(table.widths).map(([wave, width]) => [rename(wave), width]),
-      ),
+      widths: dict(Object.entries(table.widths).map(([wave, width]) => [rename(wave), width])),
     };
   }
   return { ...state, graphs, tables };
@@ -794,7 +796,6 @@ function waveUsers(state: DocState, name: string): string[] {
 }
 
 function removeWaves(state: DocState, names: readonly string[]): DocState {
-  const waves = { ...state.waves };
   for (const name of names) {
     const users = waveUsers(state, name);
     if (users.length > 0) {
@@ -802,8 +803,8 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
         `Wave ${JSON.stringify(name)} is in use by ${users.join(", ")}. Remove it from there first.`,
       );
     }
-    delete waves[name];
   }
+  const waves = withoutEntries(state.waves, names);
   return { ...state, waves, waveOrder: state.waveOrder.filter((name) => name in waves) };
 }
 
@@ -817,9 +818,9 @@ function emptyGraph(name: string): GraphSpec {
     traces: [],
     images: [],
     contours: [],
-    axes: Object.fromEntries(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
+    axes: dict(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
     annotations: [],
-    cursors: {},
+    cursors: dict(),
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
     showInfo: false,
@@ -1017,9 +1018,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.waves) {
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
-      const waves = { ...state.waves };
-      delete waves[wave.name];
-      waves[newName] = changed(wave, { name: newName });
+      const waves = withEntry(
+        withoutEntries(state.waves, [wave.name]),
+        newName,
+        changed(wave, { name: newName }),
+      );
       const renamed = renameReferences(
         {
           ...withFolders(state, parentFolder(newName)),
@@ -1071,7 +1074,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       }
       const move = (name: string) =>
         name === path || name.startsWith(`${path}:`) ? newPath + name.slice(path.length) : name;
-      const waves: Record<string, Wave> = {};
+      const waves = dict<Wave>();
       for (const wave of Object.values(state.waves)) {
         const name = move(wave.name);
         if (name !== wave.name && name in state.waves) {
@@ -1139,11 +1142,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const graph = requireGraph(state, command.graph);
       for (const name of command.traces) requireItem(graph.traces, name, graph.name, "trace");
       const traces = graph.traces.filter((trace) => !command.traces.includes(trace.name));
-      const cursors = Object.fromEntries(
-        Object.entries(graph.cursors).filter(
-          ([, cursor]) => !command.traces.includes(cursor.trace),
-        ),
-      );
+      const cursors = filterDict(graph.cursors, (cursor) => !command.traces.includes(cursor.trace));
       // A tag goes with the trace it points at.
       const annotations = graph.annotations.filter(
         (item) => item.trace === null || !command.traces.includes(item.trace),
@@ -1177,7 +1176,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       }
       const axis = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
       return {
-        state: putGraph(state, { ...graph, axes: { ...graph.axes, [name]: axis } }),
+        state: putGraph(state, { ...graph, axes: withEntry(graph.axes, name, axis) }),
         result: name,
       };
     }
@@ -1197,8 +1196,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
         );
       }
-      const axes = { ...graph.axes };
-      delete axes[command.axis];
+      const axes = withoutEntries(graph.axes, [command.axis]);
       return { state: putGraph(state, { ...graph, axes }), result: null };
     }
     case "modifyAxis": {
@@ -1220,7 +1218,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError("A log axis needs a range greater than 0.");
       }
       return {
-        state: putGraph(state, { ...graph, axes: { ...graph.axes, [command.axis]: axis } }),
+        state: putGraph(state, { ...graph, axes: withEntry(graph.axes, command.axis, axis) }),
         result: null,
       };
     }
@@ -1322,7 +1320,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: putGraph(state, {
           ...graph,
-          cursors: { ...graph.cursors, [cursor]: { trace: trace.name, point: command.point } },
+          cursors: withEntry(graph.cursors, cursor, { trace: trace.name, point: command.point }),
         }),
         result: null,
       };
@@ -1330,8 +1328,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeCursor": {
       const graph = requireGraph(state, command.graph);
       const cursor: CursorName = oneOf(command.cursor, CURSOR_NAMES, "cursor");
-      const cursors = { ...graph.cursors };
-      delete cursors[cursor];
+      const cursors = withoutEntries(graph.cursors, [cursor]);
       return { state: putGraph(state, { ...graph, cursors }), result: null };
     }
     case "addAnnotation": {
@@ -1398,7 +1395,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
         state: {
-          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: {} }),
+          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: dict() }),
           windows: [...state.windows, placeWindow(state, name, "table")],
         },
         result: name,
@@ -1413,9 +1410,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeFromTable": {
       const table = requireTable(state, command.table);
       const columns = table.columns.filter((column) => !command.waves.includes(column));
-      const widths = Object.fromEntries(
-        Object.entries(table.widths).filter(([wave]) => columns.includes(wave)),
-      );
+      const widths = filterDict(table.widths, (_, wave) => columns.includes(wave));
       return { state: putTable(state, { ...table, columns, widths }), result: null };
     }
     case "modifyTable": {
@@ -1439,7 +1434,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!table.columns.includes(command.wave)) return { state, result: null };
       const width = Math.round(Math.max(32, Math.min(800, command.width)));
       return {
-        state: putTable(state, { ...table, widths: { ...table.widths, [command.wave]: width } }),
+        state: putTable(state, { ...table, widths: withEntry(table.widths, command.wave, width) }),
         result: null,
       };
     }
@@ -1468,7 +1463,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: {
           ...state,
-          pages: { ...state.pages, [name]: page },
+          pages: withEntry(state.pages, name, page),
           windows: [...state.windows, placeWindow(state, name, "page")],
         },
         result: name,
@@ -1567,7 +1562,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: {
           ...state,
-          procedures: { ...state.procedures, [name]: procedure },
+          procedures: withEntry(state.procedures, name, procedure),
           windows: [...state.windows, placeWindow(state, name, "procedure")],
         },
         result: name,
@@ -1589,7 +1584,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         return { state, result: null };
       }
       return {
-        state: { ...state, procedures: { ...state.procedures, [command.name]: next } },
+        state: { ...state, procedures: withEntry(state.procedures, command.name, next) },
         result: null,
       };
     }
@@ -1597,31 +1592,25 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!windowTaken(state)(command.name)) {
         throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
       }
-      const graphs = { ...state.graphs };
-      const tables = { ...state.tables };
-      const procedures = { ...state.procedures };
-      const pages = { ...state.pages };
+      const gone = [command.name];
+      let pages = withoutEntries(state.pages, gone);
       // A graph that is closed leaves the pages it was on.
-      if (command.name in graphs) {
+      if (command.name in state.graphs) {
         for (const [name, page] of Object.entries(pages)) {
           if (page.items.some((item) => item.graph === command.name)) {
-            pages[name] = {
+            pages = withEntry(pages, name, {
               ...page,
               items: page.items.filter((item) => item.graph !== command.name),
-            };
+            });
           }
         }
       }
-      delete graphs[command.name];
-      delete tables[command.name];
-      delete procedures[command.name];
-      delete pages[command.name];
       return {
         state: {
           ...state,
-          graphs,
-          tables,
-          procedures,
+          graphs: withoutEntries(state.graphs, gone),
+          tables: withoutEntries(state.tables, gone),
+          procedures: withoutEntries(state.procedures, gone),
           pages,
           windows: state.windows.filter((window) => window.name !== command.name),
         },

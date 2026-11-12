@@ -1,7 +1,9 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand } from "../doc/commands";
+import { applyCommand, checkName } from "../doc/commands";
+import { dict, dictFrom } from "../doc/dict";
 import {
   AXIS_SIDES,
+  CURSOR_NAMES,
   DEFAULT_TABLE_DIGITS,
   defaultAxis,
   defaultTraceStyle,
@@ -75,25 +77,27 @@ export function describeExperiment(
         : { name, file: fileFor(wave), ...scaling };
     }),
     folders: [...state.folders],
-    graphs: { ...state.graphs },
-    tables: { ...state.tables },
-    procedures: { ...state.procedures },
-    pages: { ...state.pages },
+    graphs: dictFrom(state.graphs),
+    tables: dictFrom(state.tables),
+    procedures: dictFrom(state.procedures),
+    pages: dictFrom(state.pages),
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
 }
 
 /** Fills in what graphs saved by earlier versions do not have. */
-function upgradeGraph(saved: GraphSpec): GraphSpec {
-  const axes: Record<string, AxisSpec> = {};
+function upgradeGraph(graphName: string, saved: GraphSpec): GraphSpec {
+  const axes = dict<AxisSpec>();
   for (const side of AXIS_SIDES) axes[side] = defaultAxis(side);
   for (const [name, axis] of Object.entries(saved.axes ?? {})) {
     const side = (axis.side as AxisSide | undefined) ?? (name as AxisSide);
-    axes[name] = { ...defaultAxis(side), ...axis, side };
+    axes[checkName(name, "axis")] = { ...defaultAxis(side), ...axis, side };
   }
+  const cursors = saved.cursors ?? {};
   return {
     ...saved,
+    name: graphName,
     traces: (saved.traces ?? []).map((trace, index): TraceSpec => ({
       ...defaultTraceStyle(index),
       ...trace,
@@ -117,7 +121,12 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       trace: annotation.trace ?? null,
       point: annotation.point ?? 0,
     })),
-    cursors: saved.cursors ?? {},
+    cursors: dict(
+      CURSOR_NAMES.filter((cursor) => Object.hasOwn(cursors, cursor)).map((cursor) => [
+        cursor,
+        cursors[cursor]!,
+      ]),
+    ),
     showInfo: saved.showInfo ?? false,
     axes,
   };
@@ -151,23 +160,33 @@ export function buildState(
     // Waves are rebuilt through makeWave so the document assigns their revisions.
     state = applyCommand(state, { op: "makeWave", name, ...decodeNpy(bytes), ...scaling }).state;
   }
-  const graphs: Record<string, GraphSpec> = {};
-  for (const [name, graph] of Object.entries(saved.graphs)) graphs[name] = upgradeGraph(graph);
-  const tables: Record<string, TableSpec> = {};
+  // Names are checked as the commands that make these would check them. The
+  // records are rebuilt without a prototype (see ../doc/dict), whatever JSON gave.
+  const graphs = dict<GraphSpec>();
+  for (const [name, graph] of Object.entries(saved.graphs)) {
+    graphs[checkName(name, "graph")] = upgradeGraph(name, graph);
+  }
+  const tables = dict<TableSpec>();
   for (const [name, table] of Object.entries(saved.tables)) {
-    tables[name] = {
+    tables[checkName(name, "table")] = {
       ...table,
+      name,
       digits: table.digits ?? DEFAULT_TABLE_DIGITS,
-      widths: table.widths ?? {},
+      widths: dictFrom(table.widths),
     };
   }
-  const procedures: Record<string, ProcedureSpec> = {};
+  const procedures = dict<ProcedureSpec>();
   for (const [name, procedure] of Object.entries(saved.procedures ?? {})) {
-    procedures[name] = { name, code: procedure.code ?? "", autoRun: procedure.autoRun ?? true };
+    procedures[checkName(name, "procedure")] = {
+      name,
+      code: procedure.code ?? "",
+      autoRun: procedure.autoRun ?? true,
+    };
   }
   // A window whose content did not come along would be an empty frame.
-  const pages: Record<string, PageSpec> = {};
+  const pages = dict<PageSpec>();
   for (const [name, page] of Object.entries(saved.pages ?? {})) {
+    checkName(name, "page layout");
     // A page keeps only the graphs that came along.
     const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
     pages[name] = { ...page, name, items };
