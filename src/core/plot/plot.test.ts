@@ -649,6 +649,81 @@ describe("layoutGraph", () => {
     expect(svg).toContain('fill-opacity="0.25"');
   });
 
+  describe("fills across gaps in the data", () => {
+    /** The X span of each filled area, in data values, rounded to hundredths. */
+    const filledSpans = (layout: ReturnType<typeof lay>) =>
+      find(layout.prims, "polygon").map((area) => {
+        const xs = Array.from(area.points).filter((_, index) => index % 2 === 0);
+        const { scale } = layout.axes.bottom!;
+        return [Math.min(...xs), Math.max(...xs)].map(
+          (pixel) => Math.round(scale.toValue(pixel) * 100) / 100,
+        );
+      });
+
+    it("breaks the fill between two traces wherever either one has a gap", () => {
+      const doc = new Doc();
+      const a = Float64Array.of(3, 3, 3, NaN, 3, 3, 3, 3, 3, 3);
+      const b = Float64Array.of(1, 1, 1, 1, 1, 1, NaN, 1, 1, 1);
+      doc.dispatch({ op: "makeWave", name: "a", data: a });
+      doc.dispatch({ op: "makeWave", name: "b", data: b });
+      doc.dispatch({ op: "display", y: ["a", "b"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 2],
+        [4, 5],
+        [7, 9],
+      ]);
+    });
+
+    it("fills between traces with different X only where both have data", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "xa", data: Float64Array.of(0, 1, 2, 3, 4, 5, 6) });
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, 3, NaN, 3, 3, 3) });
+      // Three points at X 0.5, 2.5 and 4.5.
+      doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(1, 1, 1), x0: 0.5, dx: 2 });
+      doc.dispatch({ op: "display", y: ["a"], x: "xa" });
+      doc.dispatch({ op: "appendTraces", graph: "Graph0", y: ["b"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      const layout = lay(doc);
+      expect(filledSpans(layout)).toEqual([
+        [0.5, 2],
+        [4, 4.5],
+      ]);
+      // The band's edges follow the two traces.
+      const { scale } = layout.axes.left!;
+      const ys = find(layout.prims, "polygon").flatMap((area) =>
+        Array.from(area.points).filter((_, index) => index % 2 === 1),
+      );
+      expect(new Set(ys.map((pixel) => Math.round(scale.toValue(pixel) * 100) / 100))).toEqual(
+        new Set([1, 3]),
+      );
+    });
+
+    it("breaks a fill to zero at gaps", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, NaN, 3, 3) });
+      doc.dispatch({ op: "display", y: ["a"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "zero" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 1],
+        [3, 4],
+      ]);
+    });
+
+    it("pairs points in order when X goes back and forth", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "xs", data: Float64Array.of(0, 2, 1, 3, 2, 4) });
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, 3, NaN, 3, 3) });
+      doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(1, 1, 1, 1, 1, 1) });
+      doc.dispatch({ op: "display", y: ["a", "b"], x: "xs" });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 2],
+        [2, 4],
+      ]);
+    });
+  });
+
   it("draws a trace shifted by its offsets and makes room for it", () => {
     const doc = pairDoc();
     const before = lay(doc);

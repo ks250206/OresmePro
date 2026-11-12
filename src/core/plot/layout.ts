@@ -797,6 +797,124 @@ function emitAnnotation(
   return box;
 }
 
+/** Whether the X of a run of pixels only ever goes one way. */
+function oneWay(run: Float32Array): boolean {
+  let rising = true;
+  let falling = true;
+  for (let index = 2; index < run.length; index += 2) {
+    if (run[index]! < run[index - 2]!) rising = false;
+    if (run[index]! > run[index - 2]!) falling = false;
+  }
+  return rising || falling;
+}
+
+/**
+ * The part of a run (whose X goes one way) between two X positions, from
+ * left to right, with its ends cut where the run crosses them.
+ */
+function sliceRun(run: Float32Array, lo: number, hi: number): number[] {
+  const count = run.length / 2;
+  const rising = run[0]! <= run[run.length - 2]!;
+  const out: number[] = [];
+  let px = Number.NaN;
+  let py = Number.NaN;
+  for (let step = 0; step < count; step += 1) {
+    const at = (rising ? step : count - 1 - step) * 2;
+    const x = run[at]!;
+    const y = run[at + 1]!;
+    if (step > 0) {
+      const cut = (edge: number) => out.push(edge, py + ((y - py) * (edge - px)) / (x - px));
+      if (px < lo && x > lo) cut(lo);
+      if (px < hi && x > hi) cut(hi);
+    }
+    if (x >= lo && x <= hi) out.push(x, y);
+    px = x;
+    py = y;
+  }
+  return out;
+}
+
+/** A polygon along one edge and back along the other, both given in the same direction. */
+function ring(out: readonly number[], back: readonly number[]): Float32Array {
+  const points = new Float32Array(out.length + back.length);
+  points.set(out);
+  for (let at = 0; at < back.length; at += 2) {
+    points[out.length + at] = back[back.length - 2 - at]!;
+    points[out.length + at + 1] = back[back.length - 1 - at]!;
+  }
+  return points;
+}
+
+/**
+ * The areas between two traces, out along one and back along the other.
+ * A gap in either breaks the band, so each area covers only the X that a
+ * run of each trace spans, and nothing joins across the missing stretch.
+ */
+function bandBetween(upper: Float32Array[], lower: Float32Array[]): Float32Array[] {
+  const spans = (runs: Float32Array[]) =>
+    runs
+      .filter((run) => run.length >= 4)
+      .map((run) => {
+        const ends = [run[0]!, run[run.length - 2]!];
+        return { run, lo: Math.min(...ends), hi: Math.max(...ends) };
+      })
+      .sort((one, other) => one.lo - other.lo);
+  const above = spans(upper);
+  const below = spans(lower);
+  const areas: Float32Array[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < above.length && j < below.length) {
+    const a = above[i]!;
+    const b = below[j]!;
+    const lo = Math.max(a.lo, b.lo);
+    const hi = Math.min(a.hi, b.hi);
+    if (hi > lo) {
+      areas.push(ring(sliceRun(a.run, lo, hi), sliceRun(b.run, lo, hi)));
+    }
+    if (a.hi < b.hi) i += 1;
+    else j += 1;
+  }
+  return areas;
+}
+
+/**
+ * The areas between two traces whose X goes back and forth, where X cannot
+ * say what lies opposite what: points are paired by index instead, and a
+ * point missing from either trace breaks the band.
+ */
+function bandByIndex(
+  one: ResolvedTrace,
+  other: ResolvedTrace,
+  first: { xs: Scale; ys: Scale },
+  second: { xs: Scale; ys: Scale },
+): Float32Array[] {
+  const count = Math.min(
+    one.x ? Math.min(one.y.data.length, one.x.data.length) : one.y.data.length,
+    other.x ? Math.min(other.y.data.length, other.x.data.length) : other.y.data.length,
+  );
+  const areas: Float32Array[] = [];
+  let out: number[] = [];
+  let back: number[] = [];
+  const close = () => {
+    if (out.length >= 4) areas.push(ring(out, back));
+    out = [];
+    back = [];
+  };
+  for (let index = 0; index < count; index += 1) {
+    const ax = first.xs.toPixel(traceX(one.y, one.x, index));
+    const ay = first.ys.toPixel(one.y.data[index]!);
+    const bx = second.xs.toPixel(traceX(other.y, other.x, index));
+    const by = second.ys.toPixel(other.y.data[index]!);
+    if ([ax, ay, bx, by].every(Number.isFinite)) {
+      out.push(ax, ay);
+      back.push(bx, by);
+    } else close();
+  }
+  close();
+  return areas;
+}
+
 /** The size of an error bar at one point: from a wave, or constant. */
 function errorAt(source: string | number | null, waves: Readonly<Record<string, Wave>>) {
   if (source === null) return null;
@@ -1365,20 +1483,12 @@ export function layoutGraph(
         // Out along this trace and back along the next one, if they share axes.
         const next = traces[order + 1];
         if (next && next.spec.hAxis === spec.hAxis && next.spec.vAxis === spec.vAxis) {
-          const out = upper.flatMap((run) => Array.from(run));
-          const forward = runsOf(next).flatMap((run) => Array.from(run));
-          const lower: number[] = [];
-          for (let index = forward.length - 2; index >= 0; index -= 2) {
-            lower.push(forward[index]!, forward[index + 1]!);
-          }
-          if (out.length >= 4 && lower.length >= 4) {
-            children.push({
-              kind: "polygon",
-              points: Float32Array.from([...out, ...lower]),
-              fill,
-              opacity,
-            });
-          }
+          const lower = runsOf(next);
+          const areas =
+            upper.every(oneWay) && lower.every(oneWay)
+              ? bandBetween(upper, lower)
+              : bandByIndex(trace, next, scalesOf(spec), scalesOf(next.spec));
+          for (const points of areas) children.push({ kind: "polygon", points, fill, opacity });
         }
       }
     }
