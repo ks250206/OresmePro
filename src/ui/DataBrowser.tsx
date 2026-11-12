@@ -545,7 +545,7 @@ export function DataBrowser() {
         {renderFolder("", 0)}
         {order.length === 0 && folders.length === 0 ? (
           <div className="px-4 py-1 leading-relaxed text-muted">
-            No waves yet. Drop a CSV file here, or make one:
+            No waves yet. Drop a CSV or Igor file here, or make one:
             <div className="font-mono text-[11px]">op.make("w", np.arange(10))</div>
           </div>
         ) : null}

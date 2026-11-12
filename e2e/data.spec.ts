@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "./fixtures";
 
 test.describe("tables", () => {
@@ -379,5 +380,92 @@ test.describe("loading delimited text", () => {
     const content = `v\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
     await app.drop([{ name: "big.csv", content }]);
     await expect.poll(async () => (await app.wave("v"))?.length, { timeout: 20_000 }).toBe(rows);
+  });
+});
+
+test.describe("loading Igor files", () => {
+  /** One of the files that scripts/igor-fixtures.py writes, as a file to drop. */
+  const igorFile = async (fixture: string, name = fixture) => ({
+    name,
+    content: [
+      ...(await readFile(new URL(`../src/core/io/testdata/igor/${fixture}`, import.meta.url))),
+    ],
+  });
+
+  test("a dropped binary wave loads at once, with its scaling, units and note", async ({
+    app,
+    page,
+  }) => {
+    await app.drop([await igorFile("v5-be-3d.ibw", "cube.ibw")]);
+    await expect.poll(async () => (await app.doc()).order).toEqual(["cube"]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const cube = (await app.wave("cube"))!;
+    // Igor's value i + 10j + 100k at (i, j, k), in C order here.
+    expect(cube).toMatchObject({ shape: [4, 3, 2], unit: "counts per second" });
+    expect(cube.data.slice(0, 4)).toEqual([0, 100, 10, 110]);
+    const scaling = await page.evaluate(() => {
+      const wave = globalThis.oresme.doc.getState().waves.cube!;
+      return [wave.x0, wave.dx, wave.xUnit, wave.y0, wave.dy, wave.yUnit, wave.note];
+    });
+    expect(scaling.slice(0, 6)).toEqual([0.5, 0.1, "nanometre", -1, 2, "µm"]);
+    expect(scaling[6]).toMatch(/^Loaded from cube\.ibw \(SHA-256 [0-9a-f]{64}\): Igor wave cube/);
+    expect(scaling[6]).toMatch(/\nIgor's note:\n測定 1\n温度 300 K$/);
+    expect((await app.lastEntry()).code).toMatch(
+      /^Loaded cube \(float64, 4×3×2\) from cube\.ibw\./,
+    );
+
+    // Again: the new wave gets a suffix, and the first is left as it was.
+    await app.drop([await igorFile("v5-be-3d.ibw", "cube.ibw")]);
+    await expect.poll(async () => (await app.doc()).order).toEqual(["cube", "cube_1"]);
+  });
+
+  test("a dropped packed experiment loads its waves under their data folders, as one step", async ({
+    app,
+  }) => {
+    await app.drop([await igorFile("experiment-le.pxp", "run.pxp")]);
+    await expect.poll(async () => (await app.doc()).order.length).toBe(21);
+    const doc = await app.doc();
+    expect(doc.folders).toEqual([
+      "raw_data",
+      "raw_data:run_1",
+      "a_folder_whose_name_is_longer_than_31_bytes",
+      "dup_1",
+    ]);
+    expect(doc.order.slice(0, 8)).toEqual([
+      "wave0",
+      "my_wave",
+      "a_b",
+      "a_b_1",
+      "wave_2nd",
+      "dup",
+      "raw_data:sig",
+      "raw_data:run_1:t0_int8",
+    ]);
+    expect((await app.wave("raw_data:run_1:t5_uint32"))!.data).toEqual([0, 0, 4294967295]);
+    expect((await app.wave("a_folder_whose_name_is_longer_than_31_bytes:labels"))!.text).toEqual([
+      "one",
+      "two",
+    ]);
+    const summary = (await app.lastEntry()).code;
+    expect(summary).toMatch(
+      /^Loaded 21 waves from run\.pxp: 6 in root, 1 in raw_data, 12 in raw_data:run_1/,
+    );
+    expect(summary).toContain("Not loaded: root:dep (Igor computes it from a formula");
+    expect(summary).toContain(
+      "Not brought over: 2 graphs, 1 table (Igor's window recreation macros)",
+    );
+    // Nothing of the file opens a window, and the whole load is one step to undo.
+    expect(doc.windows).toEqual([]);
+    await app.menu("Edit", "Undo");
+    await expect.poll(async () => (await app.doc()).order).toEqual([]);
+    expect((await app.doc()).folders).toEqual([]);
+  });
+
+  test("a damaged Igor file loads nothing and says why", async ({ app, page }) => {
+    const file = await igorFile("experiment-be.pxp", "cut.pxp");
+    await app.drop([{ name: file.name, content: file.content.slice(0, 4000) }]);
+    const alert = page.getByRole("dialog", { name: "Could not load cut.pxp" });
+    await expect(alert.getByRole("alert")).toContainText("The file is cut short or damaged");
+    expect((await app.doc()).order).toEqual([]);
   });
 });
