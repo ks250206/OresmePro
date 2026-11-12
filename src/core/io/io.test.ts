@@ -115,6 +115,54 @@ describe("parseDelimited", () => {
     expect((result.columns[0] as Float64Array)[rows - 1]).toBe(rows - 1);
   });
 
+  it("keeps a column that mixes text and numbers as text, every cell as written", () => {
+    const result = parseDelimited("name,value\nA,1\nB,2\n3,3\n4,4\n5,5\n", free);
+    expect(result.names).toEqual(["name", "value"]);
+    expect(result.columns[0]).toEqual(["A", "B", "3", "4", "5"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([1, 2, 3, 4, 5]);
+    // A column of dates with a stray number is text too.
+    const dates = parseDelimited("when\n2026-11-11\n7\n", free);
+    expect([dates.dates[0], dates.columns[0]]).toEqual([false, ["2026-11-11", "7"]]);
+  });
+
+  it("reads markers of missing values as NaN, and infinities", () => {
+    const markers =
+      "NaN,nan,NA,na,N/A,#N/A,null,NULL,None,-,--,#DIV/0!,#VALUE!,#REF!,#NAME?,#NUM!,#NULL!";
+    const text = [
+      "value",
+      "1",
+      ...markers.split(","),
+      "inf",
+      "+Inf",
+      "-inf",
+      "Infinity",
+      "-Infinity",
+      "",
+    ];
+    const result = parseDelimited(text.map((cell, index) => `${index},${cell}`).join("\n"), free);
+    expect(result.dates).toEqual([false, false]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([
+      1,
+      ...markers.split(",").map(() => Number.NaN),
+      Infinity,
+      Infinity,
+      -Infinity,
+      Infinity,
+      -Infinity,
+      Number.NaN,
+    ]);
+    const dates = parseDelimited("when\n2026-11-11\nN/A\n\n", free);
+    expect(dates.dates).toEqual([true]);
+    expect((dates.columns[0] as Float64Array)[1]).toBeNaN();
+    // A marker in a column of text is text like the rest.
+    expect(parseDelimited("label\nA\nN/A\n-\n", free).columns[0]).toEqual(["A", "N/A", "-"]);
+    // An Excel error at the start of a line is a value, not a comment.
+    const first = parseDelimited("a,b\n#N/A,1\n#DIV/0!,2\n# note\n3,3\n", free);
+    expect(Array.from(first.columns[0] as Float64Array)).toEqual([NaN, NaN, 3]);
+    // "Na" is sodium, not "not available".
+    expect(parseDelimited("element\nNa\n", free).columns[0]).toEqual(["Na"]);
+  });
+
   it("avoids names that are taken", () => {
     const result = parseDelimited("x,x\n1,2\n", (name) => name === "x");
     expect(result.names).toEqual(["x_1", "x_2"]);

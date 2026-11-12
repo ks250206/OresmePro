@@ -86,17 +86,59 @@ function detectDelimiter(lines: string[]): string | RegExp {
   return present ? present.candidate : /\s+/;
 }
 
-const toNumber = (cell: string): number => {
-  const text = cell.trim();
-  if (text === "") return Number.NaN;
-  const value = Number(text);
-  return Number.isNaN(value) && !/^[+-]?nan$/i.test(text) ? Number.NaN : value;
-};
+/** Excel's error values, which it also writes into CSV files. */
+const EXCEL_ERRORS = /^#(?:N\/A|DIV\/0!|VALUE!|REF!|NAME\?|NUM!|NULL!)$/i;
 
-const isNumeric = (cell: string): boolean => {
+/**
+ * Words that stand for a missing value. "NA" only in one case: "Na" is
+ * sodium, which is as likely in scientific data as R's "not available".
+ */
+const MISSING = /^(?:[+-]?nan|n\/a|null|none|-|--)$/i;
+
+const INFINITY = /^([+-]?)inf(?:inity)?$/i;
+
+/** What a cell holds, as far as deciding the type of its column goes. */
+type CellKind = "empty" | "missing" | "number" | "date" | "text";
+
+function cellKind(cell: string): CellKind {
   const text = cell.trim();
-  return text === "" || /^[+-]?nan$/i.test(text) || !Number.isNaN(Number(text));
-};
+  if (text === "") return "empty";
+  if (isMissing(text)) return "missing";
+  if (!Number.isNaN(Number(text)) || INFINITY.test(text)) return "number";
+  return parseDate(text) === null ? "text" : "date";
+}
+
+function isMissing(text: string): boolean {
+  return text === "NA" || text === "na" || MISSING.test(text) || EXCEL_ERRORS.test(text);
+}
+
+/** The value of a cell of a numeric column: NaN for a missing value. */
+function numberOf(cell: string): number {
+  const text = cell.trim();
+  const infinity = INFINITY.exec(text);
+  if (infinity) return infinity[1] === "-" ? -Infinity : Infinity;
+  return text === "" || isMissing(text) ? Number.NaN : Number(text);
+}
+
+/**
+ * The type of a column from the kinds of its cells: numbers when every
+ * filled cell is a number or a missing value, dates when every one is a date
+ * or missing, text otherwise.
+ */
+function columnKind(kinds: readonly CellKind[]): "number" | "date" | "text" {
+  const dates = kinds.includes("date");
+  if (kinds.includes("text") || (dates && kinds.includes("number"))) return "text";
+  return dates ? "date" : "number";
+}
+
+/**
+ * A line starting with `#` is a comment, unless it starts with one of
+ * Excel's error values, such as `#N/A`, in its first cell.
+ */
+function isComment(line: string): boolean {
+  const text = line.trimStart();
+  return text.startsWith("#") && !EXCEL_ERRORS.test(/^[^\s,;]*/.exec(text)![0]);
+}
 
 /**
  * Parses delimited text (CSV, TSV, whitespace-separated) into columns of
@@ -109,9 +151,7 @@ export function parseDelimited(
   taken: (name: string) => boolean,
   zone: TimeZone = UTC,
 ): DelimitedResult {
-  const lines = text
-    .split(/\r\n|\n|\r/)
-    .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
+  const lines = text.split(/\r\n|\n|\r/).filter((line) => line.trim() !== "" && !isComment(line));
   if (lines.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
 
   const delimiter = detectDelimiter(lines);
@@ -133,7 +173,7 @@ export function columnsFromRows(
 ): DelimitedResult {
   if (rows.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
   rows = [...rows];
-  const hasHeader = rows[0]!.some((cell) => cell.trim() !== "" && !isNumeric(cell));
+  const hasHeader = rows[0]!.some((cell) => ["text", "date"].includes(cellKind(cell)));
   const header = hasHeader ? rows.shift()! : [];
   // A loop, not Math.max(...): a file can have more rows than a call can take arguments.
   let width = header.length;
@@ -145,38 +185,25 @@ export function columnsFromRows(
   const used = new Set<string>();
   for (let column = 0; column < width; column += 1) {
     const title = header[column]?.trim() || `column${column}`;
+    const cells = rows.map((row) => row[column] ?? "");
+    const kind = columnKind(cells.map(cellKind));
+    const isText = kind === "text";
+    const isDate = kind === "date";
     const data = new Float64Array(rows.length);
-    let numeric = 0;
-    let filled = 0;
-    rows.forEach((row, index) => {
-      const cell = row[column] ?? "";
-      data[index] = toNumber(cell);
-      if (cell.trim() !== "") {
-        filled += 1;
-        if (isNumeric(cell)) numeric += 1;
-      }
-    });
-    // A column counts as text when most of its filled cells are not numbers...
-    let isText = filled > 0 && numeric < filled / 2;
-    // ...unless every filled cell is a date, which is stored as a number of seconds.
-    let isDate = false;
-    if (isText) {
-      const seconds = rows.map((row) => {
-        const cell = (row[column] ?? "").trim();
-        return cell === "" ? Number.NaN : parseDate(cell, zone);
+    if (isDate) {
+      // Dates are stored as seconds; parseDate is not null for any cell judged a date.
+      cells.forEach((cell, index) => {
+        data[index] = cellKind(cell) === "date" ? parseDate(cell.trim(), zone)! : Number.NaN;
       });
-      if (seconds.every((value) => value !== null)) {
-        data.set(seconds as number[]);
-        isText = false;
-        isDate = true;
-      }
+    } else if (!isText) {
+      cells.forEach((cell, index) => (data[index] = numberOf(cell)));
     }
     const base = sanitizeName(title, "wave");
     let name = base;
     for (let suffix = 1; used.has(name) || taken(name); suffix += 1) name = `${base}_${suffix}`;
     used.add(name);
     names.push(name);
-    columns.push(isText ? rows.map((row) => row[column] ?? "") : data);
+    columns.push(isText ? cells : data);
     dates.push(isDate);
   }
   return { names, columns, dates, rows: rows.length };
