@@ -1001,4 +1001,45 @@ describe("oresme Python API", () => {
     // Reference: position fixed at 20, width by golden section, the rest linear.
     expect(stdout).toBe("20.0 1.103 1.4987 0.30221 0.13836 True\n");
   });
+
+  it("fits on a large offset and says when a fit cannot converge", async () => {
+    expect(
+      await run(
+        [
+          'ow = op.make("offset", 1e8 + 3 * np.arange(10))',
+          'r = op.fit("line", ow, quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.chisq, r.converged)",
+          // The same model as a custom function goes through the iterative solver.
+          "r = op.fit(lambda x, a, b: a + b * x, ow, guess=[1e8, 0], quiet=True)",
+          "print(round(r['a'] - 1e8, 6), round(r['b'], 6), r.chisq < 1e-10, r.converged)",
+          'r = op.fit("poly3", op.make("offpoly", 1e8 + 2 * np.arange(10) + 0.5 * np.arange(10) ** 2), hold={"K0": 1e8}, quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.converged)",
+          // y = exp(-a*x) approaches 0 only as a goes to infinity: there is no minimum.
+          "r = op.fit(lambda x, a: np.exp(-a * x), op.make('nofit', np.zeros(10)), x=op.make('nofit_x', np.arange(1.0, 11)), guess=[0.5], quiet=True)",
+          "print(r.converged, 'did not converge' in str(r))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[100000000.0, 3.0] 0.0 True",
+      "0.0 3.0 True True",
+      "[100000000.0, 2.0, 0.5] True",
+      "False True",
+    ]);
+  });
+
+  it("weights a linear fit by the uncertainties of the points", async () => {
+    expect(
+      await run(
+        [
+          'op.make("wline", [0.0, 1.0, 3.0]); op.make("wline_err", [1.0, 1.0, 0.5])',
+          'r = op.fit("line", "wline", sigma="wline_err", quiet=True)',
+          "print(np.round(r.coef * 21, 9).tolist(), round(r.chisq * 21, 9), np.round(r.sigma ** 2 * 21, 9).tolist(), r.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Weights 1, 1, 4: the weighted normal equations give a = -4/21, b = 33/21,
+    // chi-square 4/21, and variances 17/21 and 6/21.
+    expect(stdout).toBe("[-4.0, 33.0] 4.0 [17.0, 6.0] True\n");
+  });
 });

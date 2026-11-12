@@ -166,7 +166,8 @@ wave を列として表示・編集します。行も列も仮想スクロール
 
 **Analysis** メニューから実行できます。どれも Python の関数を呼び出すだけなので、実行したコマンドと結果は履歴に残ります。
 
-- **Curve Fitting…**: `line`、多項式、`gauss`、`lor`、`exp`、`dblexp`、`sin`、`power`、`sigmoid` を最小二乗法(Levenberg–Marquardt)で当てはめます。
+- **Curve Fitting…**: `line`、多項式、`gauss`、`lor`、`exp`、`dblexp`、`sin`、`power`、`sigmoid` を最小二乗法で当てはめます。
+  `line` と多項式は線形最小二乗法で直接解き、そのほかは Levenberg–Marquardt で反復します。収束しなかったときは結果にそう表示されます(`r.converged` が `False`)。
   初期値は自動で推定します。カーソル A–B 間だけを対象にもできます。
   係数の**固定**(`y0=0`)、**制約**(`A > 0, 2 < x0 < 5`)、点ごとの標準偏差による**重み付け**を指定できます。
   結果は `fit_<wave名>`(当てはめた曲線。元データのグラフに追加されます)、`W_coef`(係数)、`W_sigma`(標準偏差)に入ります。

@@ -162,14 +162,26 @@ def _resolve(function, x, y, guess):
 
 
 def _jacobian(model, x, params):
+    """Derivatives of the model by its parameters, by central differences."""
+    eps = np.finfo(float).eps
     columns = []
     for index, value in enumerate(params):
         step = 1e-6 * max(abs(value), 1e-6)
-        up = params.copy()
-        down = params.copy()
-        up[index] += step
-        down[index] -= step
-        columns.append((model(x, *up) - model(x, *down)) / (2 * step))
+        for _ in range(5):
+            up = params.copy()
+            down = params.copy()
+            up[index] += step
+            down[index] -= step
+            high, low = model(x, *up), model(x, *down)
+            # Rounding blurs the model values by about eps times their size: on
+            # a large background a small step changes nothing that survives
+            # it. Take a step large enough for the change to stand clear.
+            change = float(np.max(np.abs(high - low)))
+            blur = eps * max(float(np.max(np.abs(high))), float(np.max(np.abs(low))))
+            if not change < 1e4 * blur:
+                break
+            step *= min(1e6, 1e6 * blur / change) if change > 0 else 1e6
+        columns.append((high - low) / (up[index] - down[index]))
     return np.column_stack(columns)
 
 
@@ -192,7 +204,8 @@ def _damped_step(jacobian, residual, free, damping):
     return step
 
 
-def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max_iterations=200):
+def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max_iterations=200,
+                   design=None):
     """Levenberg-Marquardt within bounds. Returns (parameters, covariance, chi-square, converged).
 
     ``weights`` multiply the residuals (1/sigma per point). ``lower`` and
@@ -200,6 +213,10 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
     outward is held there and the step is solved for the others; it is let go
     once the fit pulls it back inside. ``converged`` is true only where the
     linearised model promises no further reduction of chi-square worth having.
+
+    ``design`` is the matrix of a model that is linear in its parameters (one
+    column per parameter). It is then solved directly by linear least
+    squares, and only where that answer breaks a bound by iterating.
     """
     params = np.array(start, dtype=float)
     lower = np.full(len(params), -np.inf) if lower is None else np.asarray(lower, dtype=float)
@@ -211,7 +228,7 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
         return (y - model(x, *values)) * scale
 
     def jacobian_at(values):
-        jacobian = _jacobian(model, x, values)
+        jacobian = _jacobian(model, x, values) if design is None else design
         return jacobian if weights is None else jacobian * weights[:, None]
 
     def pushed_out(direction, among):
@@ -225,7 +242,14 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
             raise _op.OresmeError("The fit function is not finite at the starting guess.")
         # Chi-square cannot be resolved more finely than the rounding of the data.
         floor = (16 * np.finfo(float).eps * float(np.linalg.norm(y * scale))) ** 2
-        damping = 1e-3
+        if design is not None:
+            jacobian = jacobian_at(params)
+            trial = params + _damped_step(jacobian, residual, np.ones(len(params), dtype=bool), 0.0)
+            if np.all((trial >= lower) & (trial <= upper)):
+                trial_residual = residuals(trial)
+                params, residual, chi = trial, trial_residual, float(trial_residual @ trial_residual)
+        # A linear model's Gauss-Newton step is exact; a nonlinear one starts damped.
+        damping = 0.0 if design is not None else 1e-3
         converged = False
         for _ in range(max_iterations):
             jacobian = jacobian_at(params)
@@ -256,7 +280,7 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                     damping = max(damping / 10, 1e-12)
                     improved = True
                     break
-                damping *= 10
+                damping = max(damping * 10, 1e-3)
             if not improved:
                 break
         jacobian = jacobian_at(params)
@@ -464,8 +488,12 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
         trial[free] = values
         return model(x_, *trial)
 
+    design = None
+    if isinstance(function, str) and (function == "line" or function.startswith("poly")):
+        # a + b*x and K0 + K1*x + ... are linear in their parameters.
+        design = np.vander(x_fit, len(names), increasing=True)[:, free]
     best, free_covariance, chisq, converged = _least_squares(
-        reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free]
+        reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
     )
     params = full.copy()
     params[free] = best
