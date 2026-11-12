@@ -12,11 +12,14 @@ import type { Command } from "../core/doc/commands";
 import {
   cellIndex,
   clearCommands,
+  clipboardCells,
+  clipboardText,
   pointCommands,
   selectionRange,
   tableEditCommands,
   type Cell,
   type CellEdit,
+  type CopiedCells,
   type TableColumn,
 } from "../core/doc/tableEdit";
 import { DATE_UNIT, leafName } from "../core/doc/types";
@@ -34,6 +37,9 @@ const POINT_WIDTH = 64;
 const COLUMN_WIDTH = 96;
 /** Copying more cells than this at once is refused rather than freezing the page. */
 const MAX_COPY_CELLS = 2_000_000;
+
+/** The last cells copied from any table, so that pasting them back gives the same cells. */
+let lastCopy: CopiedCells | null = null;
 
 interface ColumnInfo extends TableColumn {
   id: string;
@@ -224,8 +230,8 @@ export function TableWindow({ name }: { name: string }) {
     if (move) select(move);
   };
 
-  /** The selected cells as tab-separated text, at full precision. */
-  const selectionText = (): string | null => {
+  /** The selected cells at full precision, and the text copied for them. */
+  const selectionCopy = (): CopiedCells | null => {
     const cellCount = (range.bottom - range.top + 1) * (range.right - range.left + 1);
     if (cellCount > MAX_COPY_CELLS) {
       showError(
@@ -237,11 +243,11 @@ export function TableWindow({ name }: { name: string }) {
     const picked = columnInfos.slice(range.left, range.right + 1);
     // Rows past the end of every selected wave are empty: leave them out.
     const last = Math.min(range.bottom, Math.max(...picked.map(rowsOf)) - 1);
-    const lines: string[] = [];
+    const cells: string[][] = [];
     for (let index = range.top; index <= last; index += 1) {
-      lines.push(picked.map((info) => cellText(info, index, 17)).join("\t"));
+      cells.push(picked.map((info) => cellText(info, index, 17)));
     }
-    return lines.join("\n");
+    return { text: clipboardText(cells), cells };
   };
 
   const clearSelection = () => runGui(clearCommands(waves, columnInfos, range, plane));
@@ -293,16 +299,9 @@ export function TableWindow({ name }: { name: string }) {
 
   const onPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (editing) return;
-    const text = event.clipboardData.getData("text/plain");
-    if (!text.trim()) return;
+    const rows = clipboardCells(event.clipboardData.getData("text/plain"), lastCopy);
+    if (rows.length === 0) return;
     event.preventDefault();
-    // Tabs if there are any (spreadsheets), commas otherwise.
-    const separator = text.includes("\t") ? "\t" : ",";
-    const rows = text
-      .replace(/\r\n?/g, "\n")
-      .replace(/\n$/, "")
-      .split("\n")
-      .map((line) => line.split(separator));
     // Collect every pasted cell first: the cells of one wave must be written together.
     const edits: CellEdit[] = [];
     rows.forEach((cells, down) => {
@@ -323,9 +322,10 @@ export function TableWindow({ name }: { name: string }) {
   const onCopy = (event: React.ClipboardEvent<HTMLDivElement>, cut = false) => {
     if (editing) return;
     event.preventDefault();
-    const text = selectionText();
-    if (text === null) return;
-    event.clipboardData.setData("text/plain", text);
+    const copied = selectionCopy();
+    if (copied === null) return;
+    event.clipboardData.setData("text/plain", copied.text);
+    lastCopy = copied;
     if (cut) clearSelection();
   };
 

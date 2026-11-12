@@ -195,3 +195,86 @@ export function pointCommands(
   }
   return commands;
 }
+
+/** Cells copied from a table: the text put on the clipboard, and the cells it came from. */
+export interface CopiedCells {
+  text: string;
+  cells: readonly (readonly string[])[];
+}
+
+/**
+ * Cells as text for the clipboard, the way spreadsheets copy them: tabs
+ * between cells, lines between rows, and a cell in double quotes (with its
+ * quotes doubled) when it holds a tab or a line break, or starts with a quote.
+ */
+export function clipboardText(cells: readonly (readonly string[])[]): string {
+  const quote = (cell: string) =>
+    /[\t\n\r]|^"/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+  return cells.map((row) => row.map(quote).join("\t")).join("\n");
+}
+
+/**
+ * The cells of text pasted into a table. The table's own last copy, `own`,
+ * is recognised (whatever the clipboard did to its line ends) and its cells
+ * are used as they are: a single cell copied alone has no tab to show that
+ * a comma in it is not a separator. Other text is read as spreadsheets
+ * write it, by tabs and lines with quoted cells; text without tabs is split
+ * on commas only when every piece is a number or a date, as typed lists of
+ * numbers are, so that text with commas stays whole.
+ */
+export function clipboardCells(text: string, own?: CopiedCells | null): string[][] {
+  const bare = (value: string) => value.replace(/\r/g, "");
+  if (own && bare(own.text) === bare(text)) return own.cells.map((row) => [...row]);
+  if (text.trim() === "") return [];
+  const plain = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+  if (!plain.includes("\t") && plain.includes(",")) {
+    const rows = plain.split("\n").map((line) => line.split(","));
+    const value = (cell: string) => parseCell(cell) !== null || parseDate(cell) !== null;
+    if (rows.every((row) => row.every(value))) return rows;
+  }
+  return splitTabbed(plain);
+}
+
+/** Splits tab-separated text into rows of cells; a cell may be in double quotes. */
+function splitTabbed(text: string): string[][] {
+  const separator = /[\t\n]/g;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let at = 0;
+  for (;;) {
+    let end = -1;
+    let cell = "";
+    if (text[at] === '"') {
+      // Quotes count only if they enclose the whole cell; otherwise they are text.
+      const close = closingQuote(text, at + 1);
+      if (close >= 0 && /^[\t\n]?$/.test(text[close + 1] ?? "")) {
+        cell = text.slice(at + 1, close).replaceAll('""', '"');
+        end = close + 1;
+      }
+    }
+    if (end < 0) {
+      separator.lastIndex = at;
+      end = separator.exec(text)?.index ?? text.length;
+      cell = text.slice(at, end);
+    }
+    row.push(cell);
+    if (end >= text.length) break;
+    if (text[end] === "\n") {
+      rows.push(row);
+      row = [];
+    }
+    at = end + 1;
+  }
+  rows.push(row);
+  return rows;
+}
+
+/** The index of the quote that closes a quoted cell, skipping doubled quotes; -1 if none. */
+function closingQuote(text: string, from: number): number {
+  for (let index = from; index < text.length; index += 1) {
+    if (text[index] !== '"') continue;
+    if (text[index + 1] !== '"') return index;
+    index += 1;
+  }
+  return -1;
+}

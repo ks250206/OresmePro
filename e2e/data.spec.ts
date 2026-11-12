@@ -90,6 +90,32 @@ test.describe("tables", () => {
     expect((await app.wave("b"))!.data).toEqual([NaN, NaN, 8, 10]);
   });
 
+  test("text cells copied from a table paste back unchanged", async ({ app, page }) => {
+    await app.run(
+      'op.make("labels", ["Li,Mg", "a\\tb", "say \\"hi\\""]); op.make("other", ["x", "y", "z"]); t = op.edit("labels", "other")',
+    );
+    const cells = page.getByRole("grid", { name: "Table0" }).getByRole("gridcell");
+    // A single cell with a comma: nothing on the clipboard says the comma is not a separator.
+    await cells.nth(0).click();
+    expect(await app.copy()).toBe("Li,Mg");
+    await cells.nth(1).click();
+    await app.paste("Li,Mg");
+    expect((await app.wave("other"))!.text).toEqual(["Li,Mg", "y", "z"]);
+
+    // A tab in a cell is quoted, as spreadsheets do.
+    await cells.nth(2).click();
+    await cells.nth(4).click({ modifiers: ["Shift"] });
+    expect(await app.copy()).toBe('"a\tb"\nsay "hi"');
+    await cells.nth(3).click();
+    await app.paste('"a\tb"\r\nsay "hi"\r\n');
+    expect((await app.wave("other"))!.text).toEqual(["Li,Mg", "a\tb", 'say "hi"']);
+
+    // Text with commas from elsewhere stays in one cell.
+    await cells.nth(1).click();
+    await app.paste("Mg,Ca");
+    expect((await app.wave("other"))!.text).toEqual(["Mg,Ca", "a\tb", 'say "hi"']);
+  });
+
   test("rows and columns are selected by their headers and points deleted", async ({
     app,
     page,
