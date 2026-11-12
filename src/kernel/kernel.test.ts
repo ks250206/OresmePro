@@ -955,4 +955,50 @@ describe("oresme Python API", () => {
     ]);
     expect(doc.getState().waves.ztab2!.shape).toEqual([2, 2]);
   });
+
+  it("fits the free parameters while a bounded one rests on its bound", async () => {
+    expect(
+      await run(
+        [
+          'bw = op.make("bounded", 3 + 2 * np.arange(10))',
+          'r = op.fit("line", bw, bounds={"b": (None, 1)}, quiet=True)',
+          // With b = 1 the best a is the mean of y - x: 7.5, leaving sum((x - 4.5)^2) = 82.5.
+          "print(np.round(r.coef, 6).tolist(), round(r.chisq, 6), r.converged)",
+          'r = op.fit("line", bw, bounds={"b": (None, 5)}, quiet=True)',
+          "print(np.round(r.coef, 6).tolist(), round(r.chisq, 6), r.converged)",
+          "bx = np.linspace(-5, 5, 201)",
+          'bg = op.make("bgauss", 0.5 + 3 * np.exp(-((bx - 1.2) / 0.8) ** 2), x0=bx[0], dx=bx[1] - bx[0])',
+          'r = op.fit("gauss", bg, bounds={"width": (None, 0.5)}, quiet=True)',
+          "print(np.round(r.coef, 5).tolist(), round(r.chisq, 5), r.converged)",
+          'r = op.fit("gauss", bg, hold={"y0": 0.5}, bounds={"width": (0.1, 0.5)}, quiet=True)',
+          "print(np.round(r.coef, 5).tolist(), round(r.chisq, 5), r.converged, r.sigma[0])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The Gaussian references come from fixing the width at 0.5 and searching
+    // x0 by golden section, with y0 and A by linear least squares at each x0.
+    expect(stdout.trim().split("\n")).toEqual([
+      "[7.5, 1.0] 82.5 True",
+      "[3.0, 2.0] 0.0 True",
+      "[0.62112, 3.42646, 1.2, 0.5] 15.6695 True",
+      "[0.5, 3.59775, 1.2, 0.5] 18.25051 True 0.0",
+    ]);
+  });
+
+  it("lets a fitted peak rest on the edge of the data", async () => {
+    expect(
+      await run(
+        [
+          "ex = np.linspace(0, 20, 401)",
+          // A peak centred just beyond the data, so its position stops at x = 20.
+          'ep = op.make("edgepk", 0.3 + 2 * np.exp(-((ex - 21) / 1.5) ** 2), x0=0, dx=ex[1] - ex[0])',
+          "res = op.fit_peaks(ep, peaks=[19.5], components=False, quiet=True)",
+          "p = res[0]",
+          "print(p['x'], round(p['height'], 5), round(p['width'], 4), round(res.baseline['offset'], 5), round(res.chisq, 5), res.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Reference: position fixed at 20, width by golden section, the rest linear.
+    expect(stdout).toBe("20.0 1.103 1.4987 0.30221 0.13836 True\n");
+  });
 });

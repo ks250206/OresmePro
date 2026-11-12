@@ -173,11 +173,33 @@ def _jacobian(model, x, params):
     return np.column_stack(columns)
 
 
+def _damped_step(jacobian, residual, free, damping):
+    """The Levenberg-Marquardt step for the ``free`` parameters; the others stay put."""
+    step = np.zeros(jacobian.shape[1])
+    if not free.any():
+        return step
+    columns = jacobian[:, free]
+    # Columns of unit length, so that the damping weighs every parameter alike
+    # and the solve does not depend on the units of the parameters.
+    norms = np.sqrt(np.sum(columns**2, axis=0))
+    norms[norms == 0] = 1.0
+    columns = columns / norms
+    target = residual
+    if damping:
+        columns = np.vstack([columns, np.sqrt(damping) * np.eye(columns.shape[1])])
+        target = np.concatenate([residual, np.zeros(columns.shape[1])])
+    step[free] = np.linalg.lstsq(columns, target, rcond=None)[0] / norms
+    return step
+
+
 def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max_iterations=200):
-    """Levenberg-Marquardt. Returns (parameters, covariance, chi-square, converged).
+    """Levenberg-Marquardt within bounds. Returns (parameters, covariance, chi-square, converged).
 
     ``weights`` multiply the residuals (1/sigma per point). ``lower`` and
-    ``upper`` bound the parameters; steps are clipped to stay inside them.
+    ``upper`` bound the parameters. A parameter on a bound that the fit pushes
+    outward is held there and the step is solved for the others; it is let go
+    once the fit pulls it back inside. ``converged`` is true only where the
+    linearised model promises no further reduction of chi-square worth having.
     """
     params = np.array(start, dtype=float)
     lower = np.full(len(params), -np.inf) if lower is None else np.asarray(lower, dtype=float)
@@ -192,39 +214,50 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
         jacobian = _jacobian(model, x, values)
         return jacobian if weights is None else jacobian * weights[:, None]
 
+    def pushed_out(direction, among):
+        """Parameters on a bound that ``direction`` would carry past it."""
+        return among & (((params <= lower) & (direction < 0)) | ((params >= upper) & (direction > 0)))
+
     with np.errstate(all="ignore"):
         residual = residuals(params)
         chi = float(residual @ residual)
         if not np.isfinite(chi):
             raise _op.OresmeError("The fit function is not finite at the starting guess.")
+        # Chi-square cannot be resolved more finely than the rounding of the data.
+        floor = (16 * np.finfo(float).eps * float(np.linalg.norm(y * scale))) ** 2
         damping = 1e-3
         converged = False
         for _ in range(max_iterations):
             jacobian = jacobian_at(params)
-            normal = jacobian.T @ jacobian
-            gradient = jacobian.T @ residual
+            free = ~pushed_out(jacobian.T @ residual, np.ones(len(params), dtype=bool))
+            if not free.any():
+                converged = True
+                break
+            # What a full Gauss-Newton step could still gain: the part of the
+            # residual that the free parameters can reach.
+            gain = float(np.sum((jacobian @ _damped_step(jacobian, residual, free, 0.0)) ** 2))
+            if not gain > 1e-12 * chi + floor:
+                converged = True
+                break
             improved = False
             while damping < 1e12:
-                try:
-                    step = np.linalg.solve(
-                        normal + damping * np.diag(np.diag(normal) + 1e-30), gradient
-                    )
-                except np.linalg.LinAlgError:
-                    damping *= 10
-                    continue
+                moving = free.copy()
+                step = _damped_step(jacobian, residual, moving, damping)
+                # Coupling can still push a parameter on its bound outward;
+                # hold it too and solve again for the rest.
+                while (outward := pushed_out(step, moving)).any():
+                    moving &= ~outward
+                    step = _damped_step(jacobian, residual, moving, damping)
                 trial = np.clip(params + step, lower, upper)
                 trial_residual = residuals(trial)
                 trial_chi = float(trial_residual @ trial_residual)
-                if np.isfinite(trial_chi) and trial_chi <= chi:
-                    change = chi - trial_chi
+                if np.isfinite(trial_chi) and trial_chi < chi:
                     params, residual, chi = trial, trial_residual, trial_chi
                     damping = max(damping / 10, 1e-12)
                     improved = True
-                    converged = change <= 1e-10 * max(chi, 1e-300)
                     break
                 damping *= 10
-            if not improved or converged:
-                converged = converged or not improved
+            if not improved:
                 break
         jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))
