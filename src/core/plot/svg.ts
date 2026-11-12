@@ -113,8 +113,9 @@ function render(prims: readonly Prim[], state: { clips: number }, out: string[])
         const rotate = prim.rotate
           ? ` transform="rotate(${num(prim.rotate)} ${num(prim.x)} ${num(prim.y)})"`
           : "";
+        const style = `${prim.italic ? ' font-style="italic"' : ""}${prim.bold ? ' font-weight="bold"' : ""}`;
         out.push(
-          `<text x="${num(prim.x)}" y="${num(prim.y)}" font-family="${escapeXml(prim.family)}" font-size="${num(prim.size)}" fill="${prim.fill}" xml:space="preserve"${rotate}>${escapeXml(prim.text)}</text>`,
+          `<text x="${num(prim.x)}" y="${num(prim.y)}" font-family="${escapeXml(prim.family)}" font-size="${num(prim.size)}"${style} fill="${prim.fill}" xml:space="preserve"${rotate}>${escapeXml(prim.text)}</text>`,
         );
         break;
       }

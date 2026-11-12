@@ -285,13 +285,13 @@ describe("category ticks", () => {
 
 describe("rich text", () => {
   it("parses superscripts and subscripts", () => {
-    expect(parseRichText("cm^{-1} V_{out}")).toEqual([
-      { text: "cm", shift: 0 },
-      { text: "-1", shift: 1 },
-      { text: " V", shift: 0 },
-      { text: "out", shift: -1 },
+    expect(parseRichText("cm^{-1} V_{out}", { size: 100 })).toEqual([
+      { text: "cm", size: 100, dy: 0 },
+      { text: "-1", size: 70, dy: -40 },
+      { text: " V", size: 100, dy: 0 },
+      { text: "out", size: 70, dy: 18 },
     ]);
-    expect(parseRichText("a^b")).toEqual([{ text: "a^b", shift: 0 }]);
+    expect(parseRichText("a^b")).toEqual([{ text: "a^b", size: 1, dy: 0 }]);
   });
 });
 

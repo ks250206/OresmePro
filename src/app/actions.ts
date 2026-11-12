@@ -20,7 +20,7 @@ import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { isIgorFile, planIgorImport } from "../core/io/igorImport";
 import { drawPrims } from "../core/plot/canvas";
-import type { Prim } from "../core/plot/displayList";
+import { cssFont, type FontStyle, type Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { newExperimentId } from "./experiments";
@@ -65,12 +65,13 @@ function rasterizeText(
   family: string,
   size: number,
   fill: string,
+  style: FontStyle,
 ): RasterText | null {
   const scale = 4;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) return null;
-  const font = `${size * scale}px ${family}`;
+  const font = cssFont(size * scale, family, style);
   context.font = font;
   const metrics = context.measureText(text);
   const ascent = Math.ceil(metrics.fontBoundingBoxAscent ?? size * scale);

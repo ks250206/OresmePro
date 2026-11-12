@@ -1,15 +1,18 @@
 import { zlibSync } from "fflate";
 import type { MarkerShape } from "../doc/types";
-import type { Prim } from "./displayList";
+import type { FontStyle, Prim } from "./displayList";
 
 /**
  * Writes a display list as a one-page vector PDF.
  *
  * Text uses the fonts every PDF viewer has built in, so nothing is embedded:
- * Helvetica, Times or Courier for Latin text, and Symbol for Greek and
- * mathematical signs. Other scripts (Japanese, say) have no such font, so
- * that text is drawn as a picture when a rasterizer is supplied; without
- * one it falls back to a standard Japanese font that only some viewers have.
+ * Helvetica, Times or Courier for Latin text, in their bold, italic and bold
+ * italic cuts where the text asks for them, and Symbol for Greek and
+ * mathematical signs. Symbol has no such cuts, so Greek stays upright and
+ * regular. Other scripts (Japanese, say) have no built-in font, so that text
+ * is drawn as a picture, in its style, when a rasterizer is supplied; without
+ * one it falls back to a standard Japanese font that only some viewers have,
+ * upright and regular.
  */
 
 /** Text drawn to pixels, for scripts the built-in PDF fonts cannot show. */
@@ -24,7 +27,13 @@ export interface RasterText {
 }
 
 export interface PdfOptions {
-  rasterizeText?: (text: string, family: string, size: number, fill: string) => RasterText | null;
+  rasterizeText?: (
+    text: string,
+    family: string,
+    size: number,
+    fill: string,
+    style: FontStyle,
+  ) => RasterText | null;
   /**
    * PDF points per unit of the display list. By default 0.75: the list is in
    * CSS pixels. A page layout is in points already and passes 1.
@@ -106,12 +115,32 @@ function textRuns(text: string): { font: FontKey; hex: string }[] {
   return runs;
 }
 
-function latinFont(family: string): string {
-  const name = family.toLowerCase();
+/** The built-in family closest to one font name of a CSS list, or null if it says nothing. */
+function builtInFamily(name: string): "Helvetica" | "Times" | "Courier" | null {
   if (name.includes("courier") || name.includes("mono")) return "Courier";
-  if (name.includes("times") || (name.includes("serif") && !name.includes("sans")))
-    return "Times-Roman";
-  return "Helvetica";
+  if (name.includes("times") || (name.includes("serif") && !name.includes("sans"))) return "Times";
+  if (name.includes("helvetica") || name.includes("arial") || name.includes("sans")) {
+    return "Helvetica";
+  }
+  return null;
+}
+
+/** The names of the built-in cuts, regular, bold, italic and bold italic. */
+const CUTS = {
+  Helvetica: ["Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"],
+  Times: ["Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic"],
+  Courier: ["Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique"],
+} as const;
+
+/**
+ * The built-in font for Latin text in a CSS font list: the first font in the
+ * list that one stands in for decides, so a font named in the text wins over
+ * the graph's fallbacks after it.
+ */
+function latinFont(family: string, style: FontStyle): string {
+  const names = family.toLowerCase().split(",");
+  const base = names.map((name) => builtInFamily(name.trim())).find(Boolean) ?? "Helvetica";
+  return CUTS[base][(style.bold ? 1 : 0) + (style.italic ? 2 : 0)];
 }
 
 function markerPath(shape: MarkerShape, x: number, y: number, s: number): string {
@@ -273,7 +302,10 @@ function render(prims: readonly Prim[], context: Context): void {
         const sin = Math.sin(angle);
         const runs = textRuns(prim.text);
         const picture = runs.some((run) => run.font === "cjk")
-          ? context.options.rasterizeText?.(prim.text, prim.family, prim.size, prim.fill)
+          ? context.options.rasterizeText?.(prim.text, prim.family, prim.size, prim.fill, {
+              bold: prim.bold ?? false,
+              italic: prim.italic ?? false,
+            })
           : null;
         if (picture) {
           // Place the picture in the text's own frame: origin at the baseline start.
@@ -290,7 +322,7 @@ function render(prims: readonly Prim[], context: Context): void {
         for (const run of runs) {
           const base =
             run.font === "latin"
-              ? latinFont(prim.family)
+              ? latinFont(prim.family, prim)
               : run.font === "symbol"
                 ? "Symbol"
                 : "CJK";

@@ -731,11 +731,12 @@ function emitAnnotation(
   const symbolWidth = 26;
   const symbolGap = 6;
   const padding = tag ? 4 : 6;
-  const rowHeight = Math.round(size * 1.35);
+  // Each row is as tall as the largest text on its baseline needs.
+  const rowHeights = rows.map((row) => Math.round(row.block.lineSize * 1.35));
   const hasSymbols = rows.some((row) => row.trace);
   const textX = hasSymbols ? symbolWidth + symbolGap : 0;
   const width = Math.ceil(padding * 2 + textX + Math.max(...rows.map((row) => row.block.width)));
-  const height = padding * 2 + rowHeight * rows.length;
+  const height = padding * 2 + rowHeights.reduce((sum, rowHeight) => sum + rowHeight, 0);
   // A tag's box is centred on its point before it is moved; the others sit at their anchor.
   const home: Rect =
     tag && target
@@ -787,13 +788,18 @@ function emitAnnotation(
     fill: PAPER,
     ...(annotation.frame ? { stroke: INK, width: 1 } : {}),
   });
+  let top = box.y + padding;
   rows.forEach((row, index) => {
-    const middle = box.y + padding + rowHeight * (index + 0.5);
+    const middle = top + rowHeights[index]! / 2;
     if (row.trace) emitSymbol(out, row.trace, box.x + padding, middle, symbolWidth);
-    emitText(out, row.block, box.x + padding + textX, middle + (size * CAP_HEIGHT) / 2, {
-      family,
-      fill: INK,
-    });
+    emitText(
+      out,
+      row.block,
+      box.x + padding + textX,
+      middle + (row.block.lineSize * CAP_HEIGHT) / 2,
+      { family, fill: INK },
+    );
+    top += rowHeights[index]!;
   });
   return box;
 }

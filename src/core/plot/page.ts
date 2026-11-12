@@ -42,18 +42,20 @@ export function translatePrims(prims: readonly Prim[], dx: number, dy: number): 
   });
 }
 
-/** A text item's lines laid out, and the box they take on the page. */
+/**
+ * A text item's lines laid out, each with the baseline it sits on, and the
+ * box they take on the page. A line is as tall as the largest text on it needs.
+ */
 function layoutTextItem(item: PageItem, measure: MeasureText) {
-  const lines = item.text
-    .split("\n")
-    .map((line) => layoutText(line, item.size, DEFAULT_FONT_FAMILY, measure));
-  const lineHeight = item.size * 1.3;
-  const width = Math.max(item.size, ...lines.map((line) => line.width));
-  return {
-    lines,
-    lineHeight,
-    box: { x: item.x, y: item.y, w: width, h: lineHeight * lines.length },
-  };
+  let height = 0;
+  const lines = item.text.split("\n").map((text) => {
+    const block = layoutText(text, item.size, DEFAULT_FONT_FAMILY, measure);
+    const baseline = item.y + height + block.lineSize * (0.15 + CAP_HEIGHT);
+    height += block.lineSize * 1.3;
+    return { block, baseline };
+  });
+  const width = Math.max(item.size, ...lines.map((line) => line.block.width));
+  return { lines, box: { x: item.x, y: item.y, w: width, h: height } };
 }
 
 /**
@@ -104,13 +106,10 @@ export function layoutPage(
       });
       continue;
     }
-    const { lines, lineHeight, box } = layoutTextItem(item, measure);
-    lines.forEach((line, index) => {
-      emitText(prims, line, item.x, item.y + lineHeight * index + item.size * (0.15 + CAP_HEIGHT), {
-        family: DEFAULT_FONT_FAMILY,
-        fill: INK,
-      });
-    });
+    const { lines, box } = layoutTextItem(item, measure);
+    for (const { block, baseline } of lines) {
+      emitText(prims, block, item.x, baseline, { family: DEFAULT_FONT_FAMILY, fill: INK });
+    }
     items.push({ name: item.name, kind: "text", box });
   }
   return { width: page.width, height: page.height, prims, items };

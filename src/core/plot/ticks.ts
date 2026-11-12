@@ -242,14 +242,47 @@ export function scaleSuffix(exponent: number, unit: string): string {
 }
 
 /**
+ * A label with Igor's `\U` and `\u` (the axis' units) replaced by `units`, or
+ * null if it has neither. A backslash escapes the character after it, so
+ * `\\u` is a backslash and a "u".
+ */
+function withUnits(label: string, units: string): string | null {
+  let out = "";
+  let found = false;
+  for (let index = 0; index < label.length; index += 1) {
+    const char = label[index]!;
+    const next = label[index + 1];
+    if (char === "\\" && (next === "u" || next === "U")) {
+      out += units;
+      found = true;
+    } else if (char === "\\" && next !== undefined) {
+      out += char + next;
+    } else {
+      out += char;
+      continue;
+    }
+    index += 1;
+  }
+  return found ? out : null;
+}
+
+/**
  * The axis label to draw. With no user label it is just the unit (with any
  * prefix); a user label is kept verbatim and the scale is appended only when
- * the tick labels have had an exponent divided out.
+ * the tick labels have had an exponent divided out, unless the label says
+ * where the units go with `\u`.
  */
 export function axisLabelText(userLabel: string | null, exponent: number, unit: string): string {
   if (userLabel === null) return scaleSuffix(exponent, unit);
+  const placed = withUnits(userLabel, scaleSuffix(exponent, unit));
+  if (placed !== null) return placed;
   if (exponent === 0) return userLabel;
-  return userLabel ? `${userLabel} (${scaleSuffix(exponent, unit)})` : scaleSuffix(exponent, unit);
+  if (!userLabel) return scaleSuffix(exponent, unit);
+  // A label that changes its own look with codes has that look end with it,
+  // so the scale after it is written as the label began.
+  return userLabel.includes("\\")
+    ? `\\[9${userLabel}\\]9 (${scaleSuffix(exponent, unit)})`
+    : `${userLabel} (${scaleSuffix(exponent, unit)})`;
 }
 
 /** Formats a value compactly for readouts and tables (not for axes). */
