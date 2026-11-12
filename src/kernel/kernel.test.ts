@@ -360,6 +360,47 @@ describe("oresme Python API", () => {
     );
   });
 
+  it("differentiates and integrates against an X wave", async () => {
+    expect(
+      await run(
+        [
+          // Uneven steps: the three-point formula is exact for a parabola inside, first order at the ends.
+          'dxv = op.make("dxv", [0.0, 0.5, 2.0, 2.25, 4.0], unit="V")',
+          'dq = op.differentiate(op.make("dqv", np.array([0.0, 0.5, 2.0, 2.25, 4.0]) ** 2, unit="mAh"), x=dxv)',
+          "print(dq.name, dq.data.tolist(), dq.unit, dq.x0, dq.dx, repr(dq.x_unit))",
+          // Evenly spaced X gives what the X scaling gives.
+          'even = op.make("dxeven", np.sin(np.arange(20) * 0.3), x0=1, dx=0.3)',
+          'same = op.differentiate(even, name="dxeven_a").data; byx = op.differentiate(even, x=1 + 0.3 * np.arange(20), name="dxeven_b").data',
+          "print(bool(np.allclose(same, byx, rtol=0, atol=1e-12)), op.exists('wave1'))",
+          // A repeated X value, and X coming back to where it was, have no slope.
+          'print(op.differentiate(op.make("dxrep", [0.0, 1, 2, 3, 4]), x=[0.0, 1, 1, 2, 3]).data.tolist())',
+          'print(op.differentiate(op.make("dxturn", [0.0, 1, 4, 1, 0]), x=[0.0, 1, 2, 1, 0]).data.tolist())',
+          // Constant current over uneven time steps, and a loop that comes back.
+          'itime = op.make("itime", [0.0, 1.0, 3.0, 3.5, 10.0], unit="s")',
+          'q = op.integrate(op.make("icur", np.full(5, 2.0), unit="A"), x=itime)',
+          "print(q.name, q.data.tolist(), q.unit)",
+          'print(op.integrate(op.make("iloop", np.ones(5)), x=[0.0, 1, 2, 1, 0]).data.tolist())',
+          // With the X scaling the units follow the same rule.
+          'sv = op.make("dxscaled", np.arange(4.0), dx=0.5, x_unit="s", unit="V")',
+          "print(op.differentiate(sv).unit, op.integrate(sv).unit, repr(op.integrate(op.make('dxnounit', [1.0, 2.0])).unit))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "dqv_DIF [0.5, 1.0, 4.0, 4.5, 6.25] mAh/V 0.0 1.0 ''",
+      "True False",
+      "[1.0, nan, nan, 1.0, 1.0]",
+      "[1.0, 2.0, nan, 2.0, 1.0]",
+      "icur_INT [0.0, 2.0, 6.0, 7.0, 20.0] A·s",
+      "[0.0, 1.0, 2.0, 1.0, 0.0]",
+      "V/s V·s ''",
+    ]);
+    expect(await run('op.integrate("icur", x=[0.0, 1, np.nan, 3, 4])')).toBe(false);
+    expect(errors[0]).toContain("The X wave is NaN or infinite at point 2, where Y has a value.");
+    expect(await run('op.differentiate("icur", x=[0.0, 1, 2])')).toBe(false);
+    expect(errors[0]).toContain("must be 1-D with 5 points");
+  });
+
   it("saves a graph through the application", async () => {
     expect(await run('g.save("figure.pdf")')).toBe(true);
     expect(exported).toEqual(["Graph0:figure.pdf"]);

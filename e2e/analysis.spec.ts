@@ -50,6 +50,33 @@ g = op.display(pk)`);
     expect((await app.doc()).order).toEqual(["sig", "sig_smth"]);
   });
 
+  test("integrate takes an X wave from the dialog", async ({ app, page }) => {
+    await app.run(`op.make("current", [2.0, 2.0, 2.0, 2.0], unit="A")
+op.make("time", [0.0, 1.0, 3.0, 6.0], unit="s")`);
+    await app.menu("Analysis", "Integrate…");
+    const dialog = page.getByRole("dialog", { name: "Integrate" });
+    await dialog.getByLabel("Wave").selectOption("current");
+    await dialog.getByLabel("X wave").selectOption("time");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.integrate("current", x="time")');
+    expect(entry.status).toBe("ok");
+    const charge = (await app.wave("current_INT"))!;
+    expect(charge.data).toEqual([0, 2, 6, 12]);
+    expect(charge.unit).toBe("A·s");
+
+    // Without an X wave the call is what it always was.
+    await app.menu("Analysis", "Differentiate…");
+    await page
+      .getByRole("dialog", { name: "Differentiate" })
+      .getByLabel("Wave")
+      .selectOption("time");
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.differentiate("time")');
+  });
+
   test("a fit can add residuals and a confidence band to the graph", async ({ app, page }) => {
     await app.run(`xl = np.linspace(0, 10, 80)
 line = op.make("line", 1 + 2 * xl + np.random.default_rng(4).normal(scale=0.3, size=80), dx=xl[1] - xl[0])

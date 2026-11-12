@@ -2199,8 +2199,8 @@ interface AnalysisField {
   key: string;
   label: string;
   initial: string;
-  /** integer and number are typed in; anything else is a list of choices. */
-  kind: "integer" | "number" | readonly string[];
+  /** integer and number are typed in, xwave picks an X wave; anything else is a list of choices. */
+  kind: "integer" | "number" | "xwave" | readonly string[];
   /** May be left empty, which leaves the argument out. */
   optional?: boolean;
   hint?: string;
@@ -2211,8 +2211,16 @@ const ANALYSES: Record<
   { title: string; dimensions?: 1 | 2; fields?: AnalysisField[]; note?: string }
 > = {
   stats: { title: "Wave Stats" },
-  differentiate: { title: "Differentiate" },
-  integrate: { title: "Integrate" },
+  differentiate: {
+    title: "Differentiate",
+    fields: [{ key: "x", label: "X data", initial: CALCULATED, kind: "xwave" }],
+    note: "Against an X wave, the result has one point per point of the data: plot it against the same X wave.",
+  },
+  integrate: {
+    title: "Integrate",
+    fields: [{ key: "x", label: "X data", initial: CALCULATED, kind: "xwave" }],
+    note: "Against an X wave, the result has one point per point of the data: plot it against the same X wave.",
+  },
   smooth: {
     title: "Smooth",
     fields: [{ key: "n", label: "Points", initial: "5", kind: "integer" }],
@@ -2302,6 +2310,10 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
   const bad = new Set<string>();
   for (const field of fields) {
     const text = (values[field.key] ?? "").trim();
+    if (field.kind === "xwave") {
+      if (text !== CALCULATED) args.push(`${field.key}=${pyName(text)}`);
+      continue;
+    }
     if (typeof field.kind !== "string") {
       // The Python None is the one choice that is not a string.
       args.push(`${field.key}=${text === "None" ? "None" : JSON.stringify(text)}`);
@@ -2346,7 +2358,12 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
       </Field>
       {fields.map((field) => (
         <Field key={field.key} label={field.label}>
-          {typeof field.kind === "string" ? (
+          {field.kind === "xwave" ? (
+            <XWaveSelect
+              value={values[field.key] ?? CALCULATED}
+              onChange={(value) => setValues({ ...values, [field.key]: value })}
+            />
+          ) : typeof field.kind === "string" ? (
             <TextInput
               aria-label={field.label}
               aria-invalid={bad.has(field.key)}

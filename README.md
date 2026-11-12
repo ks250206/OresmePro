@@ -222,6 +222,13 @@ wave を列として表示・編集します。行も列も仮想スクロール
 - **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウスまたはローレンツの和とベースライン(定数・直線)を同時に当てはめます。
   各ピークの位置・高さ・半値全幅・面積を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
 - Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル、または複素数のまま)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
+- **X wave に対する微分・積分**: 電流を時間で積分して電荷にする、容量を電圧で微分して dQ/dV を出す、といった XY データの計算です(ダイアログの「X data」で X wave を選びます)。
+  X の間隔は不揃いでもよく、微分は内側の点で不等間隔の 3 点公式(2 次精度)、両端で片側差分(X のスケーリングを使うときと同じ)です。
+  隣り合う X が同じ値の点(定電圧区間など)と、X が折り返して同じ値に戻る点では傾きが決まらないので、微分は NaN になります。
+  積分は台形則の累積で、最初の点で 0 から始まります。X は単調でなくてよく、X が戻る区間の面積は負に数えます(充放電のループなど)。
+  Y が値を持つ点で X が NaN だとエラーです。Y の NaN は、微分ではその点と両隣、積分ではそこから先を NaN にします(X のスケーリングを使うときと同じ)。
+  結果は元の wave と同じ点数の、X のスケーリングを持たない wave なので、同じ X wave に対して描きます。
+  単位は、両方わかっていれば微分が `Y/X`、積分が `Y·X` です(X のスケーリングを使うときも同じ。日付の X は秒として扱います)。
 - 画像: **フィルタ**(ガウス・平均・メディアン・シャープ化)、任意の直線に沿った**ラインプロファイル**。
 
 ### プロシージャウィンドウ
@@ -391,6 +398,7 @@ r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band =
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
 op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
+op.integrate(current, x=time); op.differentiate(capacity, x=voltage)   # X wave に対して(結果は同じ X に対して描く)
 spec = op.fft(w, output="complex"); op.ifft(spec)            # 複素スペクトルと逆変換
 g.trace("w_FFT").part = "magnitude"                          # 複素 wave の描く部分: real / imag / magnitude / phase
 op.interpolate(y, x, n=200, kind="cubic")                    # at=[...] で指定した X の値も

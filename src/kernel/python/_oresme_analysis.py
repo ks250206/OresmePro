@@ -667,28 +667,131 @@ def stats(wave_, quiet=False):
     return result
 
 
-def differentiate(wave_, name=None):
-    """The derivative with respect to X, as a new wave ``<name>_DIF``."""
+def _x_data(x, length):
+    """The values and unit of an X given as a wave, a wave's name or an array."""
+    if isinstance(x, (str, _op.Wave)):
+        source = _op.wave(_op._wave_name(x))
+        values, unit = np.asarray(source.data, dtype=float), source.unit
+    else:
+        # An array is used as it is: making a wave of it would leave one behind.
+        values, unit = np.asarray(x, dtype=float), ""
+    if values.shape != (length,):
+        raise _op.OresmeError(f"The X values must be 1-D with {length} points, like the wave.")
+    return values, unit
+
+
+def _checked_x(x_values, y_values):
+    """X must be a number wherever Y is; where Y is missing it is a gap anyway."""
+    loose = ~np.isfinite(x_values) & np.isfinite(y_values)
+    if loose.any():
+        raise _op.OresmeError(
+            f"The X wave is NaN or infinite at point {int(np.flatnonzero(loose)[0])}, where Y has a value."
+        )
+
+
+def _units(y_unit, x_unit, joint):
+    """``Y/X`` or ``Y·X``; nothing unless both are known.
+
+    Dates on X are seconds. A compound unit is bracketed where joining it
+    would change how it reads (``mAh/(g·V)`` must not read as ``mAh/g·V``).
+    """
+    x_unit = "s" if x_unit == "dat" else x_unit
+    if not y_unit or not x_unit:
+        return ""
+    if joint == "/":
+        return f"{y_unit}/({x_unit})" if any(mark in x_unit for mark in "/·* ") else f"{y_unit}/{x_unit}"
+    return f"({y_unit})·{x_unit}" if "/" in y_unit else f"{y_unit}·{x_unit}"
+
+
+def differentiate(wave_, name=None, *, x=None):
+    """The derivative with respect to X, as a new wave ``<name>_DIF``.
+
+    Central differences inside, one-sided at the two ends. ``x`` (a wave or an
+    array with one value per point) differentiates against those values
+    instead of the X scaling, e.g. ``op.differentiate(capacity, x=voltage)``
+    for dQ/dV. The spacing may be uneven and X may turn back: each point uses
+    the three-point formula for uneven steps, which is second-order accurate
+    (``np.gradient(y, x)``, first order at the ends as without ``x``). Where
+    two neighbouring X values are equal, or X turns back to the value it had
+    two points before, the slope has no value and the result is NaN there.
+    The result is then a plain wave with one point per point of the data,
+    meant to be plotted against the same X wave.
+
+    A NaN in the data leaves NaN in the derivative at it and its neighbours.
+    The unit is ``Y/X`` when both units are known.
+    """
     source, values = _numeric(wave_)
+    if x is None:
+        return _op.make(
+            _sibling(source, "_DIF", name),
+            np.gradient(values, source.dx),
+            x0=source.x0,
+            dx=source.dx,
+            x_unit=source.x_unit,
+            unit=_units(source.unit, source.x_unit, "/"),
+        )
+    if values.ndim != 1 or len(values) < 2:
+        raise _op.OresmeError("Differentiating against X needs a 1-D wave of at least 2 points.")
+    x_values, x_unit = _x_data(x, len(values))
+    _checked_x(x_values, values)
+    steps = np.diff(x_values)
+    with np.errstate(all="ignore"):
+        slope = np.gradient(values, x_values)
+    # A zero step, or a turn of X that comes back to the same value, would
+    # divide by zero in the formula of the points that use it.
+    undefined = np.zeros(len(values), dtype=bool)
+    undefined[:-1] |= steps == 0
+    undefined[1:] |= steps == 0
+    undefined[1:-1] |= steps[:-1] + steps[1:] == 0
+    slope[undefined] = np.nan
     return _op.make(
         _sibling(source, "_DIF", name),
-        np.gradient(values, source.dx),
-        x0=source.x0,
-        dx=source.dx,
-        x_unit=source.x_unit,
+        slope,
+        x0=0,
+        dx=1,
+        x_unit="",
+        unit=_units(source.unit, x_unit, "/"),
     )
 
 
-def integrate(wave_, name=None):
-    """The running integral over X (trapezoidal), as a new wave ``<name>_INT``."""
+def integrate(wave_, name=None, *, x=None):
+    """The running integral over X (trapezoidal), as a new wave ``<name>_INT``.
+
+    It starts at 0 at the first point. ``x`` (a wave or an array with one
+    value per point) integrates against those values instead of the X
+    scaling, e.g. ``op.integrate(current, x=time)`` for the charge. X may be
+    unevenly spaced and need not increase: where it goes back, the area
+    counts negative, as in a charge-discharge loop. The result is then a
+    plain wave with one point per point of the data, meant to be plotted
+    against the same X wave.
+
+    A NaN in the data makes the running integral NaN from there on. The unit
+    is ``Y·X`` when both units are known.
+    """
     source, values = _numeric(wave_)
-    steps = (values[1:] + values[:-1]) / 2 * source.dx
+    if x is None:
+        steps = (values[1:] + values[:-1]) / 2 * source.dx
+        return _op.make(
+            _sibling(source, "_INT", name),
+            np.concatenate(([0.0], np.cumsum(steps))),
+            x0=source.x0,
+            dx=source.dx,
+            x_unit=source.x_unit,
+            unit=_units(source.unit, source.x_unit, "·"),
+        )
+    if values.ndim != 1:
+        raise _op.OresmeError("Integrating against X needs a 1-D wave.")
+    x_values, x_unit = _x_data(x, len(values))
+    _checked_x(x_values, values)
+    with np.errstate(invalid="ignore"):
+        steps = (values[1:] + values[:-1]) / 2 * np.diff(x_values)
     return _op.make(
         _sibling(source, "_INT", name),
         np.concatenate(([0.0], np.cumsum(steps))),
-        x0=source.x0,
-        dx=source.dx,
-        x_unit=source.x_unit,
+        x0=0,
+        dx=1,
+        x_unit="",
+        unit=_units(source.unit, x_unit, "·"),
     )
 
 
