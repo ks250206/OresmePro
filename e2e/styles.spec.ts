@@ -116,7 +116,7 @@ test.describe("graph styles", () => {
     await app.menu("Windows", "New Graph…");
     await page
       .getByRole("dialog", { name: "New Graph" })
-      .getByRole("listbox")
+      .getByRole("listbox", { name: "Y waves" })
       .getByRole("option", { name: "c", exact: true })
       .click();
     await app.doIt();

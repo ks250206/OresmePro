@@ -80,7 +80,7 @@ test.describe("graph interaction", () => {
     await app.menu("Graph", "Append Traces…");
     await page
       .getByRole("dialog")
-      .getByRole("listbox")
+      .getByRole("listbox", { name: "Y waves" })
       .getByRole("option", { name: "noise" })
       .click();
     await app.doIt();
@@ -196,5 +196,171 @@ gc.append_image(cube)`);
       .getByRole("log", { name: "Command history" })
       .getByRole("img", { name: "Graph('Graph0')" });
     await expect(picture).toBeVisible();
+  });
+});
+
+test.describe("New Graph and Append Traces dialogs", () => {
+  /** Waves of two lengths, with an X wave for each length. */
+  async function someWaves(app: App): Promise<void> {
+    await app.run(`op.make("a", [1.0, 2.0, 3.0], unit="V")
+op.make("b", [3.0, 2.0, 1.0], unit="V")
+op.make("t", [0.0, 0.5, 2.0], unit="s")
+op.make("c", [5.0, 6.0])
+op.make("t2", [10.0, 20.0])
+op.make("d", [1.0, 1.0, 2.0, 3.0])`);
+  }
+
+  async function newGraph(app: App) {
+    await app.menu("Windows", "New Graph…");
+    const dialog = app.page.getByRole("dialog", { name: "New Graph" });
+    return {
+      dialog,
+      y: dialog.getByRole("listbox", { name: "Y waves" }),
+      x: dialog.getByRole("listbox", { name: "X waves" }),
+      traces: dialog.getByRole("listbox", { name: "Traces to add" }),
+    };
+  }
+
+  test("two Y waves selected and Do It make a graph at once", async ({ app, page }) => {
+    await someWaves(app);
+    const { y, traces } = await newGraph(app);
+    await y.getByRole("option", { name: "a", exact: true }).click();
+    await y.getByRole("option", { name: "b", exact: true }).click({ modifiers: ["Control"] });
+    // With nothing added yet, the list below shows what Do It will make.
+    await expect(traces.getByRole("option")).toHaveText([/^a\s*3\s*float64\s*0 to 2\s*V/, /^b/]);
+    await expect(page.getByRole("status", { name: "Pairing" })).toHaveText(
+      "Each of the 2 Y waves against its own X scaling.",
+    );
+    await app.doIt();
+    const graph = (await app.doc()).graphs.Graph0!;
+    expect(graph.traces.map((trace) => [trace.y, trace.x])).toEqual([
+      ["a", null],
+      ["b", null],
+    ]);
+    expect((await app.lastEntry()).code).toBe('op.display("a", "b")');
+  });
+
+  test("the lists work from the keyboard and Return is Do It", async ({ app, page }) => {
+    await someWaves(app);
+    const { y } = await newGraph(app);
+    await expect(y).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(y.getByRole("option", { selected: true })).toHaveText([/^a/, /^b/]);
+    // Typing a name jumps to it.
+    await page.keyboard.type("d");
+    await expect(y.getByRole("option", { selected: true })).toHaveText([/^d/]);
+    await page.keyboard.press("Control+a");
+    await expect(y.getByRole("option", { selected: true })).toHaveCount(6);
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Enter");
+    expect((await app.lastEntry()).code).toBe('op.display("a")');
+  });
+
+  test("an X wave is paired with the Y waves, and To Cmd Line writes the Python", async ({
+    app,
+  }) => {
+    await someWaves(app);
+    const { dialog, y, x } = await newGraph(app);
+    await y.getByRole("option", { name: "a", exact: true }).click();
+    await x.getByRole("option", { name: "t", exact: true }).click();
+    await expect(dialog.getByLabel("Wave details")).toHaveText(
+      "t: 3 points · float64 · X 0 to 2 (step 1) · unit s",
+    );
+    await dialog.getByRole("button", { name: "To Cmd Line" }).click();
+    await expect(dialog).toBeHidden();
+    expect(await app.typed()).toBe('op.display("a", x="t")');
+    expect((await app.doc()).graphs).toEqual({});
+    await app.commandLine.press("Enter");
+    await app.idle();
+    expect((await app.doc()).graphs.Graph0!.traces[0]).toMatchObject({ y: "a", x: "t" });
+  });
+
+  test("traces added in groups with other X waves and axes make one graph in one step", async ({
+    app,
+    page,
+  }) => {
+    await someWaves(app);
+    const { dialog, y, x, traces } = await newGraph(app);
+    await y.getByRole("option", { name: "a", exact: true }).click();
+    await y.getByRole("option", { name: "b", exact: true }).click({ modifiers: ["Shift"] });
+    await x.getByRole("option", { name: "t", exact: true }).click();
+    await dialog.getByRole("button", { name: "Add", exact: true }).click();
+
+    await y.getByRole("option", { name: "c", exact: true }).click();
+    await x.getByRole("option", { name: "t2", exact: true }).click();
+    await dialog.getByLabel("Vertical axis").selectOption("right");
+    await dialog.getByRole("button", { name: "Add", exact: true }).click();
+    // A double-click adds a Y wave at once, against the X selected (none fits d).
+    await x.getByRole("option", { name: "_calculated_" }).click();
+    await y.getByRole("option", { name: "d", exact: true }).dblclick();
+    await expect(traces.getByRole("option")).toHaveText([
+      /^a vs t/,
+      /^b vs t/,
+      /^c vs t2\s*2\s*float64\s*10 to 20\s*right, bottom$/,
+      /^d\s*4/,
+    ]);
+
+    await traces.getByRole("option", { name: "d", exact: true }).click();
+    await page.keyboard.press("Delete");
+    await traces.getByRole("option", { name: "b vs t" }).click();
+    await dialog.getByRole("button", { name: "Remove" }).click();
+    await expect(traces.getByRole("option")).toHaveText([/^a vs t/, /^c vs t2/]);
+    await dialog.getByLabel("Graph name").fill("Pairs");
+    await app.doIt();
+
+    const graph = (await app.doc()).graphs.Pairs!;
+    expect(graph.traces.map(({ y, x, vAxis, hAxis }) => ({ y, x, vAxis, hAxis }))).toEqual([
+      { y: "a", x: "t", vAxis: "left", hAxis: "bottom" },
+      { y: "c", x: "t2", vAxis: "right", hAxis: "bottom" },
+    ]);
+    expect((await app.lastEntry()).code).toBe(
+      'g = op.display("a", x="t", name="Pairs")\ng.append("c", x="t2", axis="right")',
+    );
+    // One Do It, one undo.
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Undo/ }).click();
+    expect((await app.doc()).graphs.Pairs).toBeUndefined();
+  });
+
+  test("a Y and an X wave of different lengths cannot be paired, and the dialog says so", async ({
+    app,
+  }) => {
+    await someWaves(app);
+    const { dialog, y, x } = await newGraph(app);
+    await y.getByRole("option", { name: "a", exact: true }).click();
+    await x.getByRole("option", { name: "t2", exact: true }).click();
+    await expect(dialog.getByRole("status", { name: "Pairing" })).toHaveText(
+      "a has 3 points but t2 has 2: a Y and an X wave must have as many points.",
+    );
+    await expect(dialog.getByRole("button", { name: "Add", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await x.getByRole("option", { name: "t", exact: true }).click({ modifiers: ["Control"] });
+    await expect(dialog.getByRole("status", { name: "Pairing" })).toHaveText(
+      /^2 X waves for 1 Y wave: select one X wave/,
+    );
+  });
+
+  test("Append Traces shows what the graph has and appends to it", async ({ app }) => {
+    await someWaves(app);
+    await app.run('op.display("a", x="t")');
+    await app.menu("Graph", "Append Traces…");
+    const dialog = app.page.getByRole("dialog", { name: "Append Traces to Graph0" });
+    const traces = dialog.getByRole("listbox", { name: "Traces to add" });
+    const existing = traces.getByRole("option", { name: "a vs t" });
+    await expect(existing).toHaveAttribute("aria-disabled", "true");
+    await dialog
+      .getByRole("listbox", { name: "Y waves" })
+      .getByRole("option", { name: "b", exact: true })
+      .click();
+    await dialog.getByLabel("Vertical axis").selectOption("right");
+    await expect(traces.getByRole("option")).toHaveText([/^a vs t/, /^b\s*3.*right, bottom$/]);
+    // What the graph has cannot be removed.
+    await existing.click({ force: true });
+    await expect(existing).toHaveAttribute("aria-selected", "false");
+    await expect(dialog.getByRole("button", { name: "Remove" })).toBeDisabled();
+    await app.doIt();
+    expect((await app.doc()).graphs.Graph0!.traces.map((trace) => trace.y)).toEqual(["a", "b"]);
+    expect((await app.lastEntry()).code).toBe('op.graph("Graph0").append("b", axis="right")');
   });
 });
