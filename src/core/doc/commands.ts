@@ -305,7 +305,7 @@ function bool(value: unknown, what: string): boolean {
   return value;
 }
 
-function oneOf<T extends string>(value: unknown, choices: readonly T[], what: string): T {
+export function oneOf<T extends string>(value: unknown, choices: readonly T[], what: string): T {
   if (typeof value !== "string" || !choices.includes(value as T)) {
     throw new DocError(`${what} must be one of: ${choices.join(", ")}.`);
   }

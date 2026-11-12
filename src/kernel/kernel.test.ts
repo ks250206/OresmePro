@@ -65,6 +65,7 @@ beforeAll(async () => {
             return toSvg(layout.prims, layout.width, layout.height);
           },
           exportPage: (name, filename) => exported.push(`${name}:${filename}`),
+          measureText: (text, size) => text.length * size * 0.55,
         },
         method,
         paramsJson,
@@ -838,6 +839,56 @@ describe("oresme Python API", () => {
       await run("g1.kill(); print([i.name for i in page.items]); page.kill(); print(op.layouts())"),
     ).toBe(true);
     expect(stdout).toBe("['graph1']\n[]\n");
+  });
+
+  it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
+    expect(
+      await run(
+        [
+          'lw = op.make("lineup_w", [1.0, 3.0, 2.0])',
+          'lg = [op.display(lw, name=f"Lineup{i}") for i in range(5)]',
+          'lp = op.new_layout("Lineup", size=(600, 800))',
+          "li = [lp.add_graph(g, x=40 + 50 * i, y=40 + 150 * i, w=100 + 10 * i, h=60 + 20 * i) for i, g in enumerate(lg[:4])]",
+          'lt = lp.add_text("Caption", x=300, y=700, size=10)',
+          'lp.align([li[0], "graph2", lt], "right"); print([i.x for i in lp.items])',
+          'lp.align(li[1], "center"); print(li[1].x)',
+          'lp.distribute(li[:3], "vertical"); print([i.y for i in li])',
+          'lp.match_size(["graph3", "graph0", lt]); print([(i.w, i.h) for i in li], lt.size)',
+          "lp.arrange(2, 2, margin=50, gap=(20, 10)); print([(i.x, i.y, i.w, i.h) for i in li], lt.x)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      // "Caption" is 38.5 points wide, so its right edge, at 338.5, is the outermost.
+      "[238.5, 90, 218.5, 190, 300]",
+      // One item alone lines up with the page: (600 - 110) / 2.
+      "245",
+      // From 40 to 440 with 240 points of graphs: gaps of 80.
+      "[40, 180, 340, 490]",
+      // The size of graph3, the first named; text keeps its own.
+      "[(130, 120), (110, 80), (120, 100), (130, 120)] 10",
+      // Cells (500 - 20) / 2 wide and (700 - 10) / 2 high, filled in reading order.
+      "[(50, 50, 240, 345), (310, 50, 240, 345), (50, 405, 240, 345), (310, 405, 240, 345)] 300",
+    ]);
+    // A graph beyond the cells stays where it is, and Python is told.
+    expect(await run('lp.add_graph("Lineup4", x=10, y=10); lp.arrange(1, 2)')).toBe(true);
+    // The new graph reads first, at the top left; the next row is graph2 and graph3.
+    expect(stderr).toMatch(/graph1, graph2, graph3 did not fit in the 1 × 2 grid/);
+    expect(
+      await run('lp.arrange(1, 2, items=["graph3", lt, "graph1"], gap=0); print(li[3].x, li[1].x)'),
+    ).toBe(true);
+    expect(stdout).toBe("36 300\n");
+    // All of one input is one step to undo.
+    const before = doc.getState().pages.Lineup!.items;
+    expect(
+      await run('lp.align(["graph0", "graph2"], "top"); lp.distribute(li, "horizontal")'),
+    ).toBe(true);
+    doc.undo();
+    expect(doc.getState().pages.Lineup!.items).toEqual(before);
+    expect(await run('lp.align(["graph0", "nope"], "left")')).toBe(false);
+    expect(errors[0]).toMatch(/OresmeError: Lineup has no item named "nope"/);
+    expect(await run('lp.distribute(li[:2], "vertical")')).toBe(false);
+    expect(errors[0]).toMatch(/three or more/);
   });
 
   it("takes names that JavaScript objects inherit, such as constructor and toString", async () => {

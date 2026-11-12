@@ -185,6 +185,7 @@ export const kernel: KernelClient = new KernelClient({
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
   renderPageSvg,
   exportPage: (page, filename) => pageExportHandler(page, filename),
+  measureText,
   indexURL: PYODIDE_URL,
 });
 

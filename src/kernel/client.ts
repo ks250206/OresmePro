@@ -26,6 +26,7 @@ export interface KernelOptions {
   exportGraph: RpcContext["exportGraph"];
   renderPageSvg: RpcContext["renderPageSvg"];
   exportPage: RpcContext["exportPage"];
+  measureText: RpcContext["measureText"];
   indexURL: string;
 }
 

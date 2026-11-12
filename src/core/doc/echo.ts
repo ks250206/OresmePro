@@ -1,3 +1,4 @@
+import type { Arrangement } from "./arrange";
 import type { Command } from "./commands";
 
 /** Python source to be written as it is, where a literal would otherwise go. */
@@ -255,5 +256,32 @@ export function echoPython(
       return `op.table(${pyLiteral(command.table)}).remove(${names(command.waves)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
+  }
+}
+
+/**
+ * The Python call that rearranges items on a page as the layout window did:
+ * one call for the whole arrangement, so the history reads as what was done
+ * and not as the item changes it took.
+ */
+export function echoArrangement(layout: string, arrangement: Arrangement): string {
+  const page = `op.layout(${pyLiteral(layout)})`;
+  switch (arrangement.action) {
+    case "align":
+      return `${page}.align(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.edge)})`;
+    case "distribute":
+      return `${page}.distribute(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.direction)})`;
+    case "matchSize":
+      return `${page}.match_size(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.dimension)})`;
+    case "arrange": {
+      const [across, down] = arrangement.gap;
+      return `${page}.arrange(${joinArgs(
+        String(arrangement.rows),
+        String(arrangement.columns),
+        arrangement.items ? `items=${pyLiteral([...arrangement.items])}` : "",
+        `margin=${pyLiteral(arrangement.margin)}`,
+        `gap=${across === down ? pyLiteral(across) : `(${pyLiteral(across)}, ${pyLiteral(down)})`}`,
+      )})`;
+    }
   }
 }

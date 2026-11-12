@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_FAMILY, type DocState, type PageSpec } from "../doc/types";
+import { DEFAULT_FONT_FAMILY, type DocState, type PageItem, type PageSpec } from "../doc/types";
 import type { MeasureText, Prim, Rect } from "./displayList";
 import { layoutGraph } from "./layout";
 import { CAP_HEIGHT, emitText, layoutText } from "./richText";
@@ -42,6 +42,30 @@ export function translatePrims(prims: readonly Prim[], dx: number, dy: number): 
   });
 }
 
+/** A text item's lines laid out, and the box they take on the page. */
+function layoutTextItem(item: PageItem, measure: MeasureText) {
+  const lines = item.text
+    .split("\n")
+    .map((line) => layoutText(line, item.size, DEFAULT_FONT_FAMILY, measure));
+  const lineHeight = item.size * 1.3;
+  const width = Math.max(item.size, ...lines.map((line) => line.width));
+  return {
+    lines,
+    lineHeight,
+    box: { x: item.x, y: item.y, w: width, h: lineHeight * lines.length },
+  };
+}
+
+/**
+ * Where an item is on its page. A graph has the size it is given; text
+ * takes the room its words need, so its box depends on the font.
+ */
+export function itemBox(item: PageItem, measure: MeasureText): Rect {
+  return item.kind === "graph"
+    ? { x: item.x, y: item.y, w: item.w, h: item.h }
+    : layoutTextItem(item, measure).box;
+}
+
 const PAPER = "#ffffff";
 const INK = "#000000";
 
@@ -80,22 +104,14 @@ export function layoutPage(
       });
       continue;
     }
-    const lines = item.text
-      .split("\n")
-      .map((line) => layoutText(line, item.size, DEFAULT_FONT_FAMILY, measure));
-    const lineHeight = item.size * 1.3;
+    const { lines, lineHeight, box } = layoutTextItem(item, measure);
     lines.forEach((line, index) => {
       emitText(prims, line, item.x, item.y + lineHeight * index + item.size * (0.15 + CAP_HEIGHT), {
         family: DEFAULT_FONT_FAMILY,
         fill: INK,
       });
     });
-    const width = Math.max(item.size, ...lines.map((line) => line.width));
-    items.push({
-      name: item.name,
-      kind: "text",
-      box: { x: item.x, y: item.y, w: width, h: lineHeight * lines.length },
-    });
+    items.push({ name: item.name, kind: "text", box });
   }
   return { width: page.width, height: page.height, prims, items };
 }

@@ -1,9 +1,11 @@
+import { arrangeLayout } from "../core/doc/arrange";
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
 import { DocError, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
+import type { MeasureText } from "../core/plot/displayList";
 import { tracePosition, traceX } from "../core/plot/layout";
 
 export interface RpcContext {
@@ -17,6 +19,8 @@ export interface RpcContext {
   /** The same for page layouts. */
   renderPageSvg(page: string): string;
   exportPage(page: string, filename: string): void;
+  /** Measures text as it is drawn, to know how much room text on a page takes. */
+  measureText: MeasureText;
 }
 
 export interface RpcReply {
@@ -183,6 +187,12 @@ export function handleRpc(
       }
       context.exportPage(params.name, filename);
       return { result: null };
+    }
+    case "arrangeLayout": {
+      const layout = typeof params.layout === "string" ? params.layout : "";
+      const { commands, leftOut } = arrangeLayout(state, layout, params, context.measureText);
+      for (const command of commands) doc.dispatch(command, { group });
+      return { result: { leftOut } };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;

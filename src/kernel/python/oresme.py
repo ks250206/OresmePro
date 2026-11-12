@@ -21,6 +21,7 @@ the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 
 import json
 import re
+import warnings
 
 import numpy as np
 
@@ -1253,6 +1254,13 @@ class LayoutItem(_Props):
         return f"LayoutItem({self._name!r} on {self._layout.name})"
 
 
+def _item_names(items):
+    """Names of page items, given as names or as items; one alone is taken as a list."""
+    if isinstance(items, (str, LayoutItem)):
+        items = [items]
+    return [item.name if isinstance(item, LayoutItem) else str(item) for item in items]
+
+
 class Layout(_Props):
     """A page layout: graphs and text arranged on a sheet of paper.
 
@@ -1302,6 +1310,54 @@ class Layout(_Props):
 
     def item(self, name):
         return LayoutItem(self, name)
+
+    def _arrange(self, request):
+        return _call("arrangeLayout", {"layout": self._name, **request})[0]
+
+    def align(self, items, edge):
+        """Line items up: ``"left"``, ``"right"``, ``"top"`` or ``"bottom"`` edges,
+        or their middles, ``"center"`` (one above the other) or ``"middle"``
+        (side by side). They line up with the outermost of them; a single item
+        lines up with the page. ``items`` are names or items of this page.
+        """
+        self._arrange({"action": "align", "items": _item_names(items), "edge": edge})
+
+    def distribute(self, items, direction="horizontal"):
+        """Space three or more items so the gaps between them are equal,
+        ``"horizontal"``-ly or ``"vertical"``-ly. The outermost stay where they are.
+        """
+        self._arrange({"action": "distribute", "items": _item_names(items), "direction": direction})
+
+    def match_size(self, items, dimension="both"):
+        """Give graphs the ``"width"``, ``"height"`` or ``"both"`` of the first one named.
+
+        Text keeps the size its words need and is left as it is.
+        """
+        self._arrange({"action": "matchSize", "items": _item_names(items), "dimension": dimension})
+
+    def arrange(self, rows, columns, items=None, margin=36, gap=12):
+        """Put graphs in a grid of ``rows`` by ``columns`` that fills the page inside
+        ``margin`` points, with ``gap`` points between cells (or a pair: between
+        columns, between rows). The graphs fill the cells row by row, in the order
+        given; without ``items``, every graph of the page in the order they read on it
+        now. Text is not moved; graphs beyond the cells stay where they are.
+        """
+        request = {
+            "action": "arrange",
+            "rows": _plain(rows),
+            "columns": _plain(columns),
+            "margin": _plain(margin),
+            "gap": _plain(tuple(gap) if isinstance(gap, (list, tuple)) else gap),
+        }
+        if items is not None:
+            request["items"] = _item_names(items)
+        left_out = self._arrange(request)["leftOut"]
+        if left_out:
+            warnings.warn(
+                f"{', '.join(left_out)} did not fit in the {rows} × {columns} grid "
+                "and stayed where they were.",
+                stacklevel=2,
+            )
 
     def svg(self):
         """The page as an SVG document."""
