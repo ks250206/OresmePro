@@ -13,26 +13,37 @@ const asDict = <T>(record: Dict<T>): Dict<T> =>
   Object.getPrototypeOf(record) === null ? record : dictFrom(record);
 
 /**
- * A document whose records kept by name all have no prototype (see ./dict).
- * Commands keep them so; a document built elsewhere and loaded may not have.
+ * A document whose records kept by name all have no prototype (see ./dict):
+ * the same document if that already holds. The commands build them so, but
+ * nothing in the types says a record must be one, so every state that enters
+ * the document passes through here rather than trusting each command.
  */
 function withDicts(state: DocState): DocState {
-  const graphs = dictFrom(state.graphs);
+  let graphs = asDict(state.graphs);
   for (const [name, graph] of Object.entries(graphs)) {
-    graphs[name] = { ...graph, axes: asDict(graph.axes), cursors: asDict(graph.cursors) };
+    const axes = asDict(graph.axes);
+    const cursors = asDict(graph.cursors);
+    if (axes === graph.axes && cursors === graph.cursors) continue;
+    if (graphs === state.graphs) graphs = dictFrom(graphs);
+    (graphs as Record<string, typeof graph>)[name] = { ...graph, axes, cursors };
   }
-  const tables = dictFrom(state.tables);
+  let tables = asDict(state.tables);
   for (const [name, table] of Object.entries(tables)) {
-    tables[name] = { ...table, widths: asDict(table.widths) };
+    const widths = asDict(table.widths);
+    if (widths === table.widths) continue;
+    if (tables === state.tables) tables = dictFrom(tables);
+    (tables as Record<string, typeof table>)[name] = { ...table, widths };
   }
-  return {
-    ...state,
-    waves: asDict(state.waves),
-    graphs,
-    tables,
-    procedures: asDict(state.procedures),
-    pages: asDict(state.pages),
-  };
+  const waves = asDict(state.waves);
+  const procedures = asDict(state.procedures);
+  const pages = asDict(state.pages);
+  const same =
+    graphs === state.graphs &&
+    tables === state.tables &&
+    waves === state.waves &&
+    procedures === state.procedures &&
+    pages === state.pages;
+  return same ? state : { ...state, waves, graphs, tables, procedures, pages };
 }
 
 const UNDO_LIMIT = 100;
@@ -74,8 +85,10 @@ export class Doc {
   /** Applies a command and returns the name of what it created, if anything. */
   dispatch(command: Command, options: DispatchOptions = {}): string | null {
     const before = this.state;
-    const { state, result } = applyCommand(before, command);
-    if (state === before) return result;
+    const applied = applyCommand(before, command);
+    const { result } = applied;
+    if (applied.state === before) return result;
+    const state = withDicts(applied.state);
     if (isTransient(command)) {
       this.state = state;
     } else {
