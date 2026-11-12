@@ -1,8 +1,12 @@
-import { strToU8, unzlibSync } from "fflate";
+import { strToU8, unzlibSync, zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
+import { checkStyle } from "../doc/commands";
 import { Doc } from "../doc/doc";
+import { echoPython } from "../doc/echo";
+import { graphScript } from "../doc/recreate";
+import { unzipExperiment, zipExperiment } from "../io/experiment";
 import { drawPrims } from "./canvas";
-import type { FontStyle, MeasureText, Prim } from "./displayList";
+import type { FontStyle, MeasureText, Prim, Rect } from "./displayList";
 import { layoutGraph } from "./layout";
 import { layoutPage } from "./page";
 import { toPdf } from "./pdf";
@@ -387,10 +391,142 @@ describe("laying out mixed text", () => {
   });
 });
 
+/** Where a text instruction's ink can be, from its size and the test measure. */
+function inkBox(prim: Extract<Prim, { kind: "text" }>): Rect {
+  const w = measure(prim.text, prim.size, prim.family);
+  const up = prim.size * CAP_HEIGHT;
+  const down = prim.size * 0.22;
+  if (prim.rotate === -90) return { x: prim.x - up, y: prim.y - w, w: up + down, h: w };
+  return { x: prim.x, y: prim.y - up, w, h: up + down };
+}
+
+const meets = (a: Rect, b: Rect): boolean =>
+  a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
 const textPrims = (prims: readonly Prim[]): Extract<Prim, { kind: "text" }>[] =>
   prims.flatMap((prim) =>
     prim.kind === "text" ? [prim] : prim.kind === "clip" ? textPrims(prim.children) : [],
   );
+
+describe("room for large axis labels", () => {
+  /** A graph with an axis on every side, each labelled with its side's name. */
+  function fourSides(props: Record<string, unknown>) {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 250, 30), unit: "V" });
+    doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(1000, 2, 3) });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({
+      op: "appendTraces",
+      graph: "Graph0",
+      y: ["b"],
+      vAxis: "right",
+      hAxis: "top",
+    });
+    for (const side of ["left", "bottom", "right", "top"]) {
+      const label = `${side[0]!.toUpperCase()}${side.slice(1)}side`;
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: side, props: { label, ...props } });
+    }
+    return doc;
+  }
+
+  it("keeps big labels inside the graph and clear of the tick labels on every side", () => {
+    const small = fourSides({});
+    const big = fourSides({ labelSize: 30, labelStyle: "bold italic", tickLabelSize: 18 });
+    const lay = (doc: Doc) =>
+      layoutGraph(doc.getState().graphs.Graph0!, doc.getState().waves, 600, 450, measure);
+    const before = lay(small);
+    const after = lay(big);
+    expect(after.plot.x).toBeGreaterThan(before.plot.x + 20);
+    expect(after.plot.y).toBeGreaterThan(before.plot.y + 20);
+    expect(600 - after.plot.x - after.plot.w).toBeGreaterThan(600 - before.plot.x - before.plot.w);
+    expect(450 - after.plot.y - after.plot.h).toBeGreaterThan(450 - before.plot.y - before.plot.h);
+
+    const texts = textPrims(after.prims);
+    const titles = texts.filter((prim) => prim.text.endsWith("side"));
+    expect(titles).toHaveLength(4);
+    const graph = { x: 0, y: 0, w: 600, h: 450 };
+    for (const title of titles) {
+      expect(title).toMatchObject({ size: 30, bold: true, italic: true });
+      const box = inkBox(title);
+      expect(box.x, title.text).toBeGreaterThanOrEqual(graph.x);
+      expect(box.y, title.text).toBeGreaterThanOrEqual(graph.y);
+      expect(box.x + box.w, title.text).toBeLessThanOrEqual(graph.w);
+      expect(box.y + box.h, title.text).toBeLessThanOrEqual(graph.h);
+      expect(meets(box, after.plot), title.text).toBe(false);
+    }
+    const ticks = texts.filter((prim) => !prim.text.endsWith("side"));
+    expect(ticks.length).toBeGreaterThan(8);
+    for (const tick of ticks) {
+      expect(tick.size).toBe(18);
+      expect(tick).not.toHaveProperty("italic");
+      for (const title of titles) {
+        expect(meets(inkBox(tick), inkBox(title)), `${tick.text} / ${title.text}`).toBe(false);
+      }
+      expect(meets(inkBox(tick), after.plot), tick.text).toBe(false);
+    }
+    // Left and right labels read upwards, as before.
+    expect(titles.filter((prim) => prim.rotate === -90).map((prim) => prim.text)).toEqual([
+      "Leftside",
+      "Rightside",
+    ]);
+  });
+
+  it("makes room for large tick labels on a mirrored axis and on stacked axes", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 250, 30) });
+    doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(5, 7, 6) });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "addAxis", graph: "Graph0", name: "L2", side: "left" });
+    doc.dispatch({ op: "appendTraces", graph: "Graph0", y: ["b"], vAxis: "L2" });
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "left",
+      props: { label: "Inner", labelSize: 26, tickLabelSize: 20 },
+    });
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "L2",
+      props: { label: "Outer", labelSize: 26, tickLabelSize: 20 },
+    });
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { mirror: "labels", tickLabelSize: 24 },
+    });
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.Graph0!, state.waves, 600, 450, measure);
+    const texts = textPrims(layout.prims);
+    const boxes = texts.map((prim) => ({ text: prim.text, box: inkBox(prim) }));
+    for (const one of boxes) {
+      expect(one.box.x, one.text).toBeGreaterThanOrEqual(0);
+      expect(one.box.y, one.text).toBeGreaterThanOrEqual(0);
+      expect(meets(one.box, layout.plot), one.text).toBe(false);
+    }
+    // The labels of the stacked axes clear every tick label, the outer axis' included.
+    for (const title of boxes.filter((one) => one.text === "Inner" || one.text === "Outer")) {
+      for (const other of boxes.filter((one) => one !== title)) {
+        expect(meets(title.box, other.box), `${title.text} / ${other.text}`).toBe(false);
+      }
+    }
+    // Neighbouring tick labels of one axis clear each other.
+    const sameAxis = (one: (typeof boxes)[number], other: (typeof boxes)[number]) =>
+      Math.abs(one.box.y - other.box.y) < 0.01 ||
+      Math.abs(one.box.x + one.box.w - other.box.x - other.box.w) < 0.01;
+    for (const [index, one] of boxes.entries()) {
+      for (const other of boxes.slice(index + 1).filter((item) => sameAxis(one, item))) {
+        expect(meets(one.box, other.box), `${one.text} / ${other.text}`).toBe(false);
+      }
+    }
+    // The mirrored labels on top are as large as those at the bottom.
+    const bottomTicks = texts.filter((prim) => prim.size === 24);
+    const above = bottomTicks.filter((prim) => prim.y < layout.plot.y);
+    expect(above.length).toBeGreaterThan(2);
+    expect(above.length * 2).toBe(bottomTicks.length);
+  });
+});
 
 describe("bold and italic in each backend", () => {
   const prims: Prim[] = [
@@ -516,5 +652,110 @@ describe("bold and italic in each backend", () => {
       'bold 12px "Courier New", monospace',
       'italic 12px "Arial", "Times New Roman", serif',
     ]);
+  });
+});
+
+describe("label sizes and styles in the document", () => {
+  function labelled() {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2, 3), unit: "V" });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "left",
+      props: { label: "Voltage (\\f02V\\f00)", labelSize: 20, labelStyle: "bold" },
+    });
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { tickLabelSize: 9 },
+    });
+    return doc;
+  }
+
+  it("checks the values", () => {
+    const doc = labelled();
+    const axis = doc.getState().graphs.Graph0!.axes.left!;
+    expect(axis).toMatchObject({ labelSize: 20, labelStyle: "bold", tickLabelSize: null });
+    const modify = (props: Record<string, unknown>) =>
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props });
+    expect(() => modify({ labelSize: 3 })).toThrow(/labelSize must be between 4 and 96/);
+    expect(() => modify({ tickLabelSize: "big" })).toThrow(/tickLabelSize/);
+    expect(() => modify({ labelStyle: "oblique" })).toThrow(/labelStyle/);
+    modify({ labelSize: null, labelStyle: "bold italic" });
+    expect(doc.getState().graphs.Graph0!.axes.left).toMatchObject({
+      labelSize: null,
+      labelStyle: "bold italic",
+    });
+  });
+
+  it("writes them as Python, in the history and in the recreation script", () => {
+    expect(
+      echoPython({
+        op: "modifyAxis",
+        graph: "Graph0",
+        axis: "left",
+        props: { labelSize: 20, labelStyle: "italic", label: "\\f02t\\f00 (s)" },
+      }),
+    ).toBe(
+      'op.graph("Graph0").axis("left").set(label_size=20, label_style="italic", label="\\\\f02t\\\\f00 (s)")',
+    );
+    const script = graphScript(labelled().getState(), "Graph0");
+    expect(script).toContain(
+      'g.axis("left").set(label="Voltage (\\\\f02V\\\\f00)", label_size=20, label_style="bold")',
+    );
+    expect(script).toContain('g.axis("bottom").set(tick_label_size=9)');
+  });
+
+  it("are part of a graph's style", () => {
+    const doc = labelled();
+    doc.dispatch({ op: "saveStyle", name: "big", graph: "Graph0" });
+    const style = doc.getState().styles.big!;
+    expect(style.axes?.left).toMatchObject({ labelSize: 20, labelStyle: "bold" });
+    expect(style.axes?.bottom).toMatchObject({ tickLabelSize: 9 });
+    expect(checkStyle({ axes: { left: { labelStyle: "italic", tickLabelSize: 8 } } })).toEqual({
+      axes: { left: { labelStyle: "italic", tickLabelSize: 8 } },
+    });
+    expect(() => checkStyle({ axes: { left: { labelStyle: "slanted" } } })).toThrow(/labelStyle/);
+    doc.dispatch({ op: "display", y: ["a"], style: null });
+    doc.dispatch({ op: "applyStyle", style: "big", graphs: ["Graph1"] });
+    // The size and style travel; the words of the label are data and stay.
+    expect(doc.getState().graphs.Graph1!.axes.left).toMatchObject({
+      label: null,
+      labelSize: 20,
+      labelStyle: "bold",
+    });
+  });
+
+  it("are saved with the experiment, and older experiments open with the graph's sizes", () => {
+    const state = labelled().getState();
+    const restored = unzipExperiment(zipExperiment(state, [])).state;
+    expect(restored.graphs.Graph0!.axes).toEqual(state.graphs.Graph0!.axes);
+
+    const old = {
+      version: 2,
+      waves: [],
+      graphs: {
+        G: {
+          name: "G",
+          traces: [],
+          axes: { left: { side: "left", label: "Old", min: null, max: null } },
+          fontSize: 12,
+          fontFamily: "Arial",
+        },
+      },
+      tables: {},
+      windows: [{ name: "G", kind: "graph", x: 0, y: 0, w: 440, h: 300 }],
+    };
+    const opened = unzipExperiment(zipSync({ "experiment.json": strToU8(JSON.stringify(old)) }))
+      .state.graphs.G!;
+    expect(opened.axes.left).toMatchObject({
+      label: "Old",
+      labelSize: null,
+      labelStyle: "plain",
+      tickLabelSize: null,
+    });
   });
 });

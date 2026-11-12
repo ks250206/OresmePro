@@ -24,6 +24,7 @@ import {
   FILL_MODES,
   GRAPH_LOOK,
   GRID_MODES,
+  LABEL_STYLES,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
@@ -610,12 +611,21 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
 const nullableNumber = (what: string) => (value: unknown) =>
   value === null ? null : finite(value, what);
 
+function fontSize(value: unknown, what: string): number {
+  const size = positive(value, what);
+  if (size < 4 || size > 96) throw new DocError(`${what} must be between 4 and 96.`);
+  return size;
+}
+
 const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown) => AxisSpec[K] } =
   {
     label: (value) => {
       if (value === null || typeof value === "string") return value;
       throw new DocError("label must be text, or null for the automatic label.");
     },
+    labelSize: (value) => (value === null ? null : fontSize(value, "labelSize")),
+    labelStyle: (value) => oneOf(value, LABEL_STYLES, "labelStyle"),
+    tickLabelSize: (value) => (value === null ? null : fontSize(value, "tickLabelSize")),
     min: nullableNumber("min"),
     max: nullableNumber("max"),
     log: (value) => bool(value, "log"),
@@ -643,11 +653,7 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
   };
 
 const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyle[K] } = {
-  fontSize: (value) => {
-    const size = positive(value, "fontSize");
-    if (size < 4 || size > 96) throw new DocError("fontSize must be between 4 and 96.");
-    return size;
-  },
+  fontSize: (value) => fontSize(value, "fontSize"),
   fontFamily: (value) => {
     if (typeof value !== "string" || !value.trim()) throw new DocError("fontFamily must be text.");
     return value;

@@ -6,6 +6,7 @@ import {
   type AnnotationSpec,
   type AxisSide,
   type AxisSpec,
+  type LabelStyle,
   type ComplexPart,
   type CursorName,
   type GraphSpec,
@@ -27,7 +28,7 @@ import {
   xExtentOf,
   type Extent,
 } from "./decimate";
-import { DASHES, type MeasureText, type Prim, type Rect } from "./displayList";
+import { DASHES, type FontStyle, type MeasureText, type Prim, type Rect } from "./displayList";
 import { emitText, layoutText, CAP_HEIGHT, type TextBlock } from "./richText";
 import { makeScale, shiftScale, type Scale } from "./scale";
 import {
@@ -148,6 +149,8 @@ interface AxisInfo {
   lane: number;
   scale: Scale;
   ticks: TickSet;
+  /** Font size of the tick labels. */
+  tickSize: number;
   labels: TextBlock[];
   title: TextBlock;
   /** Room the axis needs outward from its line. */
@@ -196,6 +199,13 @@ export function axisRange(spec: AxisSpec, data: Extent): [number, number] {
   }
   return [min, max];
 }
+
+const LABEL_LOOKS: Record<LabelStyle, FontStyle> = {
+  plain: {},
+  italic: { italic: true },
+  bold: { bold: true },
+  "bold italic": { bold: true, italic: true },
+};
 
 function commonUnit(units: string[]): string {
   const first = units[0] ?? "";
@@ -969,7 +979,6 @@ export function layoutGraph(
 ): GraphLayout {
   const size = graph.fontSize;
   const family = graph.fontFamily;
-  const cap = size * CAP_HEIGHT;
   const zone = isTimeZone(options.timeZone) ? timeZone(options.timeZone) : UTC;
 
   // Resolve what can be drawn; anything else is reported as missing.
@@ -1098,6 +1107,7 @@ export function layoutGraph(
       lane: 0,
       scale: makeScale(0, 1, false, 0, 1),
       ticks: { major: [], minor: [], exponent: 0 },
+      tickSize: spec.tickLabelSize ?? size,
       labels: [],
       title: blank,
       depth: 0,
@@ -1140,7 +1150,7 @@ export function layoutGraph(
   const labelExtent = (axis: AxisInfo): number =>
     axis.vertical
       ? Math.max(0, ...axis.labels.map((label) => label.width))
-      : Math.max(cap, ...axis.labels.map((label) => label.ascent));
+      : Math.max(axis.tickSize * CAP_HEIGHT, ...axis.labels.map((label) => label.ascent));
 
   const margins: Record<AxisSide, number> = { left: 48, right: 12, top: 12, bottom: 36 };
   let plot: Rect = { x: 0, y: 0, w: 0, h: 0 };
@@ -1169,11 +1179,12 @@ export function layoutGraph(
         axis.kind === "category"
           ? Math.min(400, axis.categories?.length ?? 1)
           : Math.min(12, Math.max(2, Math.floor(length / (axis.vertical ? 36 : 64))));
+      const { tickSize } = axis;
       if (axis.kind === "category" && axis.vertical) {
-        maxCount = Math.min(maxCount, Math.max(1, Math.floor(length / (size * 1.3))));
+        maxCount = Math.min(maxCount, Math.max(1, Math.floor(length / (tickSize * 1.3))));
       }
       let ticks = ticksFor(axis, scale, maxCount, zone);
-      let labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
+      let labels = ticks.major.map((tick) => layoutText(tick.label, tickSize, family, measure));
       if (!axis.vertical) {
         // Thin the ticks out until neighbouring labels clear each other.
         while (maxCount > 1) {
@@ -1183,12 +1194,12 @@ export function layoutGraph(
           for (let index = 1; index < pixels.length; index += 1) {
             spacing = Math.min(spacing, Math.abs(pixels[index]! - pixels[index - 1]!));
           }
-          if (widest + size * 0.8 <= spacing) break;
+          if (widest + tickSize * 0.8 <= spacing) break;
           // Ticks at a step the user chose stay where they are.
           if (axis.kind === "number" && !axis.spec.log && axis.spec.tickStep !== null) break;
           maxCount = axis.kind === "category" ? Math.floor(maxCount * 0.7) : maxCount - 1;
           ticks = ticksFor(axis, scale, Math.max(1, maxCount), zone);
-          labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
+          labels = ticks.major.map((tick) => layoutText(tick.label, tickSize, family, measure));
         }
       }
       axis.scale = scale;
@@ -1199,9 +1210,10 @@ export function layoutGraph(
         axis.kind === "date" ? (ticks.context ?? "") : axis.kind === "category" ? "" : axis.unit;
       axis.title = layoutText(
         axisLabelText(axis.spec.label, ticks.exponent, unitText),
-        size,
+        axis.spec.labelSize ?? size,
         family,
         measure,
+        LABEL_LOOKS[axis.spec.labelStyle],
       );
       axis.depth =
         tickOut(axis.spec) +
@@ -1722,24 +1734,26 @@ export function layoutGraph(
     let at = line + out * (show.ticks ? tickOut(axis.spec) : 0);
     if (show.labels) {
       at += out * TICK_LABEL_GAP;
+      const extent = labelExtent(axis);
       axis.ticks.major.forEach((tick, index) => {
         const label = axis.labels[index]!;
         const pixel = scale.toPixel(tick.value);
         if (axis.vertical) {
-          emitText(prims, label, at, pixel + cap / 2, {
+          emitText(prims, label, at, pixel + (axis.tickSize * CAP_HEIGHT) / 2, {
             align: side === "left" ? 1 : 0,
             family,
             fill: INK,
           });
         } else {
-          emitText(prims, label, pixel, side === "bottom" ? at + cap : at, {
+          // Below the axis the labels hang from the gap, so the tallest one clears the ticks.
+          emitText(prims, label, pixel, side === "bottom" ? at + extent : at, {
             align: 0.5,
             family,
             fill: INK,
           });
         }
       });
-      at += out * labelExtent(axis);
+      at += out * extent;
     }
     if (show.title && axis.title.width > 0) {
       at += out * AXIS_LABEL_GAP;

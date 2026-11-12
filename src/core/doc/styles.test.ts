@@ -45,9 +45,21 @@ function setup(): Doc {
     op: "modifyAxis",
     graph: "A",
     axis: "left",
-    props: { ticks: "inside", mirror: "ticks", grid: "major", minor: true },
+    props: {
+      ticks: "inside",
+      mirror: "ticks",
+      grid: "major",
+      minor: true,
+      labelSize: 20,
+      labelStyle: "italic",
+    },
   });
-  doc.dispatch({ op: "modifyAxis", graph: "A", axis: "bottom", props: { ticks: "inside" } });
+  doc.dispatch({
+    op: "modifyAxis",
+    graph: "A",
+    axis: "bottom",
+    props: { ticks: "inside", tickLabelSize: 10 },
+  });
   return doc;
 }
 
@@ -125,7 +137,11 @@ describe("graph styles", () => {
       ticks: "inside",
       minor: true,
       grid: "major",
+      labelSize: 20,
+      labelStyle: "italic",
+      tickLabelSize: null,
     });
+    expect(style.axes?.bottom).toMatchObject({ labelSize: null, tickLabelSize: 10 });
     expect(style.axes?.other).toBeUndefined();
     expect(style.traces).toEqual([
       {

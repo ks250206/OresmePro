@@ -697,10 +697,22 @@ class Axis(_Props):
     major ticks that far apart. ``tick_format`` writes the tick labels like
     Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
     goes back to automatic labels.
+
+    ``label_size`` and ``tick_label_size`` are the font sizes of the axis
+    label and of the tick labels (``None``: the graph's ``font_size``).
+    ``label_style`` sets the whole label in ``"plain"``, ``"italic"``,
+    ``"bold"`` or ``"bold italic"``. Codes in the label change part of it,
+    as in Igor: ``r"Voltage (\\f02V\\f00)"`` has an italic V, ``\\Z14``
+    makes what follows 14 high, ``\\u`` puts the units there. Write such
+    labels as raw strings (``r"..."``), or Python reads ``\\f`` and ``\\u``
+    as its own escapes.
     """
 
     _props = (
         "label",
+        "label_size",
+        "label_style",
+        "tick_label_size",
         "min",
         "max",
         "log",

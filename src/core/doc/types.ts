@@ -302,12 +302,20 @@ export const TICK_MODES = ["outside", "inside", "crossing", "none"] as const;
 export type TickMode = (typeof TICK_MODES)[number];
 export const GRID_MODES = ["off", "major", "all"] as const;
 export type GridMode = (typeof GRID_MODES)[number];
+export const LABEL_STYLES = ["plain", "italic", "bold", "bold italic"] as const;
+export type LabelStyle = (typeof LABEL_STYLES)[number];
 
 export interface AxisSpec {
   /** Which edge of the plot the axis belongs to. Fixed when the axis is made. */
   side: AxisSide;
   /** null means automatic (derived from wave units). */
   label: string | null;
+  /** Font size of the label; null is the graph's. Codes in the label can change it further. */
+  labelSize: number | null;
+  /** The style the whole label is set in, before any codes in it. */
+  labelStyle: LabelStyle;
+  /** Font size of the tick labels; null is the graph's. */
+  tickLabelSize: number | null;
   /** null means autoscale to the data. */
   min: number | null;
   max: number | null;
@@ -404,8 +412,9 @@ export interface GraphSpec extends GraphStyle {
  * same fonts, lines, colors and size. What it holds is the look and never the
  * data, and the rule that tells them apart is: a property is look when the
  * same value is right for a graph of any other data, and data when the right
- * value depends on what is plotted. So font, tick direction, mirror axes,
- * grid, line width, colors and markers are look; ranges, labels, log or
+ * value depends on what is plotted. So font, the size and style of axis
+ * labels and tick labels, tick direction, mirror axes, grid, line width,
+ * colors and markers are look; ranges, labels (their words), log or
  * linear, reversal, tick step and format (they follow the values), axis spans
  * (they follow which axes there are), which waves are plotted, error bars,
  * offsets, fills and color waves are data. Hidden traces and the cursor bar
@@ -415,7 +424,15 @@ export interface GraphSpec extends GraphStyle {
 /** The graph-wide properties a style can hold. */
 export const GRAPH_LOOK = ["fontSize", "fontFamily"] as const;
 /** The properties of an axis a style can hold. */
-export const AXIS_LOOK = ["mirror", "ticks", "minor", "grid"] as const;
+export const AXIS_LOOK = [
+  "mirror",
+  "ticks",
+  "minor",
+  "grid",
+  "labelSize",
+  "labelStyle",
+  "tickLabelSize",
+] as const;
 /** The properties of a trace a style can hold, for each place in its cycle. */
 export const TRACE_LOOK = [
   "mode",
@@ -596,6 +613,9 @@ export const DEFAULT_FONT_FAMILY = "Helvetica Neue, Helvetica, Arial, sans-serif
 export const defaultAxis = (side: AxisSide): AxisSpec => ({
   side,
   label: null,
+  labelSize: null,
+  labelStyle: "plain",
+  tickLabelSize: null,
   min: null,
   max: null,
   log: false,

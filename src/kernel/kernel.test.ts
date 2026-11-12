@@ -739,6 +739,50 @@ describe("oresme Python API", () => {
     expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Polish, name: "" });
   });
 
+  it("sizes and styles axis labels, and reads codes in label text", async () => {
+    expect(
+      await run(
+        [
+          'lv = op.make("lbl_v", [0.001, 0.004, 0.002], unit="V")',
+          'lg = op.display(lv, name="LabelSizes")',
+          'ax = lg.axis("left")',
+          "print(ax.label_size, ax.label_style, ax.tick_label_size)",
+          'ax.label_size = 20; ax.label_style = "italic"',
+          String.raw`lg.bottom.set(tick_label_size=9, label=r"\f02t\f00 / \u", label_style="bold")`,
+          "print(ax.label_size, ax.label_style, lg.bottom.tick_label_size, lg.bottom.label)",
+          "svg = lg.svg()",
+          'print(\'font-size="20" font-style="italic"\' in svg, \'font-size="9"\' in svg)',
+          // \f sets the style outright, as in Igor: the italic t is not also bold.
+          'print(\'font-style="italic" fill="#000000" xml:space="preserve">t<\' in svg)',
+          "try:",
+          '    ax.label_style = "slanted"',
+          "except op.OresmeError as error:",
+          '    print(str(error).split(":")[0])',
+          "try:",
+          "    ax.label_size = 200",
+          "except op.OresmeError as error:",
+          "    print(error)",
+          "ax.label_size = None",
+          "print(ax.label_size)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "None plain None",
+        "20 italic 9 \\f02t\\f00 / \\u",
+        "True True",
+        "True",
+        "labelStyle must be one of",
+        "labelSize must be between 4 and 96.",
+        "None",
+        "",
+      ].join("\n"),
+    );
+    const left = doc.getState().graphs.LabelSizes!.axes.left!;
+    expect(left).toMatchObject({ labelSize: null, labelStyle: "italic" });
+  });
+
   it("shows dates in the experiment's time zone", async () => {
     expect(
       await run(
@@ -2048,7 +2092,7 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe(
       [
-        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off'}",
+        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'tick_label_size': None}",
         "15 Style('stPaper') [3, 1, 3] on",
         "22 22 #ff0000 4",
         "22 Style('stTalk') Style('stTalk')",
