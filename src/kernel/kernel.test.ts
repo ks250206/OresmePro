@@ -1171,6 +1171,254 @@ describe("oresme Python API", () => {
     }
   });
 
+  it("fits the points that are chosen: ranges in X, spans left out, a mask", async () => {
+    expect(
+      await run(
+        [
+          "sx = np.arange(20.0)",
+          "sy = 1 + 2 * sx",
+          "sy[5:8] += 50; sy[15] = -30",
+          'sw = op.make("sel_w", sy)',
+          // Left to itself the line is pulled by the bad points.
+          'print(abs(op.fit("line", sw, quiet=True)["b"] - 2) > 0.1)',
+          'r = op.fit("line", sw, exclude=[(5, 7), (15, 15)], quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.points, r.freedom)",
+          'r = op.fit("line", sw, xrange=(8, 14), quiet=True); print(np.round(r.coef, 9).tolist(), r.points)',
+          'sm = op.make("sel_mask", (sy == 1 + 2 * sx).astype(float))',
+          'r = op.fit("line", sw, mask=sm, range=(0, 12), quiet=True); print(np.round(r.coef, 9).tolist(), r.points)',
+          // The wave itself is untouched, and the curve runs across what was left out.
+          'print(sw.data[6], np.isfinite(op.wave("fit_sel_w").data).all())',
+          'r = op.fit("line", sw, mask=np.ones(20), exclude=(5, 7), residuals=True, quiet=True)',
+          "print(round(float(r.residuals.data[6]), 6), round(float(r.residuals.data[2]), 6))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "True",
+      "[1.0, 2.0] 16 14",
+      "[1.0, 2.0] 7",
+      "[1.0, 2.0] 10",
+      "63.0 True",
+      // The residual of a point left out shows how far off it is.
+      expect.stringMatching(/^5\d\.\d+ -?\d\.\d+$/),
+    ]);
+    for (const [code, error] of [
+      ['op.fit("line", sw, mask=[1, 0])', /mask needs one value per point/],
+      ['op.fit("line", sw, exclude=(0, 100))', /No points are left to fit/],
+      ['op.fit("line", sw, exclude=5)', /exclude takes \(low, high\)/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("keeps each fit with its settings, to be compared, run again and applied to other waves", async () => {
+    expect(
+      await run(
+        [
+          "kx = np.linspace(0, 4, 41)",
+          'ka = op.make("keep_a", 1 + 3 * np.exp(-kx / 0.5), x0=0, dx=0.1)',
+          'kb = op.make("keep_b", 2 + 5 * np.exp(-kx / 0.8), x0=0, dx=0.1)',
+          'kc = op.make("keep_c", 0.5 + 1 * np.exp(-kx / 1.5), x0=0, dx=0.1)',
+          'r = op.fit("exp", ka, hold={"y0": 1}, xrange=(0, 3), quiet=True)',
+          "kept = op.result(r.name)",
+          "print(kept.kind, kept.label, kept.names, kept.held, np.round(kept.coef, 6).tolist())",
+          "print(kept.settings['hold'], kept.settings['xrange'], kept.settings['y'], kept.reason, kept.changed)",
+          "print(kept.covariance.shape, round(float(kept.correlation[1, 2]), 2), np.isnan(kept.correlation[0, 1]), list(kept.outputs))",
+          // The data changes: the result says so, and running it again gives a new one beside it.
+          "ka.data = 1 + 4 * np.exp(-kx / 0.5)",
+          "again = kept.rerun(quiet=True)",
+          "print(kept.changed, again.name != kept.name, round(kept['A'], 6), round(again['A'], 6), op.result(again.name).changed)",
+          "same = kept.rerun(replace=True, quiet=True); print(same.name == kept.name, round(kept['A'], 6))",
+          // The same settings on other waves, and all of them side by side.
+          "others = kept.apply([kb, 'keep_c'])",
+          "print([o.function for o in others], [round(o['tau'], 6) for o in others], [round(o['y0'], 6) for o in others])",
+          't = op.table("Results"); print([c.name for c in t.columns][:6])',
+          'print(op.wave("Results_data").data[-2:], np.round(op.wave("Results_tau").data[-2:], 6).tolist())',
+          "print(str(kept).splitlines()[0])",
+          "kept.rename('sampleA'); print(op.result('sampleA')['tau'] == same['tau'], 'sampleA' in [x.name for x in op.results()])",
+          "again.result.remove(); print(again.name in [x.name for x in op.results()])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "fit exp(keep_a) ('y0', 'A', 'tau') ('y0',) [1.0, 3.0, 0.5]",
+      "{'y0': 1} [0, 3] keep_a converged []",
+      // A and tau of a decay lean on each other; the held y0 has no correlation to give.
+      "(3, 3) -0.63 True ['fit']",
+      "['keep_a'] True 3.0 4.0 []",
+      "True 4.0",
+      // y0 stays held at 1 for the others too, so their fits are of other curves.
+      expect.stringMatching(
+        /^\['exp\(keep_b\)', 'exp\(keep_c\)'\] \[\d\.\d+, \d\.\d+\] \[1\.0, 1\.0\]$/,
+      ),
+      "['Results_result', 'Results_data', 'Results_y0', 'Results_y0_sd', 'Results_A', 'Results_A_sd']",
+      expect.stringMatching(/^\['keep_b' 'keep_c'\] \[\d\.\d+, \d\.\d+\]$/),
+      expect.stringMatching(/^Fit\d+: exp\(keep_a\), 31 points, chi-square = /),
+      "True True",
+      "False",
+    ]);
+    // In the document: with fingerprints of the inputs, and undone with the fit that made it.
+    const kept = doc.getState().results.sampleA!;
+    expect(kept.inputs.map((input) => input.wave)).toEqual(["keep_a"]);
+    expect(kept.created).toBeGreaterThan(Date.now() - 600_000);
+    expect(await run('q = op.fit("line", "keep_b", quiet=True, record=False); print(q.name)')).toBe(
+      true,
+    );
+    expect(stdout).toBe("None\n");
+  });
+
+  it("finds a function of the user's again, and says what cannot be repeated", async () => {
+    expect(
+      await run(
+        [
+          "def keep_fn(x, a, b): return a * np.sqrt(x) + b",
+          "fx = np.linspace(1, 9, 30)",
+          'fw = op.make("keep_fn_w", 2 * np.sqrt(fx) + 1, x0=1, dx=fx[1] - fx[0])',
+          "r = op.fit(keep_fn, fw, guess=[1, 0], quiet=True)",
+          "print(np.round(r.rerun(quiet=True).coef, 6).tolist(), r.result.settings['function'])",
+          "s = op.fit('line', fw, sigma=np.full(30, 0.1), quiet=True)",
+          "print(np.round(s.rerun(sigma=0.2, quiet=True).sigma / s.sigma, 6).tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("[2.0, 1.0] keep_fn\n[2.0, 2.0]\n");
+    expect(await run("s.rerun()")).toBe(false);
+    expect(errors[0]).toMatch(/was given sigma as data, which was not kept\. Give sigma= again/);
+    expect(await run("del keep_fn; r.rerun()")).toBe(false);
+    expect(errors[0]).toMatch(/used your function 'keep_fn', which is not defined now/);
+  });
+
+  it("says what makes a fit doubtful: parameters that stand in for each other, and why it stopped", async () => {
+    expect(
+      await run(
+        [
+          "dx_ = np.linspace(1000, 1001, 40)",
+          'dw = op.make("doubt_w", 3 + 0.5 * dx_ + np.random.default_rng(3).normal(0, 0.01, 40), x0=1000, dx=dx_[1] - dx_[0])',
+          'r = op.fit("line", dw, quiet=True); print(str(r).splitlines()[-1]); print(r.reason)',
+          'z = op.fit(lambda x, a: np.exp(-a * x), op.make("doubt_z", np.zeros(20), x0=1, dx=1), guess=[1.0], quiet=True)',
+          "print(z.converged, z.reason, str(z).splitlines()[1])",
+          // eta of a pseudo-Voigt stays within 0..1 without being told to.
+          "px = np.linspace(-8, 8, 161)",
+          'pw = op.make("doubt_pv", 1 / (1 + (px / 0.7) ** 4), x0=-8, dx=0.1)',
+          'p = op.fit("pseudo_voigt", pw, quiet=True); print(0 <= p["eta"] <= 1)',
+          // A limit given on one side leaves the function's own limit on the other.
+          'p = op.fit("pseudo_voigt", pw, bounds={"eta": (None, 0.25)}, quiet=True); print(round(p["eta"], 6))',
+          'pl = op.make("doubt_lor", 1 / (1 + (px / 0.7) ** 2), x0=-8, dx=0.1)',
+          'p = op.fit("pseudo_voigt", pl, bounds={"eta": (None, 0.25)}, quiet=True); print(round(p["eta"], 6))',
+          'p = op.fit("pseudo_voigt", pl, bounds={"eta": (0.5, None)}, quiet=True); print(round(p["eta"], 6))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "strongly correlated: a and b (-1.000)",
+      "converged",
+      expect.stringMatching(
+        /^False (stopped[^(]*?) {3}\(did not converge: \1; showing the best parameters found\)$/,
+      ),
+      "True",
+      "0.0",
+      "0.25",
+      "1.0",
+    ]);
+  });
+
+  it("fits several waves at once with parameters in common, and many waves one by one", async () => {
+    expect(
+      await run(
+        [
+          "gx = np.linspace(0, 5, 51)",
+          "gn = np.random.default_rng(7)",
+          'gs = [op.make(f"glob_{i}", y0 + A * np.exp(-gx / 0.9) + gn.normal(0, 0.01, 51), x0=0, dx=0.1) for i, (y0, A) in enumerate([(0, 1), (0.5, 3), (-1, 0.2)])]',
+          'g = op.fit_global("exp", gs, shared=["tau"], quiet=True)',
+          "print(g.names, g.shared, g.coef.shape, round(g['tau'], 2), np.round(g['A'], 1).tolist(), (np.round(g['y0'], 1) + 0.0).tolist())",
+          // One time constant fitted to all three is known better than from any one of them.
+          'alone = [op.fit("exp", w, quiet=True) for w in gs]',
+          "print(g.sigma[0, 2] < min(r.sigma[2] for r in alone), np.all(g.sigma[:, 2] == g.sigma[0, 2]), g.converged)",
+          "kept = g.result; print(kept.kind, kept.names[:3], len(kept.names), kept.settings['shared'], list(kept.outputs))",
+          'h = op.fit_global("exp", gs, shared=["tau"], hold={"y0": 0}, quiet=True); print(h.held, h.coef[:, 0].tolist(), h.chisq > g.chisq)',
+          "print(str(g).splitlines()[1].strip().split(' ±')[0][:9], len(str(g).splitlines()))",
+          "print(round(kept.rerun(quiet=True)['tau'], 2))",
+          'b = op.fit_batch("exp", gs); print(len(b), [round(r["tau"], 1) for r in b])',
+          'print(op.wave("Results_data").data[-3:])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('y0', 'A', 'tau') ('tau',) (3, 3) 0.9 [1.0, 3.0, 0.2] [0.0, 0.5, -1.0]",
+      "True True True",
+      "global ('tau', 'y0[0]', 'A[0]') 7 ['tau'] ['fit0', 'fit1', 'fit2']",
+      "('y0',) [0.0, 0.0, 0.0] True",
+      "tau = 0.9 6",
+      "0.9",
+      expect.stringMatching(/^Fit\d+: exp\(glob_0\), chi-square = /),
+      expect.stringMatching(/^Fit\d+: exp\(glob_1\), chi-square = /),
+      expect.stringMatching(/^Fit\d+: exp\(glob_2\), chi-square = /),
+      "3 [0.9, 0.9, 0.9]",
+      "['glob_0' 'glob_1' 'glob_2']",
+    ]);
+    for (const [code, error] of [
+      ['op.fit_global("exp", gs[:1])', /needs two waves or more/],
+      ['op.fit_global("exp", gs, shared=["rate"])', /no parameter named 'rate'/],
+      ['op.fit_global("exp", gs, xs=[gs[0]])', /one X wave for each wave/],
+      ["kept.apply(gs)", /cannot be applied wave by wave/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("ties peaks to each other: a spacing, a ratio of areas, the same width", async () => {
+    expect(
+      await run(
+        [
+          "tx = np.linspace(0, 20, 801)",
+          "tg = lambda x0, h, w: h * np.exp(-((tx - x0) / w) ** 2)",
+          // A doublet that overlaps: 1.5 apart, areas 2:1, the same width.
+          'tw = op.make("tie_w", 0.2 + tg(9, 4, 0.9) + tg(10.5, 2, 0.9) + np.random.default_rng(5).normal(0, 0.02, 801), x0=0, dx=0.025)',
+          "free = op.fit_peaks(tw, peaks=[9, 10.5], quiet=True)",
+          "tied = op.fit_peaks(tw, peaks=[9, 10.5], same_width=True, spacing={(1, 2): 1.5}, area_ratio={(1, 2): 0.5}, quiet=True)",
+          "a, b = tied.peaks",
+          "print(round(b['x'] - a['x'], 9), round(b['area'] / a['area'], 9), round(b['width'] - a['width'], 9))",
+          "print(round(a['x'], 2), round(a['height'], 1), round(a['width'] / (2 * np.sqrt(np.log(2))), 2), tied.converged)",
+          // With fewer free parameters the position is known better, and the tied one as well as its source.
+          "print(a['x_sigma'] < free.peaks[0]['x_sigma'], round(b['x_sigma'] / a['x_sigma'], 6), b['area_sigma'] > 0)",
+          "kept = tied.result; print(kept.kind, kept.names, kept.freedom - free.result.freedom)",
+          "print(kept.settings['spacing'], kept.settings['area_ratio'], kept.settings['same_width'], kept.settings['peaks'])",
+          "again = kept.rerun(quiet=True); print(round(again.peaks[1]['x'] - again.peaks[0]['x'], 9))",
+          // A chain of spacings, given as a list.
+          'tw3 = op.make("tie_w3", tg(5, 1, 0.5) + tg(7, 1, 0.5) + tg(9, 1, 0.5), x0=0, dx=0.025)',
+          "c = op.fit_peaks(tw3, peaks=[5.1, 6.8, 9.2], baseline=None, spacing=[(1, 2, 2), (2, 3, 2)], quiet=True)",
+          "print([round(p['x'], 6) for p in c.peaks])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "1.5 0.5 0.0",
+      "9.0 4.0 0.9 True",
+      "True 1.0 True",
+      "peaks ('x1', 'height1', 'fwhm1', 'area1', 'x2', 'height2', 'fwhm2', 'area2', 'offset') 3",
+      "[[1, 2, 1.5]] [[1, 2, 0.5]] True [9, 10.5]",
+      "1.5",
+      "[5.0, 7.0, 9.0]",
+    ]);
+    for (const [code, error] of [
+      [
+        "op.fit_peaks(tw, peaks=[9, 10.5], spacing={(1, 3): 1})",
+        /there is no peak 3; the peaks are 1 to 2/,
+      ],
+      [
+        "op.fit_peaks(tw, peaks=[9, 10.5], spacing={(1, 2): 1, (2, 1): -1})",
+        /go round in a circle/,
+      ],
+      ["op.fit_peaks(tw, peaks=[9, 10.5], spacing=[(1, 2, 1), (1, 2, 2)])", /tied twice over/],
+      ["op.fit_peaks(tw, peaks=[9, 10.5], area_ratio=[1, 2])", /area_ratio takes/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
   it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
     expect(
       await run(

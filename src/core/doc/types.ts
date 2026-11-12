@@ -1,4 +1,5 @@
 import { dict, type Dict } from "./dict";
+import type { AnalysisResult } from "./results";
 
 /** The number types a wave can hold, named as NumPy names them. */
 export const WAVE_TYPES = [
@@ -546,6 +547,8 @@ export interface DocState {
   readonly styles: Dict<StyleSpec>;
   /** The style new graphs are given, or null. Always one of `styles`. */
   readonly defaultStyle: string | null;
+  /** Analysis results (fits), by name, with what was asked for. */
+  readonly results: Dict<AnalysisResult>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -565,6 +568,7 @@ export const emptyDoc = (): DocState => ({
   pages: dict(),
   styles: dict(),
   defaultStyle: null,
+  results: dict(),
   timeZone: "UTC",
   windows: [],
 });

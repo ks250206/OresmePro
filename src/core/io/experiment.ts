@@ -1,6 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
+import { checkResult, type AnalysisResult } from "../doc/results";
 import {
   AXIS_SIDES,
   CURSOR_NAMES,
@@ -55,6 +56,7 @@ export interface SavedExperiment {
   pages?: Record<string, PageSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
+  results?: Record<string, AnalysisResult>;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -86,6 +88,7 @@ export function describeExperiment(
     pages: dictFrom(state.pages),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
+    results: dictFrom(state.results),
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
@@ -223,8 +226,29 @@ export function buildState(
       window.name in procedures ||
       window.name in pages,
   );
+  const results = dict<AnalysisResult>();
+  for (const [name, result] of Object.entries(saved.results ?? {})) {
+    checkName(name, "result");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      results[name] = checkResult(result, name, null);
+    } catch {
+      continue;
+    }
+  }
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
-  return { ...state, graphs, tables, procedures, pages, styles, defaultStyle, timeZone, windows };
+  return {
+    ...state,
+    graphs,
+    tables,
+    procedures,
+    pages,
+    styles,
+    defaultStyle,
+    results,
+    timeZone,
+    windows,
+  };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

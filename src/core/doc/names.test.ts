@@ -23,6 +23,7 @@ function records(state: DocState): [string, object][] {
     ["procedures", state.procedures],
     ["pages", state.pages],
     ["styles", state.styles],
+    ["results", state.results],
     ...Object.values(state.graphs).flatMap((graph): [string, object][] => [
       [`${graph.name}.axes`, graph.axes],
       [`${graph.name}.cursors`, graph.cursors],

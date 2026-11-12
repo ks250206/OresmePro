@@ -14,7 +14,14 @@ import oresme as _op
 __all__ = [
     "FitResult",
     "PeakFitResult",
+    "Result",
+    "result",
+    "results",
+    "results_table",
     "fit",
+    "fit_batch",
+    "fit_global",
+    "GlobalFitResult",
     "fit_functions",
     "find_peaks",
     "fit_peaks",
@@ -318,7 +325,10 @@ def _damped_step(jacobian, residual, free, damping):
 
 def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max_iterations=200,
                    design=None):
-    """Levenberg-Marquardt within bounds. Returns (parameters, covariance, chi-square, converged).
+    """Levenberg-Marquardt within bounds.
+
+    Returns (parameters, covariance, chi-square, converged, reason), the last
+    saying in words why it stopped.
 
     ``weights`` multiply the residuals (1/sigma per point). ``lower`` and
     ``upper`` bound the parameters. A parameter on a bound that the fit pushes
@@ -368,20 +378,24 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
         # a light damping does, and in fewer evaluations.
         damping = 0.0 if design is not None else 1.0
         converged = False
+        reason = "stopped at the limit of iterations"
         for _ in range(max_iterations):
             jacobian = jacobian_at(params)
             if not np.all(np.isfinite(jacobian)):
                 # The model cannot be differentiated here: nothing says which way to go.
+                reason = "stopped where the function is not finite"
                 break
             free = ~pushed_out(jacobian.T @ residual, np.ones(len(params), dtype=bool))
             if not free.any():
                 converged = True
+                reason = "converged with every parameter on a bound"
                 break
             # What a full Gauss-Newton step could still gain: the part of the
             # residual that the free parameters can reach.
             gain = float(np.sum((jacobian @ _damped_step(jacobian, residual, free, 0.0)) ** 2))
             if not gain > 1e-12 * chi + floor:
                 converged = True
+                reason = "converged"
                 break
             improved = False
             while damping < 1e12:
@@ -408,6 +422,11 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                 # converged all the same if a step promises no more than the
                 # relative reduction MINPACK settles for.
                 converged = not gain > 1.5e-8 * chi + floor
+                reason = (
+                    "converged as far as the precision of the data allows"
+                    if converged
+                    else "stopped: no step improves the fit, though it is not at a minimum"
+                )
                 break
         jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))
@@ -418,7 +437,7 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                 covariance = covariance * chi / freedom
         except np.linalg.LinAlgError:
             covariance = np.full((len(params), len(params)), np.nan)
-    return params, covariance, chi, converged
+    return params, covariance, chi, converged, reason
 
 
 def _index_of(names, name, what):
@@ -431,7 +450,8 @@ class FitResult:
     """The outcome of ``op.fit``: coefficients, their uncertainties and the fit wave."""
 
     def __init__(self, function, names, coef, sigma, chisq, points, wave, converged, held=(),
-                 residuals=None, band=None):
+                 residuals=None, band=None, *, reason="", covariance=None, freedom=None,
+                 name=None):
         self.held = tuple(held)
         #: The wave of residuals (data minus fit), if ``residuals=True`` was given.
         self.residuals = residuals
@@ -443,8 +463,36 @@ class FitResult:
         self.sigma = sigma
         self.chisq = chisq
         self.points = points
+        #: Points less fitted parameters.
+        self.freedom = points - (len(self.names) - len(self.held)) if freedom is None else freedom
         self.wave = wave
         self.converged = converged
+        #: Why the fit stopped, in words.
+        self.reason = reason
+        #: The covariance of the parameters, in the order of ``names`` (zero for held ones).
+        self.covariance = covariance
+        #: The name under which the fit is kept among the experiment's results, or None.
+        self.name = name
+
+    @property
+    def correlation(self):
+        """The correlation of the parameters: 1 on the diagonal, NaN for held ones."""
+        return _correlation(self.covariance)
+
+    @property
+    def result(self):
+        """The fit as it is kept in the experiment: ``.rerun()``, ``.apply(waves)``, ``.remove()``."""
+        if self.name is None:
+            raise _op.OresmeError("This fit was not recorded (record=False).")
+        return Result(self.name)
+
+    def rerun(self, **changes):
+        """Fit again with the same settings; see ``Result.rerun``."""
+        return self.result.rerun(**changes)
+
+    def apply(self, waves, **changes):
+        """Fit other waves with the same settings; see ``Result.apply``."""
+        return self.result.apply(waves, **changes)
 
     def __getitem__(self, name):
         return float(self.coef[self.names.index(name)])
@@ -453,16 +501,47 @@ class FitResult:
         return f"FitResult({self.function}, chisq={self.chisq:.6g})"
 
     def __str__(self):
-        lines = [f"Fit: {self.function}, {self.points} points, chi-square = {self.chisq:.6g}"]
-        if not self.converged:
-            lines.append("  (did not converge; showing the best parameters found)")
-        width = max(len(name) for name in self.names)
-        for name, value, error in zip(self.names, self.coef, self.sigma):
-            if name in self.held:
-                lines.append(f"  {name:<{width}} = {value:.6g} (held)")
-                continue
-            lines.append(f"  {name:<{width}} = {value:.6g} ± {error:.3g}")
-        return "\n".join(lines)
+        return _fit_summary(
+            f"Fit: {self.function}", self.names, self.coef, self.sigma, self.held, self.chisq,
+            self.points, self.converged, self.reason, self.covariance,
+        )
+
+
+def _correlation(covariance):
+    if covariance is None:
+        return None
+    covariance = np.asarray(covariance, dtype=float)
+    with np.errstate(all="ignore"):
+        spread = np.sqrt(np.diag(covariance))
+        correlation = covariance / np.outer(spread, spread)
+    correlation[~np.isfinite(correlation)] = np.nan
+    return correlation
+
+
+def _fit_summary(title, names, coef, sigma, held, chisq, points, converged, reason, covariance):
+    """What a fit prints: the parameters, and what makes them doubtful."""
+    lines = [f"{title}, {points} points, chi-square = {chisq:.6g}"]
+    if not converged:
+        why = f": {reason}" if reason else ""
+        lines.append(f"  (did not converge{why}; showing the best parameters found)")
+    width = max(len(name) for name in names)
+    for name, value, error in zip(names, coef, sigma):
+        if name in held:
+            lines.append(f"  {name:<{width}} = {value:.6g} (held)")
+            continue
+        lines.append(f"  {name:<{width}} = {value:.6g} ± {error:.3g}")
+    # Parameters that can stand in for each other are not determined separately.
+    correlation = _correlation(covariance)
+    if correlation is not None:
+        pairs = [
+            f"{names[i]} and {names[j]} ({correlation[i, j]:+.3f})"
+            for i in range(len(names))
+            for j in range(i + 1, len(names))
+            if np.isfinite(correlation[i, j]) and abs(correlation[i, j]) > 0.98
+        ]
+        if pairs:
+            lines.append(f"  strongly correlated: {', '.join(pairs)}")
+    return "\n".join(lines)
 
 
 def _incomplete_beta(a, b, x, y):
@@ -541,8 +620,100 @@ def _stack_axis(graph, source, name):
     return name
 
 
+#: Limits a built-in function's parameters have unless others are given.
+_DEFAULT_BOUNDS = {"pseudo_voigt": {"eta": (0.0, 1.0)}}
+
+
+def _limits(function, bounds):
+    """The limits of the parameters: those given, on top of the function's own.
+
+    A side given as None has no limit of the user's; the function's own limit
+    on that side, if it has one, stays.
+    """
+    limits = dict(_DEFAULT_BOUNDS.get(function, {})) if isinstance(function, str) else {}
+    for key, (low, high) in (bounds or {}).items():
+        own_low, own_high = limits.get(key, (None, None))
+        limits[key] = (own_low if low is None else low, own_high if high is None else high)
+    return limits
+
+
+def _graph_showing(y_wave, graph):
+    """The graph given, or the frontmost one that shows the wave; None if none does."""
+    for candidate in [graph] if graph is not None else reversed(_op.graphs()):
+        candidate = _op.graph(candidate) if isinstance(candidate, str) else candidate
+        if any(trace["y"] == y_wave.name for trace in candidate._info()["traces"]):
+            return candidate
+    return None
+
+
+def _spans(spans, what):
+    """One (low, high) pair or a list of them, as a list of sorted pairs of numbers."""
+    try:
+        array = np.asarray(spans, dtype=float)
+    except (TypeError, ValueError):
+        array = None
+    if array is None or array.ndim not in (1, 2) or array.shape[-1] != 2:
+        raise _op.OresmeError(f"{what} takes (low, high) in X, or a list of such pairs.")
+    return [sorted((float(low), float(high))) for low, high in array.reshape(-1, 2)]
+
+
+def _selection(x_values, y_values, target, *, range=None, xrange=None, cursors=False,
+               exclude=None, mask=None):
+    """Which points an analysis uses, and the settings that choose the same points again.
+
+    Returns (use, settings, waves): a boolean per point, the choices as they
+    are recorded with the result, and the waves the choice depends on.
+    """
+    count = len(y_values)
+    use = np.ones(count, dtype=bool)
+    said = {}
+    waves = []
+    if cursors:
+        if target is None:
+            raise _op.OresmeError("cursors=True needs a graph that shows the wave.")
+        marks = target._info()["cursors"]
+        if "A" not in marks or "B" not in marks:
+            raise _op.OresmeError("Put cursors A and B on the graph first.")
+        # The cursors may move later: the points they marked are what is recorded.
+        range = (marks["A"]["point"], marks["B"]["point"])
+    if range is not None:
+        first, last = sorted((int(range[0]), int(range[1])))
+        first, last = max(0, first), min(count - 1, last)
+        use[:first] = False
+        use[last + 1 :] = False
+        said["range"] = [first, last]
+    if xrange is not None:
+        (low, high), = _spans(xrange, "xrange")[:1]
+        use &= (x_values >= low) & (x_values <= high)
+        said["xrange"] = [low, high]
+    if exclude is not None:
+        said["exclude"] = _spans(exclude, "exclude")
+        for low, high in said["exclude"]:
+            use &= ~((x_values >= low) & (x_values <= high))
+    if mask is not None:
+        if isinstance(mask, (str, _op.Wave)):
+            mask_wave = _op.wave(_op._wave_name(mask))
+            values = np.asarray(mask_wave.data)
+            said["mask"] = mask_wave.name
+            waves.append(mask_wave.name)
+        else:
+            values = np.asarray(mask)
+            # Not a wave: there is nothing by which to find it again.
+            said["mask"] = _UNREPEATABLE
+        if values.shape != y_values.shape:
+            raise _op.OresmeError("mask needs one value per point: nonzero to use the point.")
+        with np.errstate(all="ignore"):
+            use &= np.nan_to_num(values.astype(float), nan=0.0) != 0
+    return use, said, waves
+
+
+#: Stands in the recorded settings for a value that was given as data, not as a wave.
+_UNREPEATABLE = "<array>"
+
+
 def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None,
-        cursors=False, graph=None, name=None, quiet=False, residuals=False, band=None):
+        xrange=None, exclude=None, mask=None, cursors=False, graph=None, name=None, quiet=False,
+        residuals=False, band=None, result=None, record=True):
     """Fit a function to a wave by least squares.
 
     ``function`` is the name of a built-in function (see ``op.fit_functions()``),
@@ -558,9 +729,14 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
     are then taken from those; without ``sigma`` they are estimated from the
     scatter of the data around the fit.
 
-    ``x`` is an X wave; without it the wave's X scaling is used. ``range=(a, b)``
-    limits the fit to points a..b inclusive; ``cursors=True`` uses the points
-    between cursors A and B of the graph.
+    ``x`` is an X wave; without it the wave's X scaling is used.
+
+    Which points are fitted, the wave itself staying as it is:
+    ``range=(a, b)`` takes points a..b inclusive, ``xrange=(x1, x2)`` those
+    with X in that span, ``cursors=True`` the points between cursors A and B
+    of the graph. ``exclude=(x1, x2)`` or ``exclude=[(x1, x2), ...]`` leaves
+    out the points with X in those spans, and ``mask`` (a wave or array with
+    one value per point) leaves out the points where it is zero. They combine.
 
     ``residuals=True`` also makes ``res_<name>`` (data minus fit) and shows it
     on an axis of its own above the data. ``band=0.95`` makes
@@ -569,7 +745,13 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
 
     Makes a wave ``fit_<name>`` with the fitted curve and adds it to the graph
     showing the data, and stores the coefficients in ``W_coef`` and their
-    standard deviations in ``W_sigma``. Returns a ``FitResult``.
+    standard deviations in ``W_sigma``. Returns a ``FitResult``, which also
+    has the covariance and correlation of the parameters and why the fit
+    stopped.
+
+    The fit is kept among the experiment's results (``op.results()``) with
+    its settings, as ``Fit0``, ``Fit1``, ...; ``result="name"`` names it,
+    replacing a result of that name, and ``record=False`` keeps nothing.
     """
     y_wave = _op.wave(_op._wave_name(y))
     x_wave = None if x is None else _op.wave(_op._wave_name(x))
@@ -581,36 +763,30 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
         raise _op.OresmeError("The X and Y waves have different lengths.")
 
     leaf = y_wave.name.rsplit(":", 1)[-1]
-    target = None
-    for candidate in [graph] if graph is not None else reversed(_op.graphs()):
-        candidate = _op.graph(candidate) if isinstance(candidate, str) else candidate
-        if any(trace["y"] == y_wave.name for trace in candidate._info()["traces"]):
-            target = candidate
-            break
-
-    first, last = 0, len(y_values) - 1
-    if cursors:
-        if target is None:
-            raise _op.OresmeError("cursors=True needs a graph that shows the wave.")
-        marks = target._info()["cursors"]
-        if "A" not in marks or "B" not in marks:
-            raise _op.OresmeError("Put cursors A and B on the graph first.")
-        first, last = sorted((marks["A"]["point"], marks["B"]["point"]))
-    elif range is not None:
-        first, last = sorted((int(range[0]), int(range[1])))
-    first, last = max(0, first), min(len(y_values) - 1, last)
-
-    x_fit = x_values[first : last + 1]
-    y_fit = y_values[first : last + 1]
-    keep = np.isfinite(x_fit) & np.isfinite(y_fit)
+    target = _graph_showing(y_wave, graph)
+    use, chosen, inputs = _selection(
+        x_values, y_values, target, range=range, xrange=xrange, cursors=cursors,
+        exclude=exclude, mask=mask,
+    )
+    use &= np.isfinite(x_values) & np.isfinite(y_values)
     weights = None
+    said_sigma = None
     if sigma is not None:
         if isinstance(sigma, (str, _op.Wave)):
-            sigma = _op.wave(_op._wave_name(sigma)).data
-        errors = np.broadcast_to(np.asarray(sigma, dtype=float), y_values.shape)[first : last + 1]
-        keep &= np.isfinite(errors) & (errors > 0)
-        weights = 1.0 / errors[keep]
-    x_fit, y_fit = x_fit[keep], y_fit[keep]
+            sigma_wave = _op.wave(_op._wave_name(sigma))
+            said_sigma = sigma_wave.name
+            inputs.append(sigma_wave.name)
+            sigma = sigma_wave.data
+        else:
+            said_sigma = float(sigma) if np.ndim(sigma) == 0 else _UNREPEATABLE
+        errors = np.broadcast_to(np.asarray(sigma, dtype=float), y_values.shape)
+        use &= np.isfinite(errors) & (errors > 0)
+        weights = 1.0 / errors[use]
+    if not use.any():
+        raise _op.OresmeError("No points are left to fit.")
+    # The curve and the residuals are drawn from the first point used to the last.
+    first, last = (int(index) for index in np.flatnonzero(use)[[0, -1]])
+    x_fit, y_fit = x_values[use], y_values[use]
     model, names, start, label = _resolve(function, x_fit, y_fit, guess)
     if len(start) != len(names):
         raise _op.OresmeError(f"{label} has {len(names)} parameters; the guess has {len(start)}.")
@@ -630,7 +806,7 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
         raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {len(free)} parameters.")
     lower = np.full(len(names), -np.inf)
     upper = np.full(len(names), np.inf)
-    for key, (low, high) in (bounds or {}).items():
+    for key, (low, high) in _limits(function, bounds).items():
         at = _index_of(names, key, "bounds")
         lower[at] = -np.inf if low is None else float(low)
         upper[at] = np.inf if high is None else float(high)
@@ -646,13 +822,14 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
     if isinstance(function, str) and (function == "line" or function.startswith("poly")):
         # a + b*x and K0 + K1*x + ... are linear in their parameters.
         design = np.vander(x_fit, len(names), increasing=True)[:, free]
-    best, free_covariance, chisq, converged = _least_squares(
+    best, free_covariance, chisq, converged, reason = _least_squares(
         reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
     )
     params = full.copy()
     params[free] = best
-    sigma = np.zeros(len(names))
-    sigma[free] = np.sqrt(np.abs(np.diag(free_covariance)))
+    covariance = np.zeros((len(names), len(names)))
+    covariance[np.ix_(free, free)] = free_covariance
+    sigma = np.sqrt(np.abs(np.diag(covariance)))
 
     fit_name = name or (y_wave.name.rsplit(":", 1)[0] + ":" if ":" in y_wave.name else "") + f"fit_{leaf}"
     with np.errstate(all="ignore"):
@@ -686,6 +863,7 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
         target.trace(wave_.name.rsplit(":", 1)[-1]).set(**style)
 
     band_waves = None
+    level = None
     if band:
         level = 0.95 if band is True else float(band)
         if not 0 < level < 1:
@@ -705,7 +883,7 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
                                      unit=y_wave.unit))
             else:
                 whole = np.full(len(y_values), np.nan)
-                whole[np.flatnonzero(keep) + first] = values
+                whole[use] = values
                 made.append(_op.make(f"{fit_name}{suffix}", whole, unit=y_wave.unit))
         band_waves = (made[1], made[0])
         # Upper edge first: it fills down to the next trace, the lower edge.
@@ -728,13 +906,619 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
             show(residual_wave, axis=axis, color=source["color"])
             target.axis(axis).set(grid="major")
 
-    result = FitResult(
+    stored = None
+    if record:
+        outputs = {"fit": fit_wave.name}
+        if residual_wave is not None:
+            outputs["residuals"] = residual_wave.name
+        if band_waves is not None:
+            outputs["band_low"], outputs["band_high"] = (wave_.name for wave_ in band_waves)
+        stored = _record(
+            {
+                "kind": "fit",
+                "label": f"{label}({leaf})",
+                "settings": {
+                    "function": label,
+                    "custom": callable(function),
+                    "y": y_wave.name,
+                    "x": None if x_wave is None else x_wave.name,
+                    "guess": None if guess is None else [float(value) for value in guess],
+                    "hold": {key: float(full[names.index(key)]) for key in held},
+                    "bounds": {
+                        key: [None if low is None else float(low), None if high is None else float(high)]
+                        for key, (low, high) in (bounds or {}).items()
+                    },
+                    "sigma": said_sigma,
+                    **chosen,
+                    "residuals": bool(residuals),
+                    "band": level,
+                    "name": name,
+                },
+                "inputs": [y_wave.name, *([x_wave.name] if x_wave is not None else []), *inputs],
+                "names": list(names),
+                "coef": params,
+                "sigma": sigma,
+                "held": held,
+                "covariance": covariance,
+                "chisq": chisq,
+                "points": len(y_fit),
+                "freedom": len(y_fit) - len(free),
+                "converged": converged,
+                "reason": reason,
+                "outputs": outputs,
+            },
+            result,
+        )
+    outcome = FitResult(
         f"{label}({leaf})", names, params, sigma, chisq, len(y_fit), fit_wave, converged, held,
-        residuals=residual_wave, band=band_waves,
+        residuals=residual_wave, band=band_waves, reason=reason, covariance=covariance,
+        freedom=len(y_fit) - len(free), name=stored,
     )
     if not quiet:
-        print(result)
-    return result
+        print(outcome)
+    return outcome
+
+
+# --- Results kept in the experiment ---------------------------------------------------
+
+
+def _plain(value):
+    """A value as JSON can hold it: no NumPy types, and None where a number is not finite."""
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return _plain(value.tolist())
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return float(value) if np.isfinite(value) else None
+    return value
+
+
+def _record(payload, name=None):
+    """Keeps the outcome of an analysis in the experiment; returns the name it is kept under."""
+    command = {"op": "addResult", "result": _plain(payload)}
+    if name is not None:
+        command["name"] = name
+    return _op._dispatch(command)
+
+
+def _numbers(values):
+    return np.array([np.nan if value is None else value for value in values], dtype=float)
+
+
+class Result:
+    """An analysis kept in the experiment: what was asked for and what came out.
+
+    ``names``, ``coef`` and ``sigma`` are the parameters; ``settings`` is what
+    the analysis was told; ``changed`` lists the waves it read that are no
+    longer what they were then. ``rerun()`` does it again and ``apply(waves)``
+    does the same to other waves.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    def _info(self):
+        return _op._call("resultInfo", {"name": self._name})[0]
+
+    @property
+    def name(self):
+        return self._name
+
+    kind = property(lambda self: self._info()["kind"])
+    label = property(lambda self: self._info()["label"])
+    names = property(lambda self: tuple(self._info()["names"]))
+    held = property(lambda self: tuple(self._info()["held"]))
+    coef = property(lambda self: _numbers(self._info()["coef"]))
+    sigma = property(lambda self: _numbers(self._info()["sigma"]))
+    points = property(lambda self: self._info()["points"])
+    freedom = property(lambda self: self._info()["freedom"])
+    converged = property(lambda self: self._info()["converged"])
+    reason = property(lambda self: self._info()["reason"])
+    settings = property(lambda self: self._info()["settings"])
+    #: The waves the analysis read that have changed (or are gone) since.
+    changed = property(lambda self: self._info()["changed"])
+
+    @property
+    def chisq(self):
+        value = self._info()["chisq"]
+        return np.nan if value is None else value
+
+    @property
+    def covariance(self):
+        rows = self._info()["covariance"]
+        return None if rows is None else np.array([_numbers(row) for row in rows])
+
+    @property
+    def correlation(self):
+        return _correlation(self.covariance)
+
+    @property
+    def created(self):
+        """When the analysis was done, as a ``datetime`` in UTC."""
+        import datetime
+
+        return datetime.datetime.fromtimestamp(
+            self._info()["created"] / 1000, tz=datetime.timezone.utc
+        )
+
+    @property
+    def outputs(self):
+        """The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out."""
+        existing = set(_op._call("listWaves")[0])
+        return {
+            role: _op.Wave(wave_)
+            for role, wave_ in self._info()["outputs"].items()
+            if wave_ in existing
+        }
+
+    def __getitem__(self, name):
+        info = self._info()
+        if name not in info["names"]:
+            raise KeyError(name)
+        value = info["coef"][info["names"].index(name)]
+        return np.nan if value is None else value
+
+    def _call(self, **changes):
+        """The function that does this kind of analysis and the arguments that repeat it."""
+        info = self._info()
+        settings = dict(info["settings"])
+        unrepeatable = [key for key, value in settings.items() if value == _UNREPEATABLE]
+        unrepeatable = [key for key in unrepeatable if key not in changes]
+        if unrepeatable:
+            raise _op.OresmeError(
+                f"{self._name} was given {', '.join(unrepeatable)} as data, which was not kept. "
+                f"Give {' and '.join(f'{key}=' for key in unrepeatable)} again, or use a wave next time."
+            )
+        if info["kind"] == "fit":
+            function = settings.pop("function")
+            if settings.pop("custom", False) and "function" not in changes:
+                function = _user_function(function, self._name)
+            call = fit
+            settings["function"] = function
+        elif info["kind"] == "peaks":
+            call = fit_peaks
+        else:
+            call = fit_global
+            function = settings.pop("function")
+            if settings.pop("custom", False) and "function" not in changes:
+                function = _user_function(function, self._name)
+            settings["function"] = function
+        settings.update(changes)
+        return call, settings
+
+    def rerun(self, replace=False, **changes):
+        """Do the analysis again with the same settings, on the data as it is now.
+
+        Keyword arguments change settings (``rerun(hold={"y0": 0})``). The
+        outcome is kept as a new result, so that both can be compared, unless
+        ``replace=True``.
+        """
+        call, settings = self._call(**changes)
+        if replace:
+            settings["result"] = self._name
+        return call(**settings)
+
+    def apply(self, waves, table=True, **changes):
+        """Do the same analysis on other waves; returns the list of outcomes.
+
+        Each wave takes the place of the one analysed (``y``); everything
+        else stays, an X wave included. With ``table`` the outcomes are also
+        put side by side in a table (see ``op.results_table``).
+        """
+        if self.kind == "global":
+            raise _op.OresmeError("A fit of several waves at once cannot be applied wave by wave.")
+        outcomes = []
+        for wave_ in [waves] if isinstance(waves, (str, _op.Wave)) else list(waves):
+            call, settings = self._call(**changes)
+            settings["y"] = wave_
+            settings.setdefault("quiet", True)
+            # Each wave's curve is named after the wave, not after the first fit's.
+            settings.pop("name", None)
+            outcomes.append(call(**settings))
+        if table and outcomes:
+            results_table(outcomes)
+        return outcomes
+
+    def rename(self, name):
+        self._name = _op._dispatch({"op": "renameResult", "name": self._name, "newName": name})
+        return self
+
+    def remove(self):
+        """Forget the result. The waves it made stay."""
+        _op._dispatch({"op": "removeResults", "names": [self._name]})
+
+    def __repr__(self):
+        return f"Result({self._name!r})"
+
+    def __str__(self):
+        info = self._info()
+        text = _fit_summary(
+            f"{self._name}: {info['label']}", info["names"], _numbers(info["coef"]),
+            _numbers(info["sigma"]), info["held"], self.chisq, info["points"], info["converged"],
+            info["reason"], self.covariance,
+        )
+        if info["changed"]:
+            text += f"\n  (changed since: {', '.join(info['changed'])})"
+        return text
+
+
+def _user_function(name, result):
+    """A fit function of the user's, found again by its name among what they have defined."""
+    try:
+        from IPython import get_ipython
+
+        namespace = get_ipython().user_ns
+    except Exception:  # Outside the command window there is no such namespace.
+        namespace = {}
+    function = namespace.get(name)
+    if not callable(function):
+        raise _op.OresmeError(
+            f"{result} used your function {name!r}, which is not defined now. "
+            "Define it again, or pass function=."
+        )
+    return function
+
+
+def results():
+    """Every analysis kept in the experiment, oldest first."""
+    return [Result(name) for name in _op._call("listResults")[0]]
+
+
+def result(name=None):
+    """A result by name; with no name, the latest."""
+    names = _op._call("listResults")[0]
+    if name is None:
+        if not names:
+            raise _op.OresmeError("There are no results yet.")
+        return Result(names[-1])
+    if name not in names:
+        raise _op.OresmeError(f"No result named {name!r}.")
+    return Result(name)
+
+
+def _result_name(item):
+    name = item if isinstance(item, str) else getattr(item, "name", None)
+    if not isinstance(name, str):
+        raise _op.OresmeError("Give results by name, or as the objects the fits return.")
+    return name
+
+
+def results_table(results_=None, name="Results", sigma=True):
+    """Put results side by side: a row for each, a column for each parameter.
+
+    ``results_`` is a list of results (names, or what the fits returned);
+    all of them if left out. Makes text waves ``<name>_result`` and
+    ``<name>_data`` (which result, and the wave it was about) and, for each
+    parameter, ``<name>_<parameter>`` and (with ``sigma``)
+    ``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
+    table, which is returned. A parameter a result does not have is NaN.
+    """
+    names = [_result_name(item) for item in (results() if results_ is None else results_)]
+    if not names:
+        raise _op.OresmeError("There are no results to put in a table.")
+    infos = [_op._call("resultInfo", {"name": item})[0] for item in names]
+    parameters = []
+    for info in infos:
+        parameters += [key for key in info["names"] if key not in parameters]
+
+    def column(info, key, field):
+        if key not in info["names"]:
+            return np.nan
+        value = info[field][info["names"].index(key)]
+        return np.nan if value is None else value
+
+    def clean(key):
+        return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
+
+    waves = [
+        _op.make(f"{name}_result", names),
+        _op.make(f"{name}_data", [str(info["settings"].get("y", "")) for info in infos]),
+    ]
+    for key in parameters:
+        waves.append(_op.make(f"{name}_{clean(key)}", [column(info, key, "coef") for info in infos]))
+        if sigma:
+            waves.append(
+                _op.make(f"{name}_{clean(key)}_sd", [column(info, key, "sigma") for info in infos])
+            )
+    waves.append(
+        _op.make(f"{name}_chisq", [np.nan if info["chisq"] is None else info["chisq"] for info in infos])
+    )
+    existing = {table.name: table for table in _op.tables()}
+    if name in existing:
+        # The same table again: it shows the waves as they are now.
+        shown = {column_.name for column_ in existing[name].columns}
+        missing = [wave_ for wave_ in waves if wave_.name not in shown]
+        if missing:
+            existing[name].append(*missing)
+        return existing[name]
+    return _op.edit(*waves, name=name)
+
+
+def fit_batch(function, waves, *, table=True, quiet=True, **options):
+    """Fit the same function to several waves, one after another.
+
+    Takes the options of ``op.fit`` (the same ``x`` wave, ranges, holds and
+    bounds for all). Returns the list of ``FitResult``; with ``table`` they
+    are also put side by side in a table (see ``op.results_table``).
+    """
+    outcomes = [fit(function, wave_, quiet=quiet, **options) for wave_ in waves]
+    if table and outcomes and all(outcome.name for outcome in outcomes):
+        results_table(outcomes)
+    if not quiet:
+        return outcomes
+    for outcome in outcomes:
+        state = "" if outcome.converged else "  (did not converge)"
+        print(f"{outcome.name or '-'}: {outcome.function}, chi-square = {outcome.chisq:.6g}{state}")
+    return outcomes
+
+
+class GlobalFitResult:
+    """The outcome of ``op.fit_global``: one row of coefficients per wave.
+
+    ``coef`` and ``sigma`` have a row for each wave and a column for each
+    parameter, in the order of ``names``; a shared parameter has the same
+    value in every row. ``waves`` are the fitted curves.
+    """
+
+    def __init__(self, function, names, shared, held, data, coef, sigma, chisq, points,
+                 converged, reason, waves, name=None):
+        self.function = function
+        self.names = tuple(names)
+        self.shared = tuple(shared)
+        self.held = tuple(held)
+        #: The names of the waves that were fitted, in the order of the rows.
+        self.data = tuple(data)
+        self.coef = coef
+        self.sigma = sigma
+        self.chisq = chisq
+        self.points = points
+        self.converged = converged
+        self.reason = reason
+        self.waves = waves
+        self.name = name
+
+    @property
+    def result(self):
+        """The fit as it is kept in the experiment: ``.rerun()``, ``.remove()``."""
+        if self.name is None:
+            raise _op.OresmeError("This fit was not recorded (record=False).")
+        return Result(self.name)
+
+    def __getitem__(self, name):
+        """A shared parameter as a number, any other as an array with a value per wave."""
+        column = self.coef[:, self.names.index(name)]
+        return float(column[0]) if name in self.shared else column.copy()
+
+    def __repr__(self):
+        return f"GlobalFitResult({self.function}, {len(self.data)} waves, chisq={self.chisq:.6g})"
+
+    def __str__(self):
+        lines = [
+            f"Global fit: {self.function} to {len(self.data)} waves, {self.points} points, "
+            f"chi-square = {self.chisq:.6g}"
+        ]
+        if not self.converged:
+            why = f": {self.reason}" if self.reason else ""
+            lines.append(f"  (did not converge{why}; showing the best parameters found)")
+        for key in self.shared:
+            at = self.names.index(key)
+            lines.append(f"  {key} = {self.coef[0, at]:.6g} ± {self.sigma[0, at]:.3g}  (shared)")
+        own = [key for key in self.names if key not in self.shared]
+        if own:
+            width = max(len(leaf) for leaf in self.data)
+            lines.append("  " + " " * width + "".join(f"  {key:>24}" for key in own))
+            for row, leaf in enumerate(self.data):
+                cells = []
+                for key in own:
+                    at = self.names.index(key)
+                    cell = (
+                        f"{self.coef[row, at]:.6g} (held)" if key in self.held
+                        else f"{self.coef[row, at]:.6g} ± {self.sigma[row, at]:.3g}"
+                    )
+                    cells.append(f"  {cell:>24}")
+                lines.append(f"  {leaf:<{width}}" + "".join(cells))
+        return "\n".join(lines)
+
+
+def fit_global(function, ys, xs=None, *, shared=(), guess=None, hold=None, bounds=None,
+               quiet=False, result=None, record=True):
+    """Fit one function to several waves at once, with some parameters common to all.
+
+    ``ys`` is a list of waves. ``shared`` names the parameters that have one
+    value for all of them (a time constant, a peak position); the others are
+    fitted for each wave. ``xs`` is an X wave for all, or a list with one
+    for each; without it each wave's X scaling is used.
+
+    ``guess`` is a list with a starting value per parameter, used for every
+    wave (needed for a function of your own). ``hold={"y0": 0}`` fixes a
+    parameter for every wave, and ``bounds={"A": (0, None)}`` limits it.
+
+    Makes ``fit_<name>`` for each wave and adds it to the graph showing the
+    wave. Returns a ``GlobalFitResult``; the fit is kept among the
+    experiment's results as ``Global0``, ``Global1``, ....
+    """
+    y_waves = [_op.wave(_op._wave_name(item)) for item in ys]
+    if len(y_waves) < 2:
+        raise _op.OresmeError("A global fit needs two waves or more; for one, use op.fit.")
+    if xs is None or isinstance(xs, (str, _op.Wave)):
+        x_waves = [None if xs is None else _op.wave(_op._wave_name(xs))] * len(y_waves)
+    else:
+        x_waves = [_op.wave(_op._wave_name(item)) for item in xs]
+        if len(x_waves) != len(y_waves):
+            raise _op.OresmeError("xs needs one X wave for each wave of ys, or a single one for all.")
+    sets = []
+    for y_wave, x_wave in zip(y_waves, x_waves):
+        values = np.asarray(y_wave.data, dtype=float)
+        if values.ndim != 1:
+            raise _op.OresmeError("Only 1-D waves can be fitted.")
+        at = np.asarray(y_wave.x if x_wave is None else x_wave.data, dtype=float)
+        if len(at) != len(values):
+            raise _op.OresmeError(f"{y_wave.name} and its X wave have different lengths.")
+        keep = np.isfinite(at) & np.isfinite(values)
+        if not keep.any():
+            raise _op.OresmeError(f"{y_wave.name} has no points to fit.")
+        sets.append((at, values, keep))
+
+    count = len(sets)
+    model, names, _, label = _resolve(function, sets[0][0][sets[0][2]], sets[0][1][sets[0][2]], guess)
+    size = len(names)
+    shared = [names[_index_of(names, key, "shared")] for key in shared]
+    # A starting point for each wave: its own guess, where the function has one.
+    starts = np.array([
+        _resolve(function, at[keep], values[keep], guess)[2] for at, values, keep in sets
+    ], dtype=float)
+    if starts.shape[1] != size:
+        raise _op.OresmeError(f"{label} has {size} parameters; the guess has {starts.shape[1]}.")
+    held = []
+    if isinstance(hold, dict):
+        for key, value in hold.items():
+            starts[:, _index_of(names, key, "hold")] = float(value)
+            held.append(key)
+    elif hold is not None:
+        held = [names[_index_of(names, key, "hold")] for key in hold]
+    low = np.full(size, -np.inf)
+    high = np.full(size, np.inf)
+    for key, (least, most) in _limits(function, bounds).items():
+        at = _index_of(names, key, "bounds")
+        low[at] = -np.inf if least is None else float(least)
+        high[at] = np.inf if most is None else float(most)
+
+    # The fitted values in one row: each shared parameter once, then the others wave by wave.
+    places = []  # (parameter, wave or None for all)
+    for index, key in enumerate(names):
+        if key in held:
+            continue
+        if key in shared:
+            places.append((index, None))
+    for row in np.arange(count):
+        places += [(index, int(row)) for index, key in enumerate(names)
+                   if key not in held and key not in shared]
+    if not places:
+        raise _op.OresmeError("Every parameter is held; there is nothing to fit.")
+    total = int(sum(keep.sum() for _, _, keep in sets))
+    if total <= len(places):
+        raise _op.OresmeError(f"{total} points are not enough to fit {len(places)} parameters.")
+
+    def table(values):
+        """The coefficients of every wave, from the fitted values."""
+        whole = starts.copy()
+        for value, (index, row) in zip(values, places):
+            if row is None:
+                whole[:, index] = value
+            else:
+                whole[row, index] = value
+        return whole
+
+    def joined(_, *values):
+        whole = table(values)
+        return np.concatenate([
+            model(at[keep], *whole[row]) for row, (at, _, keep) in enumerate(sets)
+        ])
+
+    first = [float(np.mean(starts[:, index])) if row is None else starts[row, index]
+             for index, row in places]
+    solved, covariance, chisq, converged, reason = _least_squares(
+        joined, np.arange(total, dtype=float),
+        np.concatenate([values[keep] for _, values, keep in sets]), first, None,
+        [low[index] for index, _ in places], [high[index] for index, _ in places],
+        max_iterations=400,
+    )
+    coef = table(solved)
+    errors = np.sqrt(np.abs(np.diag(covariance)))
+    sigma = np.zeros_like(coef)
+    for error, (index, row) in zip(errors, places):
+        if row is None:
+            sigma[:, index] = error
+        else:
+            sigma[row, index] = error
+
+    made = []
+    for row, (y_wave, x_wave) in enumerate(zip(y_waves, x_waves)):
+        at, values, keep = sets[row]
+        leaf = y_wave.name.rsplit(":", 1)[-1]
+        folder = y_wave.name.rsplit(":", 1)[0] + ":" if ":" in y_wave.name else ""
+        with np.errstate(all="ignore"):
+            if x_wave is None:
+                grid = np.linspace(at[keep].min(), at[keep].max(), 200)
+                curve = _op.make(
+                    f"{folder}fit_{leaf}", model(grid, *coef[row]), x0=grid[0],
+                    dx=(grid[1] - grid[0]) or 1.0, x_unit=y_wave.x_unit, unit=y_wave.unit,
+                )
+            else:
+                curve = _op.make(f"{folder}fit_{leaf}", model(at, *coef[row]), unit=y_wave.unit)
+        made.append(curve)
+        target = _graph_showing(y_wave, None)
+        if target is not None and not any(t["y"] == curve.name for t in target._info()["traces"]):
+            source = next(t for t in target._info()["traces"] if t["y"] == y_wave.name)
+            target.append(curve, x=x_wave, axis=source["vAxis"], haxis=source["hAxis"])
+            target.trace(curve.name.rsplit(":", 1)[-1]).set(color="black")
+
+    data = [y_wave.name for y_wave in y_waves]
+    stored = None
+    if record:
+        flat_names, flat_coef, flat_sigma = [], [], []
+        for key in shared:
+            flat_names.append(key)
+            flat_coef.append(coef[0, names.index(key)])
+            flat_sigma.append(sigma[0, names.index(key)])
+        for row in np.arange(count):
+            for index, key in enumerate(names):
+                if key in shared:
+                    continue
+                flat_names.append(f"{key}[{row}]")
+                flat_coef.append(coef[row, index])
+                flat_sigma.append(sigma[row, index])
+        stored = _record(
+            {
+                "kind": "global",
+                "label": f"{label}({len(data)} waves)",
+                "settings": {
+                    "function": label,
+                    "custom": callable(function),
+                    "ys": data,
+                    "xs": (
+                        None if xs is None
+                        else x_waves[0].name if isinstance(xs, (str, _op.Wave))
+                        else [x_wave.name for x_wave in x_waves]
+                    ),
+                    "shared": shared,
+                    "guess": None if guess is None else [float(value) for value in guess],
+                    "hold": {key: float(starts[0, names.index(key)]) for key in held},
+                    "bounds": {
+                        key: [None if least is None else float(least),
+                              None if most is None else float(most)]
+                        for key, (least, most) in (bounds or {}).items()
+                    },
+                },
+                "inputs": data + [x_wave.name for x_wave in x_waves if x_wave is not None],
+                "names": flat_names,
+                "coef": flat_coef,
+                "sigma": flat_sigma,
+                "held": [f"{key}[{row}]" for row in np.arange(count) for key in held
+                         if key not in shared],
+                "covariance": None,
+                "chisq": chisq,
+                "points": total,
+                "freedom": total - len(places),
+                "converged": converged,
+                "reason": reason,
+                "outputs": {f"fit{row}": curve.name for row, curve in enumerate(made)},
+            },
+            result,
+        )
+    outcome = GlobalFitResult(
+        label, names, shared, held, data, coef, sigma, chisq, total, converged, reason, made,
+        name=stored,
+    )
+    if not quiet:
+        print(outcome)
+    return outcome
 
 
 def _numeric(wave_):
@@ -1179,7 +1963,11 @@ class PeakFitResult:
     """The outcome of ``op.fit_peaks``: one row per peak, and the waves it made."""
 
     def __init__(self, shape, peaks, baseline, chisq, points, wave, components, converged,
-                 columns=()):
+                 columns=(), reason="", name=None):
+        #: Why the fit stopped, in words.
+        self.reason = reason
+        #: The name under which the fit is kept among the experiment's results, or None.
+        self.name = name
         self.shape = shape
         #: A list of dicts: x, height, width (FWHM), area, their uncertainties,
         #: and what the shape adds (the Gaussian and Lorentzian FWHMs of a
@@ -1193,6 +1981,13 @@ class PeakFitResult:
         self.wave = wave
         self.components = components
         self.converged = converged
+
+    @property
+    def result(self):
+        """The fit as it is kept in the experiment: ``.rerun()``, ``.apply(waves)``, ``.remove()``."""
+        if self.name is None:
+            raise _op.OresmeError("This fit was not recorded (record=False).")
+        return Result(self.name)
 
     def __len__(self):
         return len(self.peaks)
@@ -1209,7 +2004,8 @@ class PeakFitResult:
             f"{self.points} points, chi-square = {self.chisq:.6g}"
         ]
         if not self.converged:
-            lines.append("  (did not converge; showing the best parameters found)")
+            why = f": {self.reason}" if self.reason else ""
+            lines.append(f"  (did not converge{why}; showing the best parameters found)")
         extra = "".join(f"  {heading:>12}" for _, heading in self.columns)
         lines.append(f"  {'#':>2}  {'position':>12}  {'height':>12}  {'FWHM':>12}  {'area':>12}{extra}")
         for number, peak in enumerate(self.peaks, 1):
@@ -1224,8 +2020,23 @@ class PeakFitResult:
         return "\n".join(lines)
 
 
+def _triples(ties, what):
+    """Ties between two peaks, given as {(i, j): value} or [(i, j, value), ...], as a list."""
+    if ties is None:
+        return []
+    items = [(*key, value) for key, value in ties.items()] if isinstance(ties, dict) else list(ties)
+    try:
+        return [(int(first), int(second), float(value)) for first, second, value in items]
+    except (TypeError, ValueError):
+        raise _op.OresmeError(
+            f"{what} takes {{(i, j): value}} or [(i, j, value), ...], with peaks numbered from 1."
+        ) from None
+
+
 def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", range=None,
-              cursors=False, graph=None, components=True, quiet=False, **find):
+              xrange=None, exclude=None, mask=None, cursors=False, graph=None, components=True,
+              same_width=False, spacing=None, area_ratio=None, quiet=False, result=None,
+              record=True, **find):
     """Fit several peaks at once: a sum of peaks of one shape on a baseline.
 
     ``peaks`` says where to start: nothing to find them (see ``op.find_peaks``,
@@ -1240,11 +2051,25 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
     ``eta * Lorentzian + (1 - eta) * Gaussian`` with one FWHM, and reports
     ``eta`` (kept within 0..1).
 
+    Peaks can be tied to each other, as the lines of a multiplet are. Peaks
+    are numbered from 1, left to right as they start out:
+
+    - ``same_width=True`` gives every peak the width (all width parameters) of the first;
+    - ``spacing={(1, 2): 1.2}`` keeps peak 2 at 1.2 to the right of peak 1;
+    - ``area_ratio={(1, 2): 0.5}`` keeps the area of peak 2 at half that of peak 1.
+
+    A tied quantity is not fitted: it follows the peak it is tied to, and its
+    uncertainty is carried over from that peak's.
+
+    ``range``, ``xrange``, ``exclude``, ``mask`` and ``cursors`` choose the
+    points, as for ``op.fit``.
+
     Makes ``fit_<name>`` (the sum), ``fit_<name>_p1``, ``_p2``, ... (each peak
     on the baseline, if ``components``), and ``W_peaks``: one row per peak with
     position, height, full width at half maximum and area, then the columns
     the shape adds. Returns a ``PeakFitResult`` listing the peaks from left to
-    right.
+    right. The fit is kept among the experiment's results as ``Peaks0``,
+    ``Peaks1``, ... (see ``op.results()``), unless ``record=False``.
     """
     if shape not in _SHAPES:
         raise _op.OresmeError(f"shape must be one of {', '.join(_SHAPES)}.")
@@ -1261,26 +2086,17 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
     x_values = np.asarray(y_wave.x if x_wave is None else x_wave.data, dtype=float)
     leaf = y_wave.name.rsplit(":", 1)[-1]
 
-    target = None
-    for candidate in [graph] if graph is not None else reversed(_op.graphs()):
-        candidate = _op.graph(candidate) if isinstance(candidate, str) else candidate
-        if any(trace["y"] == y_wave.name for trace in candidate._info()["traces"]):
-            target = candidate
-            break
-    first, last = 0, len(y_values) - 1
-    if cursors:
-        if target is None:
-            raise _op.OresmeError("cursors=True needs a graph that shows the wave.")
-        marks = target._info()["cursors"]
-        if "A" not in marks or "B" not in marks:
-            raise _op.OresmeError("Put cursors A and B on the graph first.")
-        first, last = sorted((marks["A"]["point"], marks["B"]["point"]))
-    elif range is not None:
-        first, last = sorted((int(range[0]), int(range[1])))
-    first, last = max(0, first), min(len(y_values) - 1, last)
-    keep = np.isfinite(x_values[first : last + 1]) & np.isfinite(y_values[first : last + 1])
-    x_fit = x_values[first : last + 1][keep]
-    y_fit = y_values[first : last + 1][keep]
+    target = _graph_showing(y_wave, graph)
+    use, chosen, inputs = _selection(
+        x_values, y_values, target, range=range, xrange=xrange, cursors=cursors,
+        exclude=exclude, mask=mask,
+    )
+    use &= np.isfinite(x_values) & np.isfinite(y_values)
+    if not use.any():
+        raise _op.OresmeError("No points are left to fit.")
+    first, last = (int(index) for index in np.flatnonzero(use)[[0, -1]])
+    x_fit = x_values[use]
+    y_fit = y_values[use]
 
     # Starting points: found, or the positions given.
     if peaks is None or isinstance(peaks, (int, np.integer)):
@@ -1332,9 +2148,84 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
         limits = form.bounds(span)
         lower += [0.0 if height > 0 else -np.inf, float(x_fit.min()), *(low for low, _ in limits)]
         upper += [np.inf if height > 0 else 0.0, float(x_fit.max()), *(high for _, high in limits)]
-    best, covariance, chisq, converged = _least_squares(
-        model, x_fit, y_fit, start, None, lower, upper, max_iterations=400
+    start, lower, upper = (np.array(values, dtype=float) for values in (start, lower, upper))
+
+    # Ties: a tied parameter is left out of the fit and worked out from the others.
+    def at_peak(number, what):
+        if not 1 <= number <= count:
+            raise _op.OresmeError(f"{what}: there is no peak {number}; the peaks are 1 to {count}.")
+        return base_terms + size * (number - 1)
+
+    ties = {}
+
+    def tie(index, rule, what):
+        if index in ties:
+            raise _op.OresmeError(f"{what}: that peak is tied twice over.")
+        ties[index] = rule
+
+    if same_width:
+        for number in np.arange(2, count + 1):
+            for offset in np.arange(2, size):
+                tie(int(at_peak(number, "same_width") + offset),
+                    ("copy", int(at_peak(1, "same_width") + offset)), "same_width")
+    spacings = _triples(spacing, "spacing")
+    for one, other, distance in spacings:
+        tie(at_peak(other, "spacing") + 1, ("offset", at_peak(one, "spacing") + 1, distance), "spacing")
+    ratios = _triples(area_ratio, "area_ratio")
+    for one, other, ratio in ratios:
+        tie(at_peak(other, "area_ratio"), ("area", at_peak(one, "area_ratio"), ratio), "area_ratio")
+    fitted = [index for index in np.arange(len(start)) if index not in ties]
+
+    def expand(values):
+        """Every parameter, from the fitted ones."""
+        whole = np.full(len(start), np.nan)
+        whole[fitted] = values
+        pending = dict(ties)
+        # A tie can hang on another tie (a chain of spacings): go round until all are settled.
+        while pending:
+            settled = False
+            for index, rule in list(pending.items()):
+                source = rule[1]
+                if rule[0] == "area":
+                    # Areas need the heights and the widths of both peaks.
+                    needed = [source, *np.arange(source + 2, source + size),
+                              *np.arange(index + 2, index + size)]
+                    if any(np.isnan(whole[item]) for item in needed):
+                        continue
+                    own = form.area(*np.abs(whole[index + 2 : index + size]))
+                    whole[index] = (
+                        rule[2] * whole[source]
+                        * form.area(*np.abs(whole[source + 2 : source + size])) / own
+                    )
+                elif np.isnan(whole[source]):
+                    continue
+                else:
+                    whole[index] = whole[source] + (rule[2] if rule[0] == "offset" else 0.0)
+                del pending[index]
+                settled = True
+            if not settled:
+                raise _op.OresmeError("The ties between the peaks go round in a circle.")
+        return whole
+
+    expand(start[fitted])
+    if len(y_fit) <= len(fitted):
+        raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {count} peaks.")
+    solved, fitted_covariance, chisq, converged, reason = _least_squares(
+        (lambda x_, *values: model(x_, *expand(values))) if ties else model,
+        x_fit, y_fit, start[fitted], None, lower[fitted], upper[fitted], max_iterations=400,
     )
+    best = expand(solved)
+    if ties:
+        # The uncertainty of the tied parameters follows from those they are tied to.
+        spread = np.column_stack([
+            (expand(solved + step) - expand(solved - step)) / (2 * step[index])
+            for index, step in enumerate(
+                np.diag(1e-6 * np.maximum(np.abs(solved), 1e-6))
+            )
+        ])
+        covariance = spread @ fitted_covariance @ spread.T
+    else:
+        covariance = fitted_covariance
     errors = np.sqrt(np.abs(np.diag(covariance)))
 
     rows = []
@@ -1418,11 +2309,71 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
             target.append(fit_wave, x=x_wave, axis=source["vAxis"], haxis=source["hAxis"])
             target.trace(fit_wave.name.rsplit(":", 1)[-1]).set(color="black")
 
-    result = PeakFitResult(shape, rows, base, chisq, len(y_fit), fit_wave, parts, converged,
-                           [(key, heading) for key, heading, _ in form.report])
+    stored = None
+    if record:
+        # One parameter per column of the table, peak by peak, so that fits of
+        # several samples line up when their results are put side by side.
+        names, values, spreads = [], [], []
+        for number, row in enumerate(rows, 1):
+            for key, title in (("x", "x"), ("height", "height"), ("width", "fwhm"), ("area", "area"),
+                               *((key, key) for key, _, _ in form.report)):
+                names.append(f"{title}{number}")
+                values.append(row[key])
+                spreads.append(row[f"{key}_sigma"])
+        if base_terms >= 1:
+            names.append("offset")
+            values.append(base["offset"])
+            # For a sloping baseline the offset is given at x = 0, away from the middle of the data.
+            spreads.append(
+                errors[0] if base_terms == 1 else np.sqrt(abs(
+                    covariance[0, 0] + centre**2 * covariance[1, 1] - 2 * centre * covariance[0, 1]
+                ))
+            )
+        if base_terms == 2:
+            names.append("slope")
+            values.append(base["slope"])
+            spreads.append(errors[1])
+        outputs = {"fit": fit_wave.name}
+        for number, part in enumerate(parts, 1):
+            outputs[f"peak{number}"] = part.name
+        stored = _record(
+            {
+                "kind": "peaks",
+                "label": f"{count} {shape} peak{'s' if count != 1 else ''}({leaf})",
+                "settings": {
+                    "y": y_wave.name,
+                    "x": None if x_wave is None else x_wave.name,
+                    # Where the peaks started, so that fitting again starts there too.
+                    "peaks": [float(position) for position, _, _ in starts],
+                    "shape": shape,
+                    "baseline": baseline,
+                    **chosen,
+                    "components": bool(components),
+                    "same_width": bool(same_width),
+                    "spacing": [list(item) for item in spacings],
+                    "area_ratio": [list(item) for item in ratios],
+                },
+                "inputs": [y_wave.name, *([x_wave.name] if x_wave is not None else []), *inputs],
+                "names": names,
+                "coef": values,
+                "sigma": spreads,
+                "held": [],
+                "covariance": None,
+                "chisq": chisq,
+                "points": len(y_fit),
+                "freedom": len(y_fit) - len(fitted),
+                "converged": converged,
+                "reason": reason,
+                "outputs": outputs,
+            },
+            result,
+        )
+    outcome = PeakFitResult(shape, rows, base, chisq, len(y_fit), fit_wave, parts, converged,
+                            [(key, heading) for key, heading, _ in form.report],
+                            reason=reason, name=stored)
     if not quiet:
-        print(result)
-    return result
+        print(outcome)
+    return outcome
 
 
 # --- Spectra -------------------------------------------------------------------

@@ -1,6 +1,13 @@
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import { dict, filterDict, withEntry, withoutEntries } from "./dict";
+import {
+  checkResult,
+  renameInResult,
+  RESULT_BASE,
+  RESULT_KINDS,
+  type AnalysisResult,
+} from "./results";
 import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
@@ -226,6 +233,10 @@ export type Command =
   | { op: "renameStyle"; name: string; newName: string }
   | { op: "applyStyle"; style: string; graphs: readonly string[] }
   | { op: "setDefaultStyle"; name: string | null }
+  /** Keeps the outcome of an analysis. `result` is as Python reports it (see checkResult). */
+  | { op: "addResult"; result: unknown; name?: string }
+  | { op: "removeResults"; names: readonly string[] }
+  | { op: "renameResult"; name: string; newName: string }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
@@ -927,7 +938,11 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
       widths: dict(Object.entries(table.widths).map(([wave, width]) => [rename(wave), width])),
     };
   }
-  return { ...state, graphs, tables };
+  const results = dict<AnalysisResult>();
+  for (const result of Object.values(state.results)) {
+    results[result.name] = renameInResult(result, rename);
+  }
+  return { ...state, graphs, tables, results };
 }
 
 function waveUsers(state: DocState, name: string): string[] {
@@ -1763,6 +1778,48 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const name = checkName(command.name, "style");
       const style = checkStyle(command.style);
       return { state: { ...state, styles: withEntry(state.styles, name, style) }, result: name };
+    }
+    case "addResult": {
+      const kind = RESULT_KINDS.find(
+        (item) => item === (command.result as { kind?: unknown } | null)?.kind,
+      );
+      const taken = (name: string) => name in state.results;
+      // A name that is given replaces the result of that name: the same analysis, run again.
+      const name =
+        command.name === undefined
+          ? uniqueName(RESULT_BASE[kind ?? "fit"], taken)
+          : checkName(command.name, "result");
+      const result = checkResult(command.result, name, state);
+      return { state: { ...state, results: withEntry(state.results, name, result) }, result: name };
+    }
+    case "removeResults": {
+      for (const name of command.names) {
+        if (!(name in state.results))
+          throw new DocError(`No result named ${JSON.stringify(name)}.`);
+      }
+      return {
+        state: { ...state, results: withoutEntries(state.results, command.names) },
+        result: null,
+      };
+    }
+    case "renameResult": {
+      const result = state.results[command.name];
+      if (!result) throw new DocError(`No result named ${JSON.stringify(command.name)}.`);
+      const newName = checkName(command.newName, "result");
+      if (newName === command.name) return { state, result: newName };
+      if (newName in state.results) {
+        throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
+      }
+      return {
+        state: {
+          ...state,
+          results: withEntry(withoutEntries(state.results, [command.name]), newName, {
+            ...result,
+            name: newName,
+          }),
+        },
+        result: newName,
+      };
     }
     case "removeStyle": {
       requireStyle(state, command.name);

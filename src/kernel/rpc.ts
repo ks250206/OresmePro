@@ -3,6 +3,7 @@ import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
+import { changedInputs } from "../core/doc/results";
 import { DocError, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
@@ -108,6 +109,10 @@ export function handleRpc(
           command.values = data;
         }
         delete command.complex;
+      }
+      if (command.op === "addResult" && typeof command.result === "object" && command.result) {
+        // Stamped here: the document's commands do not read the clock.
+        command.result = { created: Date.now(), ...command.result };
       }
       return { result: doc.dispatch(command as unknown as Command, { group }) };
     }
@@ -242,6 +247,21 @@ export function handleRpc(
     case "putFile": {
       const bytes = wordsToBytes(data, Number(params.size));
       return { result: context.files.put(String(params.path), bytes) };
+    }
+    case "listResults":
+      return {
+        result: Object.values(state.results)
+          .sort((a, b) => a.created - b.created)
+          .map((result) => result.name),
+      };
+    case "resultInfo": {
+      const name = params.name;
+      const result =
+        typeof name === "string" && Object.hasOwn(state.results, name)
+          ? state.results[name]
+          : undefined;
+      if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+      return { result: { ...result, changed: changedInputs(state, result) } };
     }
     case "importData": {
       const filename = String(params.filename);

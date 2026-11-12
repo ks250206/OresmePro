@@ -88,6 +88,7 @@ export function echoPython(
   shapeOf?: (wave: string) => readonly number[] | undefined,
 ): string | null {
   switch (command.op) {
+    case "addResult":
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
@@ -95,6 +96,10 @@ export function echoPython(
     case "resizeColumn":
     case "setProcedure":
       return null;
+    case "removeResults":
+      return command.names.map((name) => `op.result(${pyLiteral(name)}).remove()`).join("\n");
+    case "renameResult":
+      return `op.result(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
     case "newLayout":
       return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
     case "modifyLayout":
