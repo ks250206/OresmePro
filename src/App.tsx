@@ -7,6 +7,7 @@ import {
   exportGraph,
   loadDelimitedText,
   loadExcelWorkbook,
+  loadIgorFiles,
   loadFiles,
   newExperiment,
   openExperiment,
@@ -127,6 +128,7 @@ function useMenus(): MenuDefinition[] {
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
+        { label: "Load Igor Files…", onSelect: loadIgorFiles },
         { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
@@ -151,6 +153,7 @@ function useMenus(): MenuDefinition[] {
       items: [
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
+        { label: "Load Igor Files…", onSelect: loadIgorFiles },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
         { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },

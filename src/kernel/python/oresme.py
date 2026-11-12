@@ -55,6 +55,7 @@ __all__ = [
     "edit",
     "load_text",
     "load_excel",
+    "load_igor",
     "graph",
     "graphs",
     "table",
@@ -1679,23 +1680,32 @@ def edit(*waves_, name=None):
     return Table(_dispatch(command))
 
 
-def _import(kind, source, name, preset, options):
-    """Read a file's bytes here and have the application turn them into waves."""
+def _read_source(source, name):
+    """The bytes of a file to load, and the file name that goes into the notes of the waves."""
     if isinstance(source, (bytes, bytearray, memoryview)):
         if name is None:
             raise OresmeError("Give name=, a file name for the notes of the waves, with bytes.")
-        data, filename = bytes(source), name
-    else:
-        path = os.fspath(source)
-        try:
-            with open(path, "rb") as handle:
-                data = handle.read()
-        except OSError as error:
-            raise OresmeError(
-                f"Could not read {path}: {error.strerror or error}. Files added with "
-                "File > Add Files for Python are in the working directory."
-            ) from None
-        filename = name or os.path.basename(path)
+        return bytes(source), name
+    path = os.fspath(source)
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError as error:
+        raise OresmeError(
+            f"Could not read {path}: {error.strerror or error}. Files added with "
+            "File > Add Files for Python are in the working directory."
+        ) from None
+    return data, name or os.path.basename(path)
+
+
+def _file_words(data):
+    """A file's bytes as they travel to the application: float64 words, padded with zeros."""
+    return np.frombuffer(data + b"\0" * (-len(data) % 8), dtype=np.float64)
+
+
+def _import(kind, source, name, preset, options):
+    """Read a file's bytes here and have the application turn them into waves."""
+    data, filename = _read_source(source, name)
     settings = {key: value for key, value in options.items() if value is not None}
     if isinstance(settings.get("header"), bool):
         settings["header"] = "yes" if settings["header"] else "no"
@@ -1716,7 +1726,7 @@ def _import(kind, source, name, preset, options):
             "size": len(data),
             "digest": hashlib.sha256(data).hexdigest(),
         },
-        np.frombuffer(data + b"\0" * (-len(data) % 8), dtype=np.float64),
+        _file_words(data),
     )[0]
     for table in reply["tables"]:
         unread = [
@@ -1780,6 +1790,36 @@ def load_excel(source, *, sheets=None, preset=None, decimal=None, skip=None, hea
         x=x, errors=errors, graph=bool(graph), table=bool(table),
     ))
     return {table["sheet"]: [Wave(wave_) for wave_ in table["waves"]] for table in reply["tables"]}
+
+
+def load_igor(source, *, name=None):
+    """Load the waves of an Igor Pro file: a binary wave (.ibw) or a packed experiment (.pxp, .pxt).
+
+    ``source`` is a file in the working directory, any other path, or the
+    file's bytes with ``name=`` (whose extension says which kind it is).
+    Returns the waves made, in a list in the order of the file: one for a
+    binary wave, all of an experiment's waves otherwise, each in the data
+    folder it was in (``w.name`` is then like ``"run1:signal"``). The values,
+    dimensions, scaling, units and note are Igor's; names Igor allows but this
+    app does not ("raw data") are made legal ("raw_data"), and a name that is
+    taken gets a suffix. Each wave's note says which file it came from and
+    what could not be kept as Igor had it. An experiment's graphs, tables,
+    procedures, variables and history are not loaded, nor a wave whose values
+    Igor did not save (it computes them from a formula); such waves are named
+    in a warning.
+    """
+    data, filename = _read_source(source, name)
+    reply = _call(
+        "importIgor",
+        {"filename": filename, "size": len(data), "digest": hashlib.sha256(data).hexdigest()},
+        _file_words(data),
+    )[0]
+    if reply["skipped"]:
+        warnings.warn(
+            f"{filename}: not loaded, without saved values: {', '.join(reply['skipped'])}.",
+            stacklevel=2,
+        )
+    return [Wave(wave_) for wave_ in reply["waves"]]
 
 
 def graphs():

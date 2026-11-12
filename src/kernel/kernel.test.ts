@@ -8,6 +8,7 @@ import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import excelWorkbook from "../core/io/testdata/excel.xlsx?inline";
+import { igorFixture } from "../core/io/testdata/igor";
 import { bootPython, type PythonKernel } from "./boot";
 import { answerRpc } from "./rpc";
 
@@ -1165,6 +1166,47 @@ describe("oresme Python API", () => {
       ['op.load_text(b"1,2")', /Give name=/],
       ['op.load_excel("lt_run.csv")', /not an Excel workbook/],
       ['op.load_excel("lt_book.xlsx", sheets="Nope")', /no sheet named "Nope"/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("loads Igor binary waves and packed experiments through the same reader", async () => {
+    files.put("li_frames.ibw", igorFixture("v5-le-4d-uint16.ibw"));
+    files.put("li_exp.pxp", igorFixture("experiment-be.pxp"));
+    const order = doc.getState().waveOrder;
+    expect(
+      await run(
+        [
+          'fr = op.load_igor("li_frames.ibw")',
+          "print([w.name for w in fr], fr[0].dtype, fr[0].shape, int(fr[0].data[2, 1, 0, 1]))",
+          'ex = op.load_igor("li_exp.pxp")',
+          'm = op.wave("raw_data:run_1:matrix")',
+          "print(len(ex), ex[-3].name, m.data.tolist(), m.y0, m.dy, m.y_unit)",
+          'print(op.wave("raw_data:run_1:t3_uint16").data.tolist(), op.wave("raw_data:run_1:c64").data.tolist())',
+          'again = op.load_igor(open("li_frames.ibw", "rb").read(), name="copy.ibw")',
+          "print(again[0].name, again[0].note.splitlines()[0][:30])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The 3×2×2×2 wave counts 0, 1, 2, ... in Igor's order (rows fastest), so the
+    // value at row 2, column 1, layer 0, chunk 1 is 2 + 3 + 12.
+    expect(stdout.trim().split("\n")).toEqual([
+      "['frames'] uint16 (3, 2, 2, 2) 17",
+      "21 raw_data:run_1:matrix [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]] 10.0 5.0 mm",
+      "[0, 0, 65535] [(1+2j), (-0-3.5j)]",
+      "frames_1 Loaded from copy.ibw (SHA-256",
+    ]);
+    expect(stderr).toMatch(/li_exp\.pxp: not loaded, without saved values: root:dep/);
+    // One input is one step to undo, whatever it loaded; the document is left as it was.
+    doc.undo();
+    expect(doc.getState().waveOrder).toEqual(order);
+    for (const [code, error] of [
+      ['op.load_igor("li_missing.ibw")', /Could not read li_missing\.ibw/],
+      ['op.load_igor(b"x,y\\n1,2\\n", name="table.ibw")', /not an Igor binary wave/],
+      ['op.load_igor(b"x,y\\n1,2\\n", name="table.pxp")', /not an Igor packed experiment/],
+      ['op.load_igor(b"1")', /Give name=/],
     ] as const) {
       expect(await run(code), code).toBe(false);
       expect(errors[0]).toMatch(error);

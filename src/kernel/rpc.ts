@@ -7,6 +7,7 @@ import { changedInputs } from "../core/doc/results";
 import { DocError, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
+import { planIgorImport } from "../core/io/igorImport";
 import type { MeasureText } from "../core/plot/displayList";
 import { tracePosition, traceX } from "../core/plot/layout";
 
@@ -303,6 +304,15 @@ export function handleRpc(
           encoding: plan.encoding,
         },
       };
+    }
+    case "importIgor": {
+      const filename = String(params.filename);
+      const digest = typeof params.digest === "string" ? params.digest : undefined;
+      const bytes = wordsToBytes(data, Number(params.size));
+      const plan = planIgorImport(bytes, filename, state, digest);
+      if (plan.waves.length === 0) throw new DocError(plan.summary);
+      for (const command of plan.commands) doc.dispatch(command, { group });
+      return { result: { waves: plan.waves, summary: plan.summary, skipped: plan.skipped } };
     }
     case "removeFile":
       return { result: context.files.remove(String(params.path)) };

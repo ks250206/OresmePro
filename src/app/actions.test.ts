@@ -7,6 +7,7 @@ import {
   selectedItems,
   selectItems,
 } from "./actions";
+import { igorFixture } from "../core/io/testdata/igor";
 import { doc, files, history, ui } from "./session";
 
 const csv = (name: string, value: number) => ({
@@ -63,6 +64,62 @@ describe("loading files of data", () => {
       "two.txt",
     ]);
     ui.set({ dialog: null });
+  });
+});
+
+describe("loading Igor files", () => {
+  const igorFile = (fixture: string, name: string) =>
+    new File([igorFixture(fixture) as Uint8Array<ArrayBuffer>], name);
+
+  it("loads a dropped binary wave at once, as one undo step noted in the history", async () => {
+    const before = history.getEntries().length;
+    await loadFiles([igorFile("v5-be-3d.ibw", "cube.ibw"), new File(["a\n1\n"], "later.csv")]);
+    expect(doc.getState().waves.cube).toMatchObject({ shape: [4, 3, 2], xUnit: "nanometre" });
+    expect(doc.getState().waves.cube!.note).toMatch(
+      /^Loaded from cube\.ibw \(SHA-256 [0-9a-f]{64}\): Igor wave cube, binary wave version 5/,
+    );
+    expect(
+      history
+        .getEntries()
+        .slice(before)
+        .map((entry) => [entry.source, entry.code]),
+    ).toEqual([
+      [
+        "system",
+        "Loaded cube (float64, 4×3×2) from cube.ibw.\nIgor's dimension labels are not loaded.\n" +
+          'Igor\'s scaling of the layers: start 5, step 0.5, unit "K" (a wave here has scaling for its rows and columns only).',
+      ],
+    ]);
+    // The text file still goes to the Load Data dialog.
+    expect(ui.get().dialog).toMatchObject({ kind: "importData", file: { name: "later.csv" } });
+    ui.set({ dialog: null });
+    doc.undo();
+    expect(doc.getState().waves.cube).toBeUndefined();
+  });
+
+  it("loads a packed experiment's waves and folders as one undo step", async () => {
+    const before = doc.getState();
+    await loadFiles([igorFile("experiment-le.pxp", "exp.pxp")]);
+    const state = doc.getState();
+    expect(state.waveOrder.length - before.waveOrder.length).toBe(21);
+    expect(state.waves["raw_data:run_1:matrix"]).toMatchObject({ shape: [2, 3] });
+    expect(state.folders).toContain("a_folder_whose_name_is_longer_than_31_bytes");
+    expect(history.getEntries().at(-1)!.code).toMatch(/^Loaded 21 waves from exp\.pxp: /);
+    doc.undo();
+    expect(doc.getState().waveOrder).toEqual(before.waveOrder);
+    expect(doc.getState().folders).toEqual(before.folders);
+  });
+
+  it("loads nothing from a damaged file and says why", async () => {
+    const before = doc.getState().waveOrder;
+    const bytes = igorFixture("experiment-be.pxp");
+    await loadFiles([new File([bytes.slice(0, 4000)], "cut.pxp")]);
+    expect(ui.get().alert).toEqual({
+      title: "Could not load cut.pxp",
+      message: expect.stringMatching(/^The file is cut short or damaged/) as string,
+    });
+    expect(doc.getState().waveOrder).toEqual(before);
+    ui.set({ alert: null });
   });
 });
 

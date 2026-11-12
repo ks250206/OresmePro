@@ -18,6 +18,7 @@ import {
 } from "../core/doc/types";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
+import { isIgorFile, planIgorImport } from "../core/io/igorImport";
 import { drawPrims } from "../core/plot/canvas";
 import type { Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
@@ -177,10 +178,17 @@ export function loadExcelWorkbook(): void {
   pickFile(".xlsx,.xlsm", true, (picked) => void loadFiles(picked));
 }
 
+/** Asks for Igor binary waves and packed experiments, and loads their waves. */
+export function loadIgorFiles(): void {
+  pickFile(".ibw,.pxp,.pxt", true, (picked) => void loadFiles(picked));
+}
+
 /**
- * Takes in dropped or chosen files. An experiment is opened; files of data
- * (delimited text, Excel workbooks) are shown in the Load Data dialog one
- * after another, where the user sees how each is read before it is.
+ * Takes in dropped or chosen files. An experiment is opened; Igor files are
+ * loaded at once (they say exactly what they hold, so there is nothing to
+ * choose); other files of data (delimited text, Excel workbooks) are shown in
+ * the Load Data dialog one after another, where the user sees how each is
+ * read before it is.
  */
 export async function loadFiles(files: Iterable<File>): Promise<void> {
   const data: PendingData[] = [];
@@ -190,7 +198,9 @@ export async function loadFiles(files: Iterable<File>): Promise<void> {
       continue;
     }
     try {
-      data.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+      const pending = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+      if (isIgorFile(file.name)) await importIgorFile(pending);
+      else data.push(pending);
     } catch (error) {
       showError(`Could not read ${file.name}`, error);
     }
@@ -241,6 +251,31 @@ export async function importFile(
         ? `Loaded ${plan.summary[0]} from ${file.name}.`
         : `Loaded from ${file.name}:\n${plan.summary.join("\n")}`,
     );
+    return true;
+  } catch (error) {
+    showError(`Could not load ${file.name}`, error);
+    return false;
+  }
+}
+
+/**
+ * Loads the waves of an Igor file into the experiment: the wave of a binary
+ * wave, or every wave of a packed experiment under its data folders, as one
+ * undo step. The history notes what was loaded and, for an experiment, what
+ * was not. A file that cannot be read whole loads nothing. Returns whether
+ * anything was loaded.
+ */
+export async function importIgorFile(file: PendingData): Promise<boolean> {
+  try {
+    const digest = await sha256(file.bytes);
+    // Planned only now, as for text files: waves made meanwhile are avoided.
+    const plan = planIgorImport(file.bytes, file.name, doc.getState(), digest);
+    if (plan.commands.length === 0) {
+      showError("Nothing to load", plan.summary);
+      return false;
+    }
+    if (runGui(plan.commands) === undefined) return false;
+    note(plan.summary);
     return true;
   } catch (error) {
     showError(`Could not load ${file.name}`, error);
