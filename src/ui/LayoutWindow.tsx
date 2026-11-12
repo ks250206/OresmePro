@@ -201,6 +201,15 @@ export function LayoutWindow({ name }: { name: string }) {
     const at = toPage(event);
     const item = itemAt(at.x, at.y);
     const toggle = event.shiftKey || event.metaKey;
+    // The selection as it is now, not as it was drawn: a second click can
+    // arrive before the first one's selection has been rendered.
+    const stored = ui.get().pageSelection;
+    const selected = (Object.hasOwn(stored, name) ? stored[name]! : []).filter((chosen) =>
+      page.items.some((other) => other.name === chosen),
+    );
+    const select = (items: readonly string[]) => {
+      if (!sameList(items, selected)) selectItems(name, items);
+    };
     if (!item) {
       // On empty paper: a rubber band, which adds to the selection with Shift.
       if (!toggle) select([]);
