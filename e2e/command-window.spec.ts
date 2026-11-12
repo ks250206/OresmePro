@@ -110,6 +110,29 @@ test.describe("running Python", () => {
     expect((await app.run("print(6 * 7)")).output).toBe("42\n");
   });
 
+  test("an interrupt that is swallowed is sent again, and does not reach the next input", async ({
+    app,
+    page,
+  }) => {
+    // The first signal lands in a handler that goes on, as one that arrives during
+    // the preparation before the user's code would; the loop after it must still stop.
+    const swallowed = await interrupted(
+      app,
+      "try:\n    while True: pass\nexcept KeyboardInterrupt:\n    print('caught')\nwhile True: pass",
+    );
+    expect(swallowed.status).toBe("error");
+    expect(swallowed.output).toContain("caught");
+    expect(swallowed.output).toContain("KeyboardInterrupt");
+    // Nothing is left over to hit what runs next, even well after the last repeat.
+    await page.evaluate(() =>
+      globalThis.oresme.kernel.execute("import time\ntime.sleep(4.5)\nprint('slept')"),
+    );
+    await app.idle();
+    const next = await app.lastEntry();
+    expect([next.status, next.output]).toEqual(["ok", "slept\n"]);
+    await expect(page.getByText("Python ready")).toBeVisible();
+  });
+
   test("an interrupt sent the moment code is submitted is not lost", async ({ app, page }) => {
     await page.evaluate(() => {
       globalThis.oresme.kernel.execute("while True: pass");
