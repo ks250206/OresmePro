@@ -26,11 +26,26 @@ export function pyLiteral(value: unknown): string {
   }
   if (typeof value === "string") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(pyLiteral).join(", ")}]`;
+  if (typeof value === "object" && !ArrayBuffer.isView(value)) {
+    const entries = Object.entries(value).map(
+      ([key, item]) => `${pyLiteral(key)}: ${pyLiteral(item)}`,
+    );
+    return `{${entries.join(", ")}}`;
+  }
   throw new Error(`Cannot write ${typeof value} as a Python literal.`);
 }
 
 export const snakeCase = (name: string): string =>
   name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+/** Data with the keys of its dicts in Python's spelling, as Python reads a style. */
+export function snakeKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [snakeCase(key), snakeKeys(item)]),
+  );
+}
 
 export const camelCase = (name: string): string =>
   name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
@@ -174,6 +189,8 @@ export function echoPython(
       return `op.display(${joinArgs(
         names(command.y),
         keywords({ x: command.x ?? undefined, name: command.name }),
+        // A style of null is written, as None: it means no style, not the default.
+        command.style === undefined ? "" : `style=${pyLiteral(command.style)}`,
       )})`;
     case "appendTraces":
       return `op.graph(${pyLiteral(command.graph)}).append(${joinArgs(
@@ -254,6 +271,23 @@ export function echoPython(
       return `op.table(${pyLiteral(command.table)}).append(${names(command.waves)})`;
     case "removeFromTable":
       return `op.table(${pyLiteral(command.table)}).remove(${names(command.waves)})`;
+    case "saveStyle":
+      return `op.graph(${pyLiteral(command.graph)}).save_style(${joinArgs(
+        pyLiteral(command.name),
+        command.size ? "size=True" : "",
+      )})`;
+    case "setStyle":
+      return `op.set_style(${pyLiteral(command.name)}, ${pyLiteral(snakeKeys(command.style))})`;
+    case "removeStyle":
+      return `op.style(${pyLiteral(command.name)}).remove()`;
+    case "renameStyle":
+      return `op.style(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "applyStyle":
+      return command.graphs.length === 1
+        ? `op.graph(${pyLiteral(command.graphs[0])}).apply_style(${pyLiteral(command.style)})`
+        : `op.apply_style(${pyLiteral(command.style)}, graphs=${pyLiteral([...command.graphs])})`;
+    case "setDefaultStyle":
+      return `op.set_default_style(${pyLiteral(command.name)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
   }

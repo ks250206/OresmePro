@@ -1,7 +1,7 @@
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
-import type { DocState } from "../core/doc/types";
+import { figureSize, type DocState } from "../core/doc/types";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
@@ -106,18 +106,12 @@ export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(
 /** How the command key is written in menus. */
 export const MOD = isMac ? "⌘" : "Ctrl+";
 
-/** Height of a window's title bar; the content area is the window minus this. */
-export const TITLE_BAR_HEIGHT = 24;
-/** Height of the cursor readout bar under a graph. */
-export const INFO_BAR_HEIGHT = 56;
+export { INFO_BAR_HEIGHT, TITLE_BAR_HEIGHT } from "../core/doc/types";
 
 /** The size at which a graph is drawn in its window. */
 export function graphSize(state: DocState, name: string): { width: number; height: number } {
   const window = state.windows.find((item) => item.name === name);
-  const info = state.graphs[name]?.showInfo ? INFO_BAR_HEIGHT : 0;
-  return window
-    ? { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info }
-    : { width: 440, height: 280 };
+  return window ? figureSize(window, state.graphs[name]) : { width: 440, height: 280 };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand, checkName } from "../doc/commands";
+import { applyCommand, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
 import {
   AXIS_SIDES,
@@ -14,6 +14,7 @@ import {
   type GraphSpec,
   type PageSpec,
   type ProcedureSpec,
+  type StyleSpec,
   type TableSpec,
   type TraceSpec,
   type Wave,
@@ -52,6 +53,8 @@ export interface SavedExperiment {
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
+  styles?: Record<string, StyleSpec>;
+  defaultStyle?: string | null;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -81,13 +84,19 @@ export function describeExperiment(
     tables: dictFrom(state.tables),
     procedures: dictFrom(state.procedures),
     pages: dictFrom(state.pages),
+    styles: dictFrom(state.styles),
+    defaultStyle: state.defaultStyle,
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
 }
 
 /** Fills in what graphs saved by earlier versions do not have. */
-function upgradeGraph(graphName: string, saved: GraphSpec): GraphSpec {
+function upgradeGraph(
+  graphName: string,
+  saved: GraphSpec,
+  styles: Readonly<Record<string, StyleSpec>>,
+): GraphSpec {
   const axes = dict<AxisSpec>();
   for (const side of AXIS_SIDES) axes[side] = defaultAxis(side);
   for (const [name, axis] of Object.entries(saved.axes ?? {})) {
@@ -128,6 +137,7 @@ function upgradeGraph(graphName: string, saved: GraphSpec): GraphSpec {
       ]),
     ),
     showInfo: saved.showInfo ?? false,
+    style: typeof saved.style === "string" && saved.style in styles ? saved.style : null,
     axes,
   };
 }
@@ -162,9 +172,24 @@ export function buildState(
   }
   // Names are checked as the commands that make these would check them. The
   // records are rebuilt without a prototype (see ../doc/dict), whatever JSON gave.
+  const styles = dict<StyleSpec>();
+  for (const [name, style] of Object.entries(saved.styles ?? {})) {
+    checkName(name, "style");
+    // A style that cannot be read (one written by a later version, say) is
+    // left behind rather than keeping the experiment's data from opening.
+    try {
+      styles[name] = checkStyle(style);
+    } catch {
+      continue;
+    }
+  }
+  const defaultStyle =
+    typeof saved.defaultStyle === "string" && saved.defaultStyle in styles
+      ? saved.defaultStyle
+      : null;
   const graphs = dict<GraphSpec>();
   for (const [name, graph] of Object.entries(saved.graphs)) {
-    graphs[checkName(name, "graph")] = upgradeGraph(name, graph);
+    graphs[checkName(name, "graph")] = upgradeGraph(name, graph, styles);
   }
   const tables = dict<TableSpec>();
   for (const [name, table] of Object.entries(saved.tables)) {
@@ -199,7 +224,7 @@ export function buildState(
       window.name in pages,
   );
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
-  return { ...state, graphs, tables, procedures, pages, timeZone, windows };
+  return { ...state, graphs, tables, procedures, pages, styles, defaultStyle, timeZone, windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

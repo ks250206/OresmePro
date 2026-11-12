@@ -384,6 +384,11 @@ export interface GraphStyle {
 
 export interface GraphSpec extends GraphStyle {
   name: string;
+  /**
+   * The style (see {@link StyleSpec}) last given to the graph, or null.
+   * Traces and axes added to the graph later take their look from it.
+   */
+  style: string | null;
   traces: readonly TraceSpec[];
   images: readonly ImageSpec[];
   contours: readonly ContourSpec[];
@@ -391,6 +396,65 @@ export interface GraphSpec extends GraphStyle {
   axes: Dict<AxisSpec>;
   annotations: readonly AnnotationSpec[];
   cursors: Readonly<Partial<Record<CursorName, CursorSpec>>>;
+}
+
+/*
+ * A style is the look of a graph kept under a name, to give other graphs the
+ * same fonts, lines, colors and size. What it holds is the look and never the
+ * data, and the rule that tells them apart is: a property is look when the
+ * same value is right for a graph of any other data, and data when the right
+ * value depends on what is plotted. So font, tick direction, mirror axes,
+ * grid, line width, colors and markers are look; ranges, labels, log or
+ * linear, reversal, tick step and format (they follow the values), axis spans
+ * (they follow which axes there are), which waves are plotted, error bars,
+ * offsets, fills and color waves are data. Hidden traces and the cursor bar
+ * are the state of the work, not of the figure, so neither is held.
+ */
+
+/** The graph-wide properties a style can hold. */
+export const GRAPH_LOOK = ["fontSize", "fontFamily"] as const;
+/** The properties of an axis a style can hold. */
+export const AXIS_LOOK = ["mirror", "ticks", "minor", "grid"] as const;
+/** The properties of a trace a style can hold, for each place in its cycle. */
+export const TRACE_LOOK = [
+  "mode",
+  "color",
+  "lineSize",
+  "lineStyle",
+  "marker",
+  "markerSize",
+  "markerFill",
+] as const;
+
+export type GraphLook = Pick<GraphStyle, (typeof GRAPH_LOOK)[number]>;
+export type AxisLook = Pick<AxisSpec, (typeof AXIS_LOOK)[number]>;
+export type TraceLook = Pick<TraceStyle, (typeof TRACE_LOOK)[number]>;
+
+/**
+ * The axes a style describes: the four sides by their names, and "other" for
+ * any axis that was added. An added axis without an "other" entry looks like
+ * the axis of its side, so stacked plots match.
+ */
+export const AXIS_ROLES = [...AXIS_SIDES, "other"] as const;
+export type AxisRole = (typeof AXIS_ROLES)[number];
+
+/** The size of the drawn graph (the figure, as exported), in CSS pixels. */
+export interface FigureSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The look of a graph kept under a name. Every part is optional and a style
+ * changes only what it holds. `traces` is a cycle: the graph's traces take
+ * its entries in order, starting again from the first when there are more
+ * traces than entries.
+ */
+export interface StyleSpec {
+  graph?: Partial<GraphLook>;
+  size?: FigureSize;
+  axes?: Partial<Record<AxisRole, Partial<AxisLook>>>;
+  traces?: readonly Partial<TraceLook>[];
 }
 
 export interface TableSpec {
@@ -478,6 +542,10 @@ export interface DocState {
   readonly tables: Dict<TableSpec>;
   readonly procedures: Dict<ProcedureSpec>;
   readonly pages: Dict<PageSpec>;
+  /** Graph styles, by name. */
+  readonly styles: Dict<StyleSpec>;
+  /** The style new graphs are given, or null. Always one of `styles`. */
+  readonly defaultStyle: string | null;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -495,9 +563,22 @@ export const emptyDoc = (): DocState => ({
   tables: dict(),
   procedures: dict(),
   pages: dict(),
+  styles: dict(),
+  defaultStyle: null,
   timeZone: "UTC",
   windows: [],
 });
+
+/** Height of a window's title bar; the content area is the window minus this. */
+export const TITLE_BAR_HEIGHT = 24;
+/** Height of the cursor readout bar under a graph. */
+export const INFO_BAR_HEIGHT = 56;
+
+/** The size a graph is drawn at in its window, and exported at. */
+export function figureSize(window: WindowState, graph: GraphSpec | undefined): FigureSize {
+  const info = graph?.showInfo ? INFO_BAR_HEIGHT : 0;
+  return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info };
+}
 
 export class DocError extends Error {
   constructor(message: string) {

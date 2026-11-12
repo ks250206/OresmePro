@@ -22,6 +22,7 @@ function records(state: DocState): [string, object][] {
     ["tables", state.tables],
     ["procedures", state.procedures],
     ["pages", state.pages],
+    ["styles", state.styles],
     ...Object.values(state.graphs).flatMap((graph): [string, object][] => [
       [`${graph.name}.axes`, graph.axes],
       [`${graph.name}.cursors`, graph.cursors],
@@ -99,6 +100,15 @@ describe("names that objects inherit", () => {
     doc.dispatch({ op: "newLayout", name: "valueOf" });
     doc.dispatch({ op: "addLayoutItem", layout: "valueOf", kind: "graph", graph: "toString" });
     doc.dispatch({ op: "newProcedure", name: "isPrototypeOf", code: "x = 1\n" });
+    expect(() => doc.dispatch({ op: "applyStyle", style: "constructor", graphs: [] })).toThrow(
+      'No style named "constructor".',
+    );
+    doc.dispatch({ op: "setStyle", name: "constructor", style: { graph: { fontSize: 7 } } });
+    doc.dispatch({ op: "renameStyle", name: "constructor", newName: "toString" });
+    doc.dispatch({ op: "setDefaultStyle", name: "toString" });
+    doc.dispatch({ op: "applyStyle", style: "toString", graphs: ["toString"] });
+    expect(at(doc.getState().graphs, "toString")).toMatchObject({ fontSize: 7, style: "toString" });
+    expect(at(doc.getState().styles, "constructor")).toBeUndefined();
     const state = doc.getState();
     expect(at(at(state.graphs, "toString")!.axes, "valueOf")).toMatchObject({
       side: "right",
@@ -169,6 +179,13 @@ describe("names that objects inherit", () => {
     step({ op: "setProcedure", name: "Procedure", code: "z = 3\n" });
     step({ op: "killWindow", name: "otherGraph" });
     step({ op: "killWaves", names: ["other_x"] });
+    step({ op: "saveStyle", name: "paper", graph: "signalGraph" });
+    step({ op: "setStyle", name: "talk", style: { graph: { fontSize: 20 } } });
+    step({ op: "renameStyle", name: "talk", newName: "poster" });
+    step({ op: "setDefaultStyle", name: "poster" });
+    step({ op: "display", y: [] });
+    step({ op: "applyStyle", style: "paper", graphs: ["signalGraph", "Graph0"] });
+    step({ op: "removeStyle", name: "poster" });
     while (doc.undo()) seen.push(doc.getState());
     while (doc.redo()) seen.push(doc.getState());
     seen.push(unzipExperiment(zipExperiment(doc.getState(), [])).state);
@@ -259,6 +276,8 @@ describe("names that objects inherit", () => {
     doc.dispatch({ op: "resizeColumn", table: "constructor", wave: "valueOf", width: 120 });
     doc.dispatch({ op: "newLayout", name: "toString" });
     doc.dispatch({ op: "newProcedure", name: "valueOf", code: "y = 2\n" });
+    doc.dispatch({ op: "saveStyle", name: "hasOwnProperty", graph: "constructorGraph" });
+    doc.dispatch({ op: "setDefaultStyle", name: "hasOwnProperty" });
     const before = doc.getState();
 
     const restored = unzipExperiment(zipExperiment(before, [])).state;
@@ -274,6 +293,9 @@ describe("names that objects inherit", () => {
     expect(at(restored.procedures, "valueOf")!.code).toBe("y = 2\n");
     expect(restored.windows).toEqual(before.windows);
     expect(at(restored.graphs, "hasOwnProperty")).toBeUndefined();
+    expect(at(restored.styles, "hasOwnProperty")).toEqual(at(before.styles, "hasOwnProperty"));
+    expect(restored.defaultStyle).toBe("hasOwnProperty");
+    expect(at(restored.styles, "toString")).toBeUndefined();
 
     // What is loaded can be changed further, under the same names.
     const again = new Doc();

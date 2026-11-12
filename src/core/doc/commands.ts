@@ -1,9 +1,12 @@
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import { dict, filterDict, withEntry, withoutEntries } from "./dict";
+import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
+  AXIS_LOOK,
+  AXIS_ROLES,
   AXIS_SIDES,
   COLOR_TABLES,
   COMPLEX_PARTS,
@@ -12,6 +15,7 @@ import {
   DEFAULT_TABLE_DIGITS,
   DocError,
   FILL_MODES,
+  GRAPH_LOOK,
   GRID_MODES,
   LINE_STYLES,
   MARKER_SHAPES,
@@ -19,6 +23,7 @@ import {
   PAGE_SIZES,
   TAG_OFFSET,
   TICK_MODES,
+  TRACE_LOOK,
   TRACE_MODES,
   WAVE_TYPES,
   isComplexType,
@@ -33,15 +38,21 @@ import {
   leafName,
   parentFolder,
   type AnnotationSpec,
+  type AxisLook,
+  type AxisRole,
   type AxisSpec,
   type ContourSpec,
   type CursorName,
   type DocState,
   type ErrorSource,
+  type FigureSize,
+  type GraphLook,
   type GraphSpec,
   type GraphStyle,
   type ImageSpec,
   type TableSpec,
+  type StyleSpec,
+  type TraceLook,
   type TraceSpec,
   type TraceStyle,
   type Wave,
@@ -123,7 +134,14 @@ export type Command =
   | { op: "newFolder"; path: string }
   | { op: "renameFolder"; path: string; newPath: string }
   | { op: "killFolder"; path: string }
-  | { op: "display"; y: readonly string[]; x?: string | null; name?: string }
+  | {
+      op: "display";
+      y: readonly string[];
+      x?: string | null;
+      name?: string;
+      /** The style to give the new graph: left out, the default style; null, none. */
+      style?: string | null;
+    }
   | {
       op: "appendTraces";
       graph: string;
@@ -200,6 +218,14 @@ export type Command =
   | { op: "removeLayoutItem"; layout: string; item: string }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
+  /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
+  | { op: "saveStyle"; name: string; graph: string; size?: boolean }
+  /** Defines a style from its parts (see StyleSpec), replacing one of that name. */
+  | { op: "setStyle"; name: string; style: unknown }
+  | { op: "removeStyle"; name: string }
+  | { op: "renameStyle"; name: string; newName: string }
+  | { op: "applyStyle"; style: string; graphs: readonly string[] }
+  | { op: "setDefaultStyle"; name: string | null }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
@@ -617,6 +643,137 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
   showInfo: (value) => bool(value, "showInfo"),
 };
 
+type Validators<T> = { [K in keyof T]: (value: unknown) => T[K] };
+
+/** The validators of some properties, for the part of an object a style can hold. */
+function someOf<T, K extends keyof T>(validators: Validators<T>, keys: readonly K[]) {
+  const result = {} as Validators<Pick<T, K>>;
+  for (const key of keys) result[key] = validators[key];
+  return result;
+}
+
+const GRAPH_LOOK_VALIDATORS = someOf<GraphStyle, keyof GraphLook>(GRAPH_VALIDATORS, GRAPH_LOOK);
+const AXIS_LOOK_VALIDATORS = someOf<Omit<AxisSpec, "side">, keyof AxisLook>(
+  AXIS_VALIDATORS,
+  AXIS_LOOK,
+);
+const TRACE_LOOK_VALIDATORS = someOf<TraceStyle, keyof TraceLook>(TRACE_VALIDATORS, TRACE_LOOK);
+
+const figureSide = (what: string, least: number) => (value: unknown) => {
+  const size = finite(value, what);
+  if (size < least || size > 4000) {
+    throw new DocError(`${what} must be between ${least} and 4000 pixels.`);
+  }
+  return size;
+};
+const SIZE_VALIDATORS = { width: figureSide("width", 160), height: figureSide("height", 100) };
+
+/** A dict of properties, or an error naming what it should have been. */
+function propsOf(value: unknown, what: string): Props {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DocError(`${what} must be a dict of properties.`);
+  }
+  return value as Props;
+}
+
+/** The validated properties, in the order of `keys`, so equal parts are written alike. */
+function ordered<T, K extends keyof T>(props: Partial<T>, keys: readonly K[]): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of keys) if (props[key] !== undefined) result[key] = props[key];
+  return result;
+}
+
+const STYLE_PARTS = ["graph", "size", "axes", "traces"] as const;
+
+/**
+ * Checks a style given as data (from Python, a file or the browser's
+ * library) and returns it in its usual form. Unknown parts and properties
+ * and bad values are refused; parts that hold nothing are left out.
+ */
+export function checkStyle(value: unknown): StyleSpec {
+  const parts = validateProps<Required<StyleSpec>>(
+    propsOf(value, "A style"),
+    {
+      graph: (item) =>
+        ordered(
+          validateProps<GraphLook>(propsOf(item, "graph"), GRAPH_LOOK_VALIDATORS, "graph style"),
+          GRAPH_LOOK,
+        ),
+      size: (item): FigureSize => {
+        const size = validateProps<FigureSize>(propsOf(item, "size"), SIZE_VALIDATORS, "size");
+        if (size.width === undefined || size.height === undefined) {
+          throw new DocError("size needs both width and height.");
+        }
+        return { width: size.width, height: size.height };
+      },
+      axes: (item) => {
+        const roles = validateProps<Record<AxisRole, unknown>>(
+          propsOf(item, "axes"),
+          Object.fromEntries(
+            AXIS_ROLES.map((role) => [role, (look: unknown) => look]),
+          ) as Validators<Record<AxisRole, unknown>>,
+          "axes",
+        );
+        const axes: Partial<Record<AxisRole, Partial<AxisLook>>> = {};
+        for (const role of AXIS_ROLES) {
+          if (roles[role] === undefined) continue;
+          const look = ordered(
+            validateProps<AxisLook>(
+              propsOf(roles[role], `axes.${role}`),
+              AXIS_LOOK_VALIDATORS,
+              "axis style",
+            ),
+            AXIS_LOOK,
+          );
+          if (Object.keys(look).length > 0) axes[role] = look;
+        }
+        return axes;
+      },
+      traces: (item) => {
+        if (!Array.isArray(item) || item.length > 1000) {
+          throw new DocError("traces must be a list of trace properties, one for each trace.");
+        }
+        // An empty entry is a place in the cycle that leaves its trace alone.
+        return item.map((entry: unknown) =>
+          ordered(
+            validateProps<TraceLook>(
+              propsOf(entry, "A trace in a style"),
+              TRACE_LOOK_VALIDATORS,
+              "trace style",
+            ),
+            TRACE_LOOK,
+          ),
+        );
+      },
+    },
+    "style",
+  );
+  const style: Record<string, unknown> = {};
+  for (const part of STYLE_PARTS) {
+    const content = parts[part];
+    const empty =
+      content === undefined ||
+      (Array.isArray(content) ? content : Object.keys(content)).length === 0;
+    if (!empty) style[part] = content;
+  }
+  return style as StyleSpec;
+}
+
+function requireStyle(state: DocState, name: unknown): StyleSpec {
+  const style = typeof name === "string" ? state.styles[name] : undefined;
+  if (!style) throw new DocError(`No style named ${JSON.stringify(name)}.`);
+  return style;
+}
+
+/** Gives a graph a style, and its window the style's size. */
+function withStyle(state: DocState, graph: GraphSpec, name: string): DocState {
+  const style = requireStyle(state, name);
+  return {
+    ...putGraph(state, styledGraph(graph, style, name)),
+    windows: styledWindows(state.windows, graph, style),
+  };
+}
+
 type ImageProps = Pick<
   ImageSpec,
   "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk" | "part"
@@ -824,6 +981,7 @@ function emptyGraph(name: string): GraphSpec {
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
     showInfo: false,
+    style: null,
   };
 }
 
@@ -1113,18 +1271,18 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (windowTaken(state)(name)) {
         throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
       }
+      const style = command.style === undefined ? state.defaultStyle : command.style;
+      if (style !== null) requireStyle(state, style);
       const empty = emptyGraph(name);
       const graph =
         command.y.length === 0
           ? empty
           : addTraces(state, empty, command.y, command.x ?? null, "left", "bottom");
-      return {
-        state: {
-          ...putGraph(state, graph),
-          windows: [...state.windows, placeWindow(state, name, "graph")],
-        },
-        result: name,
+      const made = {
+        ...putGraph(state, graph),
+        windows: [...state.windows, placeWindow(state, name, "graph")],
       };
+      return { state: style === null ? made : withStyle(made, graph, style), result: name };
     }
     case "appendTraces": {
       const graph = requireGraph(state, command.graph);
@@ -1136,7 +1294,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         command.vAxis ?? "left",
         command.hAxis ?? "bottom",
       );
-      return { state: putGraph(state, next), result: next.traces.at(-1)!.name };
+      // New traces take their places in the cycle of the graph's style.
+      const style = graph.style === null ? undefined : state.styles[graph.style];
+      const traces = next.traces.map((trace, index) =>
+        index < graph.traces.length ? trace : { ...trace, ...traceLook(style, index) },
+      );
+      return { state: putGraph(state, { ...next, traces }), result: next.traces.at(-1)!.name };
     }
     case "removeTraces": {
       const graph = requireGraph(state, command.graph);
@@ -1174,7 +1337,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (name in graph.axes) {
         throw new DocError(`${graph.name} already has an axis named ${JSON.stringify(name)}.`);
       }
-      const axis = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
+      const plain = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
+      const style = graph.style === null ? undefined : state.styles[graph.style];
+      const axis = { ...plain, ...axisLook(style, name, plain) };
       return {
         state: putGraph(state, { ...graph, axes: withEntry(graph.axes, name, axis) }),
         result: name,
@@ -1587,6 +1752,70 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         state: { ...state, procedures: withEntry(state.procedures, command.name, next) },
         result: null,
       };
+    }
+    case "saveStyle": {
+      const name = checkName(command.name, "style");
+      requireGraph(state, command.graph);
+      const style = captureStyle(state, command.graph, command.size === true);
+      return { state: { ...state, styles: withEntry(state.styles, name, style) }, result: name };
+    }
+    case "setStyle": {
+      const name = checkName(command.name, "style");
+      const style = checkStyle(command.style);
+      return { state: { ...state, styles: withEntry(state.styles, name, style) }, result: name };
+    }
+    case "removeStyle": {
+      requireStyle(state, command.name);
+      const graphs = dict<GraphSpec>();
+      for (const graph of Object.values(state.graphs)) {
+        graphs[graph.name] = graph.style === command.name ? { ...graph, style: null } : graph;
+      }
+      return {
+        state: {
+          ...state,
+          graphs,
+          styles: withoutEntries(state.styles, [command.name]),
+          defaultStyle: state.defaultStyle === command.name ? null : state.defaultStyle,
+        },
+        result: null,
+      };
+    }
+    case "renameStyle": {
+      const style = requireStyle(state, command.name);
+      const newName = checkName(command.newName, "style");
+      if (newName === command.name) return { state, result: null };
+      if (newName in state.styles) {
+        throw new DocError(`Style ${JSON.stringify(newName)} already exists.`);
+      }
+      const follow = (name: string | null) => (name === command.name ? newName : name);
+      const graphs = dict<GraphSpec>();
+      for (const graph of Object.values(state.graphs)) {
+        graphs[graph.name] = graph.style === command.name ? { ...graph, style: newName } : graph;
+      }
+      return {
+        state: {
+          ...state,
+          graphs,
+          styles: withEntry(withoutEntries(state.styles, [command.name]), newName, style),
+          defaultStyle: follow(state.defaultStyle),
+        },
+        result: newName,
+      };
+    }
+    case "applyStyle": {
+      requireStyle(state, command.style);
+      if (!Array.isArray(command.graphs))
+        throw new DocError("graphs must be a list of graph names.");
+      let next = state;
+      for (const name of new Set<string>(command.graphs)) {
+        next = withStyle(next, requireGraph(next, name), command.style);
+      }
+      return { state: next, result: null };
+    }
+    case "setDefaultStyle": {
+      if (command.name !== null) requireStyle(state, command.name);
+      if (command.name === state.defaultStyle) return { state, result: null };
+      return { state: { ...state, defaultStyle: command.name }, result: null };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
