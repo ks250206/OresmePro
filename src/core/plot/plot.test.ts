@@ -1068,6 +1068,134 @@ describe("layoutGraph", () => {
     expect(toSvg(layout.prims, 400, 300)).toContain("data:image/png;base64,");
   });
 
+  describe("images on log axes", () => {
+    type Props = Record<string, unknown>;
+    /**
+     * An nx by ny matrix whose element (i, j) has the value 1 + 16 i + j,
+     * drawn in grays from 0 to 255 so that a pixel's red is that value.
+     */
+    function imageLayout(nx: number, ny: number, scaling: Props, bottom: Props, left: Props) {
+      const doc = new Doc();
+      const data = new Float64Array(nx * ny).map((_, k) => 1 + 16 * Math.floor(k / ny) + (k % ny));
+      doc.dispatch({ op: "makeWave", name: "m", data, shape: [nx, ny], ...scaling });
+      doc.dispatch({ op: "display", y: [] });
+      doc.dispatch({
+        op: "appendImage",
+        graph: "Graph0",
+        wave: "m",
+        props: { colorTable: "grays", zMin: 0, zMax: 255 },
+      });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "bottom", props: bottom });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: left });
+      return lay(doc);
+    }
+    /** The value drawn at a pixel, or null where the image is transparent or absent. */
+    const valueAt = (layout: ReturnType<typeof lay>, px: number, py: number): number | null => {
+      const [image] = find(layout.prims, "image");
+      if (!image) return null;
+      const col = Math.floor(((px - image.x) / image.w) * image.cols);
+      const row = Math.floor(((py - image.y) / image.h) * image.rows);
+      if (col < 0 || col >= image.cols || row < 0 || row >= image.rows) return null;
+      const at = (row * image.cols + col) * 4;
+      return image.rgba[at + 3] === 0 ? null : image.rgba[at]!;
+    };
+    /** Pixels one in from the ends of a span of values, cut to the axis; null if none is in view. */
+    const inside = (scale: ReturnType<typeof makeScale>, lo: number, hi: number) => {
+      const low = Math.min(scale.p0, scale.p1);
+      const high = Math.max(scale.p0, scale.p1);
+      const lowValueEnd = scale.min < scale.max ? scale.p0 : scale.p1;
+      const pixel = (value: number) => {
+        const p = scale.toPixel(value);
+        return Number.isFinite(p) ? Math.min(high, Math.max(low, p)) : lowValueEnd;
+      };
+      const [a, b] = [pixel(lo), pixel(hi)].sort((one, other) => one - other);
+      return b! - a! > 3 ? [a! + 1, b! - 1] : null;
+    };
+    /** Checks that each cell of the matrix is drawn exactly between its edges on the axes. */
+    function expectCellsInPlace(layout: ReturnType<typeof lay>, nx: number, ny: number, s: Props) {
+      const { x0 = 0, dx = 1, y0 = 0, dy = 1 } = s as Record<string, number>;
+      let checked = 0;
+      for (let i = 0; i < nx; i += 1) {
+        const across = inside(
+          layout.axes.bottom!.scale,
+          Math.min(x0 + (i - 0.5) * dx, x0 + (i + 0.5) * dx),
+          Math.max(x0 + (i - 0.5) * dx, x0 + (i + 0.5) * dx),
+        );
+        for (let j = 0; j < ny; j += 1) {
+          const up = inside(
+            layout.axes.left!.scale,
+            Math.min(y0 + (j - 0.5) * dy, y0 + (j + 0.5) * dy),
+            Math.max(y0 + (j - 0.5) * dy, y0 + (j + 0.5) * dy),
+          );
+          if (!across || !up) continue;
+          for (const px of across) {
+            for (const py of up) {
+              expect([i, j, px, py, valueAt(layout, px, py)]).toEqual([
+                i,
+                j,
+                px,
+                py,
+                1 + 16 * i + j,
+              ]);
+              checked += 1;
+            }
+          }
+        }
+      }
+      return checked;
+    }
+
+    it("puts each cell where a log X axis puts its edges", () => {
+      const scaling = { x0: 1, dx: 1 };
+      const layout = imageLayout(4, 3, scaling, { log: true }, {});
+      expect(expectCellsInPlace(layout, 4, 3, scaling)).toBe(4 * 3 * 4);
+      // The linear direction is sampled as before: one row per element.
+      expect(find(layout.prims, "image")[0]!.rows).toBe(3);
+    });
+
+    it("puts each cell in place with log Y, both axes log, and reversed axes", () => {
+      let scaling: Props = { y0: 2, dy: 2, x0: 5, dx: -1 };
+      let layout = imageLayout(3, 4, scaling, {}, { log: true });
+      expect(expectCellsInPlace(layout, 3, 4, scaling)).toBe(3 * 4 * 4);
+      expect(find(layout.prims, "image")[0]!.cols).toBe(3);
+
+      scaling = { x0: 2, dx: 3, y0: 10, dy: 10 };
+      layout = imageLayout(5, 4, scaling, { log: true }, { log: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+      layout = imageLayout(5, 4, scaling, { log: true, reverse: true }, { log: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+      layout = imageLayout(5, 4, scaling, { log: true }, { log: true, reverse: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+    });
+
+    it("keeps cells in place when zoomed in, and stays small for a large matrix", () => {
+      let scaling: Props = { x0: 1, dx: 1, y0: 1, dy: 1 };
+      let layout = imageLayout(8, 8, scaling, { log: true, min: 2.2, max: 5.3 }, { log: true });
+      expect(expectCellsInPlace(layout, 8, 8, scaling)).toBeGreaterThan(0);
+      // Part of cell 1 (1.5 to 2.5) is in view at the left edge.
+      const { bottom } = layout.axes;
+      expect(valueAt(layout, bottom!.scale.p0 + 1, layout.plot.y + layout.plot.h - 1)).toBe(
+        1 + 16 * 1 + 0,
+      );
+      scaling = { x0: 1, dx: 0.01 };
+      layout = imageLayout(3000, 2, scaling, { log: true }, {});
+      const [image] = find(layout.prims, "image");
+      expect(image!.cols).toBeLessThanOrEqual(2048);
+      expect(image!.cols * image!.rows).toBeLessThan(4 * layout.plot.w * layout.plot.h);
+    });
+
+    it("draws cells whose lower edge is at or below zero from where the axis starts", () => {
+      const scaling = { x0: 0, dx: 1 };
+      // Automatically, the axis starts at the lowest edge above zero.
+      let layout = imageLayout(4, 2, scaling, { log: true }, {});
+      expect(layout.axes.bottom!.scale.min).toBe(0.5);
+      expect(expectCellsInPlace(layout, 4, 2, scaling)).toBe(3 * 2 * 4);
+      // With the axis reaching further down, the cell around zero shows from there.
+      layout = imageLayout(4, 2, scaling, { log: true, min: 0.05 }, {});
+      expect(expectCellsInPlace(layout, 4, 2, scaling)).toBe(4 * 2 * 4);
+    });
+  });
+
   it("draws error bars and cursors, and leaves cursors out when asked", () => {
     const doc = graphDoc();
     doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "signal", props: { yError: 0.001 } });

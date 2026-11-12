@@ -15,7 +15,7 @@ import {
   type WaveData,
   wavePart,
 } from "../doc/types";
-import { colorAt, renderMatrix } from "./colorTables";
+import { colorAt, renderCells, renderMatrix } from "./colorTables";
 import { chainSegments, contourLevels, contourSegments } from "./contour";
 import {
   extentOf,
@@ -221,6 +221,22 @@ function ticksFor(
     : linearTicks(scale.min, scale.max, maxCount, axis.spec.minor, { step, format });
 }
 
+/**
+ * The span of the cells of an image along one axis. A log axis starts at the
+ * lowest cell edge above zero, so that the cells beyond it are whole.
+ */
+function cellExtent(origin: number, step: number, count: number): Extent {
+  const extent = spanExtent(origin - step / 2, origin + (count - 0.5) * step);
+  const width = Math.abs(step);
+  if (extent.min <= 0 && extent.max > 0 && width > 0) {
+    let edge = extent.min + (Math.floor(-extent.min / width) + 1) * width;
+    // An edge that should be at zero but is not quite, by rounding, is the next one up.
+    if (edge < width * 1e-9) edge += width;
+    if (edge <= extent.max) extent.minPositive = edge;
+  }
+  return extent;
+}
+
 /** The extent of values that are drawn shifted by an offset. */
 function shiftExtent(extent: Extent, offset: number, data: WaveData): Extent {
   if (offset === 0 || !Number.isFinite(extent.min)) return extent;
@@ -372,21 +388,73 @@ interface ImageInfo {
 const imageCache = new WeakMap<WaveData, Map<string, Uint8ClampedArray<ArrayBuffer>>>();
 const contourCache = new WeakMap<WaveData, Map<number, Float64Array[]>>();
 
+/** Samples per pixel along a log axis, which puts each cell edge within a quarter pixel. */
+const LOG_IMAGE_DENSITY = 2;
+
+/**
+ * Where the cells of an image go along one axis: the pixel span the picture
+ * covers and, for each of its pixels from the left or top, the cell shown
+ * there (-1 for none). `key` tells apart the ways of sampling, for caching.
+ */
+interface ImageAxis {
+  start: number;
+  size: number;
+  cells: Int32Array;
+  key: string;
+}
+
+function imageAxis(scale: Scale, origin: number, step: number, count: number): ImageAxis | null {
+  if (count === 0) return null;
+  const first = origin - step / 2;
+  const last = origin + (count - 0.5) * step;
+  if (!scale.log) {
+    // Evenly spaced cells: the whole matrix is stretched over its span as it is.
+    const a = scale.toPixel(first);
+    const b = scale.toPixel(last);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    const samples = Math.min(count, IMAGE_LIMIT);
+    const cells = new Int32Array(samples);
+    for (let at = 0; at < samples; at += 1) {
+      const sample = Math.min(count - 1, Math.floor(((at + 0.5) * count) / samples));
+      cells[at] = a <= b ? sample : count - 1 - sample;
+    }
+    return { start: Math.min(a, b), size: Math.abs(b - a), cells, key: `${samples}|${a <= b}` };
+  }
+  // On a log axis cells are wider at one end than the other, so the part in
+  // view is sampled pixel by pixel through the scale. That keeps one picture,
+  // without seams between cells, and its size follows the plot, not the data.
+  // Cells reaching down to zero or below start where the axis does.
+  const from = Math.max(Math.min(first, last), Math.min(scale.min, scale.max));
+  const to = Math.min(Math.max(first, last), Math.max(scale.min, scale.max));
+  if (!(to > from)) return null;
+  const a = scale.toPixel(from);
+  const b = scale.toPixel(to);
+  const start = Math.min(a, b);
+  const size = Math.abs(b - a);
+  const samples = Math.max(1, Math.min(IMAGE_LIMIT, Math.ceil(size * LOG_IMAGE_DENSITY)));
+  const cells = new Int32Array(samples);
+  for (let at = 0; at < samples; at += 1) {
+    const cell = Math.round((scale.toValue(start + ((at + 0.5) * size) / samples) - origin) / step);
+    cells[at] = cell >= 0 && cell < count ? cell : -1;
+  }
+  const key = [start, size, samples, scale.min, scale.max, scale.p0, scale.p1, origin, step];
+  return { start, size, cells, key: `log|${key.join("|")}` };
+}
+
 function cachedMatrix(
   data: WaveData,
-  nx: number,
   ny: number,
-  cols: number,
-  rows: number,
-  options: Parameters<typeof renderMatrix>[5],
+  across: ImageAxis,
+  up: ImageAxis,
+  options: Parameters<typeof renderCells>[4],
 ): Uint8ClampedArray<ArrayBuffer> {
   let entries = imageCache.get(data);
   if (!entries) imageCache.set(data, (entries = new Map()));
-  const key = [cols, rows, ...Object.values(options)].join("|");
+  const key = [across.key, up.key, ...Object.values(options)].join("|");
   let rgba = entries.get(key);
   if (!rgba) {
     if (entries.size >= 4) entries.clear();
-    rgba = renderMatrix(data, nx, ny, cols, rows, options);
+    rgba = renderCells(data, ny, across.cells, up.cells, options);
     entries.set(key, rgba);
   }
   return rgba;
@@ -873,8 +941,8 @@ export function layoutGraph(
   }
   for (const { spec, wave, nx, ny } of images) {
     // An image pixel is centred on its scaled position and half a step wide each way.
-    feed(spec.hAxis, spanExtent(wave.x0 - wave.dx / 2, wave.x0 + (nx - 0.5) * wave.dx), wave.xUnit);
-    feed(spec.vAxis, spanExtent(wave.y0 - wave.dy / 2, wave.y0 + (ny - 0.5) * wave.dy), wave.yUnit);
+    feed(spec.hAxis, cellExtent(wave.x0, wave.dx, nx), wave.xUnit);
+    feed(spec.vAxis, cellExtent(wave.y0, wave.dy, ny), wave.yUnit);
   }
   for (const { spec, wave, nx, ny } of contours) {
     feed(spec.hAxis, spanExtent(wave.x0, wave.x0 + (nx - 1) * wave.dx), wave.xUnit);
@@ -1115,32 +1183,23 @@ export function layoutGraph(
     const zMin = spec.zMin ?? (Number.isFinite(extent.min) ? extent.min : 0);
     const zMax = spec.zMax ?? (Number.isFinite(extent.max) ? extent.max : 1);
     imageInfos.push({ spec, zMin, zMax });
-    const xs = info.get(spec.hAxis)!.scale;
-    const ys = info.get(spec.vAxis)!.scale;
-    const xa = xs.toPixel(wave.x0 - wave.dx / 2);
-    const xb = xs.toPixel(wave.x0 + (nx - 0.5) * wave.dx);
-    const ya = ys.toPixel(wave.y0 - wave.dy / 2);
-    const yb = ys.toPixel(wave.y0 + (ny - 0.5) * wave.dy);
-    if (![xa, xb, ya, yb].every(Number.isFinite) || nx === 0 || ny === 0) continue;
-    const cols = Math.min(nx, IMAGE_LIMIT);
-    const rows = Math.min(ny, IMAGE_LIMIT);
+    const across = imageAxis(info.get(spec.hAxis)!.scale, wave.x0, wave.dx, nx);
+    const up = imageAxis(info.get(spec.vAxis)!.scale, wave.y0, wave.dy, ny);
+    if (!across || !up) continue;
     clipped(spec, [
       {
         kind: "image",
-        x: Math.min(xa, xb),
-        y: Math.min(ya, yb),
-        w: Math.abs(xb - xa),
-        h: Math.abs(yb - ya),
-        cols,
-        rows,
-        rgba: cachedMatrix(data, nx, ny, cols, rows, {
+        x: across.start,
+        y: up.start,
+        w: across.size,
+        h: up.size,
+        cols: across.cells.length,
+        rows: up.cells.length,
+        rgba: cachedMatrix(data, ny, across, up, {
           table: spec.colorTable,
           zMin,
           zMax,
           reverse: spec.reverse,
-          flipX: xa > xb,
-          // Index 0 belongs at the bottom unless the axis runs downward.
-          flipY: ya < yb,
         }),
       },
     ]);
