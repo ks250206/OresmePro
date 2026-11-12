@@ -1,6 +1,6 @@
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
-import { timeZone } from "../plot/ticks";
+import { timeZone, UTC } from "../plot/ticks";
 import { columnsFromRows, parseDelimited } from "./delimited";
 import { Doc } from "../doc/doc";
 import { History } from "../history/history";
@@ -74,9 +74,119 @@ describe("parseDelimited", () => {
 
   it("reads CSV with a header", () => {
     const result = parseDelimited("time (s),signal\n0,1.5\n1,2.5\n", free);
-    expect(result.names).toEqual(["time_s", "signal"]);
+    expect(result.names).toEqual(["time", "signal"]);
+    expect(result.units).toEqual(["s", ""]);
     expect([...result.columns[1]!]).toEqual([1.5, 2.5]);
     expect(result.rows).toBe(2);
+  });
+
+  it("finds units in the header, after a slash or in the row below when told", () => {
+    const text = "Ewe/V,I [mA],f(x)\nV,mA,-\n1,2,3\n";
+    const auto = parseDelimited(text, free);
+    // "f(x)" reads as a unit too: what stands in brackets at the end is taken for one.
+    expect([auto.names, auto.units]).toEqual([
+      ["Ewe_V", "I", "f"],
+      ["", "mA", "x"],
+    ]);
+    expect(auto.columns[0]).toEqual(["V", "1"]);
+    const slash = parseDelimited(text, free, UTC, { units: "slash" });
+    expect([slash.names, slash.units]).toEqual([
+      ["Ewe", "I_mA", "f_x"],
+      ["V", "", ""],
+    ]);
+    const row = parseDelimited(text, free, UTC, { units: "row" });
+    expect([row.names, row.units, row.rows]).toEqual([
+      ["Ewe_V", "I_mA", "f_x"],
+      ["V", "mA", "-"],
+      1,
+    ]);
+    expect([...row.columns[0]!]).toEqual([1]);
+    const none = parseDelimited(text, free, UTC, { units: "none" });
+    expect([none.names, none.units]).toEqual([
+      ["Ewe_V", "I_mA", "f_x"],
+      ["", "", ""],
+    ]);
+  });
+
+  it("reads decimal commas, with semicolons or tabs between the columns", () => {
+    const result = parseDelimited("U;I\n1,5;2,25e-3\n1.234,5;3\n-,5;4.5\n", free, UTC, {
+      decimal: ",",
+    });
+    expect(result.delimiter).toBe("semicolon");
+    expect([...result.columns[0]!]).toEqual([1.5, 1234.5, -0.5]);
+    expect([...result.columns[1]!]).toEqual([0.00225, 3, 4.5]);
+    // Without being told, "1,5" is text and the column keeps it as written.
+    expect(parseDelimited("U;I\n1,5;2\n", free).columns[0]).toEqual(["1,5"]);
+  });
+
+  it("passes over lines above the table and takes the header as told", () => {
+    const text = "Instrument: X-1\nDate: 2026-11-11\nt,v\n0,1\n1,2\n";
+    // The table is found where the lines begin to have the same number of columns.
+    const found = parseDelimited(text, free);
+    expect([found.names, found.rows, found.skip, found.delimiter]).toEqual([
+      ["t", "v"],
+      2,
+      2,
+      "comma",
+    ]);
+    const spaced = parseDelimited("Sample A\nrun 3 of 5, at 20 C\n\n1 2 3\n4 5 6\n", free);
+    expect([spaced.rows, spaced.skip, [...spaced.columns[2]!]]).toEqual([2, 3, [3, 6]]);
+    // A number of lines given is taken as given, even where another would be found.
+    const given = parseDelimited(text, free, UTC, { skip: 3 });
+    expect([given.names, given.rows, given.hasHeader]).toEqual([["column0", "column1"], 2, false]);
+    const none = parseDelimited("1,2\n3,4\n", free, UTC, { header: "yes" });
+    expect([none.names, none.rows]).toEqual([["wave_1", "wave_2"], 1]);
+    const data = parseDelimited("a,b\nc,d\n", free, UTC, { header: "no" });
+    expect([data.names, data.columns[0]]).toEqual([
+      ["column0", "column1"],
+      ["a", "c"],
+    ]);
+  });
+
+  it("reads a column as the type chosen and lists the cells it could not read", () => {
+    const text = "id,value,when\n1,2.5,2026-11-11\n2,over,n/a\n3,,soon\n4,7,2026-11-12\n";
+    const result = parseDelimited(text, free, UTC, {
+      columns: { 0: { type: "text" }, 1: { type: "number" }, 2: { type: "date" } },
+    });
+    expect(result.columns[0]).toEqual(["1", "2", "3", "4"]);
+    expect([...result.columns[1]!]).toEqual([2.5, Number.NaN, Number.NaN, 7]);
+    expect(result.dates).toEqual([false, false, true]);
+    // Empty cells and markers of missing values are not failures to read.
+    expect(result.unreadable).toEqual([[], [1], [2]]);
+    // Left to be detected, the same columns are text and nothing is unreadable.
+    const detected = parseDelimited(text, free);
+    expect(detected.columns[1]).toEqual(["2.5", "over", "", "7"]);
+    expect(detected.unreadable).toEqual([[], [], []]);
+  });
+
+  it("leaves out, names and gives units to columns as chosen", () => {
+    const result = parseDelimited("a,b,c\n1,2,3\n", (name) => name === "x", UTC, {
+      columns: { 0: { type: "skip" }, 1: { name: "x", unit: "V" }, 2: { name: "2 theta" } },
+    });
+    expect([result.names, result.units, result.indices, result.width]).toEqual([
+      ["x_1", "wave_2_theta"],
+      ["V", ""],
+      [1, 2],
+      3,
+    ]);
+    expect(result.header).toEqual(["a", "b", "c"]);
+    expect(result.cells).toEqual([["1", "2", "3"]]);
+  });
+
+  it("splits on the delimiter and skips the comments it is told to", () => {
+    const text = "% made by X\na;b,c\n1;2,5\n";
+    const result = parseDelimited(text, free, UTC, { delimiter: "semicolon", comment: "%" });
+    expect([result.names, result.columns[1]]).toEqual([["a", "b_c"], ["2,5"]]);
+    const kept = parseDelimited("#1,2\n3,4\n", free, UTC, { comment: "", header: "no" });
+    expect(kept.columns[0]).toEqual(["#1", "3"]);
+  });
+
+  it("reads only the first rows when asked for a preview", () => {
+    const text = `x,y\n${Array.from({ length: 50 }, (_, index) => `${index},${index * 2}`).join("\n")}`;
+    const result = parseDelimited(text, free, UTC, { limit: 10 });
+    expect(result.names).toEqual(["x", "y"]);
+    expect(result.rows).toBeGreaterThanOrEqual(10);
+    expect(result.rows).toBeLessThan(13);
   });
 
   it("reads whitespace-separated numbers without a header", () => {
@@ -309,7 +419,7 @@ describe("Excel workbooks", () => {
   it("turns a sheet into waves: numbers, dates and text", () => {
     const [sheet] = load(excelWorkbook);
     const result = columnsFromRows(sheet!.rows, () => false);
-    expect(result.names).toEqual(["time", "temp_C", "sample", "count", "ok", "double", "day"]);
+    expect(result.names).toEqual(["time", "temp", "sample", "count", "ok", "double", "day"]);
     expect(result.dates).toEqual([true, false, false, false, false, false, true]);
     expect(Array.from(result.columns[0] as Float64Array)).toEqual(
       [9, 9.5, 10].map((hour) => Date.UTC(2026, 0, 15) / 1000 + hour * 3600),
