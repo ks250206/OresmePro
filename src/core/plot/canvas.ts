@@ -101,6 +101,22 @@ export function drawPrims(ctx: Ctx, prims: readonly Prim[], dpr: number): void {
         ctx.stroke();
         break;
       }
+      case "polygon": {
+        const { points } = prim;
+        if (points.length < 6) break;
+        ctx.beginPath();
+        ctx.moveTo(points[0]!, points[1]!);
+        for (let index = 2; index < points.length; index += 2) {
+          ctx.lineTo(points[index]!, points[index + 1]!);
+        }
+        ctx.closePath();
+        const alpha = ctx.globalAlpha;
+        ctx.globalAlpha = alpha * (prim.opacity ?? 1);
+        ctx.fillStyle = prim.fill;
+        ctx.fill();
+        ctx.globalAlpha = alpha;
+        break;
+      }
       case "segments": {
         const { points } = prim;
         ctx.strokeStyle = prim.stroke;

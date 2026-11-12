@@ -130,7 +130,9 @@ scope.onmessage = (event: MessageEvent<ToWorker>) => {
     // Getting this message at all means Python is not in the middle of
     // synchronous code: it is idle or waiting on `await`.
     post({ type: "interrupt-ack" });
-    if (executing) void ready.then((python) => python.interrupt());
+    // Only the execution the user meant to stop: it may have ended, and the
+    // next one begun, while this message was on its way.
+    if (executing && currentId === message.id) void ready.then((python) => python.interrupt());
   } else if (message.type === "complete") {
     void ready.then(
       (python) => {

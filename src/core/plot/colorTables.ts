@@ -75,7 +75,7 @@ export function colorAt(table: ColorTable, fraction: number): string {
  * NaN becomes transparent.
  */
 export function renderMatrix(
-  data: Float64Array,
+  data: ArrayLike<number>,
   nx: number,
   ny: number,
   cols: number,

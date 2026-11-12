@@ -55,6 +55,18 @@ __all__ = [
     "table",
     "tables",
     "kill_window",
+    "Procedure",
+    "new_procedure",
+    "procedure",
+    "procedures",
+    "time_zone",
+    "set_time_zone",
+    "WAVE_TYPES",
+    "Layout",
+    "LayoutItem",
+    "new_layout",
+    "layout",
+    "layouts",
 ]
 
 
@@ -104,8 +116,25 @@ def _is_text(values):
     )
 
 
+#: The number types a wave can have, by their NumPy names.
+WAVE_TYPES = (
+    "float64",
+    "float32",
+    "int8",
+    "uint8",
+    "int16",
+    "uint16",
+    "int32",
+    "uint32",
+    "complex128",
+    "complex64",
+)
+
+
 def _as_array(values):
-    array = np.asarray(values, dtype=np.float64)
+    array = np.asarray(values)
+    if array.dtype.kind not in "biufc":
+        array = np.asarray(values, dtype=np.float64)
     if array.ndim == 0:
         array = array.reshape(1)
     if array.ndim > 4:
@@ -113,7 +142,30 @@ def _as_array(values):
     return array
 
 
-def _content(command, values):
+def _wave_type(array, dtype=None):
+    """The type of wave to hold an array: the one asked for, else the array's own.
+
+    Whole numbers of NumPy's default integer type become float64: that is
+    what ``[1, 2, 3]`` and ``np.arange(10)`` are, and a wave of them should
+    not start rounding what is later assigned to it. Other types a wave
+    cannot have become float64 or complex128.
+    """
+    if dtype is not None:
+        name = np.dtype(dtype).name
+        if name not in WAVE_TYPES:
+            raise OresmeError(f"A wave cannot be {name}. Types: {', '.join(WAVE_TYPES)}.")
+        return name
+    name = array.dtype.name
+    if array.dtype in (np.dtype(np.int_), np.dtype(np.int64)):
+        return "float64"
+    if name in WAVE_TYPES:
+        return name
+    if array.dtype.kind == "c":
+        return "complex128"
+    return "uint8" if array.dtype.kind == "b" else "float64"
+
+
+def _content(command, values, dtype=None):
     """Add the values to a command: text goes in the command, numbers alongside it."""
     if _is_text(values):
         items = [values] if isinstance(values, str) else [str(item) for item in values]
@@ -124,8 +176,18 @@ def _content(command, values):
         values = values.astype("datetime64[ms]").astype(np.float64) / 1000.0
         command.setdefault("unit", "dat")
     array = _as_array(values)
+    kind = _wave_type(array, dtype)
+    command["type"] = kind
     command["shape"] = list(array.shape)
-    return array.ravel()
+    flat = array.ravel()
+    # Numbers travel as float64 (which holds every other type exactly); a
+    # complex wave as its real parts followed by its imaginary parts.
+    if kind.startswith("complex"):
+        command["complex"] = True
+        return np.concatenate([flat.real, flat.imag]).astype(np.float64)
+    if flat.dtype.kind == "c":
+        flat = flat.real
+    return flat.astype(np.float64)
 
 
 def _wave_name(obj):
@@ -152,6 +214,12 @@ def _wave_data(name):
     elif array is None:
         return cached[1]
     else:
+        kind = info["type"]
+        if kind.startswith("complex"):
+            half = len(array) // 2
+            array = array[:half] + 1j * array[half:]
+        if kind != "float64":
+            array = array.astype(kind)
         array = array.reshape(info["shape"])
     array.flags.writeable = False
     if len(_data_cache) > 64:
@@ -211,6 +279,24 @@ def _plain(value):
     return value
 
 
+class _Flat:
+    """A wave's points as one row, for reading and writing by position in memory."""
+
+    def __init__(self, wave):
+        self._wave = wave
+
+    def __len__(self):
+        return self._wave.data.size
+
+    def __getitem__(self, key):
+        return self._wave.data.reshape(-1)[key]
+
+    def __setitem__(self, key, value):
+        values = self._wave.data.copy()
+        values.reshape(-1)[key] = value
+        self._wave.data = values
+
+
 class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     """A named array with scaling, stored in the application.
 
@@ -240,7 +326,35 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     @data.setter
     def data(self, values):
         command = {"op": "setWaveData", "name": self._name}
-        _dispatch(command, _content(command, values))
+        info = self._info()
+        keep = None
+        if info["kind"] == "numeric" and not _is_text(values):
+            # The wave keeps its type, as in Igor: values are converted to it.
+            # Complex values make a real wave complex rather than lose half of them.
+            keep = info["type"]
+            if np.asarray(values).dtype.kind == "c" and not keep.startswith("complex"):
+                keep = "complex64" if keep == "float32" else "complex128"
+        _dispatch(command, _content(command, values, keep))
+
+    @property
+    def dtype(self):
+        """The wave's number type, as a NumPy dtype."""
+        info = self._info()
+        return np.dtype(str) if info["kind"] == "text" else np.dtype(info["type"])
+
+    @property
+    def is_complex(self):
+        return self._info()["type"].startswith("complex")
+
+    def redimension(self, dtype):
+        """Change the number type, converting the values (Igor's Redimension).
+
+        Into an integer type they are rounded and held at the ends of its
+        range. A real wave made complex gets zero imaginary parts; a complex
+        wave made real keeps its real parts.
+        """
+        _dispatch({"op": "redimension", "name": self._name, "type": np.dtype(dtype).name})
+        return self
 
     @property
     def shape(self):
@@ -386,23 +500,28 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             values[key] = [value] if isinstance(value, str) else [str(item) for item in value]
             self.data = values
             return
-        if len(info["shape"]) > 1:
+        if len(info["shape"]) > 1 or info["type"].startswith("complex") or np.iscomplexobj(value):
             values = self.data.copy()
+            if np.iscomplexobj(value) and not np.iscomplexobj(values):
+                values = values.astype(np.complex128)
             values[key] = value
             self.data = values
             return
+        # Writing just past the end grows a 1-D wave, as typing below its last point in a table does.
         if isinstance(key, (int, np.integer)):
             index = int(key) + count if key < 0 else int(key)
-            if not 0 <= index < count:
+            if not 0 <= index <= count:
                 raise IndexError(f"Point {key} is out of range for a wave of {count} points.")
             _dispatch(
                 {"op": "setWavePoints", "name": self._name, "start": index},
                 np.array([value], dtype=np.float64),
             )
             return
-        if isinstance(key, slice):
-            start, stop, step = key.indices(count)
-            if step == 1 and stop > start:
+        if isinstance(key, slice) and key.step in (None, 1):
+            start, stop, _ = key.indices(count)
+            if key.stop is not None and key.stop > count and (key.start or 0) <= count:
+                stop = int(key.stop)
+            if stop > start:
                 values = np.empty(stop - start, dtype=np.float64)
                 values[:] = value
                 _dispatch({"op": "setWavePoints", "name": self._name, "start": start}, values)
@@ -410,6 +529,11 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         values = self.data.copy()
         values[key] = value
         self.data = values
+
+    @property
+    def flat(self):
+        """The points in storage order, whatever the shape: ``w.flat[6:9] = 0``."""
+        return _Flat(self)
 
     def __array__(self, dtype=None, copy=None):
         array = self.data
@@ -451,7 +575,17 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
 
 
 class Trace(_Props):
-    """One curve in a graph."""
+    """One curve in a graph.
+
+    ``fill="zero"`` fills the area down to zero and ``fill="next"`` the band
+    between this trace and the next one; ``fill_color`` and ``fill_opacity``
+    style it. ``x_offset`` and ``y_offset`` shift the trace where it is
+    drawn without changing its waves. ``color_wave`` colors the trace point
+    by point from another wave, through ``color_table`` (over ``color_min``
+    to ``color_max``, or the wave's own range). For a complex wave, ``part``
+    chooses what is plotted: ``"real"``, ``"imag"``, ``"magnitude"`` or
+    ``"phase"`` (radians).
+    """
 
     _props = (
         "mode",
@@ -464,6 +598,16 @@ class Trace(_Props):
         "hidden",
         "y_error",
         "x_error",
+        "fill",
+        "fill_color",
+        "fill_opacity",
+        "x_offset",
+        "y_offset",
+        "color_wave",
+        "color_table",
+        "color_min",
+        "color_max",
+        "part",
     )
 
     def __init__(self, graph, name):
@@ -481,7 +625,7 @@ class Trace(_Props):
         raise OresmeError(f"{self._graph.name} has no trace named {self._name!r}.")
 
     def _set(self, props):
-        for key in ("yError", "xError"):
+        for key in ("yError", "xError", "colorWave"):
             if isinstance(props.get(key), Wave):
                 props[key] = props[key].name
         _dispatch(
@@ -509,9 +653,27 @@ class Axis(_Props):
 
     ``span=(low, high)`` draws the axis over part of the plot area, as
     fractions from 0 to 1; use it to stack plots in one graph.
+
+    ``reverse=True`` runs the axis high to low. ``tick_step=0.25`` puts the
+    major ticks that far apart. ``tick_format`` writes the tick labels like
+    Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
+    goes back to automatic labels.
     """
 
-    _props = ("label", "min", "max", "log", "mirror", "ticks", "minor", "grid", "span")
+    _props = (
+        "label",
+        "min",
+        "max",
+        "log",
+        "mirror",
+        "ticks",
+        "minor",
+        "grid",
+        "span",
+        "reverse",
+        "tick_step",
+        "tick_format",
+    )
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -561,9 +723,13 @@ class Axis(_Props):
 
 
 class Annotation(_Props):
-    """A legend or text box in a graph."""
+    """A legend, text box, color scale or tag in a graph.
 
-    _props = ("text", "anchor", "frame")
+    ``x`` and ``y`` are how far it has been moved from its anchor (for a tag:
+    from its point), as fractions of the plot area.
+    """
+
+    _props = ("text", "anchor", "frame", "x", "y", "point")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -601,7 +767,7 @@ class Annotation(_Props):
 class Image(_Props):
     """A 2-D wave shown as an image in a graph."""
 
-    _props = ("color_table", "z_min", "z_max", "reverse", "layer", "chunk")
+    _props = ("color_table", "z_min", "z_max", "reverse", "layer", "chunk", "part")
 
     def __init__(self, graph, name):
         self._graph = graph
@@ -879,6 +1045,14 @@ class Graph(_Props):
             {"name": self._name, "filename": str(filename), "cursors": bool(cursors)},
         )
 
+    def script(self):
+        """Python that draws this graph again, as text.
+
+        Like Igor's window recreation macro: paste it into a procedure to
+        keep a graph's look, or to apply it to other waves.
+        """
+        return _call("graphScript", {"name": self._name})[0]
+
     left = property(lambda self: Axis(self, "left"))
     bottom = property(lambda self: Axis(self, "bottom"))
     right = property(lambda self: Axis(self, "right"))
@@ -890,30 +1064,56 @@ class Graph(_Props):
             Axis(self, name).autoscale()
         return self
 
-    def legend(self, text="", *, anchor="RT", frame=True):
+    def legend(self, text="", *, anchor="RT", frame=True, x=0, y=0):
         """Add a legend. With no text it lists every trace.
 
         In custom text, ``\\s(traceName)`` draws that trace's symbol.
-        ``anchor`` is two letters: L/M/R then T/C/B.
+        ``anchor`` is two letters: L/M/R then T/C/B. ``x`` and ``y`` move
+        it from there, as fractions of the plot area (dragging it with the
+        mouse sets them).
         """
-        return self._annotate("legend", text, anchor, frame)
+        return self._annotate("legend", text, anchor, frame, x, y)
 
-    def textbox(self, text, *, anchor="RT", frame=True):
+    def textbox(self, text, *, anchor="RT", frame=True, x=0, y=0):
         """Add a text box. ``^{...}`` and ``_{...}`` give super- and subscripts."""
-        return self._annotate("text", text, anchor, frame)
+        return self._annotate("text", text, anchor, frame, x, y)
 
-    def _annotate(self, kind, text, anchor, frame):
-        name = _dispatch(
-            {
-                "op": "addAnnotation",
-                "graph": self._name,
-                "kind": kind,
-                "text": text,
-                "anchor": anchor,
-                "frame": frame,
-            }
-        )
-        return Annotation(self, name)
+    def tag(self, trace, point, text="", *, frame=True, x=None, y=None):
+        """Attach a label to one point of a trace; it follows the point.
+
+        In the text, ``{x}``, ``{y}`` and ``{point}`` stand for the point's
+        values; with no text the tag shows ``x, y``. ``x`` and ``y`` say where
+        the box sits relative to the point, as fractions of the plot area.
+        """
+        if isinstance(trace, (Trace, Wave)):
+            trace = trace.name.rsplit(":", 1)[-1] if isinstance(trace, Wave) else trace.name
+        command = {
+            "op": "addAnnotation",
+            "graph": self._name,
+            "kind": "tag",
+            "text": text,
+            "frame": frame,
+            "trace": trace,
+            "point": int(point),
+        }
+        if x is not None:
+            command["x"] = float(x)
+        if y is not None:
+            command["y"] = float(y)
+        return Annotation(self, _dispatch(command))
+
+    def _annotate(self, kind, text, anchor, frame, x=0, y=0):
+        command = {
+            "op": "addAnnotation",
+            "graph": self._name,
+            "kind": kind,
+            "text": text,
+            "anchor": anchor,
+            "frame": frame,
+        }
+        if x or y:
+            command.update(x=float(x), y=float(y))
+        return Annotation(self, _dispatch(command))
 
     @property
     def annotations(self):
@@ -939,8 +1139,12 @@ class Graph(_Props):
         return f"Graph({self._name!r})"
 
 
-class Table:
-    """A table window showing waves as columns."""
+class Procedure:
+    """A Python file kept in the experiment, shown in a procedure window.
+
+    It is ``<name>.py`` in the working directory: ``run()`` executes it in
+    the interactive namespace, and other code can ``import`` it.
+    """
 
     def __init__(self, name):
         self._name = name
@@ -948,6 +1152,219 @@ class Table:
     @property
     def name(self):
         return self._name
+
+    def _info(self):
+        return _call("procedureInfo", {"name": self._name})[0]
+
+    @property
+    def code(self):
+        return self._info()["code"]
+
+    @code.setter
+    def code(self, value):
+        _dispatch({"op": "setProcedure", "name": self._name, "code": str(value)})
+
+    @property
+    def auto_run(self):
+        """Whether the file runs when the experiment is opened."""
+        return self._info()["autoRun"]
+
+    @auto_run.setter
+    def auto_run(self, value):
+        _dispatch({"op": "setProcedure", "name": self._name, "autoRun": bool(value)})
+
+    def run(self):
+        """Run the file in the interactive namespace, as if it were typed there.
+
+        What it defines can then be used from the command line. An error
+        stops it and is reported with the file's name and line.
+        """
+        import linecache
+
+        from IPython import get_ipython
+
+        __tracebackhide__ = True
+        code = self.code
+        path = f"{self._name}.py"
+        # Tracebacks quote the file, so it has to hold what is being run.
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(code)
+        linecache.checkcache(path)
+        exec(compile(code, path, "exec"), get_ipython().user_ns)
+
+    def kill(self):
+        kill_window(self._name)
+
+    def __repr__(self):
+        return f"Procedure({self._name!r})"
+
+
+class LayoutItem(_Props):
+    """A graph or a block of text on a page layout.
+
+    ``x`` and ``y`` are its top left corner and ``w`` and ``h`` the size of
+    a graph, all in points (1/72 inch) from the top left of the page.
+    ``text`` and ``size`` are the words and font size of a text item.
+    """
+
+    _props = ("x", "y", "w", "h", "text", "size")
+
+    def __init__(self, layout, name):
+        self._layout = layout
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        for item in self._layout._get()["items"]:
+            if item["name"] == self._name:
+                return item
+        raise OresmeError(f"{self._layout.name} has no item named {self._name!r}.")
+
+    def _set(self, props):
+        _dispatch(
+            {
+                "op": "modifyLayoutItem",
+                "layout": self._layout.name,
+                "item": self._name,
+                "props": props,
+            }
+        )
+
+    @property
+    def graph(self):
+        name = self._get()["graph"]
+        return None if name is None else Graph(name)
+
+    def remove(self):
+        _dispatch({"op": "removeLayoutItem", "layout": self._layout.name, "item": self._name})
+
+    def __repr__(self):
+        return f"LayoutItem({self._name!r} on {self._layout.name})"
+
+
+class Layout(_Props):
+    """A page layout: graphs and text arranged on a sheet of paper.
+
+    ``width`` and ``height`` are the size of the paper in points. The page
+    shows the graphs as they are: change a graph and the page follows.
+    """
+
+    _props = ("width", "height")
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        return _call("pageInfo", {"name": self._name})[0]
+
+    def _set(self, props):
+        _dispatch({"op": "modifyLayout", "layout": self._name, "props": props})
+
+    def add_graph(self, graph, x=None, y=None, w=None, h=None):
+        """Put a graph on the page. Without a place, it goes below what is there."""
+        command = {
+            "op": "addLayoutItem",
+            "layout": self._name,
+            "kind": "graph",
+            "graph": graph.name if isinstance(graph, Graph) else graph,
+        }
+        for key, value in (("x", x), ("y", y), ("w", w), ("h", h)):
+            if value is not None:
+                command[key] = float(value)
+        return LayoutItem(self, _dispatch(command))
+
+    def add_text(self, text, x=None, y=None, size=None):
+        """Put text on the page. ``^{...}`` and ``_{...}`` give super- and subscripts."""
+        command = {"op": "addLayoutItem", "layout": self._name, "kind": "text", "text": str(text)}
+        for key, value in (("x", x), ("y", y), ("size", size)):
+            if value is not None:
+                command[key] = float(value)
+        return LayoutItem(self, _dispatch(command))
+
+    @property
+    def items(self):
+        return [LayoutItem(self, item["name"]) for item in self._get()["items"]]
+
+    def item(self, name):
+        return LayoutItem(self, name)
+
+    def svg(self):
+        """The page as an SVG document."""
+        return _call("pageSvg", {"name": self._name})[0]
+
+    def save(self, filename):
+        """Download the page as a file: .pdf (at the paper's size), .svg or .png."""
+        _call("exportPage", {"name": self._name, "filename": str(filename)})
+
+    def kill(self):
+        kill_window(self._name)
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        return {"text/plain": repr(self), "image/svg+xml": self.svg()}
+
+    def __repr__(self):
+        return f"Layout({self._name!r})"
+
+
+#: Paper sizes in points, upright.
+PAGE_SIZES = {"A4": (595, 842), "A5": (420, 595), "A3": (842, 1191), "Letter": (612, 792)}
+
+
+def new_layout(name=None, size="A4", landscape=False):
+    """Make a page layout. ``size`` is a paper name or (width, height) in points."""
+    if isinstance(size, str):
+        if size not in PAGE_SIZES:
+            raise OresmeError(f"Paper sizes: {', '.join(PAGE_SIZES)}; or give (width, height).")
+        size = PAGE_SIZES[size]
+    width, height = (float(size[0]), float(size[1]))
+    if landscape:
+        width, height = height, width
+    command = {"op": "newLayout", "width": width, "height": height}
+    if name is not None:
+        command["name"] = name
+    return Layout(_dispatch(command))
+
+
+def layouts():
+    return [Layout(name) for name in _call("listWindows", {"kind": "page"})[0]]
+
+
+def layout(name=None):
+    """A page layout by name; with no name, the frontmost one."""
+    names = _call("listWindows", {"kind": "page"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no page layouts.")
+        return Layout(names[-1])
+    if name not in names:
+        raise OresmeError(f"No page layout named {name!r}.")
+    return Layout(name)
+
+
+class Table(_Props):
+    """A table window showing waves as columns."""
+
+    _props = ("digits",)
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        return _call("tableInfo", {"name": self._name})[0]
+
+    def _set(self, props):
+        _dispatch({"op": "modifyTable", "table": self._name, "props": props})
 
     @property
     def columns(self):
@@ -980,13 +1397,19 @@ class Table:
         return f"Table({self._name!r})"
 
 
-def make(name, data=None, *, n=128, x0=None, dx=None, x_unit=None, y0=None, dy=None,
-         y_unit=None, unit=None, note=None, overwrite=True):
+def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y0=None,
+         dy=None, y_unit=None, unit=None, note=None, overwrite=True):
     """Create a wave (or replace an existing one) and return it.
 
     ``data`` may be numbers with up to 4 dimensions, or a list of strings for
     a text wave. Without ``data`` the wave has ``n`` zeros. An existing wave
     keeps its scaling and units unless new ones are given.
+
+    The wave takes the type of the data when it is one a wave can have:
+    float64 or float32, int8 to int32 and uint8 to uint32, complex128 or
+    complex64. Plain whole numbers (a list of them, ``np.arange(10)``) are
+    float64, like any other numbers. ``dtype`` asks for a type by name:
+    ``dtype="int32"``.
     """
     command = {"op": "makeWave", "name": name, "overwrite": bool(overwrite)}
     for key, value in (("x0", x0), ("dx", dx), ("y0", y0), ("dy", dy)):
@@ -996,7 +1419,7 @@ def make(name, data=None, *, n=128, x0=None, dx=None, x_unit=None, y0=None, dy=N
         if value is not None:
             command[key] = str(value)
     values = np.zeros(int(n)) if data is None else data
-    return Wave(_dispatch(command, _content(command, values)))
+    return Wave(_dispatch(command, _content(command, values, dtype)))
 
 
 def wave(name):
@@ -1170,8 +1593,48 @@ def table(name=None):
     return Table(name)
 
 
+def new_procedure(name=None, code=""):
+    """Make a procedure window: a Python file that is saved with the experiment."""
+    command = {"op": "newProcedure", "code": str(code)}
+    if name is not None:
+        command["name"] = name
+    return Procedure(_dispatch(command))
+
+
+def procedures():
+    return [Procedure(name) for name in _call("listWindows", {"kind": "procedure"})[0]]
+
+
+def procedure(name=None):
+    """A procedure by name; with no name, the frontmost one."""
+    names = _call("listWindows", {"kind": "procedure"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no procedures.")
+        return Procedure(names[-1])
+    if name not in names:
+        raise OresmeError(f"No procedure named {name!r}.")
+    return Procedure(name)
+
+
+def time_zone():
+    """The time zone dates are shown and typed in: "UTC", "local" or a name such as "Asia/Tokyo"."""
+    return _call("timeZone")[0]
+
+
+def set_time_zone(zone):
+    """Show dates on axes and in tables in a time zone.
+
+    ``"UTC"`` (the default), ``"local"`` for this computer's zone, or an IANA
+    name such as ``"Asia/Tokyo"``. Date waves hold seconds since 1970 UTC and
+    are not changed; dates typed or loaded without an offset are read in
+    this zone.
+    """
+    _dispatch({"op": "setTimeZone", "zone": str(zone)})
+
+
 def kill_window(name):
-    """Close a graph or table."""
+    """Close a graph, table or procedure window."""
     _dispatch({"op": "killWindow", "name": name})
 
 

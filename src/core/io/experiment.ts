@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand } from "../doc/commands";
 import {
   AXIS_SIDES,
+  DEFAULT_TABLE_DIGITS,
   defaultAxis,
   defaultTraceStyle,
   emptyDoc,
@@ -9,12 +10,15 @@ import {
   type AxisSpec,
   type DocState,
   type GraphSpec,
+  type PageSpec,
+  type ProcedureSpec,
   type TableSpec,
   type TraceSpec,
   type Wave,
   type WindowState,
 } from "../doc/types";
 import type { HistoryEntry } from "../history/history";
+import { isTimeZone } from "../plot/ticks";
 import { decodeNpy, encodeNpy } from "./npy";
 
 /**
@@ -44,8 +48,14 @@ export interface SavedExperiment {
   folders?: string[];
   graphs: Record<string, GraphSpec>;
   tables: Record<string, TableSpec>;
+  procedures?: Record<string, ProcedureSpec>;
+  pages?: Record<string, PageSpec>;
+  timeZone?: string;
   windows: WindowState[];
 }
+
+/** Where the experiment's files (see FileStore) sit in an .oresme archive. */
+const FILES_PREFIX = "files/";
 
 const MAX_SAVED_ENTRIES = 2000;
 const MAX_SAVED_IMAGE = 300_000;
@@ -67,6 +77,9 @@ export function describeExperiment(
     folders: [...state.folders],
     graphs: { ...state.graphs },
     tables: { ...state.tables },
+    procedures: { ...state.procedures },
+    pages: { ...state.pages },
+    timeZone: state.timeZone,
     windows: [...state.windows],
   };
 }
@@ -89,6 +102,7 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       ...image,
       layer: image.layer ?? 0,
       chunk: image.chunk ?? 0,
+      part: image.part ?? "real",
     })),
     contours: (saved.contours ?? []).map((contour) => ({
       ...contour,
@@ -96,7 +110,13 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       chunk: contour.chunk ?? 0,
       labels: contour.labels ?? false,
     })),
-    annotations: saved.annotations ?? [],
+    annotations: (saved.annotations ?? []).map((annotation) => ({
+      ...annotation,
+      x: annotation.x ?? 0,
+      y: annotation.y ?? 0,
+      trace: annotation.trace ?? null,
+      point: annotation.point ?? 0,
+    })),
     cursors: saved.cursors ?? {},
     showInfo: saved.showInfo ?? false,
     axes,
@@ -133,7 +153,34 @@ export function buildState(
   }
   const graphs: Record<string, GraphSpec> = {};
   for (const [name, graph] of Object.entries(saved.graphs)) graphs[name] = upgradeGraph(graph);
-  return { ...state, graphs, tables: saved.tables, windows: saved.windows };
+  const tables: Record<string, TableSpec> = {};
+  for (const [name, table] of Object.entries(saved.tables)) {
+    tables[name] = {
+      ...table,
+      digits: table.digits ?? DEFAULT_TABLE_DIGITS,
+      widths: table.widths ?? {},
+    };
+  }
+  const procedures: Record<string, ProcedureSpec> = {};
+  for (const [name, procedure] of Object.entries(saved.procedures ?? {})) {
+    procedures[name] = { name, code: procedure.code ?? "", autoRun: procedure.autoRun ?? true };
+  }
+  // A window whose content did not come along would be an empty frame.
+  const pages: Record<string, PageSpec> = {};
+  for (const [name, page] of Object.entries(saved.pages ?? {})) {
+    // A page keeps only the graphs that came along.
+    const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
+    pages[name] = { ...page, name, items };
+  }
+  const windows = saved.windows.filter(
+    (window) =>
+      window.name in graphs ||
+      window.name in tables ||
+      window.name in procedures ||
+      window.name in pages,
+  );
+  const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
+  return { ...state, graphs, tables, procedures, pages, timeZone, windows };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */
@@ -150,13 +197,18 @@ export function trimHistory(entries: readonly HistoryEntry[]): HistoryEntry[] {
 }
 
 /** Packs an experiment into a single .oresme file (a zip archive). */
-export function zipExperiment(state: DocState, entries: readonly HistoryEntry[]): Uint8Array {
+export function zipExperiment(
+  state: DocState,
+  entries: readonly HistoryEntry[],
+  stored: Iterable<{ path: string; bytes: Uint8Array }> = [],
+): Uint8Array {
   const files: Record<string, Uint8Array> = {};
+  for (const { path, bytes } of stored) files[FILES_PREFIX + path] = bytes;
   let counter = 0;
   const saved = describeExperiment(state, (wave) => {
     counter += 1;
     const file = `waves/${counter}.npy`;
-    files[file] = encodeNpy(wave.data, wave.shape);
+    files[file] = encodeNpy(wave.data, wave.shape, wave.type, wave.imag);
     return file;
   });
   files["experiment.json"] = strToU8(JSON.stringify(saved));
@@ -164,7 +216,11 @@ export function zipExperiment(state: DocState, entries: readonly HistoryEntry[])
   return zipSync(files, { level: 6 });
 }
 
-export function unzipExperiment(bytes: Uint8Array): { state: DocState; history: HistoryEntry[] } {
+export function unzipExperiment(bytes: Uint8Array): {
+  state: DocState;
+  history: HistoryEntry[];
+  files: [string, Uint8Array][];
+} {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes);
@@ -177,5 +233,8 @@ export function unzipExperiment(bytes: Uint8Array): { state: DocState; history: 
   const history = files["history.json"]
     ? (JSON.parse(strFromU8(files["history.json"])) as HistoryEntry[])
     : [];
-  return { state: buildState(saved, new Map(Object.entries(files))), history };
+  const stored = Object.entries(files)
+    .filter(([name]) => name.startsWith(FILES_PREFIX) && !name.endsWith("/"))
+    .map(([name, data]): [string, Uint8Array] => [name.slice(FILES_PREFIX.length), data]);
+  return { state: buildState(saved, new Map(Object.entries(files))), history, files: stored };
 }

@@ -1,5 +1,5 @@
 import { sanitizeName } from "../doc/commands";
-import { parseDate } from "../plot/ticks";
+import { parseDate, UTC, type TimeZone } from "../plot/ticks";
 
 export interface DelimitedResult {
   /** Legal, unique wave names, one per column. */
@@ -101,9 +101,14 @@ const isNumeric = (cell: string): boolean => {
 /**
  * Parses delimited text (CSV, TSV, whitespace-separated) into columns of
  * numbers or text. The delimiter and the presence of a header row are detected.
- * Lines starting with `#` are ignored.
+ * Lines starting with `#` are ignored. Dates written without a UTC offset
+ * are taken to be in `zone`.
  */
-export function parseDelimited(text: string, taken: (name: string) => boolean): DelimitedResult {
+export function parseDelimited(
+  text: string,
+  taken: (name: string) => boolean,
+  zone: TimeZone = UTC,
+): DelimitedResult {
   const lines = text
     .split(/\r\n|\n|\r/)
     .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"));
@@ -114,6 +119,20 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
     typeof delimiter === "string"
       ? splitRecords(lines, delimiter)
       : lines.map((line) => line.trim().split(delimiter));
+  return columnsFromRows(rows, taken, zone);
+}
+
+/**
+ * Turns rows of cells (from delimited text or a spreadsheet) into columns:
+ * numbers, dates or text, named from a header row if there is one.
+ */
+export function columnsFromRows(
+  rows: string[][],
+  taken: (name: string) => boolean,
+  zone: TimeZone = UTC,
+): DelimitedResult {
+  if (rows.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
+  rows = [...rows];
   const hasHeader = rows[0]!.some((cell) => cell.trim() !== "" && !isNumeric(cell));
   const header = hasHeader ? rows.shift()! : [];
   // A loop, not Math.max(...): a file can have more rows than a call can take arguments.
@@ -144,7 +163,7 @@ export function parseDelimited(text: string, taken: (name: string) => boolean): 
     if (isText) {
       const seconds = rows.map((row) => {
         const cell = (row[column] ?? "").trim();
-        return cell === "" ? Number.NaN : parseDate(cell);
+        return cell === "" ? Number.NaN : parseDate(cell, zone);
       });
       if (seconds.every((value) => value !== null)) {
         data.set(seconds as number[]);

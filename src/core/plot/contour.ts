@@ -22,7 +22,7 @@ export function contourLevels(
  * (ax, ay, bx, by, ...), where a point (i, j) is element [i][j].
  */
 export function contourSegments(
-  data: Float64Array,
+  data: ArrayLike<number>,
   nx: number,
   ny: number,
   level: number,

@@ -1,21 +1,25 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import {
   activeGraph,
+  addFilesForPython,
   autoscaleGraph,
   EXAMPLE,
   exportGraph,
   loadDelimitedText,
+  loadExcelWorkbook,
   loadFiles,
   openExperiment,
   saveExperiment,
 } from "./app/actions";
-import { ensureIsolated } from "./app/isolate";
+import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
 import { autosave, restore } from "./app/persist";
 import {
   activeWindow,
   doc,
+  files,
   history,
   kernel,
+  PYODIDE_URL,
   requestCommandLine,
   runGui,
   ui,
@@ -75,6 +79,7 @@ function newExperiment() {
     return;
   doc.load(emptyDoc());
   history.clear();
+  files.load([]);
   kernel.restart();
 }
 
@@ -115,6 +120,8 @@ function useMenus(): MenuDefinition[] {
         { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
+        { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
+        { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
         graphItem("Save Graph as SVG", (name) => exportGraph(name, `${name}.svg`)),
@@ -137,12 +144,19 @@ function useMenus(): MenuDefinition[] {
       title: "Data",
       items: [
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
+        { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
+        { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },
         {
           label: "Change Wave Scaling…",
           disabled: selected.length !== 1,
           onSelect: () => ui.set({ dialog: { kind: "waveScaling", wave: selected[0]! } }),
+        },
+        {
+          label: "Change Wave Type…",
+          disabled: selected.length !== 1,
+          onSelect: () => ui.set({ dialog: { kind: "waveType", wave: selected[0]! } }),
         },
         {
           label: "Rename or Move Wave…",
@@ -160,13 +174,17 @@ function useMenus(): MenuDefinition[] {
       title: "Analysis",
       items: [
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
+        analysis("Multi-peak Fit…", "fit_peaks"),
         { separator: true },
         analysis("Wave Stats…", "stats"),
         analysis("Differentiate…", "differentiate"),
         analysis("Integrate…", "integrate"),
         analysis("Smooth…", "smooth"),
-        analysis("FFT Magnitude…", "fft"),
+        analysis("FFT…", "fft"),
         analysis("Histogram…", "histogram"),
+        analysis("Interpolate…", "interpolate"),
+        { separator: true },
+        analysis("Filter Image…", "filter_image"),
       ],
     },
     {
@@ -204,6 +222,8 @@ function useMenus(): MenuDefinition[] {
           ),
           disabled: !spec || spec.images.length === 0,
         },
+        { separator: true },
+        graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },
     {
@@ -213,6 +233,8 @@ function useMenus(): MenuDefinition[] {
         { label: "New Image Plot…", onSelect: open({ kind: "matrixPlot", plot: "image" }) },
         { label: "New Contour Plot…", onSelect: open({ kind: "matrixPlot", plot: "contour" }) },
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
+        { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
+        { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
         { separator: true },
         {
           label: "Data Browser",
@@ -314,10 +336,19 @@ export function App() {
     let cancelled = false;
     void ensureIsolated().then(async (proceed) => {
       if (!proceed || cancelled) return;
-      await restore(doc, history);
+      await restore(doc, history, files);
       if (cancelled) return;
-      stopSaving = autosave(doc, history);
+      stopSaving = autosave(doc, history, files);
       kernel.start();
+      openLaunchedFiles((launched) => void loadFiles(launched));
+      // Once Python is up, everything a start needs has been loaded: keep it for offline use.
+      const stop = kernel.subscribe(() => {
+        if (kernel.getState().status !== "ready") return;
+        stop();
+        void keepForOffline(PYODIDE_URL).then((count) => {
+          Object.assign(debug, { offlineFiles: count });
+        });
+      });
     });
     window.addEventListener("keydown", onGlobalKey);
     return () => {
@@ -392,4 +423,5 @@ export function App() {
 }
 
 // Exposed for debugging from the browser console.
-Object.assign(globalThis, { oresme: { doc, history, kernel, activeWindow } });
+const debug = { doc, history, kernel, files, activeWindow };
+Object.assign(globalThis, { oresme: debug });

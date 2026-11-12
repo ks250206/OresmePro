@@ -337,3 +337,382 @@ describe("echoPython for new commands", () => {
     );
   });
 });
+
+describe("tables", () => {
+  const setup = () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(3, 4) });
+    doc.dispatch({ op: "edit", waves: ["a", "b"] });
+    return doc;
+  };
+
+  it("sets how many digits a table shows", () => {
+    const doc = setup();
+    expect(doc.getState().tables.Table0!.digits).toBe(8);
+    doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 12 } });
+    expect(doc.getState().tables.Table0!.digits).toBe(12);
+    expect(() =>
+      doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 0 } }),
+    ).toThrow();
+    expect(() =>
+      doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 2.5 } }),
+    ).toThrow();
+    doc.undo();
+    expect(doc.getState().tables.Table0!.digits).toBe(8);
+    expect(echoPython({ op: "modifyTable", table: "Table0", props: { digits: 12 } })).toBe(
+      'op.table("Table0").set(digits=12)',
+    );
+  });
+
+  it("keeps column widths with the waves they belong to", () => {
+    const doc = setup();
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "a", width: 150.4 });
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "b", width: 5 });
+    expect(doc.getState().tables.Table0!.widths).toEqual({ a: 150, b: 32 });
+    doc.dispatch({ op: "removeFromTable", table: "Table0", waves: ["b"] });
+    doc.dispatch({ op: "renameWave", name: "a", newName: "run:a" });
+    expect(doc.getState().tables.Table0!.widths).toEqual({ "run:a": 150 });
+    doc.dispatch({ op: "removeFromTable", table: "Table0", waves: ["run:a"] });
+    expect(doc.getState().tables.Table0!.widths).toEqual({});
+    // A width for a wave the table does not show is dropped.
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "zz", width: 90 });
+    expect(doc.getState().tables.Table0!.widths).toEqual({});
+  });
+
+  it("writes matrix cells by their indices in the history", () => {
+    const shape = () => [3, 4];
+    expect(echoPython({ op: "setWavePoints", name: "m", start: 6, values: [9] }, shape)).toBe(
+      'op.wave("m")[1, 2] = 9',
+    );
+    expect(echoPython({ op: "setWavePoints", name: "m", start: 2, values: [1, 2, 3] }, shape)).toBe(
+      'op.wave("m").flat[2:5] = [1, 2, 3]',
+    );
+    expect(echoPython({ op: "setWavePoints", name: "a", start: 1, values: [NaN, NaN, NaN] })).toBe(
+      'op.wave("a")[1:4] = float("nan")',
+    );
+  });
+});
+
+describe("procedures", () => {
+  it("are windows with a Python file's text", () => {
+    const doc = new Doc();
+    expect(doc.dispatch({ op: "newProcedure" })).toBe("Procedure");
+    expect(doc.dispatch({ op: "newProcedure", code: "x = 1\n" })).toBe("Procedure1");
+    expect(doc.getState().windows.map((window) => [window.name, window.kind])).toEqual([
+      ["Procedure", "procedure"],
+      ["Procedure1", "procedure"],
+    ]);
+    expect(doc.getState().procedures.Procedure1).toEqual({
+      name: "Procedure1",
+      code: "x = 1\n",
+      autoRun: true,
+    });
+    // The name is a module name, and windows share one set of names.
+    expect(() => doc.dispatch({ op: "newProcedure", name: "données" })).toThrow();
+    expect(() => doc.dispatch({ op: "newProcedure", name: "Procedure" })).toThrow();
+    expect(() => doc.dispatch({ op: "display", y: [], name: "Procedure" })).toThrow();
+    expect(echoPython({ op: "newProcedure", name: "Fits" })).toBe('op.new_procedure(name="Fits")');
+    expect(echoPython({ op: "setProcedure", name: "Fits", code: "x" })).toBeNull();
+  });
+
+  it("keep their text through undo, which their editor handles itself", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "newProcedure" });
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1) });
+    doc.dispatch({ op: "setProcedure", name: "Procedure", code: "typed later" });
+    doc.dispatch({ op: "setProcedure", name: "Procedure", autoRun: false });
+    doc.undo();
+    expect(doc.getState().waves.a).toBeUndefined();
+    expect(doc.getState().procedures.Procedure).toMatchObject({
+      code: "typed later",
+      autoRun: false,
+    });
+    doc.redo();
+    expect(doc.getState().procedures.Procedure!.code).toBe("typed later");
+
+    // Closing the window is undone with the text it had.
+    doc.dispatch({ op: "killWindow", name: "Procedure" });
+    expect(doc.getState().procedures.Procedure).toBeUndefined();
+    doc.undo();
+    expect(doc.getState().procedures.Procedure!.code).toBe("typed later");
+  });
+
+  it("keep column widths through undo as well", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1) });
+    doc.dispatch({ op: "edit", waves: ["a"] });
+    doc.dispatch({ op: "modifyTable", table: "Table0", props: { digits: 4 } });
+    doc.dispatch({ op: "resizeColumn", table: "Table0", wave: "a", width: 200 });
+    doc.undo();
+    expect(doc.getState().tables.Table0).toMatchObject({ digits: 8, widths: { a: 200 } });
+  });
+});
+
+describe("time zone", () => {
+  it("is a setting of the experiment", () => {
+    const doc = new Doc();
+    expect(doc.getState().timeZone).toBe("UTC");
+    doc.dispatch({ op: "setTimeZone", zone: "Asia/Tokyo" });
+    expect(doc.getState().timeZone).toBe("Asia/Tokyo");
+    expect(() => doc.dispatch({ op: "setTimeZone", zone: "Nowhere/Land" })).toThrow(/time zone/);
+    doc.undo();
+    expect(doc.getState().timeZone).toBe("UTC");
+    expect(echoPython({ op: "setTimeZone", zone: "local" })).toBe('op.set_time_zone("local")');
+  });
+});
+
+describe("wave types", () => {
+  it("takes the type of the data and converts to a type asked for", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "f", data: Float32Array.of(0.1, 2) });
+    doc.dispatch({
+      op: "makeWave",
+      name: "i",
+      data: Float64Array.of(1.6, -2.5, 70000, NaN),
+      type: "int16",
+    });
+    doc.dispatch({
+      op: "makeWave",
+      name: "c",
+      data: Float64Array.of(1, 2),
+      imag: Float64Array.of(3, 4),
+    });
+    const { f, i, c } = doc.getState().waves;
+    expect([f!.type, f!.data.constructor.name]).toEqual(["float32", "Float32Array"]);
+    // Rounded to the nearest whole number and held at the ends of the range.
+    expect([i!.type, Array.from(i!.data)]).toEqual(["int16", [2, -2, 32767, 0]]);
+    expect(i!.data).toBeInstanceOf(Int16Array);
+    expect([c!.type, Array.from(c!.data), Array.from(c!.imag!)]).toEqual([
+      "complex128",
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(() =>
+      doc.dispatch({ op: "makeWave", name: "bad", data: Float64Array.of(1), type: "int64" }),
+    ).toThrow(/type/);
+    expect(() =>
+      doc.dispatch({
+        op: "makeWave",
+        name: "bad",
+        data: Float64Array.of(1),
+        imag: Float64Array.of(1, 2),
+      }),
+    ).toThrow(/different lengths/);
+  });
+
+  it("writes points in the wave's own type, growing both parts of a complex wave", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "b", data: Uint8Array.of(1, 2) });
+    doc.dispatch({ op: "setWavePoints", name: "b", start: 1, values: [300, 2.5, -4] });
+    expect(Array.from(doc.getState().waves.b!.data)).toEqual([1, 255, 3, 0]);
+    expect(doc.getState().waves.b!.data).toBeInstanceOf(Uint8Array);
+    doc.dispatch({ op: "insertPoints", name: "b", at: 1, count: 2 });
+    // An integer wave has no NaN: new points are 0.
+    expect(Array.from(doc.getState().waves.b!.data)).toEqual([1, 0, 0, 255, 3, 0]);
+
+    doc.dispatch({
+      op: "makeWave",
+      name: "c",
+      data: Float64Array.of(1),
+      imag: Float64Array.of(-1),
+    });
+    doc.dispatch({ op: "setWavePoints", name: "c", start: 1, values: [2, 3], imag: [5, 6] });
+    doc.dispatch({ op: "setWavePoints", name: "c", start: 0, values: [9] });
+    let c = doc.getState().waves.c!;
+    expect([Array.from(c.data), Array.from(c.imag!), c.shape]).toEqual([
+      [9, 2, 3],
+      [-1, 5, 6],
+      [3],
+    ]);
+    doc.dispatch({ op: "deletePoints", name: "c", at: 0, count: 1 });
+    c = doc.getState().waves.c!;
+    expect([Array.from(c.data), Array.from(c.imag!)]).toEqual([
+      [2, 3],
+      [5, 6],
+    ]);
+    expect(() =>
+      doc.dispatch({ op: "setWavePoints", name: "b", start: 0, values: [1], imag: [1] }),
+    ).toThrow(/not a complex wave/);
+    expect(
+      echoPython({ op: "setWavePoints", name: "c", start: 0, values: [1, NaN], imag: [2, 0] }),
+    ).toBe('op.wave("c")[0:2] = [complex(1, 2), complex("nan", 0)]');
+  });
+
+  it("changes a wave's type, keeping what the new type can hold", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "w", data: Float64Array.of(1.25, -3.75) });
+    doc.dispatch({ op: "redimension", name: "w", type: "complex64" });
+    let w = doc.getState().waves.w!;
+    expect([w.type, Array.from(w.data), Array.from(w.imag!)]).toEqual([
+      "complex64",
+      [1.25, -3.75],
+      [0, 0],
+    ]);
+    expect(w.imag).toBeInstanceOf(Float32Array);
+    doc.dispatch({ op: "redimension", name: "w", type: "int8" });
+    w = doc.getState().waves.w!;
+    expect([w.type, Array.from(w.data), w.imag]).toEqual(["int8", [1, -4], null]);
+    doc.undo();
+    expect(doc.getState().waves.w!.type).toBe("complex64");
+    doc.dispatch({ op: "duplicateWave", name: "w", newName: "copy" });
+    expect(doc.getState().waves.copy).toMatchObject({ type: "complex64" });
+    expect(doc.getState().waves.copy!.imag).not.toBe(doc.getState().waves.w!.imag);
+    expect(echoPython({ op: "redimension", name: "w", type: "float32" })).toBe(
+      'op.wave("w").redimension("float32")',
+    );
+    doc.dispatch({ op: "makeWave", name: "t", text: ["a"] });
+    expect(() => doc.dispatch({ op: "redimension", name: "t", type: "float32" })).toThrow(/text/);
+  });
+});
+
+describe("page layouts", () => {
+  const setup = () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 2, 3) });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "newLayout" });
+    return doc;
+  };
+  const page = (doc: Doc) => doc.getState().pages.Layout0!;
+
+  it("are windows holding graphs and text at places on a sheet of paper", () => {
+    const doc = setup();
+    expect(page(doc)).toEqual({ name: "Layout0", width: 595, height: 842, items: [] });
+    expect(doc.getState().windows.at(-1)).toMatchObject({ name: "Layout0", kind: "page" });
+    expect(
+      doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph0" }),
+    ).toBe("graph0");
+    expect(
+      doc.dispatch({
+        op: "addLayoutItem",
+        layout: "Layout0",
+        kind: "graph",
+        graph: "Graph1",
+        w: 200,
+        h: 150,
+      }),
+    ).toBe("graph1");
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "text",
+      text: "Figure 1",
+      x: 40,
+      y: 800,
+      size: 9,
+    });
+    const [first, second, caption] = page(doc).items;
+    // The first at the top margin, as wide as the page allows; the next below it.
+    expect(first).toMatchObject({ x: 36, y: 36, w: 440, graph: "Graph0" });
+    expect(second).toMatchObject({ x: 36, y: first!.y + first!.h + 12, w: 200, h: 150 });
+    expect(caption).toMatchObject({
+      name: "text0",
+      kind: "text",
+      text: "Figure 1",
+      x: 40,
+      y: 800,
+      size: 9,
+    });
+
+    doc.dispatch({
+      op: "modifyLayoutItem",
+      layout: "Layout0",
+      item: "graph1",
+      props: { x: 300, w: 10 },
+    });
+    // Never too small to grab.
+    expect(page(doc).items[1]).toMatchObject({ x: 300, w: 40 });
+    doc.dispatch({ op: "modifyLayout", layout: "Layout0", props: { width: 842, height: 595 } });
+    expect([page(doc).width, page(doc).height]).toEqual([842, 595]);
+    expect(() =>
+      doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Nope" }),
+    ).toThrow();
+    expect(() => doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "text" })).toThrow(
+      /text/,
+    );
+    expect(() =>
+      doc.dispatch({ op: "modifyLayout", layout: "Layout0", props: { width: 1 } }),
+    ).toThrow();
+  });
+
+  it("lose a graph that is closed, and get it back with undo", () => {
+    const doc = setup();
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph0" });
+    doc.dispatch({ op: "addLayoutItem", layout: "Layout0", kind: "graph", graph: "Graph1" });
+    doc.dispatch({ op: "killWindow", name: "Graph0" });
+    expect(page(doc).items.map((item) => item.graph)).toEqual(["Graph1"]);
+    doc.undo();
+    expect(page(doc).items.map((item) => item.graph)).toEqual(["Graph0", "Graph1"]);
+    doc.dispatch({ op: "removeLayoutItem", layout: "Layout0", item: "graph0" });
+    expect(page(doc).items.map((item) => item.name)).toEqual(["graph1"]);
+    doc.dispatch({ op: "killWindow", name: "Layout0" });
+    expect(doc.getState().pages).toEqual({});
+  });
+
+  it("are written into the history as Python", () => {
+    expect(echoPython({ op: "newLayout" })).toBe("op.new_layout()");
+    expect(
+      echoPython({
+        op: "addLayoutItem",
+        layout: "L",
+        kind: "graph",
+        graph: "Graph0",
+        x: 10,
+        w: 200,
+      }),
+    ).toBe('op.layout("L").add_graph("Graph0", x=10, w=200)');
+    expect(
+      echoPython({ op: "addLayoutItem", layout: "L", kind: "text", text: "Hi", size: 9 }),
+    ).toBe('op.layout("L").add_text("Hi", size=9)');
+    expect(
+      echoPython({ op: "modifyLayoutItem", layout: "L", item: "graph0", props: { x: 1, y: 2 } }),
+    ).toBe('op.layout("L").item("graph0").set(x=1, y=2)');
+    expect(echoPython({ op: "removeLayoutItem", layout: "L", item: "text0" })).toBe(
+      'op.layout("L").item("text0").remove()',
+    );
+    expect(
+      echoPython({ op: "modifyLayout", layout: "L", props: { width: 842, height: 595 } }),
+    ).toBe('op.layout("L").set(width=842, height=595)');
+  });
+});
+
+describe("memory held by undo", () => {
+  it("forgets the oldest steps when they hold too much wave data", () => {
+    // Room for about three old copies of an 8000-byte wave.
+    const doc = new Doc({ undoBytes: 30_000 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    for (let step = 1; step <= 10; step += 1) {
+      doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [step] });
+    }
+    let undone = 0;
+    while (doc.undo()) undone += 1;
+    // The last few edits can be undone; the earlier copies were let go.
+    expect(undone).toBeGreaterThanOrEqual(3);
+    expect(undone).toBeLessThanOrEqual(4);
+    expect(doc.getState().waves.big!.data[0]).toBe(10 - undone);
+  });
+
+  it("does not count data that the steps share", () => {
+    const doc = new Doc({ undoBytes: 30_000 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    // Twenty steps that leave the wave alone: its array is in every snapshot, once.
+    for (let step = 0; step < 20; step += 1) {
+      doc.dispatch({ op: "setWaveMeta", name: "big", note: `note ${step}` });
+    }
+    let undone = 0;
+    while (doc.undo()) undone += 1;
+    expect(undone).toBe(21);
+  });
+
+  it("always allows one undo, however large the wave", () => {
+    const doc = new Doc({ undoBytes: 10 });
+    doc.dispatch({ op: "makeWave", name: "big", data: new Float64Array(1000) });
+    doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [1] });
+    doc.dispatch({ op: "setWavePoints", name: "big", start: 0, values: [2] });
+    expect(doc.undo()).toBe(true);
+    expect(doc.getState().waves.big!.data[0]).toBe(1);
+    expect(doc.undo()).toBe(false);
+  });
+});

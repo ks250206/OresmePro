@@ -8,6 +8,12 @@ interface UndoEntry {
 }
 
 const UNDO_LIMIT = 100;
+/**
+ * How much wave data the undo history may keep alive beyond what the
+ * document itself holds. Editing a large wave leaves a copy behind with every
+ * step; past this, the oldest steps are forgotten.
+ */
+const UNDO_BYTES = 512 * 1024 * 1024;
 
 export interface DispatchOptions {
   group?: string;
@@ -19,6 +25,12 @@ export interface DispatchOptions {
  * between snapshots and cost nothing.
  */
 export class Doc {
+  private readonly undoBytes: number;
+
+  constructor(options: { undoBytes?: number } = {}) {
+    this.undoBytes = options.undoBytes ?? UNDO_BYTES;
+  }
+
   private state: DocState = emptyDoc();
   private readonly listeners = new Set<() => void>();
   private undoStack: UndoEntry[] = [];
@@ -44,6 +56,7 @@ export class Doc {
       if (!(group !== null && last?.group === group)) {
         this.undoStack.push({ state: before, group });
         if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+        this.trimUndo(state);
       }
       this.redoStack = [];
       this.state = state;
@@ -64,7 +77,7 @@ export class Doc {
     const entry = this.undoStack.pop();
     if (!entry) return false;
     this.redoStack.push(this.state);
-    this.state = this.keepWindowLayout(entry.state);
+    this.state = this.keepViewState(entry.state);
     this.emit();
     return true;
   }
@@ -73,7 +86,7 @@ export class Doc {
     const state = this.redoStack.pop();
     if (!state) return false;
     this.undoStack.push({ state: this.state, group: null });
-    this.state = this.keepWindowLayout(state);
+    this.state = this.keepViewState(state);
     this.emit();
     return true;
   }
@@ -87,16 +100,62 @@ export class Doc {
   }
 
   /**
-   * Undo restores content, not where the user has since dragged windows:
-   * windows that exist in both states keep their current geometry.
+   * Forgets the oldest undo steps while the wave data that only they keep
+   * alive is more than the limit. Arrays are shared between snapshots, so
+   * each is counted once, and those of the current document not at all.
    */
-  private keepWindowLayout(target: DocState): DocState {
-    const current = new Map(this.state.windows.map((window) => [window.name, window]));
+  private trimUndo(current: DocState): void {
+    const live = new Set<unknown>();
+    for (const wave of Object.values(current.waves)) {
+      live.add(wave.data);
+      if (wave.imag) live.add(wave.imag);
+    }
+    // Newest first: an array is charged to the most recent step that needs it.
+    const seen = new Set<unknown>(live);
+    let bytes = 0;
+    for (let index = this.undoStack.length - 1; index >= 0; index -= 1) {
+      for (const wave of Object.values(this.undoStack[index]!.state.waves)) {
+        for (const array of [wave.data, wave.imag]) {
+          if (!array || seen.has(array)) continue;
+          seen.add(array);
+          bytes += array.byteLength;
+        }
+      }
+      // The latest step is always kept: one undo must always be possible.
+      if (bytes > this.undoBytes && index < this.undoStack.length - 1) {
+        this.undoStack.splice(0, index + 1);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Undo restores content, not what is outside its reach: where the user has
+   * since dragged windows, column widths, and the text of procedures (their
+   * editors have their own undo). Whatever exists in both states keeps its
+   * current value.
+   */
+  private keepViewState(target: DocState): DocState {
+    const now = this.state;
+    const current = new Map(now.windows.map((window) => [window.name, window]));
+    const tables = { ...target.tables };
+    for (const [name, table] of Object.entries(tables)) {
+      const widths = now.tables[name]?.widths;
+      if (!widths || widths === table.widths) continue;
+      const kept = Object.entries(widths).filter(([wave]) => table.columns.includes(wave));
+      tables[name] = { ...table, widths: Object.fromEntries(kept) };
+    }
+    const procedures = { ...target.procedures };
+    for (const name of Object.keys(procedures)) {
+      if (now.procedures[name]) procedures[name] = now.procedures[name];
+    }
     return {
       ...target,
+      tables,
+      procedures,
       windows: target.windows.map((window) => {
-        const now = current.get(window.name);
-        return now ? { ...window, x: now.x, y: now.y, w: now.w, h: now.h } : window;
+        const live = current.get(window.name);
+        return live ? { ...window, x: live.x, y: live.y, w: live.w, h: live.h } : window;
       }),
     };
   }

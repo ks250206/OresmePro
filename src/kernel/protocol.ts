@@ -5,7 +5,7 @@ export type ToWorker =
   | { type: "execute"; id: number; code: string }
   | { type: "complete"; id: number; code: string; cursor: number }
   /** Sent first on Ctrl+C; reaches the worker only if Python is not running synchronously. */
-  | { type: "interrupt" };
+  | { type: "interrupt"; id: number };
 
 export type FromWorker =
   | { type: "progress"; message: string }

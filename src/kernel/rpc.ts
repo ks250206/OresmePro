@@ -1,15 +1,22 @@
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
+import { graphScript } from "../core/doc/recreate";
 import { DocError, type Wave } from "../core/doc/types";
+import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { tracePosition, traceX } from "../core/plot/layout";
 
 export interface RpcContext {
   doc: Doc;
+  /** The experiment's files; Python's working directory mirrors them. */
+  files: FileStore;
   /** Renders a graph as SVG at the given size (or its window's size). */
   renderSvg(graph: string, width: number | null, height: number | null, cursors: boolean): string;
   /** Saves a graph to a file the user downloads; the format follows the extension. */
   exportGraph(graph: string, filename: string, cursors: boolean): void;
+  /** The same for page layouts. */
+  renderPageSvg(page: string): string;
+  exportPage(page: string, filename: string): void;
 }
 
 export interface RpcReply {
@@ -20,6 +27,7 @@ export interface RpcReply {
 const waveInfo = (wave: Wave) => ({
   name: wave.name,
   kind: wave.text ? "text" : "numeric",
+  type: wave.type,
   shape: wave.shape,
   x0: wave.x0,
   dx: wave.dx,
@@ -31,6 +39,17 @@ const waveInfo = (wave: Wave) => ({
   note: wave.note,
   rev: wave.rev,
 });
+
+/** A wave's numbers as they are sent to Python: float64, real parts then imaginary parts. */
+function transportData(wave: Wave): Float64Array {
+  if (!wave.imag) {
+    return wave.data instanceof Float64Array ? wave.data : Float64Array.from(wave.data);
+  }
+  const both = new Float64Array(wave.data.length * 2);
+  both.set(wave.data);
+  both.set(wave.imag, wave.data.length);
+  return both;
+}
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
 
@@ -58,7 +77,15 @@ export function handleRpc(
       const command = { ...params } as Record<string, unknown>;
       if (command.op === "makeWave" || command.op === "setWaveData") {
         // Numbers arrive as binary data; a text wave's values are in the command.
-        if (data) command.data = data;
+        // They travel as float64 whatever the wave's type (which the command
+        // names), a complex wave as its real parts followed by its imaginary parts.
+        if (data && command.complex === true) {
+          command.data = data.subarray(0, data.length / 2);
+          command.imag = data.subarray(data.length / 2);
+        } else if (data) {
+          command.data = data;
+        }
+        delete command.complex;
       } else if (command.op === "setWavePoints") {
         if (!data) throw new DocError("Missing point values.");
         command.values = data;
@@ -73,10 +100,12 @@ export function handleRpc(
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
         ? { result: waveInfo(wave) }
-        : { result: waveInfo(wave), data: wave.data };
+        : { result: waveInfo(wave), data: transportData(wave) };
     }
     case "listWaves":
       return { result: state.waveOrder };
+    case "timeZone":
+      return { result: state.timeZone };
     case "listFolders":
       return { result: state.folders };
     case "uniqueName": {
@@ -127,6 +156,63 @@ export function handleRpc(
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
       return { result: table };
     }
+    case "pageInfo": {
+      const page = typeof params.name === "string" ? state.pages[params.name] : undefined;
+      if (!page) throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      return { result: page };
+    }
+    case "pageSvg": {
+      if (typeof params.name !== "string" || !state.pages[params.name]) {
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      }
+      return { result: context.renderPageSvg(params.name) };
+    }
+    case "exportPage": {
+      if (typeof params.name !== "string" || !state.pages[params.name]) {
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      }
+      const filename = typeof params.filename === "string" ? params.filename : "";
+      if (!/\.(pdf|svg|png)$/i.test(filename)) {
+        throw new DocError("The file name must end in .pdf, .svg or .png.");
+      }
+      context.exportPage(params.name, filename);
+      return { result: null };
+    }
+    case "procedureInfo": {
+      const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
+      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`);
+      return { result: procedure };
+    }
+    case "graphScript": {
+      if (typeof params.name !== "string" || !state.graphs[params.name]) {
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+      }
+      return { result: graphScript(state, params.name) };
+    }
+    // The three below keep Python's working directory and the experiment's
+    // files the same: Python asks what there is before running an input and
+    // reports what the input wrote or deleted afterwards.
+    case "filesState":
+      return {
+        result: {
+          procedures: Object.values(state.procedures).map(({ name, code }) => ({ name, code })),
+          files: Object.fromEntries(context.files.list().map((file) => [file.path, file.version])),
+        },
+      };
+    case "readFile": {
+      const file = typeof params.path === "string" ? context.files.get(params.path) : undefined;
+      if (!file) throw new DocError(`The experiment has no file ${JSON.stringify(params.path)}.`);
+      return {
+        result: { size: file.bytes.byteLength, version: file.version },
+        data: bytesToWords(file.bytes),
+      };
+    }
+    case "putFile": {
+      const bytes = wordsToBytes(data, Number(params.size));
+      return { result: context.files.put(String(params.path), bytes) };
+    }
+    case "removeFile":
+      return { result: context.files.remove(String(params.path)) };
     case "graphSvg": {
       if (typeof params.name !== "string" || !state.graphs[params.name]) {
         throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);

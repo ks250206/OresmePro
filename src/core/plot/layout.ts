@@ -6,11 +6,14 @@ import {
   type AnnotationSpec,
   type AxisSide,
   type AxisSpec,
+  type ComplexPart,
   type CursorName,
   type GraphSpec,
   type ImageSpec,
   type TraceSpec,
   type Wave,
+  type WaveData,
+  wavePart,
 } from "../doc/types";
 import { colorAt, renderMatrix } from "./colorTables";
 import { chainSegments, contourLevels, contourSegments } from "./contour";
@@ -24,15 +27,20 @@ import {
 } from "./decimate";
 import { DASHES, type MeasureText, type Prim, type Rect } from "./displayList";
 import { emitText, layoutText, CAP_HEIGHT, type TextBlock } from "./richText";
-import { makeScale, type Scale } from "./scale";
+import { makeScale, shiftScale, type Scale } from "./scale";
 import {
   axisLabelText,
   categoryTicks,
   dateTicks,
+  formatDate,
   formatNumber,
+  isTimeZone,
   linearTicks,
   logTicks,
+  timeZone,
+  UTC,
   type TickSet,
+  type TimeZone,
 } from "./ticks";
 
 const INK = "#000000";
@@ -66,6 +74,9 @@ export interface AxisGeometry {
 
 export interface TraceGeometry {
   name: string;
+  /** The scales the trace is drawn with: its axes', shifted by its offsets. */
+  xScale: Scale;
+  yScale: Scale;
   /** Pixel-space polylines and marker centers, for hit-testing. */
   runs: Float32Array[];
   markers: Float32Array | null;
@@ -79,10 +90,17 @@ export interface CursorGeometry {
   y: number;
 }
 
+export interface AnnotationGeometry {
+  name: string;
+  /** The box as drawn, for hit-testing and dragging. */
+  box: Rect;
+}
+
 export interface GraphLayout {
   width: number;
   height: number;
   prims: Prim[];
+  annotations: AnnotationGeometry[];
   /** The data area. */
   plot: Rect;
   /** The axes that carry something, by name. */
@@ -96,6 +114,8 @@ export interface GraphLayout {
 export interface LayoutOptions {
   /** Draw cursors. Off for exported files, as in Igor. */
   cursors?: boolean;
+  /** The time zone date axes are labelled in (see DocState.timeZone); UTC if left out. */
+  timeZone?: string;
 }
 
 const OPPOSITE: Record<AxisSide, AxisSide> = {
@@ -181,18 +201,62 @@ function commonUnit(units: string[]): string {
 }
 
 /** Ticks for an axis, and for a date axis what its labels leave unsaid. */
-function ticksFor(axis: AxisInfo, scale: Scale, maxCount: number): TickSet & { context?: string } {
+function ticksFor(
+  axis: AxisInfo,
+  scale: Scale,
+  maxCount: number,
+  zone: TimeZone,
+): TickSet & { context?: string } {
   if (axis.kind === "category") {
     return categoryTicks(scale.min, scale.max, maxCount, axis.categories ?? []);
   }
   if (axis.kind === "date") {
-    const ticks = dateTicks(scale.min, scale.max, maxCount);
+    const ticks = dateTicks(scale.min, scale.max, maxCount, zone);
     if (ticks) return ticks;
   }
+  const { tickFormat: format, tickStep: step } = axis.spec;
   return axis.spec.log
-    ? logTicks(scale.min, scale.max, maxCount)
-    : linearTicks(scale.min, scale.max, maxCount, axis.spec.minor);
+    ? logTicks(scale.min, scale.max, maxCount, format)
+    : linearTicks(scale.min, scale.max, maxCount, axis.spec.minor, { step, format });
 }
+
+/** The extent of values that are drawn shifted by an offset. */
+function shiftExtent(extent: Extent, offset: number, data: WaveData): Extent {
+  if (offset === 0 || !Number.isFinite(extent.min)) return extent;
+  const min = extent.min + offset;
+  const max = extent.max + offset;
+  let minPositive = min > 0 ? min : Infinity;
+  if (min <= 0 && max > 0) {
+    for (let index = 0; index < data.length; index += 1) {
+      const value = data[index]! + offset;
+      if (value > 0 && value < minPositive) minPositive = value;
+    }
+  }
+  return { min, max, minPositive };
+}
+
+/** The usual ratio between neighbouring X values of a trace, for bars on a log axis. */
+function barRatio(y: Wave, x: Wave | null): number {
+  const extent = xExtentOf(y, x);
+  const count = x ? x.data.length : y.data.length;
+  return count > 1 && extent.minPositive < extent.max
+    ? (extent.max / extent.minPositive) ** (1 / (count - 1))
+    : 2;
+}
+
+/** The distance between neighbouring bars of a trace, in pixels. */
+function barPitch(y: Wave, x: Wave | null, scale: Scale): number {
+  if (scale.log) {
+    const perDecade = Math.abs((scale.p1 - scale.p0) / Math.log10(scale.max / scale.min));
+    return perDecade * Math.log10(barRatio(y, x));
+  }
+  return barSpacing(y, x) * Math.abs((scale.p1 - scale.p0) / (scale.max - scale.min));
+}
+
+/** Per-point colors come in this many steps of the color table. */
+const COLOR_BINS = 64;
+/** Above this many visible points a line is drawn in one color even if it has a color wave. */
+const COLORED_LINE_LIMIT = 20_000;
 
 /** The usual distance between neighbouring points of a trace along X. */
 function barSpacing(y: Wave, x: Wave | null): number {
@@ -202,7 +266,7 @@ function barSpacing(y: Wave, x: Wave | null): number {
   return count > 1 && Number.isFinite(extent.min) ? (extent.max - extent.min) / (count - 1) : 1;
 }
 
-const planeCache = new WeakMap<Float64Array, Map<string, Float64Array>>();
+const planeCache = new WeakMap<WaveData, Map<string, WaveData>>();
 
 /**
  * The 2-D plane of a wave that an image or contour shows: the wave itself
@@ -212,7 +276,7 @@ export function planeOf(
   wave: Wave,
   layer: number,
   chunk: number,
-): { data: Float64Array; nx: number; ny: number } | null {
+): { data: WaveData; nx: number; ny: number } | null {
   const [nx, ny, nz = 1, nc = 1] = wave.shape;
   if (wave.shape.length < 2 || nx === undefined || ny === undefined) return null;
   if (layer >= nz || chunk >= nc) return null;
@@ -304,11 +368,11 @@ interface ImageInfo {
   zMax: number;
 }
 
-const imageCache = new WeakMap<Float64Array, Map<string, Uint8ClampedArray<ArrayBuffer>>>();
-const contourCache = new WeakMap<Float64Array, Map<number, Float64Array[]>>();
+const imageCache = new WeakMap<WaveData, Map<string, Uint8ClampedArray<ArrayBuffer>>>();
+const contourCache = new WeakMap<WaveData, Map<number, Float64Array[]>>();
 
 function cachedMatrix(
-  data: Float64Array,
+  data: WaveData,
   nx: number,
   ny: number,
   cols: number,
@@ -327,7 +391,7 @@ function cachedMatrix(
   return rgba;
 }
 
-function cachedContour(data: Float64Array, nx: number, ny: number, level: number): Float64Array[] {
+function cachedContour(data: WaveData, nx: number, ny: number, level: number): Float64Array[] {
   let entries = contourCache.get(data);
   if (!entries) contourCache.set(data, (entries = new Map()));
   let chains = entries.get(level);
@@ -339,17 +403,21 @@ function cachedContour(data: Float64Array, nx: number, ny: number, level: number
   return chains;
 }
 
+/** A contour line gets one label for about this many pixels of its length, up to four. */
+const LABEL_EVERY = 260;
+
 /**
- * Makes room for a label in the middle of a line. Returns the two parts of
- * the line either side of the gap, and where and at what angle (degrees,
- * kept upright) the label goes; or null if the line is too short, or its
- * middle is out of view.
+ * Makes room for labels along a line: one in the middle of a short line,
+ * several spread evenly along a long one. Returns the pieces of the line
+ * between the gaps, and where and at what angle (degrees, kept upright) each
+ * label goes; or null if the line is too short for any, or the places for
+ * them are all out of view.
  */
-function breakForLabel(
+function breakForLabels(
   points: Float32Array,
   labelWidth: number,
   area: Rect,
-): { parts: Float32Array[]; x: number; y: number; angle: number } | null {
+): { parts: Float32Array[]; labels: { x: number; y: number; angle: number }[] } | null {
   const count = points.length / 2;
   if (count < 2) return null;
   const along = new Float64Array(count);
@@ -376,29 +444,57 @@ function breakForLabel(
       y: points[index * 2 - 1]! + (points[index * 2 + 1]! - points[index * 2 - 1]!) * t,
     };
   };
-  const middle = at(total / 2);
+  /** The stretch of the line between two distances along it. */
+  const piece = (from: number, to: number): Float32Array => {
+    const start = at(from);
+    const end = at(to);
+    const inner = Math.max(0, end.before - start.before);
+    const part = new Float32Array((inner + 2) * 2);
+    part.set([start.x, start.y]);
+    part.set(points.subarray((start.before + 1) * 2, (start.before + 1 + inner) * 2), 2);
+    part.set([end.x, end.y], (inner + 1) * 2);
+    return part;
+  };
+
+  const wanted = Math.max(1, Math.min(4, Math.floor(total / LABEL_EVERY)));
   const inset = labelWidth / 2;
-  if (
-    middle.x < area.x + inset ||
-    middle.x > area.x + area.w - inset ||
-    middle.y < area.y + inset ||
-    middle.y > area.y + area.h - inset
-  ) {
-    return null;
+  const parts: Float32Array[] = [];
+  const labels: { x: number; y: number; angle: number }[] = [];
+  let from = 0;
+  for (let index = 0; index < wanted; index += 1) {
+    const centre = (total * (index + 0.5)) / wanted;
+    const middle = at(centre);
+    if (
+      middle.x < area.x + inset ||
+      middle.x > area.x + area.w - inset ||
+      middle.y < area.y + inset ||
+      middle.y > area.y + area.h - inset
+    ) {
+      continue;
+    }
+    const start = at(centre - gap);
+    const end = at(centre + gap);
+    let angle = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
+    if (angle > 90) angle -= 180;
+    else if (angle < -90) angle += 180;
+    parts.push(piece(from, centre - gap));
+    labels.push({ x: middle.x, y: middle.y, angle });
+    from = centre + gap;
   }
-  const start = at(total / 2 - gap);
-  const end = at(total / 2 + gap);
-  let angle = (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
-  if (angle > 90) angle -= 180;
-  else if (angle < -90) angle += 180;
-  const first = new Float32Array((start.before + 2) * 2);
-  first.set(points.subarray(0, (start.before + 1) * 2));
-  first.set([start.x, start.y], (start.before + 1) * 2);
-  const rest = points.subarray((end.before + 1) * 2);
-  const second = new Float32Array(rest.length + 2);
-  second.set([end.x, end.y]);
-  second.set(rest, 2);
-  return { parts: [first, second], x: middle.x, y: middle.y, angle };
+  if (labels.length === 0) return null;
+  parts.push(piece(from, total));
+  return { parts, labels };
+}
+
+/** Moves a box by an annotation's offset, keeping it inside the graph. */
+function placeBox(box: Rect, annotation: AnnotationSpec, plot: Rect, bounds: Rect): Rect {
+  const x = box.x + annotation.x * plot.w;
+  const y = box.y + annotation.y * plot.h;
+  return {
+    ...box,
+    x: Math.round(Math.max(bounds.x, Math.min(bounds.x + bounds.w - box.w, x))),
+    y: Math.round(Math.max(bounds.y, Math.min(bounds.y + bounds.h - box.h, y))),
+  };
 }
 
 function emitColorScale(
@@ -407,10 +503,11 @@ function emitColorScale(
   graph: GraphSpec,
   images: readonly ImageInfo[],
   plot: Rect,
+  bounds: Rect,
   measure: MeasureText,
-): void {
+): Rect | null {
   const image = images.find((item) => annotation.text === "" || item.spec.name === annotation.text);
-  if (!image) return;
+  if (!image) return null;
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const barWidth = 14;
@@ -424,7 +521,12 @@ function emitColorScale(
   const top = padding + (suffix.width > 0 ? size * 1.3 : size * 0.4);
   const width = Math.ceil(padding * 2 + barWidth + 4 + TICK_LABEL_GAP + labelWidth);
   const height = Math.ceil(top + barHeight + padding + size * 0.4);
-  const box = anchorBox(annotation.anchor, plot, width, height, 8);
+  const box = placeBox(
+    anchorBox(annotation.anchor, plot, width, height, 8),
+    annotation,
+    plot,
+    bounds,
+  );
   out.push({
     kind: "rect",
     ...box,
@@ -490,6 +592,31 @@ function emitColorScale(
   if (suffix.width > 0) {
     emitText(out, suffix, barX, box.y + padding + size * CAP_HEIGHT, { family, fill: INK });
   }
+  return box;
+}
+
+/** What a tag points at: where it is drawn, and its values for the text. */
+interface TagTarget {
+  px: number;
+  py: number;
+  x: number;
+  y: number;
+  /** Whether the X value is a date, for writing it out. */
+  date: boolean;
+}
+
+/** The point where the line from a box's middle towards (px, py) leaves the box. */
+function boxExit(box: Rect, px: number, py: number): [number, number] {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const dx = px - cx;
+  const dy = py - cy;
+  if (dx === 0 && dy === 0) return [cx, cy];
+  const t = Math.min(
+    dx === 0 ? Infinity : box.w / 2 / Math.abs(dx),
+    dy === 0 ? Infinity : box.h / 2 / Math.abs(dy),
+  );
+  return [cx + dx * t, cy + dy * t];
 }
 
 function emitAnnotation(
@@ -497,36 +624,93 @@ function emitAnnotation(
   annotation: AnnotationSpec,
   graph: GraphSpec,
   plot: Rect,
+  bounds: Rect,
   measure: MeasureText,
-): void {
+  target: TagTarget | null,
+  zone: TimeZone,
+): Rect | null {
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const visible = graph.traces.filter((trace) => !trace.hidden);
   const byName = new Map(graph.traces.map((trace) => [trace.name, trace]));
+  const tag = annotation.kind === "tag";
+  if (tag && !target) return null;
 
+  let text = annotation.text;
+  if (tag && target) {
+    const x = target.date ? formatDate(target.x, zone) : formatNumber(target.x);
+    const y = formatNumber(target.y);
+    text = (text === "" ? "{x}, {y}" : text)
+      .replaceAll("{x}", x)
+      .replaceAll("{y}", y)
+      .replaceAll("{point}", String(annotation.point));
+  }
   // A legend line is `\s(traceName) text`; with no text at all it lists every trace.
   const source =
-    annotation.kind === "legend" && annotation.text === ""
+    annotation.kind === "legend" && text === ""
       ? visible.map((trace) => `\\s(${trace.name}) ${trace.name}`)
-      : annotation.text.split("\n");
+      : text.split("\n");
   const rows = source.map((line) => {
     const match = /^\\s\(([^)]*)\)\s?/.exec(line);
     const trace = match ? (byName.get(match[1]!) ?? null) : null;
     const block = layoutText(match ? line.slice(match[0].length) : line, size, family, measure);
     return { trace, block };
   });
-  if (rows.length === 0) return;
+  if (rows.length === 0) return null;
 
   const symbolWidth = 26;
   const symbolGap = 6;
-  const padding = 6;
+  const padding = tag ? 4 : 6;
   const rowHeight = Math.round(size * 1.35);
   const hasSymbols = rows.some((row) => row.trace);
   const textX = hasSymbols ? symbolWidth + symbolGap : 0;
   const width = Math.ceil(padding * 2 + textX + Math.max(...rows.map((row) => row.block.width)));
   const height = padding * 2 + rowHeight * rows.length;
-  const box = anchorBox(annotation.anchor, plot, width, height, 8);
+  // A tag's box is centred on its point before it is moved; the others sit at their anchor.
+  const home: Rect =
+    tag && target
+      ? { x: target.px - width / 2, y: target.py - height / 2, w: width, h: height }
+      : anchorBox(annotation.anchor, plot, width, height, 8);
+  const box = placeBox(home, annotation, plot, bounds);
 
+  if (tag && target) {
+    // A line from the box to the point, ending in an arrowhead.
+    const [fromX, fromY] = boxExit(box, target.px, target.py);
+    const length = Math.hypot(target.px - fromX, target.py - fromY);
+    const inside =
+      target.px >= box.x &&
+      target.px <= box.x + box.w &&
+      target.py >= box.y &&
+      target.py <= box.y + box.h;
+    if (!inside && length > 6) {
+      const ux = (target.px - fromX) / length;
+      const uy = (target.py - fromY) / length;
+      const head = Math.min(7, length / 2);
+      // Stop short of the point itself, so its marker stays visible.
+      const tipX = target.px - ux * 3;
+      const tipY = target.py - uy * 3;
+      const baseX = tipX - ux * head;
+      const baseY = tipY - uy * head;
+      out.push({
+        kind: "segments",
+        points: [fromX, fromY, baseX, baseY],
+        stroke: INK,
+        width: 1,
+      });
+      out.push({
+        kind: "polygon",
+        points: [
+          tipX,
+          tipY,
+          baseX - uy * head * 0.4,
+          baseY + ux * head * 0.4,
+          baseX + uy * head * 0.4,
+          baseY - ux * head * 0.4,
+        ],
+        fill: INK,
+      });
+    }
+  }
   out.push({
     kind: "rect",
     ...box,
@@ -541,6 +725,7 @@ function emitAnnotation(
       fill: INK,
     });
   });
+  return box;
 }
 
 /** The size of an error bar at one point: from a wave, or constant. */
@@ -556,11 +741,13 @@ function errorAt(source: string | number | null, waves: Readonly<Record<string, 
  * wave) the points sit at 0, 1, 2, ..., expressed here as X scaling.
  */
 export function tracePosition(
-  trace: { y: string; x: string | null },
+  trace: { y: string; x: string | null; part?: ComplexPart },
   waves: Readonly<Record<string, Wave>>,
 ): { y: Wave; x: Wave | null; categories: readonly string[] | null } | null {
-  const y = waves[trace.y];
-  if (!y) return null;
+  const source = waves[trace.y];
+  if (!source) return null;
+  // What is plotted of a complex wave is one real number per point.
+  const y = wavePart(source, trace.part ?? "real");
   const x = trace.x === null ? null : waves[trace.x];
   if (x === undefined) return null;
   if (x?.text) return { y: { ...y, x0: 0, dx: 1 }, x: null, categories: x.text };
@@ -589,6 +776,7 @@ export function layoutGraph(
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const cap = size * CAP_HEIGHT;
+  const zone = isTimeZone(options.timeZone) ? timeZone(options.timeZone) : UTC;
 
   // Resolve what can be drawn; anything else is reported as missing.
   const missing = new Set<string>();
@@ -606,9 +794,10 @@ export function layoutGraph(
     if (!yOk || !xOk || !axisOk(spec) || spec.hidden) continue;
     // A text X wave makes a category plot: the points sit at 0, 1, 2, ...
     const categories = xWave?.text ?? null;
+    const shown = wavePart(yWave, spec.part);
     traces.push({
       spec,
-      y: categories ? { ...yWave, x0: 0, dx: 1 } : yWave,
+      y: categories ? { ...shown, x0: 0, dx: 1 } : shown,
       x: categories ? null : (xWave ?? null),
       categories,
       xUnit: categories ? "" : xWave ? xWave.unit : yWave.xUnit,
@@ -620,7 +809,8 @@ export function layoutGraph(
     items: readonly T[],
   ) =>
     items.flatMap((spec) => {
-      const wave = waves[spec.wave];
+      const source = waves[spec.wave];
+      const wave = source && wavePart(source, "part" in spec ? (spec.part as ComplexPart) : "real");
       const plane = wave && !wave.text ? planeOf(wave, spec.layer, spec.chunk) : null;
       if (!wave || !plane) {
         missing.add(spec.wave);
@@ -653,15 +843,31 @@ export function layoutGraph(
   };
   for (const { spec, y, x, categories, xUnit } of traces) {
     const bars = spec.mode === "bars";
-    // Bars grow from zero, so zero belongs in view.
+    // Bars and fills grow from zero, so zero belongs in view.
+    const fromZero = bars || spec.fill === "zero";
+    const up = extentOf(y.data);
     feed(
       spec.vAxis,
-      bars ? mergeExtent(extentOf(y.data), spanExtent(0, 0)) : extentOf(y.data),
+      shiftExtent(fromZero ? mergeExtent(up, spanExtent(0, 0)) : up, spec.yOffset, y.data),
       y.unit,
     );
-    const across = xExtentOf(y, x);
-    const half = categories || bars ? barSpacing(y, x) / 2 : 0;
-    feed(spec.hAxis, half > 0 ? spanExtent(across.min - half, across.max + half) : across, xUnit);
+    const across = x
+      ? shiftExtent(extentOf(x.data), spec.xOffset, x.data)
+      : xExtentOf({ ...y, x0: y.x0 + spec.xOffset }, null);
+    let wide = across;
+    if (categories || bars) {
+      // Room for half a bar beyond the first and last point.
+      if (graph.axes[spec.hAxis]!.log) {
+        const half = Math.sqrt(barRatio(y, x));
+        if (across.minPositive < Infinity) {
+          wide = spanExtent(across.minPositive / half, across.max * half);
+        }
+      } else {
+        const half = barSpacing(y, x) / 2;
+        wide = spanExtent(across.min - half, across.max + half);
+      }
+    }
+    feed(spec.hAxis, wide, xUnit);
     if (categories && !categoryLabels.has(spec.hAxis)) categoryLabels.set(spec.hAxis, categories);
   }
   for (const { spec, wave, nx, ny } of images) {
@@ -757,9 +963,11 @@ export function layoutGraph(
     };
     for (const axis of axisList) {
       const [lo, hi] = axis.spec.span;
-      const [p0, p1] = axis.vertical
+      const ends = axis.vertical
         ? [Math.round(plot.y + plot.h * (1 - lo)), Math.round(plot.y + plot.h * (1 - hi))]
         : [Math.round(plot.x + plot.w * lo), Math.round(plot.x + plot.w * hi)];
+      // A reversed axis has its lowest value where the highest would be.
+      const [p0, p1] = axis.spec.reverse ? [ends[1]!, ends[0]!] : [ends[0]!, ends[1]!];
       const scale = makeScale(axis.range[0], axis.range[1], axis.spec.log, p0, p1);
       const length = Math.abs(p1 - p0);
       // Category axes start with every category and thin out from there.
@@ -770,7 +978,7 @@ export function layoutGraph(
       if (axis.kind === "category" && axis.vertical) {
         maxCount = Math.min(maxCount, Math.max(1, Math.floor(length / (size * 1.3))));
       }
-      let ticks = ticksFor(axis, scale, maxCount);
+      let ticks = ticksFor(axis, scale, maxCount, zone);
       let labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
       if (!axis.vertical) {
         // Thin the ticks out until neighbouring labels clear each other.
@@ -782,8 +990,10 @@ export function layoutGraph(
             spacing = Math.min(spacing, Math.abs(pixels[index]! - pixels[index - 1]!));
           }
           if (widest + size * 0.8 <= spacing) break;
+          // Ticks at a step the user chose stay where they are.
+          if (axis.kind === "number" && !axis.spec.log && axis.spec.tickStep !== null) break;
           maxCount = axis.kind === "category" ? Math.floor(maxCount * 0.7) : maxCount - 1;
-          ticks = ticksFor(axis, scale, Math.max(1, maxCount));
+          ticks = ticksFor(axis, scale, Math.max(1, maxCount), zone);
           labels = ticks.major.map((tick) => layoutText(tick.label, size, family, measure));
         }
       }
@@ -957,25 +1167,23 @@ export function layoutGraph(
           return points;
         })
         .sort((one, other) => other.length - one.length);
-      // The level is written once, on the longest line with room for it.
+      // The level is written on every line long enough to take it, more than once on long ones.
       const text = spec.labels
         ? layoutText(formatNumber(Number(level.toPrecision(6))), labelSize, family, measure)
         : null;
-      let labelled = false;
       for (const points of lines) {
-        const label = text && !labelled ? breakForLabel(points, text.width, area) : null;
-        for (const part of label ? label.parts : [points]) {
+        const broken = text ? breakForLabels(points, text.width, area) : null;
+        for (const part of broken ? broken.parts : [points]) {
           if (part.length >= 4) {
             children.push({ kind: "polyline", points: part, stroke, width: spec.lineSize });
           }
         }
-        if (label && text) {
-          labelled = true;
+        for (const label of text && broken ? broken.labels : []) {
           const angle = (label.angle * Math.PI) / 180;
           const drop = (labelSize * CAP_HEIGHT) / 2;
           emitText(
             children,
-            text,
+            text!,
             label.x - Math.sin(angle) * drop,
             label.y + Math.cos(angle) * drop,
             {
@@ -991,14 +1199,124 @@ export function layoutGraph(
     clipped(spec, children);
   }
 
+  const scalesOf = (spec: TraceSpec) => ({
+    xs: shiftScale(info.get(spec.hAxis)!.scale, spec.xOffset),
+    ys: shiftScale(info.get(spec.vAxis)!.scale, spec.yOffset),
+  });
+  /** Where a trace's zero is drawn: at zero if that is on the axis, else at the nearer end. */
+  const baseline = (ys: Scale): number => {
+    const zero = ys.log ? Number.NaN : ys.toPixel(0);
+    const low = Math.max(ys.p0, ys.p1);
+    const high = Math.min(ys.p0, ys.p1);
+    return Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
+  };
+  const pixelRuns = new Map<TraceSpec, Float32Array[]>();
+  const runsOf = (trace: ResolvedTrace): Float32Array[] => {
+    let runs = pixelRuns.get(trace.spec);
+    if (!runs) {
+      const { xs, ys } = scalesOf(trace.spec);
+      runs = tracePixels(trace.y, trace.x, xs, ys).runs;
+      if (trace.spec.mode === "cityscape") {
+        runs = runs.map((run) => {
+          const steps = new Float32Array(Math.max(0, run.length * 2 - 2));
+          for (let index = 0, at = 0; index < run.length; index += 2) {
+            if (index > 0) {
+              steps[at++] = run[index]!;
+              steps[at++] = run[index - 1]!;
+            }
+            steps[at++] = run[index]!;
+            steps[at++] = run[index + 1]!;
+          }
+          return steps;
+        });
+      }
+      pixelRuns.set(trace.spec, runs);
+    }
+    return runs;
+  };
+
   const geometry: TraceGeometry[] = [];
-  for (const { spec, y, x } of traces) {
-    const xs = info.get(spec.hAxis)!.scale;
-    const ys = info.get(spec.vAxis)!.scale;
+  traces.forEach((trace, order) => {
+    const { spec, y, x } = trace;
+    const { xs, ys } = scalesOf(spec);
     const clip = clipFor(spec);
     const children: Prim[] = [];
     const dash = DASHES[spec.lineStyle];
-    const item: TraceGeometry = { name: spec.name, runs: [], markers: null };
+    const item: TraceGeometry = {
+      name: spec.name,
+      xScale: xs,
+      yScale: ys,
+      runs: [],
+      markers: null,
+    };
+
+    // The colors of the points, when a wave gives them: a function from a
+    // point's index to its step in the color table (-1: no color, use the trace's).
+    const zWave = spec.colorWave === null ? undefined : waves[spec.colorWave];
+    let binOf: ((index: number) => number) | null = null;
+    if (zWave && !zWave.text) {
+      const extent = extentOf(zWave.data);
+      const zMin = spec.colorMin ?? extent.min;
+      const zMax = spec.colorMax ?? extent.max;
+      const span = zMax - zMin;
+      binOf = (index) => {
+        const z = zWave.data[index];
+        if (z === undefined || Number.isNaN(z)) return -1;
+        const fraction = span > 0 ? (z - zMin) / span : 0.5;
+        return Math.max(0, Math.min(COLOR_BINS - 1, Math.floor(fraction * COLOR_BINS)));
+      };
+    } else if (spec.colorWave !== null) {
+      missing.add(spec.colorWave);
+    }
+    const binColor = (bin: number): string =>
+      bin < 0 ? spec.color : colorAt(spec.colorTable, (bin + 0.5) / COLOR_BINS);
+    /** Splits points (x, y pairs or longer groups of `stride` numbers) by color. */
+    const byColor = (points: ArrayLike<number>, indices: readonly number[], stride: number) => {
+      const groups = new Map<number, number[]>();
+      indices.forEach((index, at) => {
+        const bin = binOf!(index);
+        let group = groups.get(bin);
+        if (!group) groups.set(bin, (group = []));
+        for (let part = 0; part < stride; part += 1) group.push(points[at * stride + part]!);
+      });
+      return [...groups].sort(([one], [other]) => one - other);
+    };
+
+    // The area under the trace, behind everything else of it.
+    if (spec.fill !== "none") {
+      const fill = spec.fillColor ?? spec.color;
+      const opacity = spec.fillOpacity;
+      const upper = runsOf(trace);
+      if (spec.fill === "zero") {
+        const base = baseline(ys);
+        for (const run of upper) {
+          if (run.length < 4) continue;
+          const points = new Float32Array(run.length + 4);
+          points.set(run);
+          points.set([run[run.length - 2]!, base, run[0]!, base], run.length);
+          children.push({ kind: "polygon", points, fill, opacity });
+        }
+      } else {
+        // Out along this trace and back along the next one, if they share axes.
+        const next = traces[order + 1];
+        if (next && next.spec.hAxis === spec.hAxis && next.spec.vAxis === spec.vAxis) {
+          const out = upper.flatMap((run) => Array.from(run));
+          const forward = runsOf(next).flatMap((run) => Array.from(run));
+          const lower: number[] = [];
+          for (let index = forward.length - 2; index >= 0; index -= 2) {
+            lower.push(forward[index]!, forward[index + 1]!);
+          }
+          if (out.length >= 4 && lower.length >= 4) {
+            children.push({
+              kind: "polygon",
+              points: Float32Array.from([...out, ...lower]),
+              fill,
+              opacity,
+            });
+          }
+        }
+      }
+    }
 
     const yError = errorAt(spec.yError, waves);
     const xError = errorAt(spec.xError, waves);
@@ -1067,98 +1385,113 @@ export function layoutGraph(
     const wantsLine =
       spec.mode === "lines" || spec.mode === "lines+markers" || spec.mode === "cityscape";
     if (wantsLine) {
-      let { runs } = tracePixels(y, x, xs, ys);
-      if (spec.mode === "cityscape") {
-        runs = runs.map((run) => {
-          const steps = new Float32Array(Math.max(0, run.length * 2 - 2));
-          for (let index = 0, at = 0; index < run.length; index += 2) {
-            if (index > 0) {
-              steps[at++] = run[index]!;
-              steps[at++] = run[index - 1]!;
-            }
-            steps[at++] = run[index]!;
-            steps[at++] = run[index + 1]!;
-          }
-          return steps;
-        });
-      }
-      for (const run of runs) {
-        children.push({
-          kind: "polyline",
-          points: run,
-          stroke: spec.color,
-          width: spec.lineSize,
-          dash,
-        });
-      }
+      const runs = runsOf(trace);
       item.runs = runs;
-    }
-    if (spec.mode !== "lines" && spec.mode !== "cityscape") {
-      const points = markerPixels(y, x, xs, ys, clip);
-      item.markers = points;
-      if (spec.mode === "bars") {
-        // Bars share each slot: together they fill 80% of the spacing between points.
-        const slot = barSlots.get(spec)!;
-        const groups = slot.of();
-        const perUnit = Math.abs((xs.p1 - xs.p0) / (xs.max - xs.min));
-        const barWidth = Math.max(1, (barSpacing(y, x) * perUnit * 0.8) / groups);
-        const shift = (slot.index - (groups - 1) / 2) * barWidth;
-        const zero = ys.log ? Number.NaN : ys.toPixel(0);
-        const low = Math.max(ys.p0, ys.p1);
-        const high = Math.min(ys.p0, ys.p1);
-        const base = Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
-        for (let index = 0; index < points.length; index += 2) {
-          const top = points[index + 1]!;
+      const { first, last } = visibleRange(y, x, xs.min, xs.max);
+      if (binOf && spec.mode !== "cityscape" && last - first < COLORED_LINE_LIMIT) {
+        // Each piece of the line takes the color of the point it starts from.
+        const pieces: number[] = [];
+        const starts: number[] = [];
+        let fromX = Number.NaN;
+        let fromY = Number.NaN;
+        for (let index = first; index <= last; index += 1) {
+          const px = xs.toPixel(traceX(y, x, index));
+          const py = ys.toPixel(y.data[index]!);
+          if (Number.isFinite(fromX) && Number.isFinite(fromY) && Number.isFinite(px + py)) {
+            pieces.push(fromX, fromY, px, py);
+            starts.push(index - 1);
+          }
+          fromX = px;
+          fromY = py;
+        }
+        for (const [bin, points] of byColor(pieces, starts, 4)) {
           children.push({
-            kind: "rect",
-            x: points[index]! + shift - barWidth / 2,
-            y: Math.min(top, base),
-            w: barWidth,
-            h: Math.abs(top - base),
-            fill: spec.color,
+            kind: "segments",
+            points: Float32Array.from(points),
+            stroke: binColor(bin),
+            width: spec.lineSize,
+            dash,
           });
         }
-      } else if (spec.mode === "sticks") {
-        // Sticks run from each point to zero, or to the axis if zero is off-scale.
-        const zero = ys.log ? Number.NaN : ys.toPixel(0);
-        const low = Math.max(ys.p0, ys.p1);
-        const high = Math.min(ys.p0, ys.p1);
-        const base = Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
-        const segments = new Float32Array(points.length * 2);
-        for (let index = 0; index < points.length; index += 2) {
-          segments.set([points[index]!, points[index + 1]!, points[index]!, base], index * 2);
-        }
-        children.push({
-          kind: "segments",
-          points: segments,
-          stroke: spec.color,
-          width: spec.lineSize,
-        });
-      } else if (spec.mode === "dots") {
-        children.push({
-          kind: "markers",
-          points,
-          shape: "square",
-          size: Math.max(0.75, spec.lineSize),
-          fill: spec.color,
-          stroke: spec.color,
-          width: 0,
-        });
       } else {
-        children.push({
-          kind: "markers",
-          points,
-          shape: spec.marker,
-          size: spec.markerSize,
-          fill: spec.markerFill ? spec.color : null,
-          stroke: spec.color,
-          width: Math.max(1, spec.lineSize),
-        });
+        for (const run of runs) {
+          children.push({
+            kind: "polyline",
+            points: run,
+            stroke: spec.color,
+            width: spec.lineSize,
+            dash,
+          });
+        }
+      }
+    }
+    if (spec.mode !== "lines" && spec.mode !== "cityscape") {
+      const indices: number[] = [];
+      const points = markerPixels(y, x, xs, ys, clip, indices);
+      item.markers = points;
+      // One group in the trace's color, or one per color when a wave gives them.
+      const groups: [string, ArrayLike<number>][] = binOf
+        ? byColor(points, indices, 2).map(([bin, group]) => [binColor(bin), group])
+        : [[spec.color, points]];
+      for (const [color, group] of groups) {
+        if (spec.mode === "bars") {
+          // Bars share each slot: together they fill 80% of the distance between points.
+          const slot = barSlots.get(spec)!;
+          const count = slot.of();
+          const pitch = barPitch(y, x, info.get(spec.hAxis)!.scale);
+          const barWidth = Math.max(1, (pitch * 0.8) / count);
+          const shift = (slot.index - (count - 1) / 2) * barWidth;
+          const base = baseline(ys);
+          for (let index = 0; index < group.length; index += 2) {
+            const top = group[index + 1]!;
+            children.push({
+              kind: "rect",
+              x: group[index]! + shift - barWidth / 2,
+              y: Math.min(top, base),
+              w: barWidth,
+              h: Math.abs(top - base),
+              fill: color,
+            });
+          }
+        } else if (spec.mode === "sticks") {
+          // Sticks run from each point to zero, or to the axis if zero is off-scale.
+          const base = baseline(ys);
+          const segments = new Float32Array(group.length * 2);
+          for (let index = 0; index < group.length; index += 2) {
+            segments.set([group[index]!, group[index + 1]!, group[index]!, base], index * 2);
+          }
+          children.push({
+            kind: "segments",
+            points: segments,
+            stroke: color,
+            width: spec.lineSize,
+          });
+        } else if (spec.mode === "dots") {
+          children.push({
+            kind: "markers",
+            points: group,
+            shape: "square",
+            size: Math.max(0.75, spec.lineSize),
+            fill: color,
+            stroke: color,
+            width: 0,
+          });
+        } else {
+          children.push({
+            kind: "markers",
+            points: group,
+            shape: spec.marker,
+            size: spec.markerSize,
+            fill: spec.markerFill ? color : null,
+            stroke: color,
+            width: Math.max(1, spec.lineSize),
+          });
+        }
       }
     }
     clipped(spec, children);
     geometry.push(item);
-  }
+  });
 
   /** Draws an axis line with ticks and labels at `line`, for an axis or its mirror. */
   const drawAxis = (
@@ -1265,8 +1598,9 @@ export function layoutGraph(
     ][]) {
       const trace = traces.find((item) => item.spec.name === cursor.trace);
       if (!trace || cursor.point >= trace.y.data.length) continue;
-      const x = info.get(trace.spec.hAxis)!.scale.toPixel(traceX(trace.y, trace.x, cursor.point));
-      const y = info.get(trace.spec.vAxis)!.scale.toPixel(trace.y.data[cursor.point]!);
+      const scales = scalesOf(trace.spec);
+      const x = scales.xs.toPixel(traceX(trace.y, trace.x, cursor.point));
+      const y = scales.ys.toPixel(trace.y.data[cursor.point]!);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       cursors.push({ name, trace: cursor.trace, point: cursor.point, x, y });
       // A is round and B is square, as in Igor.
@@ -1285,6 +1619,8 @@ export function layoutGraph(
           points: [x - 9, y, x + 9, y, x, y - 9, x, y + 9],
           stroke: INK,
           width: 1,
+          // On whole pixels, so the cross is sharp wherever the point falls.
+          crisp: true,
         },
       ];
       emitText(mark, layoutText(name, 10, family, measure), x + 7, y - 7, { family, fill: INK });
@@ -1292,15 +1628,43 @@ export function layoutGraph(
     }
   }
 
+  const bounds: Rect = { x: 0, y: 0, w: width, h: height };
+  const annotations: AnnotationGeometry[] = [];
   for (const annotation of graph.annotations) {
+    let box: Rect | null;
     if (annotation.kind === "colorscale") {
-      emitColorScale(prims, annotation, graph, imageInfos, plot, measure);
+      box = emitColorScale(prims, annotation, graph, imageInfos, plot, bounds, measure);
     } else {
-      emitAnnotation(prims, annotation, graph, plot, measure);
+      let target: TagTarget | null = null;
+      const trace = traces.find((item) => item.spec.name === annotation.trace);
+      if (annotation.kind === "tag" && trace && annotation.point < trace.y.data.length) {
+        const scales = scalesOf(trace.spec);
+        const x = traceX(trace.y, trace.x, annotation.point);
+        const y = trace.y.data[annotation.point]!;
+        const px = scales.xs.toPixel(x);
+        const py = scales.ys.toPixel(y);
+        const area = clipFor(trace.spec);
+        // A tag whose point is out of view is not drawn.
+        if (px >= area.x && px <= area.x + area.w && py >= area.y && py <= area.y + area.h) {
+          target = { px, py, x, y, date: info.get(trace.spec.hAxis)!.kind === "date" };
+        }
+      }
+      box = emitAnnotation(prims, annotation, graph, plot, bounds, measure, target, zone);
     }
+    if (box) annotations.push({ name: annotation.name, box });
   }
 
-  return { width, height, prims, plot, axes, traces: geometry, cursors, missing: [...missing] };
+  return {
+    width,
+    height,
+    prims,
+    annotations,
+    plot,
+    axes,
+    traces: geometry,
+    cursors,
+    missing: [...missing],
+  };
 }
 
 /** Distance from a point to the nearest part of a trace, in pixels. */

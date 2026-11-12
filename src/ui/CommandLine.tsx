@@ -246,6 +246,12 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
                 key: "Enter",
                 run: (target) => {
                   if (target.composing) return false;
+                  // With the completion list open, Enter picks from it and never runs
+                  // the line, even in the instant before the list accepts input.
+                  if (completionStatus(target.state) !== null) {
+                    acceptCompletion(target);
+                    return true;
+                  }
                   const { doc, selection } = target.state;
                   const atEnd = selection.main.empty && selection.main.head === doc.length;
                   if (kernel.getState().input !== null) return submit(target);

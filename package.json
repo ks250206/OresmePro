@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev",
-    "build": "tsc -b && vp build",
+    "dev": "node scripts/fetch-pyodide.mjs && vp dev",
+    "build": "node scripts/fetch-pyodide.mjs && tsc -b && vp build",
     "preview": "vp preview",
     "check": "vp check",
-    "test": "vp test",
+    "test": "node scripts/fetch-pyodide.mjs && vp test",
+    "e2e": "playwright test",
+    "pyodide": "node scripts/fetch-pyodide.mjs",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -26,6 +28,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "^4.3.4",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",

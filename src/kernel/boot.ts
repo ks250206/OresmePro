@@ -64,8 +64,14 @@ export async function bootPython(
   onProgress("Starting Python…");
   pyodide.runPython(`import sys\nsys.path.insert(0, ${JSON.stringify(SITE)})`);
   const kernel = pyodide.pyimport("oresme_kernel");
+  // Before Python is running the code, there is no Python task to cancel:
+  // an interrupt that arrives while packages are loading is remembered here.
+  let loading = false;
+  let cancelled = false;
   return {
     execute: async (code) => {
+      loading = true;
+      cancelled = false;
       // `import scipy` just works: packages from the Pyodide distribution are
       // fetched the first time the code imports them.
       try {
@@ -73,11 +79,18 @@ export async function bootPython(
       } catch {
         // Not fatal: the import itself will report what is missing.
       }
+      loading = false;
+      if (cancelled) {
+        hooks.error("KeyboardInterrupt", "", "KeyboardInterrupt");
+        return false;
+      }
+      kernel.prepare();
       return Boolean(await kernel.execute(code));
     },
     complete: (code, cursor) => JSON.parse(kernel.complete(code, cursor)) as CompletionItem[],
     interrupt: () => {
-      kernel.interrupt();
+      if (loading) cancelled = true;
+      else kernel.interrupt();
     },
   };
 }

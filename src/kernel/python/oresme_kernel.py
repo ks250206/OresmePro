@@ -6,8 +6,10 @@ An IPython shell whose input comes from the command line and whose output
 
 import asyncio
 import builtins
+import importlib
 import io
 import json
+import os
 import sys
 import time
 
@@ -98,6 +100,8 @@ except (ImportError, AttributeError):
 sys.stdout = _Stream("stdout")
 sys.stderr = _Stream("stderr")
 
+import numpy as np  # noqa: E402
+
 import oresme  # noqa: E402
 
 builtins.input = oresme._input
@@ -107,7 +111,150 @@ shell.colors = "lightbg"
 shell.run_cell("import numpy as np\nimport oresme as op", store_history=False, silent=True)
 
 
+# Python works in a directory of its own. What is in it belongs to the
+# experiment: the application keeps a copy of every file, saves it with the
+# experiment, and puts it back when the experiment is opened again.
+WORKDIR = "/experiment"
+_MAX_FILE_BYTES = 64 * 1024 * 1024
+os.makedirs(WORKDIR, exist_ok=True)
+os.chdir(WORKDIR)
+if "" not in sys.path:
+    sys.path.insert(0, "")
+
+# path -> (size, mtime) of each file as the application last knew it.
+_synced = {}
+# path -> the application's version of the file that is on disk here.
+_versions = {}
+# procedure name -> its code as written to <name>.py.
+_procedures = {}
+_too_large = set()
+
+
+def _stat(path):
+    info = os.stat(os.path.join(WORKDIR, path))
+    return (info.st_size, info.st_mtime_ns)
+
+
+def _write(path, data):
+    full = os.path.join(WORKDIR, path)
+    os.makedirs(os.path.dirname(full) or WORKDIR, exist_ok=True)
+    with open(full, "wb") as handle:
+        handle.write(data)
+
+
+def _remove(path):
+    try:
+        os.remove(os.path.join(WORKDIR, path))
+    except OSError:
+        pass
+
+
+def _pull():
+    """Make the working directory match the application before an input runs.
+
+    Procedures become <name>.py, so they can be run and imported. Files that
+    were added, replaced or removed in the application (or that came with an
+    experiment just opened) are written or deleted here.
+    """
+    state = oresme._call("filesState")[0]
+    procedures = {item["name"]: item["code"] for item in state["procedures"]}
+    changed = False
+    for name, code in procedures.items():
+        if _procedures.get(name) != code:
+            _write(f"{name}.py", code.encode("utf-8"))
+            # So that `import name` picks up the new text.
+            sys.modules.pop(name, None)
+            changed = True
+    for name in set(_procedures) - set(procedures):
+        _remove(f"{name}.py")
+        sys.modules.pop(name, None)
+        changed = True
+    _procedures.clear()
+    _procedures.update(procedures)
+
+    files = state["files"]
+    for path, version in files.items():
+        if _versions.get(path) == version:
+            continue
+        info, words = oresme._call("readFile", {"path": path})
+        _write(path, words.tobytes()[: info["size"]] if words is not None else b"")
+        _versions[path] = info["version"]
+        _synced[path] = _stat(path)
+        changed = True
+    for path in set(_versions) - set(files):
+        _remove(path)
+        _versions.pop(path, None)
+        _synced.pop(path, None)
+        changed = True
+    if changed:
+        importlib.invalidate_caches()
+
+
+def _scan():
+    found = {}
+    for folder, folders, names in os.walk(WORKDIR):
+        folders[:] = [name for name in folders if name != "__pycache__"]
+        for name in names:
+            path = os.path.relpath(os.path.join(folder, name), WORKDIR).replace(os.sep, "/")
+            try:
+                found[path] = _stat(path)
+            except OSError:
+                pass
+    return found
+
+
+def _push():
+    """Tell the application what the input wrote to or deleted from the working directory."""
+    found = _scan()
+    # Asked again: the input may have made a procedure, whose file is here already.
+    procedures = {item["name"] for item in oresme._call("filesState")[0]["procedures"]}
+    for path, stat in found.items():
+        if _synced.get(path) == stat:
+            continue
+        name, extension = os.path.splitext(path)
+        if extension == ".py" and name in procedures:
+            # A procedure's text lives in its window, not in the file store.
+            _synced[path] = stat
+            continue
+        if stat[0] > _MAX_FILE_BYTES:
+            if path not in _too_large:
+                _too_large.add(path)
+                print(
+                    f"{path} is larger than {_MAX_FILE_BYTES >> 20} MB and is not kept with the experiment.",
+                    file=sys.stderr,
+                )
+            _synced[path] = stat
+            continue
+        with open(os.path.join(WORKDIR, path), "rb") as handle:
+            data = handle.read()
+        words = np.frombuffer(data + b"\0" * (-len(data) % 8), dtype=np.float64)
+        _versions[path] = oresme._call("putFile", {"path": path, "size": len(data)}, words)[0]
+        _synced[path] = stat
+    for path in set(_synced) - set(found):
+        _synced.pop(path, None)
+        if _versions.pop(path, None) is not None:
+            oresme._call("removeFile", {"path": path})
+
+
+def _sync(step):
+    try:
+        step()
+    except Exception as error:  # The input itself must still run, and report.
+        print(f"Could not sync the experiment's files: {error}", file=sys.stderr)
+
+
 _current_task = None
+# idle: nothing to interrupt. pending: an input has been handed over but its
+# task has not started. running: the task is executing the input.
+_state = "idle"
+_interrupt_requested = False
+
+
+def prepare():
+    """Announce that execute() is about to be called."""
+    global _state, _interrupt_requested
+    _state = "pending"
+    _interrupt_requested = False
 
 
 def interrupt():
@@ -116,22 +263,39 @@ def interrupt():
     Synchronous code is interrupted separately, through Pyodide's interrupt
     buffer; this covers the case where Python is idle inside the event loop
     and a signal would have nowhere sensible to land.
+
+    A request that arrives after the input was handed over but before its
+    task starts is remembered and honoured when the task begins. One that
+    arrives after the input has finished is for nothing, and is dropped: it
+    must not be left to hit whatever runs next.
     """
-    if _current_task is not None and not _current_task.done():
+    global _interrupt_requested
+    if _state == "running" and _current_task is not None and not _current_task.done():
         _current_task.cancel()
+    elif _state == "pending":
+        _interrupt_requested = True
 
 
 async def execute(code):
     """Run one input. Returns True if it finished without an error."""
-    global _current_task
+    global _current_task, _state, _interrupt_requested
     _current_task = asyncio.current_task()
+    _state = "running"
     try:
-        return await _execute(code)
+        if _interrupt_requested:
+            raise asyncio.CancelledError
+        _sync(_pull)
+        try:
+            return await _execute(code)
+        finally:
+            _sync(_push)
     except asyncio.CancelledError:
         _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
         return False
     finally:
         _current_task = None
+        _state = "idle"
+        _interrupt_requested = False
 
 
 async def _execute(code):

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "../doc/doc";
-import type { Wave } from "../doc/types";
+import { defaultAxis, type Wave } from "../doc/types";
 import { tracePixels, visibleRange, xExtentOf } from "./decimate";
 import type { MeasureText, Prim } from "./displayList";
 import { axisRange, layoutGraph } from "./layout";
+import { layoutPage, translatePrims } from "./page";
+import { toPdf } from "./pdf";
 import { parseRichText } from "./richText";
 import { makeScale } from "./scale";
 import { toSvg } from "./svg";
@@ -13,10 +15,14 @@ import {
   dateTicks,
   formatDate,
   formatNumber,
+  formatTick,
+  isTickFormat,
+  isTimeZone,
   linearTicks,
   logTicks,
   niceStep,
   parseDate,
+  timeZone,
 } from "./ticks";
 
 const measure: MeasureText = (text, size) => text.length * size * 0.55;
@@ -24,6 +30,8 @@ const measure: MeasureText = (text, size) => text.length * size * 0.55;
 const makeWave = (data: number[], extra: Partial<Wave> = {}): Wave => ({
   name: "w",
   data: new Float64Array(data),
+  imag: null,
+  type: "float64",
   text: null,
   shape: [data.length],
   x0: 0,
@@ -76,6 +84,58 @@ describe("linear ticks", () => {
   it("handles reversed and empty ranges", () => {
     expect(labels(linearTicks(10, 0, 5, false))).toEqual(["0", "2", "4", "6", "8", "10"]);
     expect(linearTicks(1, 1, 5, false).major).toEqual([]);
+  });
+});
+
+describe("tick steps and formats", () => {
+  it("puts ticks at a chosen step", () => {
+    const ticks = linearTicks(0, 1, 5, false, { step: 0.25 });
+    expect(ticks.major.map((tick) => tick.label)).toEqual(["0", "0.25", "0.5", "0.75", "1"]);
+    expect(linearTicks(0, 0.35, 5, false, { step: 0.1 }).major.map((tick) => tick.label)).toEqual([
+      "0",
+      "0.1",
+      "0.2",
+      "0.3",
+    ]);
+    // A step that would make thousands of ticks is not used.
+    expect(linearTicks(0, 1000, 5, false, { step: 0.001 }).major.length).toBeLessThan(12);
+  });
+
+  it("writes labels in a Python-style format", () => {
+    expect(formatTick(1234.5, ".1f")).toBe("1234.5");
+    expect(formatTick(1234.5, ",.0f")).toBe("1,235");
+    expect(formatTick(-0.5, ".2f")).toBe("−0.50");
+    expect(formatTick(-0.001, ".1f")).toBe("0.0");
+    expect(formatTick(0.25, "%")).toBe("25%");
+    expect(formatTick(0.125, ".1%")).toBe("12.5%");
+    expect(formatTick(12000, "e")).toBe("1.2×10^{4}");
+    expect(formatTick(0.00012, ".0e")).toBe("1×10^{−4}");
+    expect(formatTick(0, ".1e")).toBe("0");
+    expect(formatTick(5, "+d")).toBe("+5");
+    expect(formatTick(1234567, "g")).toBe("1.23457e6");
+    expect(formatTick(0.5, ".3")).toBe("0.500");
+    expect(isTickFormat(".2f")).toBe(true);
+    for (const bad of ["", "x", ".2q", "%.2f", "2f"]) expect(isTickFormat(bad)).toBe(false);
+  });
+
+  it("keeps the full value in the labels when a format is given", () => {
+    const auto = linearTicks(0, 2e6, 5, false);
+    expect(auto.exponent).toBe(6);
+    const plain = linearTicks(0, 2e6, 5, false, { format: ",.0f" });
+    expect(plain.exponent).toBe(0);
+    expect(plain.major.map((tick) => tick.label)).toEqual([
+      "0",
+      "500,000",
+      "1,000,000",
+      "1,500,000",
+      "2,000,000",
+    ]);
+    expect(logTicks(1, 1000, 5, "g").major.map((tick) => tick.label)).toEqual([
+      "1",
+      "10",
+      "100",
+      "1000",
+    ]);
   });
 });
 
@@ -150,6 +210,67 @@ describe("dates", () => {
 
   it("leaves very short ranges to ordinary ticks", () => {
     expect(dateTicks(100, 101, 5)).toBeNull();
+  });
+});
+
+describe("dates in a time zone", () => {
+  const tokyo = timeZone("Asia/Tokyo");
+  const newYork = timeZone("America/New_York");
+  const noonUtc = Date.UTC(2026, 0, 15, 12) / 1000;
+
+  it("shows a moment on the clock of the zone", () => {
+    expect(formatDate(noonUtc)).toBe("2026-01-15 12:00:00");
+    expect(formatDate(noonUtc, tokyo)).toBe("2026-01-15 21:00:00");
+    expect(formatDate(noonUtc, newYork)).toBe("2026-01-15 07:00:00");
+    // Summer time: four hours behind UTC instead of five.
+    expect(formatDate(Date.UTC(2026, 6, 15, 12) / 1000, newYork)).toBe("2026-07-15 08:00:00");
+    // Midnight in the zone is written as the day alone.
+    expect(formatDate(Date.UTC(2026, 0, 14, 15) / 1000, tokyo)).toBe("2026-01-15");
+  });
+
+  it("reads a time without an offset on the clock of the zone", () => {
+    expect(parseDate("2026-01-15 21:00", tokyo)).toBe(noonUtc);
+    expect(parseDate("2026-01-15 07:00", newYork)).toBe(noonUtc);
+    expect(parseDate("2026-07-15 08:00", newYork)).toBe(Date.UTC(2026, 6, 15, 12) / 1000);
+    // An offset in the text wins over the zone.
+    expect(parseDate("2026-01-15T12:00:00Z", tokyo)).toBe(noonUtc);
+    expect(parseDate("2026-01-15 13:00+01:00", tokyo)).toBe(noonUtc);
+    // What is shown reads back as the same moment.
+    for (const zone of [tokyo, newYork]) {
+      expect(parseDate(formatDate(noonUtc + 1234, zone), zone)).toBe(noonUtc + 1234);
+    }
+  });
+
+  it("puts ticks on round times of the zone's clock", () => {
+    const start = Date.UTC(2026, 0, 15, 0) / 1000;
+    const ticks = dateTicks(start, start + 86400, 6, tokyo)!;
+    // 00:00 UTC is 09:00 in Tokyo: the first round time after it is 12:00 there.
+    expect(ticks.major[0]).toEqual({ value: start + 3 * 3600, label: "01-15 12:00" });
+    expect(ticks.major.map((tick) => tick.label)).toContain("01-16 00:00");
+    expect(ticks.context).toBe("2026 Asia/Tokyo");
+    for (const tick of ticks.major) {
+      expect(formatDate(tick.value, tokyo)).toMatch(/(00:00|:00:00)$|^\d{4}-\d{2}-\d{2}$/);
+    }
+    // Days begin at the zone's midnight, also across the change to summer time.
+    const march = Date.UTC(2026, 2, 6) / 1000;
+    const days = dateTicks(march, march + 6 * 86400, 6, newYork)!;
+    expect(days.major.map((tick) => formatDate(tick.value, newYork))).toEqual([
+      "2026-03-06",
+      "2026-03-07",
+      "2026-03-08",
+      "2026-03-09",
+      "2026-03-10",
+      "2026-03-11",
+    ]);
+    expect(days.major[3]!.value - days.major[2]!.value).toBe(23 * 3600);
+  });
+
+  it("knows which names are zones", () => {
+    expect(isTimeZone("UTC")).toBe(true);
+    expect(isTimeZone("local")).toBe(true);
+    expect(isTimeZone("Europe/Paris")).toBe(true);
+    expect(isTimeZone("Mars/Olympus")).toBe(false);
+    expect(isTimeZone(5)).toBe(false);
   });
 });
 
@@ -234,19 +355,135 @@ describe("decimation", () => {
   });
 });
 
+describe("decimation of long waves", () => {
+  /** What a set of runs covers: for each run and pixel column, the lowest and highest Y. */
+  const coverage = (runs: Float32Array[]) =>
+    runs.map((run) => {
+      const columns = new Map<number, [number, number]>();
+      for (let index = 0; index < run.length; index += 2) {
+        const column = Math.floor(run[index]!);
+        const y = run[index + 1]!;
+        const seen = columns.get(column);
+        if (!seen) columns.set(column, [y, y]);
+        else columns.set(column, [Math.min(seen[0], y), Math.max(seen[1], y)]);
+      }
+      return {
+        start: [run[0], run[1]],
+        end: [run.at(-2), run.at(-1)],
+        columns: [...columns].sort(([a], [b]) => a - b),
+      };
+    });
+
+  const noisy = (count: number, seed: number) => {
+    const data = new Float64Array(count);
+    let state = seed;
+    for (let index = 0; index < count; index += 1) {
+      // A small generator, so the test does not depend on Math.random.
+      state = (state * 1664525 + 1013904223) >>> 0;
+      data[index] = Math.sin(index / 5000) * 3 + state / 2 ** 32;
+    }
+    return data;
+  };
+
+  it("draws the same picture whether or not blocks stand for their points", () => {
+    const data = noisy(300_000, 7);
+    // Gaps: single points, a whole block, and one that straddles blocks.
+    data[1000] = NaN;
+    data.fill(NaN, 64 * 300, 64 * 301);
+    data.fill(Infinity, 64 * 900 + 30, 64 * 902 + 10);
+    const cases: [
+      string,
+      Wave,
+      Wave | null,
+      ReturnType<typeof makeScale>,
+      ReturnType<typeof makeScale>,
+    ][] = [
+      [
+        "whole wave",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "zoomed in",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(700.3, 1900.7, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "reversed axis",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 840, 40),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "falling X",
+        makeWave([], { data, shape: [data.length], x0: 3000, dx: -0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+      [
+        "log Y",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0, 3000, false, 40, 840),
+        makeScale(0.01, 10, true, 400, 20),
+      ],
+      [
+        "log X",
+        makeWave([], { data, shape: [data.length], dx: 0.01 }),
+        null,
+        makeScale(0.01, 3000, true, 40, 840),
+        makeScale(-4, 5, false, 400, 20),
+      ],
+    ];
+    const xData = new Float64Array(data.length).map((_, index) => (index / data.length) ** 2 * 100);
+    cases.push([
+      "X wave",
+      makeWave([], { data, shape: [data.length] }),
+      makeWave([], { data: xData, shape: [data.length] }),
+      makeScale(0, 100, false, 40, 840),
+      makeScale(-4, 5, false, 400, 20),
+    ]);
+    for (const [label, y, x, xs, ys] of cases) {
+      const fast = tracePixels(y, x, xs, ys);
+      const plain = tracePixels(y, x, xs, ys, false);
+      expect(fast.decimated, label).toBe(true);
+      expect(coverage(fast.runs), label).toEqual(coverage(plain.runs));
+    }
+  });
+
+  it("follows the data when it changes", () => {
+    const data = noisy(200_000, 3);
+    const xs = makeScale(0, 200_000, false, 0, 500);
+    const ys = makeScale(-10, 10, false, 300, 0);
+    const before = tracePixels(makeWave([], { data, shape: [data.length] }), null, xs, ys);
+    // A wave that changes gets a new array, as the document makes one: a spike shows.
+    const changed = data.slice();
+    changed[123_456] = 9;
+    const after = tracePixels(
+      makeWave([], { data: changed, shape: [changed.length] }),
+      null,
+      xs,
+      ys,
+    );
+    const highest = (runs: Float32Array[]) => {
+      let top = Infinity;
+      for (const run of runs)
+        for (let index = 1; index < run.length; index += 2) top = Math.min(top, run[index]!);
+      return top;
+    };
+    expect(highest(after.runs)).toBeCloseTo(ys.toPixel(9), 3);
+    expect(highest(before.runs)).toBeGreaterThan(ys.toPixel(5));
+  });
+});
+
 describe("axisRange", () => {
-  const axis = {
-    side: "left",
-    span: [0, 1],
-    label: null,
-    min: null,
-    max: null,
-    log: false,
-    mirror: "off",
-    ticks: "outside",
-    minor: false,
-    grid: "off",
-  } as const;
+  const axis = defaultAxis("left");
   it("autoscales to the data exactly", () => {
     expect(axisRange(axis, { min: -2, max: 7, minPositive: 1 })).toEqual([-2, 7]);
   });
@@ -315,6 +552,329 @@ describe("layoutGraph", () => {
     );
     expect(wide.plot.x).toBeGreaterThan(narrow.plot.x);
     expect(texts(wide.prims)).toContain("Voltage (mV)");
+  });
+
+  it("reverses an axis and follows its tick step and format", () => {
+    const doc = graphDoc();
+    const state = () => doc.getState();
+    const plain = layoutGraph(state().graphs.Graph0!, state().waves, 400, 300, measure);
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { reverse: true, tickStep: 0.5, tickFormat: ".2f" },
+    });
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { reverse: true } });
+    const layout = layoutGraph(state().graphs.Graph0!, state().waves, 400, 300, measure);
+    const { bottom, left } = layout.axes;
+    // The same range, drawn the other way round.
+    expect([bottom!.scale.min, bottom!.scale.max]).toEqual([
+      plain.axes.bottom!.scale.min,
+      plain.axes.bottom!.scale.max,
+    ]);
+    expect(bottom!.scale.toPixel(0)).toBeGreaterThan(bottom!.scale.toPixel(1));
+    expect(left!.scale.toPixel(0.002)).toBeGreaterThan(left!.scale.toPixel(-0.002));
+    expect(bottom!.scale.toValue(bottom!.scale.toPixel(1.25))).toBeCloseTo(1.25, 9);
+    const all = texts(layout.prims);
+    for (const label of ["0.00", "0.50", "1.00", "1.50"]) expect(all).toContain(label);
+    // The trace is still drawn, point for point.
+    expect(layout.traces[0]!.runs[0]!.length).toBe(400);
+
+    expect(() =>
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickFormat: "x" } }),
+    ).toThrow(/tickFormat/);
+    expect(() =>
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickStep: 0 } }),
+    ).toThrow();
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: { tickFormat: "" } });
+    expect(state().graphs.Graph0!.axes.left!.tickFormat).toBeNull();
+  });
+
+  const find = <K extends Prim["kind"]>(
+    prims: readonly Prim[],
+    kind: K,
+  ): Extract<Prim, { kind: K }>[] =>
+    prims.flatMap((prim) =>
+      prim.kind === kind
+        ? [prim as Extract<Prim, { kind: K }>]
+        : prim.kind === "clip"
+          ? find(prim.children, kind)
+          : [],
+    );
+
+  function pairDoc() {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "hi", data: Float64Array.of(2, 3, 4, 3) });
+    doc.dispatch({ op: "makeWave", name: "lo", data: Float64Array.of(1, 1, 2, 1) });
+    doc.dispatch({ op: "makeWave", name: "z", data: Float64Array.of(0, 1, 2, NaN) });
+    doc.dispatch({ op: "display", y: ["hi", "lo"] });
+    return doc;
+  }
+  const lay = (doc: Doc) =>
+    layoutGraph(doc.getState().graphs.Graph0!, doc.getState().waves, 400, 300, measure);
+
+  it("fills under a trace to zero, and between a trace and the next", () => {
+    const doc = pairDoc();
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "lo",
+      props: { fill: "zero", fillColor: "#00ff00", fillOpacity: 0.5 },
+    });
+    let layout = lay(doc);
+    // Zero comes into view for the fill to stand on.
+    expect(layout.axes.left!.scale.min).toBe(0);
+    let [area] = find(layout.prims, "polygon");
+    expect(area).toMatchObject({ fill: "#00ff00", opacity: 0.5 });
+    const zero = layout.axes.left!.scale.toPixel(0);
+    // Four points of the trace, then back along zero.
+    expect(area!.points.length).toBe(12);
+    expect(Array.from(area!.points).slice(8).map(Math.round)).toEqual(
+      [layout.axes.bottom!.scale.toPixel(3), zero, layout.axes.bottom!.scale.toPixel(0), zero].map(
+        Math.round,
+      ),
+    );
+
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "lo", props: { fill: "none" } });
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "hi", props: { fill: "next" } });
+    layout = lay(doc);
+    [area] = find(layout.prims, "polygon");
+    // Out along "hi" and back along "lo"; in the trace's own color by default.
+    expect(area!.points.length).toBe(16);
+    expect(area!.fill).toBe("#ff0000");
+    expect(area!.points[14]).toBeCloseTo(layout.axes.bottom!.scale.toPixel(0), 3);
+    expect(area!.points[15]).toBeCloseTo(layout.axes.left!.scale.toPixel(1), 3);
+    const svg = toSvg(layout.prims, 400, 300);
+    expect(svg).toContain('<polygon points="');
+    expect(svg).toContain('fill-opacity="0.25"');
+  });
+
+  it("draws a trace shifted by its offsets and makes room for it", () => {
+    const doc = pairDoc();
+    const before = lay(doc);
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { xOffset: 10, yOffset: 100 },
+    });
+    const layout = lay(doc);
+    expect(layout.axes.left!.scale.max).toBe(104);
+    expect(layout.axes.bottom!.scale.max).toBe(13);
+    const trace = layout.traces[0]!;
+    // Point 1 of "hi" is (1, 3) in the wave and (11, 103) on the axes.
+    expect(trace.runs[0]![2]).toBeCloseTo(layout.axes.bottom!.scale.toPixel(11), 3);
+    expect(trace.runs[0]![3]).toBeCloseTo(layout.axes.left!.scale.toPixel(103), 3);
+    expect(trace.xScale.toValue(trace.runs[0]![2]!)).toBeCloseTo(1, 4);
+    // The other trace stays where its values are.
+    expect(layout.traces[1]!.yScale).toBe(layout.axes.left!.scale);
+    expect(before.axes.left!.scale.max).toBe(4);
+
+    // A cursor sits on the shifted point.
+    doc.dispatch({ op: "setCursor", graph: "Graph0", cursor: "A", trace: "hi", point: 1 });
+    const cursor = lay(doc).cursors[0]!;
+    expect(cursor.x).toBeCloseTo(trace.runs[0]![2]!, 3);
+    expect(cursor.y).toBeCloseTo(trace.runs[0]![3]!, 3);
+  });
+
+  it("colors points and line pieces from a wave", () => {
+    const doc = pairDoc();
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { mode: "markers", colorWave: "z", colorTable: "grays" },
+    });
+    let layout = lay(doc);
+    const groups = find(layout.prims, "markers");
+    // Three values of z and one NaN, which keeps the trace's color.
+    expect(groups.map((group) => group.points.length)).toEqual([2, 2, 2, 2]);
+    const fills = groups.map((group) => group.fill);
+    expect(fills[0]).toBe("#ff0000");
+    expect(new Set(fills).size).toBe(4);
+    // Dark to light along the gray table.
+    const level = (color: string | null) => Number.parseInt(color!.slice(1, 3), 16);
+    expect(level(fills[1]!)).toBeLessThan(level(fills[2]!));
+    expect(level(fills[2]!)).toBeLessThan(level(fills[3]!));
+
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Graph0",
+      trace: "hi",
+      props: { mode: "lines", colorMin: 0, colorMax: 1000 },
+    });
+    layout = lay(doc);
+    const pieces = find(layout.prims, "segments").filter((prim) => !prim.crisp);
+    // With the range that wide, the three pieces fall on the same step of the table.
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0]!.points.length).toBe(12);
+
+    // The color wave belongs to the graph: it cannot be killed, and follows a rename.
+    expect(() => doc.dispatch({ op: "killWaves", names: ["z"] })).toThrow(/in use/);
+    doc.dispatch({ op: "renameWave", name: "z", newName: "depth" });
+    expect(doc.getState().graphs.Graph0!.traces[0]!.colorWave).toBe("depth");
+    expect(() =>
+      doc.dispatch({
+        op: "modifyTrace",
+        graph: "Graph0",
+        trace: "hi",
+        props: { colorWave: "nope" },
+      }),
+    ).toThrow();
+  });
+
+  it("gives bars on a log axis the same width in every decade", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "f", data: Float64Array.of(1, 10, 100, 1000) });
+    doc.dispatch({ op: "makeWave", name: "n", data: Float64Array.of(4, 3, 2, 1) });
+    doc.dispatch({ op: "display", y: ["n"], x: "f" });
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "n", props: { mode: "bars" } });
+    doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "bottom", props: { log: true } });
+    const layout = lay(doc);
+    const { scale } = layout.axes.bottom!;
+    // Half a bar of room beyond the first and last point.
+    expect(scale.min).toBeCloseTo(1 / Math.sqrt(10), 9);
+    expect(scale.max).toBeCloseTo(1000 * Math.sqrt(10), 9);
+    const bars = find(layout.prims, "rect").filter((rect) => rect.fill === "#ff0000");
+    expect(bars).toHaveLength(4);
+    const decade = scale.toPixel(10) - scale.toPixel(1);
+    for (const bar of bars) expect(bar.w).toBeCloseTo(decade * 0.8, 3);
+    expect(bars[1]!.x + bars[1]!.w / 2).toBeCloseTo(scale.toPixel(10), 3);
+  });
+
+  it("moves annotations by their offsets and keeps them inside the graph", () => {
+    const doc = pairDoc();
+    doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "legend" });
+    const home = lay(doc);
+    const [start] = home.annotations;
+    expect(start!.name).toBe("legend0");
+    // Top right of the plot area by default.
+    expect(start!.box.x + start!.box.w).toBe(home.plot.x + home.plot.w - 8);
+
+    doc.dispatch({
+      op: "modifyAnnotation",
+      graph: "Graph0",
+      annotation: "legend0",
+      props: { x: -0.5, y: 0.25 },
+    });
+    const moved = lay(doc).annotations[0]!.box;
+    expect(moved.x).toBe(Math.round(start!.box.x - 0.5 * home.plot.w));
+    expect(moved.y).toBe(Math.round(start!.box.y + 0.25 * home.plot.h));
+    expect([moved.w, moved.h]).toEqual([start!.box.w, start!.box.h]);
+
+    doc.dispatch({
+      op: "modifyAnnotation",
+      graph: "Graph0",
+      annotation: "legend0",
+      props: { x: 5, y: -5 },
+    });
+    const pinned = lay(doc).annotations[0]!.box;
+    expect(pinned.x + pinned.w).toBe(400);
+    expect(pinned.y).toBe(0);
+  });
+
+  it("attaches a tag to a point, with its values in the text", () => {
+    const doc = pairDoc();
+    doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "hi", point: 2 });
+    doc.dispatch({
+      op: "addAnnotation",
+      graph: "Graph0",
+      kind: "tag",
+      trace: "lo",
+      point: 1,
+      text: "p{point}: {y} at {x}",
+      x: 0.2,
+      y: 0.1,
+    });
+    let layout = lay(doc);
+    expect(texts(layout.prims)).toContain("2, 4");
+    expect(texts(layout.prims)).toContain("p1: 1 at 1");
+    const [first] = layout.annotations;
+    const px = layout.axes.bottom!.scale.toPixel(2);
+    const py = layout.axes.left!.scale.toPixel(4);
+    // The middle of the box is offset from the point by the tag's fractions of the plot.
+    expect(first!.box.x + first!.box.w / 2).toBeCloseTo(px + 0.08 * layout.plot.w, 0);
+    // An arrowhead points at the data point.
+    const head = find(layout.prims, "polygon")[0]!;
+    expect(Math.hypot(head.points[0]! - px, head.points[1]! - py)).toBeLessThan(4);
+
+    // The tag follows the point when the data changes or the view is zoomed.
+    doc.dispatch({ op: "setWavePoints", name: "hi", start: 2, values: [2.5] });
+    layout = lay(doc);
+    expect(texts(layout.prims)).toContain("2, 2.5");
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "bottom",
+      props: { min: 0, max: 1.5 },
+    });
+    // Out of view: the tag for point 2 is not drawn, the one for point 1 is.
+    expect(lay(doc).annotations.map((item) => item.name)).toEqual(["tag1"]);
+
+    expect(() =>
+      doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "hi", point: 9 }),
+    ).toThrow(/past the end/);
+    expect(() =>
+      doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "tag", trace: "nope", point: 0 }),
+    ).toThrow();
+    // Tags go with their trace, and follow it through a rename of its wave.
+    doc.dispatch({ op: "renameWave", name: "lo", newName: "low" });
+    expect(doc.getState().graphs.Graph0!.annotations[1]!.trace).toBe("low");
+    doc.dispatch({ op: "removeTraces", graph: "Graph0", traces: ["hi"] });
+    expect(doc.getState().graphs.Graph0!.annotations.map((item) => item.name)).toEqual(["tag1"]);
+  });
+
+  it("labels each contour line, and long lines more than once", () => {
+    const doc = new Doc();
+    const n = 60;
+    const data = new Float64Array(n * n);
+    for (let i = 0; i < n; i += 1) {
+      for (let j = 0; j < n; j += 1) {
+        // Two hills, so one level makes two separate rings.
+        const hill = (cx: number, cy: number) => Math.exp(-((i - cx) ** 2 + (j - cy) ** 2) / 60);
+        data[i * n + j] = hill(15, 30) + hill(45, 30);
+      }
+    }
+    doc.dispatch({ op: "makeWave", name: "m", data, shape: [n, n] });
+    doc.dispatch({ op: "display", y: [] });
+    doc.dispatch({
+      op: "appendContour",
+      graph: "Graph0",
+      wave: "m",
+      props: { levels: [0.5], labels: true },
+    });
+    const state = doc.getState();
+    const small = layoutGraph(state.graphs.Graph0!, state.waves, 500, 400, measure);
+    expect(texts(small.prims).filter((text) => text === "0.5")).toHaveLength(2);
+    // Twice the size: each ring is long enough for more than one label.
+    const large = layoutGraph(state.graphs.Graph0!, state.waves, 1400, 1100, measure);
+    expect(texts(large.prims).filter((text) => text === "0.5").length).toBeGreaterThan(2);
+  });
+
+  it("plots a part of a complex wave, and any number type", () => {
+    const doc = new Doc();
+    doc.dispatch({
+      op: "makeWave",
+      name: "z",
+      data: Float64Array.of(3, 0, -1),
+      imag: Float64Array.of(4, 2, 0),
+    });
+    doc.dispatch({ op: "makeWave", name: "counts", data: Uint8Array.of(0, 100, 200) });
+    doc.dispatch({ op: "display", y: ["z", "counts"] });
+    const top = () => lay(doc).axes.left!.scale;
+    // The real parts by default; with the bytes on the same axis, 0 to 200... and -1.
+    expect([top().min, top().max]).toEqual([-1, 200]);
+    doc.dispatch({ op: "removeTraces", graph: "Graph0", traces: ["counts"] });
+    expect([top().min, top().max]).toEqual([-1, 3]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "magnitude" } });
+    expect([top().min, top().max]).toEqual([1, 5]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "imag" } });
+    expect([top().min, top().max]).toEqual([0, 4]);
+    doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "phase" } });
+    expect(top().max).toBeCloseTo(Math.PI, 12);
+    expect(() =>
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "z", props: { part: "abs" } }),
+    ).toThrow();
   });
 
   it("reports missing waves instead of failing", () => {
@@ -493,5 +1053,98 @@ describe("layoutGraph", () => {
       { kind: "image" }
     >;
     expect(new Set(Array.from(image.rgba.filter((_, index) => index % 4 === 0))).size).toBe(1);
+  });
+});
+
+describe("page layouts", () => {
+  function pageDoc() {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(1, 3, 2), unit: "V" });
+    doc.dispatch({ op: "display", y: ["a"] });
+    doc.dispatch({ op: "newLayout" });
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "graph",
+      graph: "Graph0",
+      x: 100,
+      y: 200,
+      w: 300,
+      h: 200,
+    });
+    doc.dispatch({
+      op: "addLayoutItem",
+      layout: "Layout0",
+      kind: "text",
+      text: "Figure 1\nsecond line",
+      x: 100,
+      y: 420,
+      size: 10,
+    });
+    return doc;
+  }
+
+  it("draws each graph at its place and size on the page", () => {
+    const state = pageDoc().getState();
+    const layout = layoutPage(state.pages.Layout0!, state, measure);
+    expect([layout.width, layout.height]).toEqual([595, 842]);
+    expect(layout.items).toEqual([
+      { name: "graph0", kind: "graph", box: { x: 100, y: 200, w: 300, h: 200 } },
+      {
+        name: "text0",
+        kind: "text",
+        box: { x: 100, y: 420, w: measure("second line", 10, ""), h: 26 },
+      },
+    ]);
+    // The graph as it would be drawn alone at that size, moved to its place.
+    const alone = layoutGraph(state.graphs.Graph0!, state.waves, 300, 200, measure);
+    const clip = layout.prims.find((prim) => prim.kind === "clip")!;
+    expect(clip).toMatchObject({ kind: "clip", x: 100, y: 200, w: 300, h: 200 });
+    const placed = clip.kind === "clip" ? clip.children : [];
+    expect(placed).toHaveLength(alone.prims.length);
+    const text = (prims: readonly Prim[]) =>
+      prims.flatMap((prim) => (prim.kind === "text" ? [[prim.text, prim.x, prim.y]] : []));
+    expect(text(placed)).toEqual(
+      text(alone.prims).map(([label, x, y]) => [label, (x as number) + 100, (y as number) + 200]),
+    );
+    const lines = layout.prims.filter((prim) => prim.kind === "text");
+    expect(lines.map((prim) => (prim.kind === "text" ? prim.text : ""))).toEqual([
+      "Figure 1",
+      "second line",
+    ]);
+  });
+
+  it("moves every kind of drawing instruction, and leaves the original alone", () => {
+    const original: Prim[] = [
+      { kind: "polyline", points: [0, 0, 10, 10], stroke: "#000000", width: 1 },
+      { kind: "rect", x: 1, y: 2, w: 3, h: 4, fill: "#ffffff" },
+      {
+        kind: "clip",
+        x: 0,
+        y: 0,
+        w: 5,
+        h: 5,
+        children: [{ kind: "text", x: 1, y: 1, text: "a", family: "f", size: 9, fill: "#000000" }],
+      },
+    ];
+    const moved = translatePrims(original, 5, -2);
+    expect(Array.from((moved[0] as { points: ArrayLike<number> }).points)).toEqual([5, -2, 15, 8]);
+    expect(moved[1]).toMatchObject({ x: 6, y: 0, w: 3, h: 4 });
+    expect(moved[2]).toMatchObject({ x: 5, y: -2, children: [{ x: 6, y: -1 }] });
+    expect(original[1]).toMatchObject({ x: 1, y: 2 });
+  });
+
+  it("makes a PDF of the paper's own size", () => {
+    const state = pageDoc().getState();
+    const layout = layoutPage(state.pages.Layout0!, state, measure);
+    const pdf = new TextDecoder("latin1").decode(
+      toPdf(layout.prims, layout.width, layout.height, { scale: 1 }),
+    );
+    expect(pdf).toContain("/MediaBox [0 0 595 842]");
+    // A graph alone is in CSS pixels: three quarters of a point each.
+    const graph = layoutGraph(state.graphs.Graph0!, state.waves, 400, 300, measure);
+    expect(new TextDecoder("latin1").decode(toPdf(graph.prims, 400, 300))).toContain(
+      "/MediaBox [0 0 300 225]",
+    );
   });
 });

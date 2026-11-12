@@ -50,12 +50,32 @@ export function Checkbox({
   );
 }
 
-/** A labelled row in a dialog form. */
-export function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
+/**
+ * A labelled row in a dialog form. With `group`, the row holds several
+ * controls that each have a label of their own (two checkboxes, say): the
+ * caption then names the group instead of becoming part of the first
+ * control's name.
+ */
+export function Field({
+  label,
+  group,
+  children,
+}: {
+  label: string;
+  group?: boolean;
+  children: ReactNode;
+}) {
+  const caption = <span className="w-24 shrink-0 text-right text-muted">{label}</span>;
+  const content = <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>;
+  return group ? (
+    <div role="group" aria-label={label} className="flex items-center gap-2">
+      {caption}
+      {content}
+    </div>
+  ) : (
     <label className="flex items-center gap-2">
-      <span className="w-24 shrink-0 text-right text-muted">{label}</span>
-      <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>
+      {caption}
+      {content}
     </label>
   );
 }

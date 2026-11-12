@@ -2,6 +2,8 @@ import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "
 import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
 import type { WindowState } from "../core/doc/types";
 import { GraphWindow } from "./GraphWindow";
+import { LayoutWindow } from "./LayoutWindow";
+import { ProcedureWindow } from "./ProcedureWindow";
 import { TableWindow } from "./TableWindow";
 
 interface Edges {
@@ -156,7 +158,7 @@ function windowTitle(window: WindowState, names: readonly string[]): string {
   return `${window.name}: ${shown}${unique.length > 4 ? ", \u2026" : ""}`;
 }
 
-/** The area where graph and table windows live. */
+/** The area where graph, table and procedure windows live. */
 export function Desktop() {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
@@ -190,13 +192,17 @@ export function Desktop() {
             key={window.name}
             window={window}
             active={window === top}
-            title={windowTitle(window, names)}
+            title={window.kind === "procedure" ? `${window.name}.py` : windowTitle(window, names)}
             z={windows.indexOf(window) + 1}
           >
             {window.kind === "graph" ? (
               <GraphWindow name={window.name} />
-            ) : (
+            ) : window.kind === "table" ? (
               <TableWindow name={window.name} />
+            ) : window.kind === "page" ? (
+              <LayoutWindow name={window.name} />
+            ) : (
+              <ProcedureWindow name={window.name} />
             )}
           </WindowFrame>
         );

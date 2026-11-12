@@ -1,7 +1,30 @@
 import type { Command } from "./commands";
 
+/** Python source to be written as it is, where a literal would otherwise go. */
+class PyExpression {
+  readonly source: string;
+
+  constructor(source: string) {
+    this.source = source;
+  }
+}
+
+const same = (a: unknown, b: unknown): boolean =>
+  a instanceof PyExpression && b instanceof PyExpression ? a.source === b.source : Object.is(a, b);
+
+/** A number as an argument of float() or complex(): plain, or a quoted nan or inf. */
+const pyNumber = (value: number): string =>
+  Number.isFinite(value)
+    ? String(value)
+    : Number.isNaN(value)
+      ? '"nan"'
+      : value > 0
+        ? '"inf"'
+        : '"-inf"';
+
 /** Formats a JavaScript value as a Python literal. */
 export function pyLiteral(value: unknown): string {
+  if (value instanceof PyExpression) return value.source;
   if (value === null || value === undefined) return "None";
   if (typeof value === "boolean") return value ? "True" : "False";
   if (typeof value === "number") {
@@ -30,6 +53,17 @@ function keywords(props: Readonly<Record<string, unknown>>): string {
     .join(", ");
 }
 
+/** The indices along each dimension of a position in C-order data. */
+function unravel(position: number, shape: readonly number[]): number[] {
+  const indices: number[] = [];
+  let rest = position;
+  for (let dim = shape.length - 1; dim >= 0; dim -= 1) {
+    indices.unshift(rest % shape[dim]!);
+    rest = Math.floor(rest / shape[dim]!);
+  }
+  return indices;
+}
+
 const joinArgs = (...parts: string[]): string => parts.filter(Boolean).join(", ");
 
 /** The `axis=` / `haxis=` arguments, left out when they are the defaults. */
@@ -43,20 +77,65 @@ const axisKeywords = (command: { vAxis?: string; hAxis?: string }) => ({
  * actions into the command history. Returns null for commands that cannot be
  * replayed from text (bulk data) or that are only view state.
  */
-export function echoPython(command: Command): string | null {
+export function echoPython(
+  command: Command,
+  shapeOf?: (wave: string) => readonly number[] | undefined,
+): string | null {
   switch (command.op) {
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
     case "activateWindow":
+    case "resizeColumn":
+    case "setProcedure":
       return null;
+    case "newLayout":
+      return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
+    case "modifyLayout":
+      return `op.layout(${pyLiteral(command.layout)}).set(${keywords(command.props)})`;
+    case "addLayoutItem": {
+      const layout = `op.layout(${pyLiteral(command.layout)})`;
+      const place = keywords({ x: command.x, y: command.y, w: command.w, h: command.h });
+      return command.kind === "graph"
+        ? `${layout}.add_graph(${joinArgs(pyLiteral(command.graph), place)})`
+        : `${layout}.add_text(${joinArgs(pyLiteral(command.text), keywords({ x: command.x, y: command.y, size: command.size }))})`;
+    }
+    case "modifyLayoutItem":
+      return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).set(${keywords(command.props)})`;
+    case "removeLayoutItem":
+      return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).remove()`;
+    case "setTimeZone":
+      return `op.set_time_zone(${pyLiteral(command.zone)})`;
+    case "newProcedure":
+      return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
+    case "modifyTable":
+      return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
+    case "redimension":
+      return `op.wave(${pyLiteral(command.name)}).redimension(${pyLiteral(command.type)})`;
     case "setWavePoints": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
-      if (command.values.length === 1) {
-        return `${wave}[${command.start}] = ${pyLiteral(command.values[0])}`;
+      const { start } = command;
+      // Complex points are written as complex(re, im), which also takes nan and inf.
+      const { imag } = command;
+      const values: ArrayLike<number | PyExpression> = imag
+        ? Array.from(
+            command.values,
+            (re, index) => new PyExpression(`complex(${pyNumber(re)}, ${pyNumber(imag[index]!)})`),
+          )
+        : command.values;
+      const shape = shapeOf?.(command.name) ?? [];
+      if (values.length === 1) {
+        // A cell of a matrix is written by its indices, not its place in memory.
+        const index = shape.length > 1 ? unravel(start, shape).join(", ") : String(start);
+        return `${wave}[${index}] = ${pyLiteral(values[0])}`;
       }
-      const end = command.start + command.values.length;
-      return `${wave}[${command.start}:${end}] = ${pyLiteral(Array.from(command.values))}`;
+      const target = `${shape.length > 1 ? `${wave}.flat` : wave}[${start}:${start + values.length}]`;
+      const list = Array.from(values);
+      // A run of one value (clearing a range to NaN) is written once, not per point.
+      if (list.every((value) => same(value, list[0]))) {
+        return `${target} = ${pyLiteral(list[0])}`;
+      }
+      return `${target} = ${pyLiteral(list)}`;
     }
     case "setWaveText": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
@@ -156,7 +235,17 @@ export function echoPython(command: Command): string | null {
       return `op.graph(${pyLiteral(command.graph)}).set(${keywords(command.props)})`;
     case "addAnnotation": {
       const graph = `op.graph(${pyLiteral(command.graph)})`;
-      const options = keywords({ anchor: command.anchor, frame: command.frame });
+      const place = keywords({ x: command.x, y: command.y });
+      if (command.kind === "tag") {
+        return `${graph}.tag(${joinArgs(
+          pyLiteral(command.trace),
+          String(command.point),
+          command.text ? pyLiteral(command.text) : "",
+          keywords({ frame: command.frame }),
+          place,
+        )})`;
+      }
+      const options = joinArgs(keywords({ anchor: command.anchor, frame: command.frame }), place);
       const text = command.text ? pyLiteral(command.text) : "";
       if (command.kind === "legend") return `${graph}.legend(${joinArgs(text, options)})`;
       if (command.kind === "colorscale") return `${graph}.colorscale(${joinArgs(text, options)})`;

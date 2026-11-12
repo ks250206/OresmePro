@@ -2,8 +2,10 @@ import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
 import type { DocState } from "../core/doc/types";
+import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
+import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
 import { measureText } from "./measure";
@@ -22,13 +24,18 @@ export type DialogRequest =
   | { kind: "addAxis"; graph: string }
   | { kind: "modifyGraph"; graph: string }
   | { kind: "addText"; graph: string }
+  | { kind: "editAnnotation"; graph: string; annotation: string }
   | { kind: "renameWave"; wave: string }
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
+  | { kind: "waveType"; wave: string }
   | { kind: "newFolder"; parent: string }
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
+  | { kind: "graphScript"; graph: string }
+  | { kind: "timeZone" }
+  | { kind: "pageText"; layout: string; item?: string }
   | { kind: "about" };
 
 export interface MenuItem {
@@ -61,6 +68,8 @@ export interface UiState {
 
 export const doc = new Doc();
 export const history = new History();
+/** The experiment's files: what Python wrote, and what was added for it to read. */
+export const files = new FileStore();
 export const ui = createStore<UiState>({
   dialog: null,
   alert: null,
@@ -105,6 +114,7 @@ export function exportLayout(
   const size = graphSize(state, name);
   return layoutGraph(graph, state.waves, width ?? size.width, height ?? size.height, measureText, {
     cursors,
+    timeZone: state.timeZone,
   });
 }
 
@@ -118,21 +128,63 @@ export function renderGraphSvg(
   return toSvg(layout.prims, layout.width, layout.height);
 }
 
+/** Lays a page layout out, in points. */
+export function pageLayout(name: string) {
+  const state = doc.getState();
+  const page = state.pages[name];
+  if (!page) throw new Error(`No page layout named ${JSON.stringify(name)}.`);
+  return layoutPage(page, state, measureText);
+}
+
+export function renderPageSvg(name: string): string {
+  const layout = pageLayout(name);
+  return toSvg(layout.prims, layout.width, layout.height);
+}
+
+let pageExportHandler: (page: string, filename: string) => void = () => {};
+export function setPageExportHandler(handler: typeof pageExportHandler): void {
+  pageExportHandler = handler;
+}
+
 let exportHandler: (graph: string, filename: string, cursors: boolean) => void = () => {};
 /** Lets the export code (which depends on this module) serve Python's g.save(). */
 export function setExportHandler(handler: typeof exportHandler): void {
   exportHandler = handler;
 }
 
-const PYODIDE_URL =
+// Pyodide is served with the app (see scripts/fetch-pyodide.mjs). The worker
+// imports it by URL, so the URL has to be absolute.
+export const PYODIDE_URL =
   (import.meta.env.VITE_PYODIDE_URL as string | undefined) ??
-  "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
+  new URL(`${import.meta.env.BASE_URL}pyodide/`, globalThis.location?.href ?? "http://localhost/")
+    .href;
 
-export const kernel = new KernelClient({
+/** The Python that runs a procedure, as it is written into the history. */
+export const runProcedureCode = (name: string): string =>
+  `op.procedure(${JSON.stringify(name)}).run()`;
+
+/**
+ * Runs the procedures of the experiment, as Igor compiles its procedure
+ * windows: what they define is there whenever Python is, after a restart or
+ * after opening an experiment.
+ */
+function runProcedures(): void {
+  for (const procedure of Object.values(doc.getState().procedures)) {
+    if (procedure.autoRun && procedure.code.trim()) {
+      kernel.execute(runProcedureCode(procedure.name), "gui");
+    }
+  }
+}
+
+export const kernel: KernelClient = new KernelClient({
   doc,
   history,
+  files,
+  onStart: runProcedures,
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
+  renderPageSvg,
+  exportPage: (page, filename) => pageExportHandler(page, filename),
   indexURL: PYODIDE_URL,
 });
 
@@ -158,7 +210,9 @@ export function runGui(commands: Command | readonly Command[]): string | null | 
   try {
     for (const command of list) {
       result = doc.dispatch(command, { group });
-      const echo = isTransient(command) ? null : echoPython(command);
+      const echo = isTransient(command)
+        ? null
+        : echoPython(command, (wave) => doc.getState().waves[wave]?.shape);
       if (echo) echoes.push(echo);
     }
   } catch (error) {
@@ -219,6 +273,10 @@ export function useUi<T>(selector: (state: UiState) => T): T {
 
 export function useKernelState() {
   return useSyncExternalStore(kernel.subscribe, kernel.getState);
+}
+
+export function useFiles() {
+  return useSyncExternalStore(files.subscribe, files.list);
 }
 
 export function useHistoryEntries() {

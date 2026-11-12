@@ -25,3 +25,10 @@ bin/
 *.sln
 *.sw?
 .vitest/
+
+# Fetched by scripts/fetch-pyodide.mjs
+public/pyodide/
+
+# Playwright
+test-results/
+playwright-report/

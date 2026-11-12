@@ -1,18 +1,31 @@
+import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
   AXIS_SIDES,
   COLOR_TABLES,
+  COMPLEX_PARTS,
   CURSOR_NAMES,
   DEFAULT_FONT_FAMILY,
+  DEFAULT_TABLE_DIGITS,
   DocError,
+  FILL_MODES,
   GRID_MODES,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
+  PAGE_SIZES,
+  TAG_OFFSET,
   TICK_MODES,
   TRACE_MODES,
+  WAVE_TYPES,
+  isComplexType,
+  newWaveData,
+  storeValues,
+  toWaveData,
+  typeOfData,
+  type WaveData,
   defaultAxis,
   defaultTraceStyle,
   isVerticalSide,
@@ -32,6 +45,9 @@ import {
   type TraceStyle,
   type Wave,
   type WindowState,
+  type PageItem,
+  type PageSpec,
+  type ProcedureSpec,
 } from "./types";
 
 type Props = Readonly<Record<string, unknown>>;
@@ -45,7 +61,11 @@ export type Command =
       op: "makeWave";
       name: string;
       /** Numeric values in C order. Give either this or `text`. */
-      data?: Float64Array;
+      data?: WaveData;
+      /** The imaginary parts, for a complex wave. */
+      imag?: WaveData;
+      /** The number type; by default the type of `data`. Values are converted to it. */
+      type?: string;
       text?: readonly string[];
       /** Defaults to one dimension. */
       shape?: readonly number[];
@@ -63,11 +83,25 @@ export type Command =
   | {
       op: "setWaveData";
       name: string;
-      data?: Float64Array;
+      data?: WaveData;
+      imag?: WaveData;
+      type?: string;
       text?: readonly string[];
       shape?: readonly number[];
     }
-  | { op: "setWavePoints"; name: string; start: number; values: ArrayLike<number> }
+  | {
+      /**
+       * Writes a run of points from `start`. `imag` holds the imaginary parts
+       * for a complex wave; left out, they stay as they are.
+       */
+      op: "setWavePoints";
+      name: string;
+      start: number;
+      values: ArrayLike<number>;
+      imag?: ArrayLike<number>;
+    }
+  /** Changes a wave's number type, converting its values (Igor's Redimension). */
+  | { op: "redimension"; name: string; type: string }
   | { op: "setWaveText"; name: string; start: number; values: readonly string[] }
   | { op: "insertPoints"; name: string; at: number; count: number }
   | { op: "deletePoints"; name: string; at: number; count: number }
@@ -132,19 +166,52 @@ export type Command =
       text?: string;
       anchor?: string;
       frame?: boolean;
+      x?: number;
+      y?: number;
+      /** For a tag: what it points at. */
+      trace?: string;
+      point?: number;
     }
   | { op: "modifyAnnotation"; graph: string; annotation: string; props: Props }
   | { op: "removeAnnotation"; graph: string; annotation: string }
   | { op: "edit"; waves: readonly string[]; name?: string }
   | { op: "appendToTable"; table: string; waves: readonly string[] }
   | { op: "removeFromTable"; table: string; waves: readonly string[] }
+  | { op: "modifyTable"; table: string; props: Props }
+  | { op: "resizeColumn"; table: string; wave: string; width: number }
+  | { op: "setTimeZone"; zone: string }
+  | { op: "newLayout"; name?: string; width?: number; height?: number }
+  | { op: "modifyLayout"; layout: string; props: Props }
+  | {
+      /** Puts a graph or a block of text on a page. Left out, the place is chosen. */
+      op: "addLayoutItem";
+      layout: string;
+      kind: string;
+      graph?: string;
+      text?: string;
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+      size?: number;
+    }
+  | { op: "modifyLayoutItem"; layout: string; item: string; props: Props }
+  | { op: "removeLayoutItem"; layout: string; item: string }
+  | { op: "newProcedure"; name?: string; code?: string }
+  | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
 
-/** Window geometry and focus are view state: not undoable and not echoed. */
+/**
+ * Window geometry, focus and column widths are view state: not undoable and
+ * not echoed. Neither is the text of a procedure: its editor has its own undo.
+ */
 export const isTransient = (command: Command): boolean =>
-  command.op === "moveWindow" || command.op === "activateWindow";
+  command.op === "moveWindow" ||
+  command.op === "activateWindow" ||
+  command.op === "resizeColumn" ||
+  command.op === "setProcedure";
 
 export interface CommandOutcome {
   state: DocState;
@@ -296,27 +363,73 @@ function checkShape(shape: readonly number[] | undefined, length: number): reado
 }
 
 /** The values a command carries: numeric data with a shape, or text. */
+const isWaveData = (value: unknown): value is WaveData =>
+  ArrayBuffer.isView(value) &&
+  !(value instanceof DataView) &&
+  !(value instanceof Uint8ClampedArray);
+
 function contentOf(command: {
-  data?: Float64Array;
+  data?: WaveData;
+  imag?: WaveData;
+  type?: string;
   text?: readonly string[];
   shape?: readonly number[];
-}): Pick<Wave, "data" | "text" | "shape"> {
+}): Pick<Wave, "data" | "imag" | "type" | "text" | "shape"> {
   if (command.text !== undefined) {
     if (!Array.isArray(command.text) || command.text.some((item) => typeof item !== "string")) {
       throw new DocError("A text wave holds a list of strings.");
     }
-    return { data: NO_DATA, text: [...command.text], shape: [command.text.length] };
+    return {
+      data: NO_DATA,
+      imag: null,
+      type: "float64",
+      text: [...command.text],
+      shape: [command.text.length],
+    };
   }
-  if (!(command.data instanceof Float64Array)) throw new DocError("Missing wave data.");
-  return { data: command.data, text: null, shape: checkShape(command.shape, command.data.length) };
+  if (!isWaveData(command.data)) throw new DocError("Missing wave data.");
+  const given = command.imag;
+  if (given !== undefined && !isWaveData(given)) throw new DocError("imag must be numbers.");
+  const type =
+    command.type === undefined
+      ? typeOfData(command.data, given !== undefined)
+      : oneOf(command.type, WAVE_TYPES, "type");
+  const data = toWaveData(command.data, type);
+  let imag: WaveData | null = null;
+  if (isComplexType(type)) {
+    if (given && given.length !== data.length) {
+      throw new DocError("The real and imaginary parts have different lengths.");
+    }
+    imag = given ? toWaveData(given, type) : newWaveData(type, data.length);
+  } else if (given) {
+    throw new DocError(`A wave of type ${type} has no imaginary part.`);
+  }
+  return { data, imag, type, text: null, shape: checkShape(command.shape, data.length) };
+}
+
+/** A copy of wave data with points removed and added at a position; new points hold `fill`. */
+function resized(source: WaveData, at: number, removed: number, added: number, fill: number) {
+  const data = source.slice(0, 0).constructor as new (length: number) => WaveData;
+  const next = new data(source.length - removed + added);
+  next.set(source.subarray(0, at));
+  next.fill(fill, at, at + added);
+  next.set(source.subarray(at + removed), at + added);
+  return next;
 }
 
 const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables;
+  name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
 
 function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
-  const size = kind === "graph" ? { w: 440, h: 300 } : { w: 360, h: 300 };
+  const size =
+    kind === "graph"
+      ? { w: 440, h: 300 }
+      : kind === "table"
+        ? { w: 360, h: 300 }
+        : kind === "page"
+          ? { w: 440, h: 560 }
+          : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -436,6 +549,23 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   hidden: (value) => bool(value, "hidden"),
   yError: errorSource("yError"),
   xError: errorSource("xError"),
+  fill: (value) => oneOf(value, FILL_MODES, "fill"),
+  fillColor: (value) => (value === null ? null : normalizeColor(value)),
+  fillOpacity: (value) => {
+    const opacity = finite(value, "fillOpacity");
+    if (opacity < 0 || opacity > 1) throw new DocError("fillOpacity must be between 0 and 1.");
+    return opacity;
+  },
+  xOffset: (value) => finite(value, "xOffset"),
+  yOffset: (value) => finite(value, "yOffset"),
+  colorWave: (value) => {
+    if (value === null || typeof value === "string") return value;
+    throw new DocError("colorWave must be a wave name or null.");
+  },
+  colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
+  colorMin: (value) => (value === null ? null : finite(value, "colorMin")),
+  colorMax: (value) => (value === null ? null : finite(value, "colorMax")),
+  part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
 };
 
 const nullableNumber = (what: string) => (value: unknown) =>
@@ -454,6 +584,15 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     ticks: (value) => oneOf(value, TICK_MODES, "ticks"),
     minor: (value) => bool(value, "minor"),
     grid: (value) => oneOf(value, GRID_MODES, "grid"),
+    reverse: (value) => bool(value, "reverse"),
+    tickStep: (value) => (value === null ? null : positive(value, "tickStep")),
+    tickFormat: (value) => {
+      if (value === null || value === "") return null;
+      if (typeof value === "string" && isTickFormat(value)) return value;
+      throw new DocError(
+        'tickFormat must be a format such as ".2f", "e", ".1e", "g", ",.0f" or "%", or null.',
+      );
+    },
     span: (value) => {
       if (Array.isArray(value) && value.length === 2) {
         const lo = finite(value[0], "span");
@@ -477,7 +616,10 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
   showInfo: (value) => bool(value, "showInfo"),
 };
 
-type ImageProps = Pick<ImageSpec, "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk">;
+type ImageProps = Pick<
+  ImageSpec,
+  "colorTable" | "zMin" | "zMax" | "reverse" | "layer" | "chunk" | "part"
+>;
 const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProps[K] } = {
   colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
   zMin: nullableNumber("zMin"),
@@ -485,6 +627,7 @@ const IMAGE_VALIDATORS: { [K in keyof ImageProps]: (value: unknown) => ImageProp
   reverse: (value) => bool(value, "reverse"),
   layer: (value) => index(value, "layer"),
   chunk: (value) => index(value, "chunk"),
+  part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
 };
 
 type ContourProps = Pick<
@@ -509,7 +652,7 @@ const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => Conto
   chunk: (value) => index(value, "chunk"),
 };
 
-type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame">;
+type AnnotationProps = Pick<AnnotationSpec, "text" | "anchor" | "frame" | "x" | "y" | "point">;
 const ANNOTATION_VALIDATORS: {
   [K in keyof AnnotationProps]: (value: unknown) => AnnotationProps[K];
 } = {
@@ -519,7 +662,45 @@ const ANNOTATION_VALIDATORS: {
   },
   anchor: (value) => oneOf(value, ANCHORS, "anchor"),
   frame: (value) => bool(value, "frame"),
+  x: (value) => finite(value, "x"),
+  y: (value) => finite(value, "y"),
+  point: (value) => index(value, "point"),
 };
+
+const pageSide = (what: string) => (value: unknown) => {
+  const size = positive(value, what);
+  if (size < 72 || size > 5000) throw new DocError(`${what} must be between 72 and 5000 points.`);
+  return size;
+};
+const PAGE_VALIDATORS = { width: pageSide("width"), height: pageSide("height") };
+
+type ItemProps = Pick<PageItem, "x" | "y" | "w" | "h" | "size" | "text">;
+const ITEM_VALIDATORS: { [K in keyof ItemProps]: (value: unknown) => ItemProps[K] } = {
+  x: (value) => finite(value, "x"),
+  y: (value) => finite(value, "y"),
+  w: (value) => Math.max(40, positive(value, "w")),
+  h: (value) => Math.max(40, positive(value, "h")),
+  size: (value) => {
+    const size = positive(value, "size");
+    if (size < 4 || size > 200) throw new DocError("size must be between 4 and 200.");
+    return size;
+  },
+  text: (value) => {
+    if (typeof value !== "string") throw new DocError("text must be text.");
+    return value;
+  },
+};
+
+function requirePage(state: DocState, name: string): PageSpec {
+  const page = state.pages[name];
+  if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
+  return page;
+}
+
+const putPage = (state: DocState, page: PageSpec): DocState => ({
+  ...state,
+  pages: { ...state.pages, [page.name]: page },
+});
 
 function validateProps<T>(
   props: Props,
@@ -557,6 +738,7 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
         x: trace.x === null ? null : rename(trace.x),
         yError: typeof trace.yError === "string" ? rename(trace.yError) : trace.yError,
         xError: typeof trace.xError === "string" ? rename(trace.xError) : trace.xError,
+        colorWave: trace.colorWave === null ? null : rename(trace.colorWave),
       });
     }
     const cursors: GraphSpec["cursors"] = Object.fromEntries(
@@ -569,13 +751,22 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
       ...graph,
       traces,
       cursors,
+      annotations: graph.annotations.map((item) =>
+        item.trace === null ? item : { ...item, trace: traceNames.get(item.trace) ?? item.trace },
+      ),
       images: graph.images.map((image) => ({ ...image, wave: rename(image.wave) })),
       contours: graph.contours.map((contour) => ({ ...contour, wave: rename(contour.wave) })),
     };
   }
   const tables: Record<string, TableSpec> = {};
   for (const table of Object.values(state.tables)) {
-    tables[table.name] = { ...table, columns: table.columns.map(rename) };
+    tables[table.name] = {
+      ...table,
+      columns: table.columns.map(rename),
+      widths: Object.fromEntries(
+        Object.entries(table.widths).map(([wave, width]) => [rename(wave), width]),
+      ),
+    };
   }
   return { ...state, graphs, tables };
 }
@@ -586,7 +777,11 @@ function waveUsers(state: DocState, name: string): string[] {
     const used =
       graph.traces.some(
         (trace) =>
-          trace.y === name || trace.x === name || trace.yError === name || trace.xError === name,
+          trace.y === name ||
+          trace.x === name ||
+          trace.yError === name ||
+          trace.xError === name ||
+          trace.colorWave === name,
       ) ||
       graph.images.some((image) => image.wave === name) ||
       graph.contours.some((contour) => contour.wave === name);
@@ -645,6 +840,14 @@ function requireItem<T extends { name: string }>(
 /** Checks that an error-bar wave exists and matches its trace. */
 function checkErrorWaves(state: DocState, trace: TraceSpec): void {
   const length = state.waves[trace.y]?.data.length;
+  if (trace.colorWave !== null) {
+    const wave = requireNumeric(state, trace.colorWave, 1, "used to color a trace");
+    if (length !== undefined && wave.data.length !== length) {
+      throw new DocError(
+        `Color wave ${wave.name} has ${wave.data.length} points but ${trace.y} has ${length}.`,
+      );
+    }
+  }
   for (const source of [trace.yError, trace.xError]) {
     if (typeof source !== "string") continue;
     const wave = requireNumeric(state, source, 1, "used for error bars");
@@ -694,6 +897,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const wave = requireWave(state, command.name);
       if (wave.text) throw new DocError(`${wave.name} is a text wave.`);
       const { start, values } = command;
+      if (command.imag && !wave.imag) {
+        throw new DocError(`${wave.name} is not a complex wave.`);
+      }
+      if (command.imag && command.imag.length !== values.length) {
+        throw new DocError("The real and imaginary parts have different lengths.");
+      }
       const growable = wave.shape.length === 1;
       const limit = growable ? wave.data.length : wave.data.length - values.length;
       if (!Number.isInteger(start) || start < 0 || start > limit) {
@@ -701,11 +910,30 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Point ${start} is out of range for ${JSON.stringify(wave.name)} (${wave.data.length} points).`,
         );
       }
-      const data = new Float64Array(Math.max(wave.data.length, start + values.length));
-      data.set(wave.data);
-      data.set(values, start);
+      const grown = Math.max(0, start + values.length - wave.data.length);
+      const data = resized(wave.data, wave.data.length, 0, grown, 0);
+      storeValues(data, wave.type, values, start);
+      let { imag } = wave;
+      if (imag && (grown > 0 || command.imag)) {
+        imag = resized(imag, imag.length, 0, grown, 0);
+        if (command.imag) storeValues(imag, wave.type, command.imag, start);
+      }
       const shape = growable ? [data.length] : wave.shape;
-      return { state: putWave(state, changed(wave, { data, shape })), result: null };
+      return { state: putWave(state, changed(wave, { data, imag, shape })), result: null };
+    }
+    case "redimension": {
+      const wave = requireWave(state, command.name);
+      if (wave.text) throw new DocError(`${wave.name} is a text wave; it has no number type.`);
+      const type = oneOf(command.type, WAVE_TYPES, "type");
+      if (type === wave.type) return { state, result: null };
+      const data = toWaveData(wave.data, type);
+      // Becoming complex adds a zero imaginary part; becoming real keeps the real part.
+      const imag = isComplexType(type)
+        ? wave.imag
+          ? toWaveData(wave.imag, type)
+          : newWaveData(type, data.length)
+        : null;
+      return { state: putWave(state, changed(wave, { data, imag, type })), result: null };
     }
     case "setWaveText": {
       const wave = requireWave(state, command.name);
@@ -747,11 +975,13 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         };
       }
       const added = inserting ? count : 0;
-      const data = new Float64Array(length - (end - at) + added);
-      data.set(wave.data.subarray(0, at));
-      data.fill(Number.NaN, at, at + added);
-      data.set(wave.data.subarray(end), at + added);
-      return { state: putWave(state, changed(wave, { data, shape: [data.length] })), result: null };
+      // New points are NaN (0 in an integer wave, which has no NaN).
+      const data = resized(wave.data, at, end - at, added, Number.NaN);
+      const imag = wave.imag ? resized(wave.imag, at, end - at, added, Number.NaN) : null;
+      return {
+        state: putWave(state, changed(wave, { data, imag, shape: [data.length] })),
+        result: null,
+      };
     }
     case "setWaveScale": {
       const wave = requireWave(state, command.name);
@@ -807,7 +1037,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       return {
-        state: putWave(state, changed(wave, { name: newName, data: wave.data.slice() })),
+        state: putWave(
+          state,
+          changed(wave, {
+            name: newName,
+            data: wave.data.slice(),
+            imag: wave.imag?.slice() ?? null,
+          }),
+        ),
         result: newName,
       };
     }
@@ -907,7 +1144,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ([, cursor]) => !command.traces.includes(cursor.trace),
         ),
       );
-      return { state: putGraph(state, { ...graph, traces, cursors }), result: null };
+      // A tag goes with the trace it points at.
+      const annotations = graph.annotations.filter(
+        (item) => item.trace === null || !command.traces.includes(item.trace),
+      );
+      return { state: putGraph(state, { ...graph, traces, cursors, annotations }), result: null };
     }
     case "modifyTrace": {
       const graph = requireGraph(state, command.graph);
@@ -923,6 +1164,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           typeof next.yError === "string" ? requireWave(state, next.yError).name : next.yError,
         xError:
           typeof next.xError === "string" ? requireWave(state, next.xError).name : next.xError,
+        colorWave: next.colorWave === null ? null : requireWave(state, next.colorWave).name,
       };
       const traces = graph.traces.map((item) => (item === trace ? normalized : item));
       return { state: putGraph(state, { ...graph, traces }), result: null };
@@ -1001,6 +1243,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         reverse: false,
         layer: 0,
         chunk: 0,
+        part: "real",
         ...validateProps<ImageProps>(command.props ?? {}, IMAGE_VALIDATORS, "image"),
       };
       checkPlane(wave, image);
@@ -1099,6 +1342,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         if (graph.images.length === 0) throw new DocError(`${graph.name} has no image.`);
         if (text !== "") requireItem(graph.images, text, graph.name, "image");
       }
+      const tag = kind === "tag";
+      if (tag) {
+        const trace = requireItem(graph.traces, command.trace ?? "", graph.name, "trace");
+        const length = state.waves[trace.y]?.data.length ?? 0;
+        if (index(command.point, "point") >= length) {
+          throw new DocError(`Point ${command.point} is past the end of ${trace.name}.`);
+        }
+      }
       const annotation: AnnotationSpec = {
         name: uniqueName(kind, (name) => graph.annotations.some((item) => item.name === name)),
         kind,
@@ -1107,6 +1358,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           command.anchor ?? (kind === "colorscale" ? "RC" : "RT"),
         ),
         frame: ANNOTATION_VALIDATORS.frame(command.frame ?? true),
+        x: ANNOTATION_VALIDATORS.x(command.x ?? (tag ? TAG_OFFSET.x : 0)),
+        y: ANNOTATION_VALIDATORS.y(command.y ?? (tag ? TAG_OFFSET.y : 0)),
+        trace: tag ? command.trace! : null,
+        point: tag ? command.point! : 0,
       };
       return {
         state: putGraph(state, { ...graph, annotations: [...graph.annotations, annotation] }),
@@ -1143,7 +1398,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
         state: {
-          ...putTable(state, { name, columns }),
+          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: {} }),
           windows: [...state.windows, placeWindow(state, name, "table")],
         },
         result: name,
@@ -1158,7 +1413,185 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeFromTable": {
       const table = requireTable(state, command.table);
       const columns = table.columns.filter((column) => !command.waves.includes(column));
-      return { state: putTable(state, { ...table, columns }), result: null };
+      const widths = Object.fromEntries(
+        Object.entries(table.widths).filter(([wave]) => columns.includes(wave)),
+      );
+      return { state: putTable(state, { ...table, columns, widths }), result: null };
+    }
+    case "modifyTable": {
+      const table = requireTable(state, command.table);
+      const props = validateProps<Pick<TableSpec, "digits">>(
+        command.props,
+        {
+          digits: (value) => {
+            if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 17) {
+              throw new DocError("digits must be a whole number from 1 to 17.");
+            }
+            return value;
+          },
+        },
+        "table",
+      );
+      return { state: putTable(state, { ...table, ...props }), result: null };
+    }
+    case "resizeColumn": {
+      const table = requireTable(state, command.table);
+      if (!table.columns.includes(command.wave)) return { state, result: null };
+      const width = Math.round(Math.max(32, Math.min(800, command.width)));
+      return {
+        state: putTable(state, { ...table, widths: { ...table.widths, [command.wave]: width } }),
+        result: null,
+      };
+    }
+    case "setTimeZone": {
+      if (!isTimeZone(command.zone)) {
+        throw new DocError(
+          `${JSON.stringify(command.zone)} is not a time zone. Use "UTC", "local" or a name such as "Asia/Tokyo".`,
+        );
+      }
+      return { state: { ...state, timeZone: command.zone }, result: null };
+    }
+    case "newLayout": {
+      const name =
+        command.name === undefined
+          ? uniqueName("Layout", windowTaken(state))
+          : checkName(command.name, "layout");
+      if (windowTaken(state)(name)) {
+        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+      }
+      const page: PageSpec = {
+        name,
+        width: PAGE_VALIDATORS.width(command.width ?? PAGE_SIZES.A4[0]),
+        height: PAGE_VALIDATORS.height(command.height ?? PAGE_SIZES.A4[1]),
+        items: [],
+      };
+      return {
+        state: {
+          ...state,
+          pages: { ...state.pages, [name]: page },
+          windows: [...state.windows, placeWindow(state, name, "page")],
+        },
+        result: name,
+      };
+    }
+    case "modifyLayout": {
+      const page = requirePage(state, command.layout);
+      const props = validateProps<Pick<PageSpec, "width" | "height">>(
+        command.props,
+        PAGE_VALIDATORS,
+        "layout",
+      );
+      return { state: putPage(state, { ...page, ...props }), result: null };
+    }
+    case "addLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const kind = oneOf(command.kind, ["graph", "text"] as const, "kind");
+      const margin = 36;
+      // Below what is there already, or back at the top if that is off the page.
+      let below = margin;
+      for (const item of page.items) below = Math.max(below, item.y + item.h + 12);
+      const base = { x: margin, y: below < page.height - 2 * margin ? below : margin };
+      let item: PageItem;
+      if (kind === "graph") {
+        const graph = requireGraph(state, command.graph ?? "");
+        const w = Math.min(page.width - 2 * margin, 440);
+        item = {
+          name: uniqueName("graph", (name) => page.items.some((other) => other.name === name)),
+          kind,
+          graph: graph.name,
+          text: "",
+          ...base,
+          w,
+          h: Math.round(w * 0.68),
+          size: 12,
+        };
+      } else {
+        if (typeof command.text !== "string" || command.text === "") {
+          throw new DocError("Give the text to put on the page.");
+        }
+        item = {
+          name: uniqueName("text", (name) => page.items.some((other) => other.name === name)),
+          kind,
+          graph: null,
+          text: command.text,
+          ...base,
+          w: 0,
+          h: 0,
+          size: 12,
+        };
+      }
+      const given: Record<string, unknown> = {};
+      for (const key of ["x", "y", "w", "h", "size"] as const) {
+        if (command[key] !== undefined) given[key] = command[key];
+      }
+      item = { ...item, ...validateProps<ItemProps>(given, ITEM_VALIDATORS, "item") };
+      return {
+        state: putPage(state, { ...page, items: [...page.items, item] }),
+        result: item.name,
+      };
+    }
+    case "modifyLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const target = requireItem(page.items, command.item, page.name, "item");
+      const props = validateProps<ItemProps>(command.props, ITEM_VALIDATORS, "item");
+      const items = page.items.map((item) => (item === target ? { ...item, ...props } : item));
+      return { state: putPage(state, { ...page, items }), result: null };
+    }
+    case "removeLayoutItem": {
+      const page = requirePage(state, command.layout);
+      const target = requireItem(page.items, command.item, page.name, "item");
+      return {
+        state: putPage(state, { ...page, items: page.items.filter((item) => item !== target) }),
+        result: null,
+      };
+    }
+    case "newProcedure": {
+      let name = "Procedure";
+      if (command.name !== undefined) {
+        name = checkName(command.name, "procedure");
+      } else {
+        // Procedure, Procedure1, Procedure2: the first is plain, like Igor's.
+        for (let count = 1; windowTaken(state)(name); count += 1) name = `Procedure${count}`;
+      }
+      // The procedure is a Python module of this name.
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new DocError('A procedure name can have only ASCII letters, digits and "_".');
+      }
+      if (windowTaken(state)(name)) {
+        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+      }
+      if (command.code !== undefined && typeof command.code !== "string") {
+        throw new DocError("code must be text.");
+      }
+      const procedure: ProcedureSpec = { name, code: command.code ?? "", autoRun: true };
+      return {
+        state: {
+          ...state,
+          procedures: { ...state.procedures, [name]: procedure },
+          windows: [...state.windows, placeWindow(state, name, "procedure")],
+        },
+        result: name,
+      };
+    }
+    case "setProcedure": {
+      const procedure = state.procedures[command.name];
+      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(command.name)}.`);
+      if (command.code !== undefined && typeof command.code !== "string") {
+        throw new DocError("code must be text.");
+      }
+      const next: ProcedureSpec = {
+        ...procedure,
+        code: command.code ?? procedure.code,
+        autoRun:
+          command.autoRun === undefined ? procedure.autoRun : bool(command.autoRun, "autoRun"),
+      };
+      if (next.code === procedure.code && next.autoRun === procedure.autoRun) {
+        return { state, result: null };
+      }
+      return {
+        state: { ...state, procedures: { ...state.procedures, [command.name]: next } },
+        result: null,
+      };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
@@ -1166,13 +1599,30 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       }
       const graphs = { ...state.graphs };
       const tables = { ...state.tables };
+      const procedures = { ...state.procedures };
+      const pages = { ...state.pages };
+      // A graph that is closed leaves the pages it was on.
+      if (command.name in graphs) {
+        for (const [name, page] of Object.entries(pages)) {
+          if (page.items.some((item) => item.graph === command.name)) {
+            pages[name] = {
+              ...page,
+              items: page.items.filter((item) => item.graph !== command.name),
+            };
+          }
+        }
+      }
       delete graphs[command.name];
       delete tables[command.name];
+      delete procedures[command.name];
+      delete pages[command.name];
       return {
         state: {
           ...state,
           graphs,
           tables,
+          procedures,
+          pages,
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

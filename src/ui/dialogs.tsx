@@ -1,12 +1,22 @@
 import { useState } from "react";
 import { newMatrixPlot, pyName, runPython } from "../app/actions";
 import { parseConstraints, parseHold } from "../app/fitOptions";
-import { runGui, ui, useDoc, useUi, type DialogRequest } from "../app/session";
+import {
+  doc,
+  requestCommandLine,
+  runGui,
+  ui,
+  useDoc,
+  useUi,
+  type DialogRequest,
+} from "../app/session";
 import type { Command } from "../core/doc/commands";
+import { graphScript } from "../core/doc/recreate";
 import {
   ANCHORS,
   AXIS_SIDES,
   COLOR_TABLES,
+  COMPLEX_PARTS,
   DEFAULT_FONT_FAMILY,
   GRID_MODES,
   LINE_STYLES,
@@ -15,6 +25,7 @@ import {
   TICK_MODES,
   TRACE_COLORS,
   TRACE_MODES,
+  WAVE_TYPES,
   isVerticalSide,
   leafName,
   type AxisSpec,
@@ -23,8 +34,9 @@ import {
   type GraphSpec,
   type ImageSpec,
   type TraceStyle,
+  type WaveType,
 } from "../core/doc/types";
-import { formatNumber } from "../core/plot/ticks";
+import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
 
 const close = () => ui.set({ dialog: null });
@@ -403,6 +415,13 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   const [changes, setChanges] = useState<Partial<TraceStyle>>({});
   const [lineSize, setLineSize] = useState<string | null>(null);
   const [markerSize, setMarkerSize] = useState<string | null>(null);
+  const [offsets, setOffsets] = useState<{ x: string | null; y: string | null }>({
+    x: null,
+    y: null,
+  });
+  const [opacity, setOpacity] = useState<string | null>(null);
+  const colorWaves = useNumericWaves(1);
+  const complexWaves = useDoc((state) => state.waves);
   const base = graph?.traces.find((item) => item.name === selected[0]);
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -415,7 +434,24 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   const parsedMarker = markerSize === null ? undefined : parseNumber(markerSize);
   if (typeof parsedLine === "number") sizes.lineSize = parsedLine;
   if (typeof parsedMarker === "number") sizes.markerSize = parsedMarker;
-  const invalid = parsedLine === null || parsedMarker === null;
+  const parsedX = offsets.x === null ? undefined : parseNumber(offsets.x || "0");
+  const parsedY = offsets.y === null ? undefined : parseNumber(offsets.y || "0");
+  if (typeof parsedX === "number") sizes.xOffset = parsedX;
+  if (typeof parsedY === "number") sizes.yOffset = parsedY;
+  // Opacity is entered in percent.
+  const parsedOpacity = opacity === null ? undefined : parseNumber(opacity);
+  const opacityInvalid =
+    parsedOpacity === null ||
+    (parsedOpacity !== undefined && (parsedOpacity < 0 || parsedOpacity > 100));
+  if (typeof parsedOpacity === "number" && !opacityInvalid) {
+    sizes.fillOpacity = parsedOpacity / 100;
+  }
+  const invalid =
+    parsedLine === null ||
+    parsedMarker === null ||
+    parsedX === null ||
+    parsedY === null ||
+    opacityInvalid;
   const props = { ...changes, ...sizes };
 
   return (
@@ -513,6 +549,79 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
             value={current.xError}
             onChange={(xError) => set({ xError })}
           />
+          {complexWaves[base.y]?.imag ? (
+            <Field label="Complex part">
+              <Select
+                aria-label="Complex part"
+                value={current.part}
+                onChange={(event) => set({ part: event.target.value as TraceStyle["part"] })}
+              >
+                {COMPLEX_PARTS.map((part) => (
+                  <option key={part}>{part}</option>
+                ))}
+              </Select>
+              <span className="text-muted">of each value</span>
+            </Field>
+          ) : null}
+          <Field label="Fill">
+            <Select
+              aria-label="Fill"
+              value={current.fill}
+              onChange={(event) => set({ fill: event.target.value as TraceStyle["fill"] })}
+            >
+              <option value="none">none</option>
+              <option value="zero">to zero</option>
+              <option value="next">to next trace</option>
+            </Select>
+            <TextInput
+              aria-label="Fill opacity"
+              aria-invalid={opacityInvalid}
+              disabled={current.fill === "none"}
+              className="w-12"
+              value={opacity ?? String(Math.round(base.fillOpacity * 100))}
+              onChange={(event) => setOpacity(event.target.value)}
+            />
+            <span className="text-muted">% opaque</span>
+          </Field>
+          <Field label="Offset">
+            <span className="text-muted">X</span>
+            <TextInput
+              aria-label="X offset"
+              aria-invalid={parsedX === null}
+              className="w-20"
+              value={offsets.x ?? formatNumber(base.xOffset, 10)}
+              onChange={(event) => setOffsets({ ...offsets, x: event.target.value })}
+            />
+            <span className="text-muted">Y</span>
+            <TextInput
+              aria-label="Y offset"
+              aria-invalid={parsedY === null}
+              className="w-20"
+              value={offsets.y ?? formatNumber(base.yOffset, 10)}
+              onChange={(event) => setOffsets({ ...offsets, y: event.target.value })}
+            />
+          </Field>
+          <Field label="Color by">
+            <Select
+              aria-label="Color by"
+              className="min-w-0 flex-1"
+              value={current.colorWave ?? ""}
+              onChange={(event) => set({ colorWave: event.target.value || null })}
+            >
+              <option value="">trace color</option>
+              {colorWaves.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </Select>
+            {current.colorWave !== null ? (
+              <ColorTableSelect
+                value={current.colorTable}
+                onChange={(colorTable) =>
+                  set({ colorTable: colorTable as TraceStyle["colorTable"] })
+                }
+              />
+            ) : null}
+          </Field>
           <Field label="">
             <Checkbox
               label="Hide trace"
@@ -541,6 +650,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const [min, setMin] = useState<string | null>(null);
   const [max, setMax] = useState<string | null>(null);
   const [span, setSpan] = useState<[string, string] | null>(null);
+  const [step, setStep] = useState<string | null>(null);
   const base = graph?.axes[axis];
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -567,6 +677,23 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
       spanHigh > 100 ||
       spanHigh - spanLow < 2);
   if (span && !spanInvalid) props.span = [spanLow! / 100, spanHigh! / 100];
+  // An empty step goes back to automatic ticks.
+  const parsedStep = step === null ? undefined : step.trim() === "" ? null : parseNumber(step);
+  const stepInvalid = step !== null && step.trim() !== "" && !(parsedStep! > 0);
+  if (parsedStep !== undefined && !stepInvalid) props.tickStep = parsedStep;
+  const formats: [string, string][] = [
+    ["", "Automatic"],
+    [".0f", "0 decimals"],
+    [".1f", "1 decimal"],
+    [".2f", "2 decimals"],
+    [".3f", "3 decimals"],
+    [",.0f", "Thousands: 12,000"],
+    [".1e", "Scientific: 1.2×10⁴"],
+    ["%", "Percent"],
+  ];
+  if (current.tickFormat && !formats.some(([value]) => value === current.tickFormat)) {
+    formats.push([current.tickFormat, current.tickFormat]);
+  }
 
   const switchAxis = (next: string) => {
     setAxis(next);
@@ -574,13 +701,14 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
     setMin(null);
     setMax(null);
     setSpan(null);
+    setStep(null);
   };
 
   return (
     <Dialog
       title={`Modify Axis — ${graphName}`}
       onClose={close}
-      submitDisabled={invalid || spanInvalid || Object.keys(props).length === 0}
+      submitDisabled={invalid || spanInvalid || stepInvalid || Object.keys(props).length === 0}
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
     >
       <Field label="Axis">
@@ -640,11 +768,16 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           Autoscale
         </Button>
       </Field>
-      <Field label="Scale">
+      <Field label="Scale" group>
         <Checkbox
           label="Logarithmic"
           checked={current.log}
           onChange={(event) => set({ log: event.target.checked })}
+        />
+        <Checkbox
+          label="Reversed"
+          checked={current.reverse}
+          onChange={(event) => set({ reverse: event.target.checked })}
         />
       </Field>
       <Field label="Ticks">
@@ -662,6 +795,29 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           checked={current.minor}
           onChange={(event) => set({ minor: event.target.checked })}
         />
+        <span className="text-muted">every</span>
+        <TextInput
+          aria-label="Tick step"
+          aria-invalid={stepInvalid}
+          className="w-16"
+          placeholder="auto"
+          disabled={current.log}
+          value={step ?? show(current.tickStep)}
+          onChange={(event) => setStep(event.target.value)}
+        />
+      </Field>
+      <Field label="Tick labels">
+        <Select
+          aria-label="Tick labels"
+          value={current.tickFormat ?? ""}
+          onChange={(event) => set({ tickFormat: event.target.value || null })}
+        >
+          {formats.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </Select>
       </Field>
       <Field label="Mirror">
         <Select
@@ -985,42 +1141,87 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
   );
 }
 
-function AddTextDialog({ graph }: { graph: string }) {
-  const [text, setText] = useState("");
-  const [anchor, setAnchor] = useState("RT");
-  const [frame, setFrame] = useState(true);
+/** Adds a text box, or changes a legend, text box, color scale or tag that is there. */
+function AddTextDialog({ graph, annotation }: { graph: string; annotation?: string }) {
+  const existing = useDoc((state) =>
+    state.graphs[graph]?.annotations.find((item) => item.name === annotation),
+  );
+  const [text, setText] = useState(existing?.text ?? "");
+  const [anchor, setAnchor] = useState<string>(existing?.anchor ?? "RT");
+  const [frame, setFrame] = useState(existing?.frame ?? true);
+  if (annotation && !existing) return null;
+  const kind = existing?.kind ?? "text";
+  const hint =
+    kind === "legend"
+      ? "Leave empty to list every trace. \\s(traceName) draws a trace's symbol."
+      : kind === "tag"
+        ? "{x}, {y} and {point} stand for the point's values. Leave empty to show x, y."
+        : kind === "colorscale"
+          ? ""
+          : "^{...} is a superscript and _{...} a subscript.";
+  const props: Record<string, unknown> = {};
+  if (existing) {
+    if (text !== existing.text) props.text = text;
+    if (anchor !== existing.anchor) {
+      // A new anchor is a new home: start from there, not from where it was dragged to.
+      Object.assign(props, { anchor, x: 0, y: 0 });
+    }
+    if (frame !== existing.frame) props.frame = frame;
+  }
   return (
     <Dialog
-      title={`Add Text — ${graph}`}
+      title={existing ? `Modify ${existing.name} — ${graph}` : `Add Text — ${graph}`}
       onClose={close}
-      submitDisabled={text.trim() === ""}
-      onSubmit={() => submit({ op: "addAnnotation", graph, kind: "text", text, anchor, frame })}
+      submitDisabled={existing ? Object.keys(props).length === 0 : text.trim() === ""}
+      onSubmit={() =>
+        submit(
+          existing
+            ? { op: "modifyAnnotation", graph, annotation: existing.name, props }
+            : { op: "addAnnotation", graph, kind: "text", text, anchor, frame },
+        )
+      }
     >
-      <textarea
-        aria-label="Text"
-        autoFocus
-        rows={4}
-        spellCheck={false}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-      />
-      <Field label="Position">
-        <Select
-          aria-label="Position"
-          value={anchor}
-          onChange={(event) => setAnchor(event.target.value)}
-        >
-          {ANCHORS.map((value) => (
-            <option key={value}>{value}</option>
-          ))}
-        </Select>
+      {kind === "colorscale" ? null : (
+        <textarea
+          aria-label="Text"
+          autoFocus
+          rows={4}
+          spellCheck={false}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+        />
+      )}
+      {hint ? <div className="text-[11px] text-muted">{hint}</div> : null}
+      <Field label={kind === "tag" ? "Box" : "Position"}>
+        {kind === "tag" ? null : (
+          <Select
+            aria-label="Position"
+            value={anchor}
+            onChange={(event) => setAnchor(event.target.value)}
+          >
+            {ANCHORS.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </Select>
+        )}
         <Checkbox
           label="Frame"
           checked={frame}
           onChange={(event) => setFrame(event.target.checked)}
         />
+        {existing ? (
+          <Button
+            onClick={() => {
+              close();
+              runGui({ op: "removeAnnotation", graph, annotation: existing.name });
+            }}
+          >
+            Remove
+          </Button>
+        ) : null}
       </Field>
+      <div className="text-[11px] text-muted">Drag it in the graph to move it.</div>
     </Dialog>
   );
 }
@@ -1072,6 +1273,55 @@ function NameDialog({ target, mode }: { target: string; mode: NameMode }) {
       </Field>
       <div className="pl-[104px] text-[11px] text-muted">
         Use <code>folder:name</code> to put it in a data folder.
+      </div>
+    </Dialog>
+  );
+}
+
+const TYPE_NOTES: Record<WaveType, string> = {
+  float64: "double precision, 8 bytes a point",
+  float32: "single precision, 4 bytes a point",
+  int8: "whole numbers −128 to 127",
+  uint8: "whole numbers 0 to 255",
+  int16: "whole numbers −32768 to 32767",
+  uint16: "whole numbers 0 to 65535",
+  int32: "whole numbers to ±2.1 billion",
+  uint32: "whole numbers 0 to 4.3 billion",
+  complex128: "complex, double precision",
+  complex64: "complex, single precision",
+};
+
+/** Changes the number type of a wave, as Igor's Redimension does. */
+function WaveTypeDialog({ wave: name }: { wave: string }) {
+  const wave = useDoc((state) => state.waves[name]);
+  const [type, setType] = useState<string>(wave?.type ?? "float64");
+  if (!wave || wave.text) return null;
+  const loses =
+    (wave.imag !== null && !type.startsWith("complex")) ||
+    (type.includes("int") && !wave.type.includes("int")) ||
+    (type.endsWith("32") && wave.type.endsWith("64")) ||
+    (type === "complex64" && wave.type === "complex128");
+  return (
+    <Dialog
+      title={`Change Wave Type — ${leafName(name)}`}
+      width={400}
+      onClose={close}
+      submitDisabled={type === wave.type}
+      onSubmit={() => submit({ op: "redimension", name, type })}
+    >
+      <Field label="Type">
+        <Select aria-label="Type" value={type} onChange={(event) => setType(event.target.value)}>
+          {WAVE_TYPES.map((item) => (
+            <option key={item}>{item}</option>
+          ))}
+        </Select>
+        <span className="truncate text-muted">{TYPE_NOTES[type as WaveType]}</span>
+      </Field>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Now {wave.type}.{" "}
+        {loses
+          ? "Values the new type cannot hold are rounded, held at its limits, or lose their imaginary part."
+          : "Every value is kept as it is."}
       </div>
     </Dialog>
   );
@@ -1145,6 +1395,167 @@ function WaveScalingDialog({ wave: name }: { wave: string }) {
   );
 }
 
+/** Shows the Python that draws a graph again, to copy or to keep in a procedure. */
+function GraphScriptDialog({ graph }: { graph: string }) {
+  const state = useDoc((current) => current);
+  const [copied, setCopied] = useState(false);
+  let script = "";
+  try {
+    script = graphScript(state, graph);
+  } catch {
+    // The graph was closed while the dialog was open.
+  }
+  const body = script
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  const asFunction = `def recreate_${graph}():\n${body}\n    return g\n`;
+  const toProcedure = () => {
+    const existing = Object.values(state.procedures)[0];
+    const name = existing?.name ?? runGui({ op: "newProcedure" });
+    if (!name) return;
+    const before = existing?.code ?? "";
+    const gap = before.trim() === "" ? "" : `${before.replace(/\s+$/, "")}\n\n\n`;
+    doc.dispatch({ op: "setProcedure", name, code: `${gap}${asFunction}` });
+    doc.dispatch({ op: "activateWindow", name });
+    close();
+  };
+  return (
+    <Dialog title={`Recreation Script for ${graph}`} onClose={close} width={620}>
+      <p className="m-0 leading-relaxed text-muted">
+        Python that draws this graph again. Run as it is, it makes a new graph and leaves this one
+        alone.
+      </p>
+      <pre
+        aria-label="Script"
+        className="selectable m-0 max-h-[40vh] overflow-auto rounded border border-line bg-paper p-2 font-mono text-[11.5px] leading-[1.45]"
+      >
+        {script}
+      </pre>
+      <div className="flex gap-2">
+        <Button
+          onClick={() => {
+            void navigator.clipboard?.writeText(script).then(() => setCopied(true));
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          onClick={() => {
+            requestCommandLine(script);
+            close();
+          }}
+        >
+          To Command Line
+        </Button>
+        <Button onClick={toProcedure}>Add to Procedure as a Function</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Adds a block of text to a page layout, or changes one that is there. */
+function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
+  const existing = useDoc((state) =>
+    state.pages[layout]?.items.find((other) => other.name === item),
+  );
+  const [text, setText] = useState(existing?.text ?? "");
+  const [size, setSize] = useState(String(existing?.size ?? 12));
+  if (item && !existing) return null;
+  const points = parseNumber(size);
+  const invalid = points === null || points < 4 || points > 200;
+  const props: Record<string, unknown> = {};
+  if (existing) {
+    if (text !== existing.text) props.text = text;
+    if (!invalid && points !== existing.size) props.size = points;
+  }
+  return (
+    <Dialog
+      title={existing ? `Edit Text — ${layout}` : `Add Text — ${layout}`}
+      onClose={close}
+      submitDisabled={
+        invalid || text.trim() === "" || (existing ? Object.keys(props).length === 0 : false)
+      }
+      onSubmit={() =>
+        submit(
+          existing
+            ? { op: "modifyLayoutItem", layout, item: existing.name, props }
+            : { op: "addLayoutItem", layout, kind: "text", text, size: points! },
+        )
+      }
+    >
+      <textarea
+        aria-label="Text"
+        autoFocus
+        rows={3}
+        spellCheck={false}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+      />
+      <Field label="Size">
+        <TextInput
+          aria-label="Size"
+          aria-invalid={invalid}
+          className="w-16"
+          value={size}
+          onChange={(event) => setSize(event.target.value)}
+        />
+        <span className="text-muted">points</span>
+      </Field>
+    </Dialog>
+  );
+}
+
+/** Chooses the time zone dates are shown and typed in. */
+function TimeZoneDialog() {
+  const current = useDoc((state) => state.timeZone);
+  const [choice, setChoice] = useState(
+    current === "UTC" || current === "local" ? current : "other",
+  );
+  const [name, setName] = useState(current === "UTC" || current === "local" ? "" : current);
+  const zone = choice === "other" ? name.trim() : choice;
+  const valid = isTimeZone(zone);
+  const here = timeZone("local").label;
+  return (
+    <Dialog
+      title="Time Zone for Dates"
+      width={400}
+      onClose={close}
+      submitDisabled={!valid || zone === current}
+      onSubmit={() => submit({ op: "setTimeZone", zone })}
+    >
+      <p className="m-0 leading-relaxed text-muted">
+        Date waves hold moments in time. This sets the clock they are read on: on graph axes, in
+        tables, and for dates typed or loaded without an offset.
+      </p>
+      <Field label="Show dates in">
+        <Select
+          aria-label="Time zone"
+          value={choice}
+          onChange={(event) => setChoice(event.target.value)}
+        >
+          <option value="UTC">UTC</option>
+          <option value="local">This computer's zone ({here})</option>
+          <option value="other">Another zone…</option>
+        </Select>
+      </Field>
+      {choice === "other" ? (
+        <Field label="Zone name">
+          <TextInput
+            aria-label="Zone name"
+            aria-invalid={name.trim() !== "" && !valid}
+            className="flex-1"
+            placeholder="Asia/Tokyo"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+      ) : null}
+    </Dialog>
+  );
+}
+
 function AboutDialog() {
   return (
     <Dialog title="About OresmePro" onClose={close} width={460}>
@@ -1206,6 +1617,8 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const [hold, setHold] = useState("");
   const [constraints, setConstraints] = useState("");
   const [weight, setWeight] = useState("");
+  const [residuals, setResiduals] = useState(false);
+  const [band, setBand] = useState(false);
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
   const graph = [...windows]
     .reverse()
@@ -1223,6 +1636,8 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     ...(limits ? [`bounds=${limits}`] : []),
     ...(weight === "" ? [] : [`sigma=${pyName(weight)}`]),
     ...(useCursors && hasCursors ? ["cursors=True"] : []),
+    ...(residuals ? ["residuals=True"] : []),
+    ...(band ? ["band=0.95"] : []),
   ];
   return (
     <Dialog
@@ -1310,6 +1725,18 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
           onChange={(event) => setUseCursors(event.target.checked)}
         />
       </Field>
+      <Field label="Also make" group>
+        <Checkbox
+          label="Residuals"
+          checked={residuals}
+          onChange={(event) => setResiduals(event.target.checked)}
+        />
+        <Checkbox
+          label="95% confidence band"
+          checked={band}
+          onChange={(event) => setBand(event.target.checked)}
+        />
+      </Field>
       <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
         Makes <code>fit_{leafName(y) || "wave"}</code>, <code>W_coef</code> and <code>W_sigma</code>
         , and adds the fitted curve to the graph showing the data. For your own function, call{" "}
@@ -1319,30 +1746,137 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   );
 }
 
-const ANALYSES: Record<string, { title: string; parameter?: [string, string, string] }> = {
+interface AnalysisField {
+  /** The keyword argument. */
+  key: string;
+  label: string;
+  initial: string;
+  /** integer and number are typed in; anything else is a list of choices. */
+  kind: "integer" | "number" | readonly string[];
+  /** May be left empty, which leaves the argument out. */
+  optional?: boolean;
+  hint?: string;
+}
+
+const ANALYSES: Record<
+  string,
+  { title: string; dimensions?: 1 | 2; fields?: AnalysisField[]; note?: string }
+> = {
   stats: { title: "Wave Stats" },
   differentiate: { title: "Differentiate" },
   integrate: { title: "Integrate" },
-  smooth: { title: "Smooth", parameter: ["n", "Points", "5"] },
-  fft: { title: "FFT Magnitude" },
-  histogram: { title: "Histogram", parameter: ["bins", "Bins", "50"] },
+  smooth: {
+    title: "Smooth",
+    fields: [{ key: "n", label: "Points", initial: "5", kind: "integer" }],
+  },
+  fft: {
+    title: "FFT",
+    fields: [
+      { key: "output", label: "Result", initial: "magnitude", kind: ["magnitude", "complex"] },
+    ],
+    note: "The complex result keeps the spectrum itself, which op.ifft turns back into the signal.",
+  },
+  histogram: {
+    title: "Histogram",
+    fields: [{ key: "bins", label: "Bins", initial: "50", kind: "integer" }],
+  },
+  interpolate: {
+    title: "Interpolate",
+    fields: [
+      { key: "n", label: "Points", initial: "200", kind: "integer" },
+      { key: "kind", label: "Method", initial: "linear", kind: ["linear", "cubic"] },
+    ],
+    note: "Makes a wave with evenly spaced points over the same X range.",
+  },
+  fit_peaks: {
+    title: "Multi-peak Fit",
+    fields: [
+      { key: "shape", label: "Peak shape", initial: "gauss", kind: ["gauss", "lor"] },
+      {
+        key: "baseline",
+        label: "Baseline",
+        initial: "constant",
+        kind: ["constant", "linear", "None"],
+      },
+      {
+        key: "peaks",
+        label: "Peaks",
+        initial: "",
+        kind: "integer",
+        optional: true,
+        hint: "how many of the tallest; empty finds them",
+      },
+      {
+        key: "smooth",
+        label: "Smooth first",
+        initial: "",
+        kind: "integer",
+        optional: true,
+        hint: "points, for noisy data",
+      },
+    ],
+    note: "Fits a sum of peaks and lists position, height, width and area of each.",
+  },
+  filter_image: {
+    title: "Filter Image",
+    dimensions: 2,
+    fields: [
+      {
+        key: "kind",
+        label: "Filter",
+        initial: "gauss",
+        kind: ["gauss", "mean", "median", "sharpen"],
+      },
+      {
+        key: "size",
+        label: "Size",
+        initial: "3",
+        kind: "number",
+        hint: "pixels (odd, for mean and median)",
+      },
+    ],
+  },
 };
 
 function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?: string }) {
-  const waves = useNumericWaves(1);
-  const preselected = useUi((state) => state.selectedWaves);
   const spec = ANALYSES[operation]!;
+  const waves = useNumericWaves(spec.dimensions ?? 1);
+  const preselected = useUi((state) => state.selectedWaves);
   const [wave, setWave] = useState(
     initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
   );
-  const [value, setValue] = useState(spec.parameter?.[2] ?? "");
-  const number = Number(value);
-  const invalid = spec.parameter !== undefined && (!Number.isInteger(number) || number < 1);
-  const args = [pyName(wave), ...(spec.parameter ? [`${spec.parameter[0]}=${number}`] : [])];
+  const fields = spec.fields ?? [];
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((field) => [field.key, field.initial])),
+  );
+  const args = [pyName(wave)];
+  let invalid = false;
+  const bad = new Set<string>();
+  for (const field of fields) {
+    const text = (values[field.key] ?? "").trim();
+    if (typeof field.kind !== "string") {
+      // The Python None is the one choice that is not a string.
+      args.push(`${field.key}=${text === "None" ? "None" : JSON.stringify(text)}`);
+      continue;
+    }
+    if (text === "" && field.optional) continue;
+    const number = Number(text);
+    const ok =
+      text !== "" &&
+      Number.isFinite(number) &&
+      number > 0 &&
+      (field.kind === "number" || Number.isInteger(number));
+    if (!ok) {
+      invalid = true;
+      bad.add(field.key);
+    } else {
+      args.push(`${field.key}=${number}`);
+    }
+  }
   return (
     <Dialog
       title={spec.title}
-      width={360}
+      width={400}
       onClose={close}
       submitDisabled={wave === "" || invalid}
       onSubmit={() => {
@@ -1362,16 +1896,32 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
           ))}
         </Select>
       </Field>
-      {spec.parameter ? (
-        <Field label={spec.parameter[1]}>
-          <TextInput
-            aria-label={spec.parameter[1]}
-            aria-invalid={invalid}
-            className="w-20"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-          />
+      {fields.map((field) => (
+        <Field key={field.key} label={field.label}>
+          {typeof field.kind === "string" ? (
+            <TextInput
+              aria-label={field.label}
+              aria-invalid={bad.has(field.key)}
+              className="w-20"
+              value={values[field.key] ?? ""}
+              onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            />
+          ) : (
+            <Select
+              aria-label={field.label}
+              value={values[field.key]}
+              onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+            >
+              {field.kind.map((choice) => (
+                <option key={choice}>{choice}</option>
+              ))}
+            </Select>
+          )}
+          {field.hint ? <span className="text-muted">{field.hint}</span> : null}
         </Field>
+      ))}
+      {spec.note ? (
+        <div className="pl-[104px] text-[11px] leading-relaxed text-muted">{spec.note}</div>
       ) : null}
     </Dialog>
   );
@@ -1401,6 +1951,8 @@ function renderDialog(dialog: DialogRequest) {
       return <ModifyGraphDialog graph={dialog.graph} />;
     case "addText":
       return <AddTextDialog graph={dialog.graph} />;
+    case "editAnnotation":
+      return <AddTextDialog graph={dialog.graph} annotation={dialog.annotation} />;
     case "renameWave":
       return <NameDialog target={dialog.wave} mode="rename" />;
     case "duplicateWave":
@@ -1411,10 +1963,18 @@ function renderDialog(dialog: DialogRequest) {
       return <NameDialog target={dialog.folder} mode="renameFolder" />;
     case "waveScaling":
       return <WaveScalingDialog wave={dialog.wave} />;
+    case "waveType":
+      return <WaveTypeDialog wave={dialog.wave} />;
     case "curveFit":
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
+    case "graphScript":
+      return <GraphScriptDialog graph={dialog.graph} />;
+    case "timeZone":
+      return <TimeZoneDialog />;
+    case "pageText":
+      return <PageTextDialog layout={dialog.layout} item={dialog.item} />;
     case "about":
       return <AboutDialog />;
   }

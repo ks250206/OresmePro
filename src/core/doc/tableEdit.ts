@@ -1,4 +1,4 @@
-import { parseDate } from "../plot/ticks";
+import { parseDate, UTC, type TimeZone } from "../plot/ticks";
 import type { Command } from "./commands";
 import { DATE_UNIT, type Wave } from "./types";
 
@@ -9,6 +9,8 @@ export interface CellEdit {
   j: number | null;
   row: number;
   text: string;
+  /** Set for a cell of the imaginary column of a complex wave. */
+  imag?: boolean;
 }
 
 export interface TablePlane {
@@ -48,6 +50,7 @@ export function tableEditCommands(
   waves: Readonly<Record<string, Wave>>,
   edits: readonly CellEdit[],
   plane: TablePlane,
+  zone: TimeZone = UTC,
 ): Command[] | null {
   const byWave = new Map<string, CellEdit[]>();
   for (const edit of edits) {
@@ -83,26 +86,112 @@ export function tableEditCommands(
 
     let first = Infinity;
     let last = -Infinity;
-    const writes: [number, number][] = [];
+    const writes: { at: number; value: number; imag: boolean }[] = [];
     for (const cell of inside) {
       // Dates are typed as dates and stored as seconds.
       const value =
         wave.unit === DATE_UNIT && cell.text.trim() !== ""
-          ? parseDate(cell.text)
+          ? parseDate(cell.text, zone)
           : parseCell(cell.text);
       if (value === null) return null;
       const at = flat ? cell.row : cellIndex(wave, cell.row, cell.j, plane);
-      writes.push([at, value]);
+      writes.push({ at, value, imag: cell.imag === true && wave.imag !== null });
       first = Math.min(first, at);
       last = Math.max(last, at);
     }
     // One stretch from the first to the last cell touched, holding the
-    // current values (NaN beyond the end of a growing wave) with the edits on top.
-    const values = Array.from({ length: last - first + 1 }, (_, offset) =>
-      first + offset < wave.data.length ? wave.data[first + offset]! : Number.NaN,
-    );
-    for (const [at, value] of writes) values[at - first] = value;
-    commands.push({ op: "setWavePoints", name, start: first, values });
+    // current values (NaN beyond the end of a growing wave) with the edits on
+    // top. A complex wave has such a stretch for each of its two parts.
+    const stretch = (source: ArrayLike<number>, beyond: number) =>
+      Array.from({ length: last - first + 1 }, (_, offset) =>
+        first + offset < source.length ? source[first + offset]! : beyond,
+      );
+    const values = stretch(wave.data, Number.NaN);
+    const imag = wave.imag ? stretch(wave.imag, 0) : null;
+    for (const write of writes) (write.imag ? imag! : values)[write.at - first] = write.value;
+    commands.push({
+      op: "setWavePoints",
+      name,
+      start: first,
+      values,
+      ...(imag ? { imag } : {}),
+    });
+  }
+  return commands;
+}
+
+/** A cell of a table: a row and the index of a column. */
+export interface Cell {
+  row: number;
+  column: number;
+}
+
+/** What a table column shows: a 1-D wave, or one column of a matrix. */
+export interface TableColumn {
+  wave: string;
+  j: number | null;
+  /** Set for the column of imaginary parts of a complex wave. */
+  imag?: boolean;
+}
+
+/** A rectangle of cells; all four edges are inside it. */
+export interface CellRange {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** The rectangle of cells between two corners, whichever way it was dragged. */
+export function selectionRange(a: Cell, b: Cell): CellRange {
+  return {
+    top: Math.min(a.row, b.row),
+    bottom: Math.max(a.row, b.row),
+    left: Math.min(a.column, b.column),
+    right: Math.max(a.column, b.column),
+  };
+}
+
+/** The commands that blank a range of cells: NaN in numeric waves, "" in text waves. */
+export function clearCommands(
+  waves: Readonly<Record<string, Wave>>,
+  columns: readonly TableColumn[],
+  range: CellRange,
+  plane: TablePlane,
+): Command[] {
+  const edits: CellEdit[] = [];
+  for (const { wave, j, imag } of columns.slice(range.left, range.right + 1)) {
+    // Only points that exist: clearing must not grow a wave.
+    const last = Math.min(range.bottom, (waves[wave]?.shape[0] ?? 0) - 1);
+    for (let row = range.top; row <= last; row += 1) edits.push({ wave, j, row, text: "", imag });
+  }
+  return tableEditCommands(waves, edits, plane) ?? [];
+}
+
+/**
+ * The commands that insert or delete the rows of a range in every 1-D wave
+ * the range touches. Matrices keep their shape, so they are left alone.
+ */
+export function pointCommands(
+  waves: Readonly<Record<string, Wave>>,
+  columns: readonly TableColumn[],
+  range: CellRange,
+  action: "insert" | "delete",
+): Command[] {
+  const commands: Command[] = [];
+  const seen = new Set<string>();
+  for (const { wave: name } of columns.slice(range.left, range.right + 1)) {
+    const wave = waves[name];
+    if (!wave || wave.shape.length !== 1 || seen.has(name)) continue;
+    seen.add(name);
+    const length = wave.shape[0]!;
+    const count = range.bottom - range.top + 1;
+    if (action === "insert") {
+      if (range.top <= length) commands.push({ op: "insertPoints", name, at: range.top, count });
+    } else if (range.top < length) {
+      const kept = Math.min(count, length - range.top);
+      commands.push({ op: "deletePoints", name, at: range.top, count: kept });
+    }
   }
   return commands;
 }
