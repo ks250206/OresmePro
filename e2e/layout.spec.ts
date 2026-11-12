@@ -57,7 +57,7 @@ test.describe("page layouts", () => {
 
     await window.getByRole("button", { name: "Add Text…" }).click();
     await page.getByRole("dialog").getByLabel("Text").fill("Figure 1. Sine and cosine");
-    await page.getByRole("dialog").getByLabel("Size").fill("9");
+    await page.getByRole("dialog").getByLabel("Size", { exact: true }).fill("9");
     await app.doIt();
     items = (await app.doc()).pages.Layout0!.items;
     expect(items.at(-1)).toMatchObject({

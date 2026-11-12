@@ -4,12 +4,16 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type ComponentPropsWithRef,
   type CSSProperties,
   type InputHTMLAttributes,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   type SelectHTMLAttributes,
 } from "react";
+import { flushSync } from "react-dom";
+import { MARKUP_CODES } from "../core/plot/richText";
 
 const inputClass =
   "h-6 rounded border border-line bg-paper px-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent disabled:bg-chrome disabled:text-muted";
@@ -32,7 +36,7 @@ export function Button({
   );
 }
 
-export function TextInput({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function TextInput({ className = "", ...props }: ComponentPropsWithRef<"input">) {
   return (
     <input type="text" spellCheck={false} {...props} className={`${inputClass} ${className}`} />
   );
@@ -368,5 +372,117 @@ export function NameList({
       multiple={multiple}
       style={{ height }}
     />
+  );
+}
+
+/** Codes put around the selection: before it, and after it. */
+const WRAPS = {
+  italic: ["\\f02", "\\f00"],
+  bold: ["\\f01", "\\f00"],
+  superscript: ["^{", "}"],
+  subscript: ["_{", "}"],
+} as const;
+
+const MARKUP_SIZES = [8, 10, 12, 14, 18, 24, 36];
+
+/**
+ * Buttons that write formatting codes around the selected part of a text
+ * field (or at the caret), so that nobody has to remember them. The codes
+ * stay visible in the field, as they are in Igor.
+ */
+export function MarkupButtons({
+  field,
+  value,
+  onChange,
+  disabled,
+}: {
+  field: RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (text: string) => void;
+  disabled?: boolean;
+}) {
+  const wrap = (before: string, after: string) => {
+    const element = field.current;
+    const start = element?.selectionStart ?? value.length;
+    const end = element?.selectionEnd ?? value.length;
+    // The field must show the new text before the same words can be selected inside the codes.
+    flushSync(() =>
+      onChange(value.slice(0, start) + before + value.slice(start, end) + after + value.slice(end)),
+    );
+    element?.focus();
+    element?.setSelectionRange(start + before.length, end + before.length);
+  };
+  const button = (label: ReactNode, name: keyof typeof WRAPS, title: string) => (
+    <Button
+      aria-label={title}
+      title={`${title}: ${WRAPS[name][0]}…${WRAPS[name][1]}`}
+      className="!px-2"
+      disabled={disabled}
+      onClick={() => wrap(WRAPS[name][0], WRAPS[name][1])}
+    >
+      {label}
+    </Button>
+  );
+  return (
+    <span role="group" aria-label="Formatting" className="flex items-center gap-1">
+      {button(<i className="font-serif">I</i>, "italic", "Italic")}
+      {button(<b>B</b>, "bold", "Bold")}
+      {button(
+        <span>
+          x<sup>2</sup>
+        </span>,
+        "superscript",
+        "Superscript",
+      )}
+      {button(
+        <span>
+          x<sub>2</sub>
+        </span>,
+        "subscript",
+        "Subscript",
+      )}
+      <Select
+        aria-label="Insert size"
+        title={"Size: \\Z14…\\M"}
+        disabled={disabled}
+        value=""
+        onChange={(event) => {
+          const size = event.target.value;
+          if (size) wrap(`\\Z${size.padStart(2, "0")}`, "\\M");
+        }}
+      >
+        <option value="">Size</option>
+        {MARKUP_SIZES.map((size) => (
+          <option key={size} value={size}>
+            {size}
+          </option>
+        ))}
+      </Select>
+    </span>
+  );
+}
+
+/** A line on the formatting codes, and the whole list of them on request. */
+export function MarkupHelp() {
+  return (
+    <details className="text-[11px] text-muted">
+      <summary className="cursor-default">
+        Formatting codes: <code>{"\\f02"}</code> italic, <code>{"\\f01"}</code> bold,{" "}
+        <code>{"\\Z14"}</code> size, <code>{"^{...}"}</code> superscript, <code>{"_{...}"}</code>{" "}
+        subscript
+      </summary>
+      <table className="mt-1">
+        <tbody>
+          {MARKUP_CODES.map(([code, meaning]) => (
+            <tr key={code}>
+              <td className="pr-3 align-top whitespace-nowrap">
+                <code>{code}</code>
+              </td>
+              <td>{meaning}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
   );
 }

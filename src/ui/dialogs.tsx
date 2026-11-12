@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   applyLibraryStyle,
   arrangeItems,
@@ -40,6 +40,7 @@ import {
   COMPLEX_PARTS,
   DEFAULT_FONT_FAMILY,
   GRID_MODES,
+  LABEL_STYLES,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
@@ -54,13 +55,24 @@ import {
   type ErrorSource,
   type GraphSpec,
   type ImageSpec,
+  type LabelStyle,
   type StyleSpec,
   type TraceStyle,
   type WaveType,
 } from "../core/doc/types";
 import { traceX } from "../core/plot/layout";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
-import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  Field,
+  MarkupButtons,
+  MarkupHelp,
+  NameList,
+  Select,
+  TextInput,
+} from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
@@ -824,6 +836,9 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const [max, setMax] = useState<string | null>(null);
   const [span, setSpan] = useState<[string, string] | null>(null);
   const [step, setStep] = useState<string | null>(null);
+  const [labelSize, setLabelSize] = useState<string | null>(null);
+  const [tickSize, setTickSize] = useState<string | null>(null);
+  const labelField = useRef<HTMLInputElement>(null);
   const base = graph?.axes[axis];
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -854,6 +869,17 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const parsedStep = step === null ? undefined : step.trim() === "" ? null : parseNumber(step);
   const stepInvalid = step !== null && step.trim() !== "" && !(parsedStep! > 0);
   if (parsedStep !== undefined && !stepInvalid) props.tickStep = parsedStep;
+  // Font sizes: empty is the graph's own size.
+  const fontSize = (text: string | null) =>
+    text === null ? undefined : text.trim() === "" ? null : parseNumber(text);
+  const sizeInvalid = (text: string | null, size: number | null | undefined) =>
+    text !== null && text.trim() !== "" && !(size !== null && size! >= 4 && size! <= 96);
+  const parsedLabelSize = fontSize(labelSize);
+  const labelSizeInvalid = sizeInvalid(labelSize, parsedLabelSize);
+  if (parsedLabelSize !== undefined && !labelSizeInvalid) props.labelSize = parsedLabelSize;
+  const parsedTickSize = fontSize(tickSize);
+  const tickSizeInvalid = sizeInvalid(tickSize, parsedTickSize);
+  if (parsedTickSize !== undefined && !tickSizeInvalid) props.tickLabelSize = parsedTickSize;
   const formats: [string, string][] = [
     ["", "Automatic"],
     [".0f", "0 decimals"],
@@ -875,13 +901,22 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
     setMax(null);
     setSpan(null);
     setStep(null);
+    setLabelSize(null);
+    setTickSize(null);
   };
 
   return (
     <Dialog
       title={`Modify Axis — ${graphName}`}
       onClose={close}
-      submitDisabled={invalid || spanInvalid || stepInvalid || Object.keys(props).length === 0}
+      submitDisabled={
+        invalid ||
+        spanInvalid ||
+        stepInvalid ||
+        labelSizeInvalid ||
+        tickSizeInvalid ||
+        Object.keys(props).length === 0
+      }
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
     >
       <Field label="Axis">
@@ -900,6 +935,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
       </Field>
       <Field label="Label">
         <TextInput
+          ref={labelField}
           aria-label="Label"
           className="flex-1"
           disabled={current.label === null}
@@ -912,6 +948,33 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           checked={current.label === null}
           onChange={(event) => set({ label: event.target.checked ? null : "" })}
         />
+      </Field>
+      <div className="pl-[104px]">
+        <MarkupButtons
+          field={labelField}
+          value={current.label ?? ""}
+          onChange={(label) => set({ label })}
+          disabled={current.label === null}
+        />
+      </div>
+      <Field label="Label font" group>
+        <TextInput
+          aria-label="Label size"
+          aria-invalid={labelSizeInvalid}
+          className="w-14"
+          placeholder={String(graph.fontSize)}
+          value={labelSize ?? (current.labelSize === null ? "" : String(current.labelSize))}
+          onChange={(event) => setLabelSize(event.target.value)}
+        />
+        <Select
+          aria-label="Label style"
+          value={current.labelStyle}
+          onChange={(event) => set({ labelStyle: event.target.value as LabelStyle })}
+        >
+          {LABEL_STYLES.map((style) => (
+            <option key={style}>{style}</option>
+          ))}
+        </Select>
       </Field>
       <Field label="Range">
         <TextInput
@@ -991,6 +1054,15 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
             </option>
           ))}
         </Select>
+        <span className="text-muted">size</span>
+        <TextInput
+          aria-label="Tick label size"
+          aria-invalid={tickSizeInvalid}
+          className="w-14"
+          placeholder={String(graph.fontSize)}
+          value={tickSize ?? (current.tickLabelSize === null ? "" : String(current.tickLabelSize))}
+          onChange={(event) => setTickSize(event.target.value)}
+        />
       </Field>
       <Field label="Mirror">
         <Select
@@ -1037,8 +1109,8 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         />
         <span className="text-muted">% of the plot area</span>
       </Field>
-      <div className="pl-[104px] text-[11px] text-muted">
-        In labels, <code>^{"{...}"}</code> is a superscript and <code>_{"{...}"}</code> a subscript.
+      <div className="pl-[104px]">
+        <MarkupHelp />
       </div>
     </Dialog>
   );
@@ -1322,6 +1394,7 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
   const [text, setText] = useState(existing?.text ?? "");
   const [anchor, setAnchor] = useState<string>(existing?.anchor ?? "RT");
   const [frame, setFrame] = useState(existing?.frame ?? true);
+  const field = useRef<HTMLTextAreaElement>(null);
   if (annotation && !existing) return null;
   const kind = existing?.kind ?? "text";
   const hint =
@@ -1329,9 +1402,7 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
       ? "Leave empty to list every trace. \\s(traceName) draws a trace's symbol."
       : kind === "tag"
         ? "{x}, {y} and {point} stand for the point's values. Leave empty to show x, y."
-        : kind === "colorscale"
-          ? ""
-          : "^{...} is a superscript and _{...} a subscript.";
+        : "";
   const props: Record<string, unknown> = {};
   if (existing) {
     if (text !== existing.text) props.text = text;
@@ -1355,15 +1426,20 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
       }
     >
       {kind === "colorscale" ? null : (
-        <textarea
-          aria-label="Text"
-          autoFocus
-          rows={4}
-          spellCheck={false}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-        />
+        <>
+          <textarea
+            ref={field}
+            aria-label="Text"
+            autoFocus
+            rows={4}
+            spellCheck={false}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+          />
+          <MarkupButtons field={field} value={text} onChange={setText} />
+          <MarkupHelp />
+        </>
       )}
       {hint ? <div className="text-[11px] text-muted">{hint}</div> : null}
       <Field label={kind === "tag" ? "Box" : "Position"}>
@@ -1944,6 +2020,7 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
   );
   const [text, setText] = useState(existing?.text ?? "");
   const [size, setSize] = useState(String(existing?.size ?? 12));
+  const field = useRef<HTMLTextAreaElement>(null);
   if (item && !existing) return null;
   const points = parseNumber(size);
   const invalid = points === null || points < 4 || points > 200;
@@ -1968,6 +2045,7 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
       }
     >
       <textarea
+        ref={field}
         aria-label="Text"
         autoFocus
         rows={3}
@@ -1976,6 +2054,8 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
         onChange={(event) => setText(event.target.value)}
         className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
       />
+      <MarkupButtons field={field} value={text} onChange={setText} />
+      <MarkupHelp />
       <Field label="Size">
         <TextInput
           aria-label="Size"

@@ -104,6 +104,94 @@ test.describe("graph interaction", () => {
     });
   });
 
+  test("an axis label is made larger and italic, and its words formatted with buttons", async ({
+    app,
+    page,
+  }) => {
+    await sineGraph(app);
+    await app.run('g.left.label = "Amplitude"');
+    /** How long the left axis label is drawn: the outermost dark pixels, upwards. */
+    const labelLength = () =>
+      page.evaluate(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>('[data-window="Graph0"] canvas')!;
+        const { width, height } = canvas;
+        const scale = width / canvas.clientWidth;
+        const pixels = canvas.getContext("2d")!.getImageData(0, 0, width, height).data;
+        const dark = (x: number, y: number) => pixels[(y * width + x) * 4]! < 128;
+        let left = width;
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < left; x += 1) if (dark(x, y)) left = x;
+        }
+        // The label reads upwards in a band of its own, outside the tick labels.
+        let top = height;
+        let bottom = -1;
+        for (let y = 0; y < height; y += 1) {
+          for (let x = left; x < left + 6 * scale; x += 1) {
+            if (dark(x, y)) {
+              top = Math.min(top, y);
+              bottom = Math.max(bottom, y);
+            }
+          }
+        }
+        return (bottom - top) / scale;
+      });
+    const before = await labelLength();
+
+    const box = (await app.window("Graph0").boundingBox())!;
+    await page.mouse.dblclick(box.x + 20, box.y + 150);
+    const dialog = page.getByRole("dialog", { name: /Modify Axis/ });
+    await expect(dialog.getByLabel("Axis", { exact: true })).toHaveValue("left");
+    await dialog.getByLabel("Label size", { exact: true }).fill("22");
+    await dialog.getByLabel("Label style").selectOption("italic");
+    await dialog.getByLabel("Tick label size").fill("9");
+    await app.doIt();
+    expect((await app.doc()).graphs.Graph0!.axes.left).toMatchObject({
+      label: "Amplitude",
+      labelSize: 22,
+      labelStyle: "italic",
+      tickLabelSize: 9,
+    });
+    expect((await app.lastEntry()).code).toBe(
+      'op.graph("Graph0").axis("left").set(label_style="italic", label_size=22, tick_label_size=9)',
+    );
+    const after = await labelLength();
+    expect(after / before).toBeGreaterThan(1.6);
+    expect(after / before).toBeLessThan(2.2);
+    const svg = (await app.run("print(g.svg())")).output;
+    expect(svg).toMatch(/font-size="22" font-style="italic"[^>]*>Amplitude</);
+    expect(svg).toMatch(/font-size="9" fill[^>]*>0\.5</);
+
+    // Formatting buttons write the codes around what is selected, or at the caret.
+    await app.menu("Graph", "Modify Axis…");
+    await dialog.getByLabel("Axis", { exact: true }).selectOption("bottom");
+    await dialog.getByLabel("Auto").uncheck();
+    const label = dialog.getByLabel("Label", { exact: true });
+    await label.fill("Time");
+    await label.selectText();
+    await dialog.getByRole("button", { name: "Bold" }).click();
+    await expect(label).toHaveValue("\\f01Time\\f00");
+    await label.press("End");
+    await label.pressSequentially(" (");
+    await dialog.getByRole("button", { name: "Italic" }).click();
+    await label.pressSequentially("t");
+    await dialog.getByRole("button", { name: "Subscript" }).click();
+    await label.pressSequentially("0");
+    await expect(label).toHaveValue("\\f01Time\\f00 (\\f02t_{0}\\f00");
+    await label.press("End");
+    await label.pressSequentially(")");
+    await app.doIt();
+    const code = "\\f01Time\\f00 (\\f02t_{0}\\f00)";
+    expect((await app.doc()).graphs.Graph0!.axes.bottom!.label).toBe(code);
+    expect((await app.lastEntry()).code).toBe(
+      `op.graph("Graph0").axis("bottom").set(label=${JSON.stringify(code)})`,
+    );
+    const drawn = (await app.run("print(g.svg())")).output;
+    expect(drawn).toMatch(/font-weight="bold"[^>]*>Time</);
+    expect(drawn).toMatch(/font-style="italic"[^>]*>t</);
+    expect(drawn).toMatch(/font-size="8.4" font-style="italic"[^>]*>0</);
+    expect(drawn).not.toContain("\\f0");
+  });
+
   test("cursors are placed from the trace menu, moved with keys, and dragged", async ({
     app,
     page,
