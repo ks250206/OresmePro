@@ -665,7 +665,8 @@ def smooth(wave_, n=5, name=None):
 def fft(wave_, name=None, output="magnitude"):
     """The spectrum of a wave, as a new wave ``<name>_FFT`` scaled in frequency.
 
-    ``output="magnitude"`` gives the amplitude of each frequency component.
+    ``output="magnitude"`` gives the amplitude of each frequency component:
+    ``A*cos(2*pi*f*x)`` shows as A at f, and a constant offset as its value at 0.
     ``output="complex"`` keeps the spectrum itself as a complex wave: the
     non-negative frequencies, not normalized (``np.fft.rfft``), which
     ``op.ifft`` turns back into the signal.
@@ -677,7 +678,14 @@ def fft(wave_, name=None, output="magnitude"):
         raise _op.OresmeError('output must be "magnitude" or "complex".')
     spectrum = np.fft.rfft(values)
     if output == "magnitude":
-        spectrum = np.abs(spectrum) * 2 / max(1, len(values))
+        # A cosine of amplitude A puts A/2 in each of the bins k and N-k; the
+        # one-sided spectrum folds them together. DC, and the Nyquist bin of
+        # an even length, have no mirror image and are not doubled.
+        doubled = np.full(len(spectrum), 2.0)
+        doubled[0] = 1.0
+        if len(values) % 2 == 0:
+            doubled[-1] = 1.0
+        spectrum = np.abs(spectrum) * doubled / max(1, len(values))
     spacing = abs(source.dx)
     unit = "Hz" if source.x_unit == "s" else (f"1/{source.x_unit}" if source.x_unit else "")
     return _op.make(

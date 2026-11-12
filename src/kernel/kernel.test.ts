@@ -803,7 +803,8 @@ describe("oresme Python API", () => {
     expect(stdout.trim().split("\n")).toEqual([
       "sg_FFT complex128 51 Hz 0.9901 5",
       "sg_FFT_IFFT 101 s 0.01 True",
-      "float64 1.0",
+      // The DC part is the mean, 0.5, and is not doubled.
+      "float64 0.5",
       "magnitude True True",
     ]);
   });
@@ -1041,5 +1042,25 @@ describe("oresme Python API", () => {
     // Weights 1, 1, 4: the weighted normal equations give a = -4/21, b = 33/21,
     // chi-square 4/21, and variances 17/21 and 6/21.
     expect(stdout).toBe("[-4.0, 33.0] 4.0 [17.0, 6.0] True\n");
+  });
+
+  it("gives the amplitude of DC and Nyquist components without doubling them", async () => {
+    expect(
+      await run(
+        [
+          'print(op.fft(op.make("ones8", np.ones(8))).data.tolist())',
+          'print(np.round(op.fft(op.make("alt8", (-1.0) ** np.arange(8))).data, 12).tolist())',
+          // 0.25 + 2 cos at bin 1 + 0.5 cos at the Nyquist frequency, and an odd length with no Nyquist bin.
+          'print(np.round(op.fft(op.make("mix8", 0.25 + 2 * np.cos(2 * np.pi * np.arange(8) / 8) + 0.5 * (-1.0) ** np.arange(8))).data, 12).tolist())',
+          'print(np.round(op.fft(op.make("odd7", 1 + 3 * np.cos(2 * np.pi * 3 * np.arange(7) / 7))).data, 12).tolist())',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[1.0, 0.0, 0.0, 0.0, 0.0]",
+      "[0.0, 0.0, 0.0, 0.0, 1.0]",
+      "[0.25, 2.0, 0.0, 0.0, 0.5]",
+      "[1.0, 0.0, 0.0, 3.0]",
+    ]);
   });
 });
