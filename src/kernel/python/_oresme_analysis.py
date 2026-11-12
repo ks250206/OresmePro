@@ -249,11 +249,19 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
             if np.all((trial >= lower) & (trial <= upper)):
                 trial_residual = residuals(trial)
                 params, residual, chi = trial, trial_residual, float(trial_residual @ trial_residual)
-        # A linear model's Gauss-Newton step is exact; a nonlinear one starts damped.
-        damping = 0.0 if design is not None else 1e-3
+        # A linear model's Gauss-Newton step is exact. A nonlinear one starts
+        # cautiously, half way to steepest descent: from a guess that is some
+        # way off, a full Gauss-Newton step often throws a peak clear of the
+        # data, where nothing pulls it back. Tried on peaks, decays and sines
+        # from poor guesses, this start reaches the answer far more often than
+        # a light damping does, and in fewer evaluations.
+        damping = 0.0 if design is not None else 1.0
         converged = False
         for _ in range(max_iterations):
             jacobian = jacobian_at(params)
+            if not np.all(np.isfinite(jacobian)):
+                # The model cannot be differentiated here: nothing says which way to go.
+                break
             free = ~pushed_out(jacobian.T @ residual, np.ones(len(params), dtype=bool))
             if not free.any():
                 converged = True
@@ -278,11 +286,17 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                 trial_chi = float(trial_residual @ trial_residual)
                 if np.isfinite(trial_chi) and trial_chi < chi:
                     params, residual, chi = trial, trial_residual, trial_chi
-                    damping = max(damping / 10, 1e-12)
+                    damping = max(damping / 3, 1e-12)
                     improved = True
                     break
                 damping = max(damping * 10, 1e-3)
             if not improved:
+                # No step lowers chi-square any further. On a large background
+                # that happens with the test above still out of reach: the
+                # rounding of the model hides gains that small. The fit has
+                # converged all the same if a step promises no more than the
+                # relative reduction MINPACK settles for.
+                converged = not gain > 1.5e-8 * chi + floor
                 break
         jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))

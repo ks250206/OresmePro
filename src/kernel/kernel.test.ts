@@ -1003,6 +1003,29 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("20.0 1.103 1.4987 0.30221 0.13836 True\n");
   });
 
+  it("converges from a guess a width away, and on a background of a million", async () => {
+    expect(
+      await run(
+        [
+          "rx = np.linspace(0, 10, 200)",
+          "rnoise = np.random.default_rng(1).normal(0, 0.1, rx.size)",
+          'rw = op.make("rpeak", 1 + 5 * np.exp(-((rx - 4) / 0.8) ** 2) + rnoise, x0=0, dx=rx[1])',
+          // A full Gauss-Newton step from here flattens the peak and throws it out of the data.
+          'r = op.fit("gauss", rw, guess=[0, 3, 5, 0.4], quiet=True)',
+          "print(np.round(r.coef, 2).tolist(), r.chisq < 3, r.converged)",
+          // Rounding at 1e6 hides the last gains; the fit is at its minimum and must say so.
+          'rb = op.make("rpeak_bg", rw.data + 1e6, x0=0, dx=rx[1])',
+          'r = op.fit("gauss", rb, guess=[1e6, 3, 4.5, 1], quiet=True)',
+          "print(np.round(r.coef - [1e6, 0, 0, 0], 2).tolist(), r.chisq < 3, r.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[0.99, 5.0, 4.0, 0.8] True True",
+      "[0.99, 5.0, 4.0, 0.8] True True",
+    ]);
+  });
+
   it("fits on a large offset and says when a fit cannot converge", async () => {
     expect(
       await run(
