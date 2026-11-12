@@ -46,14 +46,31 @@ def _span(x):
 
 
 def _peak(x, y):
-    """Baseline, signed height and position of the most prominent peak or dip."""
-    base = float(np.median(y))
-    up = float(y.max()) - base
-    down = base - float(y.min())
-    index = int(np.argmax(y) if up >= down else np.argmin(y))
+    """Baseline, signed height and position of the most prominent peak or dip.
+
+    The baseline is judged from the ends of the range as well as from the
+    median. A peak that fills the range (the points between two cursors set
+    at its feet) has its median half way up: seen from there it looks like
+    two dips at the ends. The ends say where it stands. A peak cut off by
+    the edge of the range has one end high instead, and there the median is
+    the better judge, so the ends decide only when they speak clearly.
+    """
+    edge = max(1, len(y) // 20)
+    ends = (float(np.mean(y[:edge])) + float(np.mean(y[-edge:]))) / 2
+    median = float(np.median(y))
+    top, bottom = float(y.max()), float(y.min())
+    if top - ends > 2 * (ends - bottom):
+        upward = True
+    elif ends - bottom > 2 * (top - ends):
+        upward = False
+    else:
+        upward = top - median >= median - bottom
+    # Of the two levels, the one further from the peak: the foot, not the flank.
+    base = min(ends, median) if upward else max(ends, median)
+    index = int(np.argmax(y) if upward else np.argmin(y))
     height = float(y[index]) - base
     # Half the width at half height, measured from the samples.
-    above = np.abs(y - base) >= abs(height) / 2
+    above = (y - base) * np.sign(height) >= abs(height) / 2
     half_width = max(float(np.ptp(x[above])) / 2, _span(x) / len(x)) if above.any() else _span(x) / 6
     return base, height, float(x[index]), half_width
 

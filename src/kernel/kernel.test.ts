@@ -1475,6 +1475,30 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("(4, 3) [4.0, 8.0, 16.0, 20.0] 0.5 10.0 2.0 K\n");
   });
 
+  it("fits a peak that fills the range it is given, as between two cursors at its feet", async () => {
+    expect(
+      await run(
+        [
+          // The demo: a decaying sine. Each half wave is a hump or a trough of its own.
+          "hx = np.linspace(0, 10, 2000)",
+          'hw = op.make("hump_w", np.sin(2 * np.pi * hx) * np.exp(-hx / 3), dx=hx[1] - hx[0])',
+          "for a, b in [(0, 0.5), (0.5, 1.0), (2.0, 2.5), (0.05, 0.45)]:",
+          '    r = op.fit("gauss", hw, xrange=(a, b), quiet=True)',
+          "    print(round(r['x0'], 2), r['A'] > 0, bool(np.sqrt(r.chisq / r.points) < 0.02), r.converged)",
+          // By point numbers, as the cursors give them, and with a Lorentzian.
+          'r = op.fit("lor", hw, range=(0, 100), quiet=True); print(round(r["x0"], 2), bool(np.sqrt(r.chisq / r.points) < 0.02))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "0.25 True True True",
+      "0.75 False True True",
+      "2.25 True True True",
+      "0.24 True True True",
+      "0.25 True",
+    ]);
+  });
+
   it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
     expect(
       await run(
