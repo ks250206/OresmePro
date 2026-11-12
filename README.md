@@ -669,3 +669,26 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 ## ライセンス
 
 未定。
+
+## 公式ドキュメントの開発
+
+[公式ドキュメント](https://ks250206.github.io/OresmePro/docs/) は `docs/` の Astro Starlight ワークスペースです。ルートの `.node-version` と `packageManager` に従い、API 生成とリンク検査に Python 3.14 を使います。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm docs:dev      # 開発サーバー。ターミナルに表示された /OresmePro/docs/ を開く
+pnpm docs:api      # Python ソースから日英の API ページを再生成
+pnpm docs:check    # API の差分検査、静的ビルド、出力 HTML のリンクとフラグメントの検査
+pnpm docs:preview  # ビルドしたサイトで Pagefind 検索を確認
+```
+
+- **ページの追加**は `docs/src/content/docs/` の該当セクションに Markdown または MDX を置きます。サイドバーの順番は frontmatter の `sidebar.order` で指定します。英語版は `en/` に同じ相対パスで追加します。未翻訳のページでは英語 UI に日本語本文と翻訳状況が表示されます。API リファレンスの docstring は両言語でソースの英語を表示します。
+- **Python API の変更**では `oresme.py` または `_oresme_analysis.py` と生成結果を同じ PR に含めます。生成元は各モジュールの `__all__` と定義です。新しいエクスポートの分類は `docs/scripts/generate-api.py`、日本語の説明や docstring の補足は `docs/scripts/api-notes.json` で管理します。
+- **サンプルの変更**は `docs/src/snippets/` の Python を編集します。日英のページと `e2e/docs.spec.ts` が同じファイルを使います。結果が変わる場合は実アプリで再実行し、`docs/src/assets/` のスクリーンショットを更新します。アーキテクチャ図は `docs/diagrams/architecture.mmd` を Mermaid CLI で SVG に書き出します。
+- **リンク**は公開時のディレクトリ URL を基準に記述します。たとえば `guides/waves/` から `reference/api/wave/` へは `../../reference/api/wave/` でリンクします。開発サーバーの **Open OresmePro** ボタンを試す場合は、別ターミナルで `pnpm dev` を起動します。
+
+### GitHub Pages
+
+GitHub の **Settings → Pages → Build and deployment → Source** で **GitHub Actions** を選びます。CI はアプリとドキュメントのチェックを実行し、成功した `main` のビルドだけを `github-pages` 環境に公開します。公開先はアプリが `/OresmePro/`、ドキュメントが `/OresmePro/docs/` です。Pages を有効化してから **CI → Run workflow** で `main` を指定すると再公開できます。
+
+実際の URL 階層で確認する場合は `pnpm pages:build` を実行し、`.pages/` をローカル HTTP サーバーの `/OresmePro/` にマウントします。アプリ側の Service Worker がクロスオリジン分離を付けるため、静的ホストでの初回起動も確認できます。

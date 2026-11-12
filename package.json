@@ -11,6 +11,13 @@
     "test": "node scripts/fetch-pyodide.mjs && vp test",
     "e2e": "playwright test",
     "pyodide": "node scripts/fetch-pyodide.mjs",
+    "docs:dev": "pnpm --filter @oresmepro/docs dev",
+    "docs:build": "pnpm --filter @oresmepro/docs build",
+    "docs:preview": "pnpm --filter @oresmepro/docs preview",
+    "docs:api": "pnpm --filter @oresmepro/docs api:generate",
+    "docs:check": "pnpm --filter @oresmepro/docs api:check && pnpm docs:build && pnpm --filter @oresmepro/docs links:check",
+    "pages:build": "pnpm docs:check && pnpm pages:assemble",
+    "pages:assemble": "pnpm build --base=/OresmePro/ --outDir=.pages && node docs/scripts/assemble-pages.mjs && python3 docs/scripts/check-links.py --pages .pages",
     "prepare": "vp config"
   },
   "dependencies": {

@@ -1,0 +1,13 @@
+---
+title: ガウシアンをフィットする
+sidebar:
+  order: 3
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/gaussian.py?raw";
+import image from "../../../assets/gaussian.png";
+
+中心 0.7 のピークに固定シードでノイズを加え、`gauss` でフィットします。点が観測データ、線が推定曲線です。コマンド履歴で推定中心と収束状態を確認できます。
+
+<Example code={code} image={image} alt="観測点に重なったガウシアンの推定曲線" />

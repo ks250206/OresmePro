@@ -1,0 +1,13 @@
+---
+title: Build a histogram
+sidebar:
+  order: 6
+---
+
+import Example from "../../../../components/Example.astro";
+import code from "../../../../snippets/histogram.py?raw";
+import image from "../../../../assets/histogram.png";
+
+Count 2,000 normally distributed samples in 24 bins. Each bar is placed at its bin center and its height is the count.
+
+<Example code={code} image={image} alt="24-bin histogram centered near 3" />

@@ -1,0 +1,12 @@
+flowchart LR
+    User["Menus · Command Window"]
+    React["React UI · Doc store"]
+    Worker["Web Worker · Pyodide / IPython"]
+    Plot["Display list · Canvas / exports"]
+    OPFS["OPFS · experiment files and snapshots"]
+    User --> React
+    React -->|"postMessage: execute / interrupt"| Worker
+    Worker -->|"postMessage: RPC request"| React
+    React -->|"SharedArrayBuffer: response + Atomics.notify"| Worker
+    React --> Plot
+    React <-->|"autosave / restore"| OPFS

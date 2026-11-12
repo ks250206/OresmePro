@@ -1,0 +1,47 @@
+---
+import Default from "@astrojs/starlight/components/PageTitle.astro";
+
+import type { StarlightRouteData } from "@astrojs/starlight/route-data";
+
+const { sidebar, entry, siteTitleHref, lang } = Astro.locals.starlightRoute;
+
+function groupsForCurrentPage(items: StarlightRouteData["sidebar"]): string[] | undefined {
+  for (const item of items) {
+    if (item.type === "link") {
+      if (item.isCurrent) return [];
+    } else {
+      const parents = groupsForCurrentPage(item.entries);
+      if (parents) return [item.label, ...parents];
+    }
+  }
+}
+const groups = groupsForCurrentPage(sidebar) ?? [];
+const japanese = lang === "ja";
+---
+<nav aria-label={japanese ? "パンくずリスト" : "Breadcrumb"}>
+  <ol>
+    <li><a href={siteTitleHref}>{japanese ? "ドキュメント" : "Docs"}</a></li>
+    {groups.map((group) => <li>{group}</li>)}
+    <li aria-current="page">{entry.data.title}</li>
+  </ol>
+</nav>
+<Default />
+<style>
+  ol {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-sm);
+  }
+  a {
+    color: var(--sl-color-accent-high);
+  }
+  li + li::before {
+    content: "/";
+    margin-inline-end: 0.5rem;
+  }
+</style>

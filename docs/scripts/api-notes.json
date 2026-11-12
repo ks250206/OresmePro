@@ -1,0 +1,58 @@
+{
+  "Axis": {
+    "ja": "`graph.axis(name)` で取得するか、`graph.left` などを使います。`axis.range = (0, 10)` で表示範囲を固定し、`axis.autoscale()` で自動設定に戻せます。",
+    "en": "Get an axis with `graph.axis(name)` or use a shortcut such as `graph.left`. Assign `axis.range = (0, 10)` to set explicit limits, or call `axis.autoscale()` to restore automatic limits."
+  },
+  "Cursor": {
+    "ja": "`graph.cursor(\"A\", trace, 10)` は点番号 10 にカーソルを置きます。`is_set` で確認してから座標や点番号を読みます。未設定のカーソルで読み取ると `OresmeError` が発生します。",
+    "en": "`graph.cursor(\"A\", trace, 10)` places the cursor at point index 10. Check `is_set` before reading coordinates or the point index. Reading an unset cursor raises `OresmeError`."
+  },
+  "Folder.waves": {
+    "ja": "直下にある Wave のリストを返します。",
+    "en": "Return the list of waves directly in this folder."
+  },
+  "Folder.folders": {
+    "ja": "直下にある子フォルダのリストを返します。",
+    "en": "Return the list of direct child folders."
+  },
+  "Graph": {
+    "ja": "`op.display(...)` で作成し、`op.graph(name)` で既存グラフを取得します。`display` の既定値 `style=_DEFAULT` は保存済みの既定スタイルを使う指定です。スタイルなしで作るには `style=None` を渡します。",
+    "en": "Create a graph with `op.display(...)` and retrieve an existing graph with `op.graph(name)`. The `display` default `style=_DEFAULT` uses the saved default style. Pass `style=None` to create a graph without a style."
+  },
+  "Graph.axis": {
+    "ja": "指定名の `Axis` を返します。その軸が存在しない場合は `OresmeError` です。",
+    "en": "Return the named `Axis`. A missing axis raises `OresmeError`."
+  },
+  "Table": {
+    "ja": "`op.edit(...)` は Wave を列として表示するテーブルを作ります。テーブルで値を変更すると Wave 自体が更新されます。",
+    "en": "`op.edit(...)` creates a table that displays waves as columns. Editing a value in the table updates the wave itself."
+  },
+  "Table.columns": {
+    "ja": "表示順の Wave オブジェクトのリスト。",
+    "en": "List of Wave objects in display order."
+  },
+  "Table.append": {
+    "ja": "Wave またはその名前を列として追加し、同じテーブルを返します。",
+    "en": "Append waves or wave names as columns and return the same table."
+  },
+  "Table.remove": {
+    "ja": "指定の列をテーブルから取り除き、同じテーブルを返します。Wave は Experiment に残ります。",
+    "en": "Remove the selected columns and return the same table. The waves remain in the experiment."
+  },
+  "Trace.x": {
+    "ja": "X 用の Wave。Y Wave のスケーリングで描く場合は `None`。",
+    "en": "The X wave, or `None` when plotting against the Y wave's X scaling."
+  },
+  "Trace.y": {
+    "ja": "Y 用の Wave。",
+    "en": "The Y wave."
+  },
+  "Wave.shape": {
+    "ja": "各次元の点数のタプル。",
+    "en": "Tuple of dimension lengths."
+  },
+  "Wave.ndim": {
+    "ja": "次元数。",
+    "en": "Number of dimensions."
+  }
+}

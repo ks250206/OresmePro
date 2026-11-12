@@ -1,0 +1,13 @@
+---
+title: ヒストグラムを作る
+sidebar:
+  order: 6
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/histogram.py?raw";
+import image from "../../../assets/histogram.png";
+
+正規分布から生成した2,000点を24ビンに数え上げます。各棒の中心はビンの中心で、高さは個数です。
+
+<Example code={code} image={image} alt="値3付近に集中する24ビンのヒストグラム" />

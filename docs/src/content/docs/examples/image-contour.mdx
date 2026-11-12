@@ -1,0 +1,13 @@
+---
+title: 2D画像に等高線を重ねる
+sidebar:
+  order: 7
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/image-contour.py?raw";
+import image from "../../../assets/image-contour.png";
+
+X・Y スケーリング付きの二次元 Wave を画像として描き、同じ格子の0.2、0.4、0.6、0.8の等高線を重ねます。
+
+<Example code={code} image={image} alt="Viridis の画像に白い等高線とカラースケールを表示した図" />

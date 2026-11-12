@@ -13,6 +13,9 @@ const isolationHeaders = {
 /** Build output, downloaded packages and test reports: not ours to format or lint. */
 const GENERATED = [
   "dist/**",
+  ".pages/**",
+  "docs/dist/**",
+  "docs/.astro/**",
   "coverage/**",
   "public/pyodide/**",
   "test-results/**",
@@ -31,8 +34,14 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  // What scripts/igor-fixtures.py writes stays as it writes it, so that running it again changes nothing.
-  fmt: { ignorePatterns: [...GENERATED, "src/core/io/testdata/igor/expected.json"] },
+  // Generated Markdown is checked against the Python source by docs:check.
+  fmt: {
+    ignorePatterns: [
+      ...GENERATED,
+      "src/core/io/testdata/igor/expected.json",
+      "docs/src/content/docs/**/reference/api/**",
+    ],
+  },
   lint: {
     ignorePatterns: [...GENERATED],
     options: { typeAware: true, typeCheck: true },

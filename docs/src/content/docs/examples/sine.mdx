@@ -1,0 +1,13 @@
+---
+title: 正弦波を描く
+sidebar:
+  order: 1
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/sine.py?raw";
+import image from "../../../assets/sine.png";
+
+3 Hz の正弦波を 200 Hz でサンプリングします。Wave に `dx=0.005` 秒を設定すると、横軸がサンプル番号から時刻になります。
+
+<Example code={code} image={image} alt="2秒弱の範囲に約6周期を描いたグラフ" />
