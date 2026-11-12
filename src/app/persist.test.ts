@@ -5,6 +5,7 @@ import { History } from "../core/history/history";
 import { encodeNpy } from "../core/io/npy";
 import {
   autosave,
+  hasBackup,
   restore,
   type PersistOptions,
   type SessionLocks,
@@ -123,7 +124,7 @@ async function open(tab: string, withLocks = true) {
   const files = new FileStore();
   await restore(doc, history, files, options(tab, withLocks));
   const before = locks.granted.length;
-  const stop = autosave(doc, history, files, options(tab, withLocks));
+  const { stop } = autosave(doc, history, files, options(tab, withLocks));
   await Promise.resolve();
   const lock = locks.granted[before];
   const session = lock?.replace("oresme-autosave-", "") ?? "";
@@ -249,10 +250,11 @@ describe("autosave shared by several tabs", () => {
     expect(values(doc, "a")).toEqual([1]);
     expect(values(doc, "b")).toEqual([2]);
 
-    // Once B's index replaces A's, nothing needs A's files.
+    // Once B's index replaces A's, only the backup B made of the state it
+    // opened (A's first index, with one wave) still needs a file of A's.
     make(b.doc, "c", [3]);
     await settle();
-    expect(store.of(a.session)).toEqual([]);
+    expect(store.of(a.session)).toHaveLength(1);
     ({ doc } = await reload());
     expect(doc.getState().waveOrder).toEqual(["a", "c"]);
     expect(values(doc, "a")).toEqual([9]);
@@ -270,13 +272,92 @@ describe("autosave shared by several tabs", () => {
     make(b.doc, "b", [2]);
     b.files.put("more.txt", new Uint8Array([1]));
     await settle();
-    expect(store.of(a.session)).toEqual([]);
+    // A's files are now the backup: the state B opened, kept to go back to.
+    expect(store.of(a.session)).toHaveLength(2);
 
     const { doc, files } = await reload();
     expect(values(doc, "a")).toEqual([1]);
     expect(values(doc, "b")).toEqual([2]);
     expect(files.list().map((file) => file.path)).toEqual(["more.txt", "notes.txt"]);
     expect(new TextDecoder().decode(files.get("notes.txt")!.bytes)).toBe("hello");
+
+    // The session after B keeps B's state as its backup, and A's is let go.
+    b.crash();
+    const c = await open("C");
+    make(c.doc, "c", [3]);
+    c.files.put("last.txt", new Uint8Array([2]));
+    await settle();
+    expect(store.of(a.session)).toEqual([]);
+    expect(store.of(b.session)).toHaveLength(4);
+  });
+
+  it("keeps the state a session opened as a backup that can be restored", async () => {
+    const a = await open("A");
+    make(a.doc, "a", [1]);
+    a.files.put("notes.txt", new TextEncoder().encode("first"));
+    a.history.add("user", "one");
+    await settle();
+    // Nothing was saved before A, so there is nothing to go back to.
+    expect(await hasBackup(options("A"))).toBe(false);
+    a.crash();
+
+    const b = await open("B");
+    b.doc.dispatch({ op: "setWaveData", name: "a", data: new Float64Array([2]) });
+    make(b.doc, "b", [3]);
+    b.files.put("notes.txt", new TextEncoder().encode("second"));
+    b.history.add("user", "two");
+    await settle();
+    // Later saves of the same session leave the backup as it is.
+    b.doc.dispatch({ op: "setWaveData", name: "a", data: new Float64Array([4]) });
+    await settle();
+    expect(await hasBackup(options("B"))).toBe(true);
+
+    const doc = new Doc();
+    const history = new History();
+    const files = new FileStore();
+    const report = await restore(doc, history, files, options("B"), "backup");
+    expect(report).toEqual({ loaded: true, errors: [], incomplete: false });
+    expect(doc.getState().waveOrder).toEqual(["a"]);
+    expect(values(doc, "a")).toEqual([1]);
+    expect(new TextDecoder().decode(files.get("notes.txt")!.bytes)).toBe("first");
+    expect(history.getEntries().map((entry) => entry.code)).toEqual(["one"]);
+    // The current state is untouched by reading the backup.
+    expect(values((await reload()).doc, "a")).toEqual([4]);
+  });
+
+  it("says how each save went, saves at once when asked and everything when told", async () => {
+    const states: string[] = [];
+    const doc = new Doc();
+    const saver = autosave(doc, new History(), new FileStore(), {
+      ...options("A"),
+      onState: (state) =>
+        states.push(state.kind === "failed" ? `failed: ${state.error}` : state.kind),
+    });
+    make(doc, "a", [1]);
+    saver.saveNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toEqual(["saving", "saved"]);
+    expect(values((await reload()).doc, "a")).toEqual([1]);
+
+    // A write that fails is reported with its reason, then tried again.
+    store.hook = (_tab, op, name) => {
+      if (op === "write" && name === "experiment.json") throw new Error("disk full");
+    };
+    make(doc, "b", [2]);
+    saver.saveNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states.slice(2)).toEqual(["saving", "failed: disk full"]);
+    store.hook = () => {};
+    saver.saveNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states.slice(4)).toEqual(["saving", "saved"]);
+
+    // Told that everything is unsaved, it writes the indexes again though nothing changed.
+    store.files.delete("history.json");
+    saver.markAll();
+    await settle();
+    expect(store.files.has("history.json")).toBe(true);
+    saver.stop();
   });
 
   it("reads again when another tab replaces the experiment during a restore", async () => {
@@ -400,8 +481,18 @@ describe("experiments saved before sessions named the files", () => {
     a.files.put("b.txt", new Uint8Array([1]));
     await settle();
 
+    // The old files are the backup of the state A opened, until the next session saves.
+    expect(store.files.has("wave-1.npy")).toBe(true);
+    a.crash();
+    const b = await open("B");
+    make(b.doc, "newer", [2]);
+    b.files.put("c.txt", new Uint8Array([2]));
+    await settle();
     expect(store.files.has("wave-1.npy")).toBe(false);
     expect(store.files.has("file-lz1-3")).toBe(false);
+    b.doc.dispatch({ op: "killWaves", names: ["newer"] });
+    b.files.remove("c.txt");
+    await settle();
     const { doc, files } = await reload();
     expect(doc.getState().waveOrder).toEqual(["old", "new"]);
     expect(values(doc, "old")).toEqual([4, 5]);

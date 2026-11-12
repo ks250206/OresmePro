@@ -54,6 +54,46 @@ export interface PersistOptions {
   /** Null where the browser has no Web Locks. Defaults to navigator.locks. */
   locks?: SessionLocks | null;
   intervalMs?: number;
+  /** Told each time saving starts, succeeds or fails. */
+  onState?: (state: SaveState) => void;
+  /**
+   * Asked before each index is replaced; false stops the save with an error.
+   * For a tab that has handed the saving of the experiment to another.
+   */
+  mayWrite?: () => boolean;
+}
+
+/** How the last attempt to save went. */
+export type SaveState =
+  | { kind: "saving" }
+  | { kind: "saved"; at: number }
+  /** `retryInMs` is how long until it is tried again by itself. */
+  | { kind: "failed"; error: string; retryInMs: number };
+
+/** What `autosave` hands back to its caller. */
+export interface Autosaver {
+  /** Stops saving and lets go of the session's lock once a save in flight has ended. */
+  stop: () => void;
+  /** Saves what is unsaved now instead of at the next interval or retry. */
+  saveNow: () => void;
+  /** Counts everything as unsaved: the document, the files and the history. */
+  markAll: () => void;
+}
+
+/** Which of the two saved states is read: the current one, or the one kept from the session before. */
+export type Generation = "current" | "backup";
+
+/** How restoring went: whether there was anything, and what could not be read. */
+export interface RestoreReport {
+  /** True if a saved document was found and loaded. */
+  loaded: boolean;
+  /** Why the document, the files or the history could not be read; empty if all went well. */
+  errors: string[];
+  /**
+   * True if the document or the files could not be read: saving now would
+   * replace them with what little was restored.
+   */
+  incomplete: boolean;
 }
 
 async function opfsDirectory(): Promise<StorageDirectory | null> {
@@ -107,6 +147,17 @@ interface SavedFile {
 type Kind = "wave" | "file";
 
 const INDEX: Record<Kind, string> = { wave: "experiment.json", file: "files.json" };
+const HISTORY = "history.json";
+/**
+ * The indexes as they were when this session first saved: the state the
+ * experiment was opened in. Their data is kept until the next session
+ * replaces them, so that state can be gone back to.
+ */
+const BACKUP: Record<string, string> = {
+  [INDEX.wave]: "experiment.backup.json",
+  [INDEX.file]: "files.backup.json",
+  [HISTORY]: "history.backup.json",
+};
 
 /** The data files an index names. */
 function references(kind: Kind, text: string): string[] {
@@ -168,7 +219,15 @@ async function collect(
   } catch {
     current = null;
   }
-  const keep = new Set([...written, ...(current ?? [])]);
+  // What the backup names is kept too. If it cannot be read, nothing of others is removed.
+  let backup: string[] = [];
+  try {
+    const index = await readFile(dir, BACKUP[INDEX[kind]]!);
+    if (index) backup = references(kind, await index.text());
+  } catch {
+    current = null;
+  }
+  const keep = new Set([...written, ...(current ?? []), ...backup]);
   for (const name of names) {
     if (keep.has(name)) continue;
     const owner = ownerOf(kind, name);
@@ -196,10 +255,12 @@ const RESTORE_ATTEMPTS = 20;
 async function readIndexed(
   dir: StorageDirectory,
   kind: Kind,
+  generation: Generation,
 ): Promise<{ text: string; data: Map<string, Uint8Array> } | null> {
+  const name = generation === "backup" ? BACKUP[INDEX[kind]]! : INDEX[kind];
   let previous: string | null = null;
   for (let attempt = 0; ; attempt += 1) {
-    const index = await readFile(dir, INDEX[kind]);
+    const index = await readFile(dir, name);
     if (!index) return null;
     const text = await index.text();
     const data = new Map<string, Uint8Array>();
@@ -218,26 +279,37 @@ async function readIndexed(
 }
 
 /**
- * Loads what was saved into the document and the history. The two are
+ * Loads what was saved into the document and the history. The parts are
  * restored independently: a session that only ran commands has a history
- * to bring back even though no document was ever written.
+ * to bring back even though no document was ever written. With "backup" it
+ * loads the state kept from when the session before this one began.
  */
 export async function restore(
   doc: Doc,
   history: History,
   files: FileStore,
   options: Pick<PersistOptions, "directory"> = {},
-): Promise<void> {
+  generation: Generation = "current",
+): Promise<RestoreReport> {
+  const report: RestoreReport = { loaded: false, errors: [], incomplete: false };
   const dir = await (options.directory ?? opfsDirectory)();
-  if (!dir) return;
+  if (!dir) return report;
+  const failed = (what: string, error: unknown) => {
+    console.warn(`Could not restore ${what}:`, error);
+    report.errors.push(error instanceof Error ? error.message : String(error));
+  };
   try {
-    const read = await readIndexed(dir, "wave");
-    if (read) doc.load(buildState(JSON.parse(read.text) as SavedExperiment, read.data));
+    const read = await readIndexed(dir, "wave", generation);
+    if (read) {
+      doc.load(buildState(JSON.parse(read.text) as SavedExperiment, read.data));
+      report.loaded = true;
+    }
   } catch (error) {
-    console.warn("Could not restore the saved experiment:", error);
+    failed("the saved experiment", error);
+    report.incomplete = true;
   }
   try {
-    const read = await readIndexed(dir, "file");
+    const read = await readIndexed(dir, "file", generation);
     if (read) {
       const loaded: [string, Uint8Array][] = [];
       for (const { path, file } of JSON.parse(read.text) as SavedFile[]) {
@@ -247,14 +319,22 @@ export async function restore(
       files.load(loaded);
     }
   } catch (error) {
-    console.warn("Could not restore the experiment's files:", error);
+    failed("the experiment's files", error);
+    report.incomplete = true;
   }
   try {
-    const savedHistory = await readFile(dir, "history.json");
-    if (savedHistory) history.load(JSON.parse(await savedHistory.text()) as HistoryEntry[]);
+    const saved = await readFile(dir, generation === "backup" ? BACKUP[HISTORY]! : HISTORY);
+    if (saved) history.load(JSON.parse(await saved.text()) as HistoryEntry[]);
   } catch (error) {
-    console.warn("Could not restore the command history:", error);
+    failed("the command history", error);
   }
+  return report;
+}
+
+/** Whether there is a state from the session before to go back to. */
+export async function hasBackup(options: Pick<PersistOptions, "directory"> = {}): Promise<boolean> {
+  const dir = await (options.directory ?? opfsDirectory)();
+  return dir !== null && (await readFile(dir, BACKUP[INDEX.wave]!)) !== null;
 }
 
 /** The longest wait before trying again after saves keep failing. */
@@ -288,7 +368,7 @@ export function autosave(
   history: History,
   files: FileStore,
   options: PersistOptions = {},
-): () => void {
+): Autosaver {
   const intervalMs = options.intervalMs ?? 800;
   const directory = options.directory ?? opfsDirectory;
   const locks = options.locks === undefined ? defaultLocks() : options.locks;
@@ -307,6 +387,25 @@ export function autosave(
   const session = newSession();
   const lock = holdLock(locks, lockName(session));
 
+  /** Indexes this session has replaced: each is copied aside before its first replacement. */
+  const backedUp = new Set<string>();
+
+  /**
+   * Replaces an index. The first time, what was there (the state this
+   * session started from) is kept as the backup, replacing the one before.
+   */
+  const writeIndex = async (dir: StorageDirectory, name: string, text: string) => {
+    if (options.mayWrite && !options.mayWrite()) {
+      throw new Error("Another tab now saves this experiment.");
+    }
+    if (!backedUp.has(name)) {
+      const before = await readFile(dir, name);
+      if (before) await writeFile(dir, BACKUP[name]!, await before.text());
+      backedUp.add(name);
+    }
+    await writeFile(dir, name, text);
+  };
+
   const saveDoc = async (dir: StorageDirectory) => {
     const state = doc.getState();
     const live = new Set<string>();
@@ -322,7 +421,7 @@ export function autosave(
     }
     const saved = describeExperiment(state, (wave) => written.get(wave.rev)!);
     // The index is written after the data it points to, then stale data is removed.
-    await writeFile(dir, INDEX.wave, JSON.stringify(saved));
+    await writeIndex(dir, INDEX.wave, JSON.stringify(saved));
     await collect(dir, "wave", live, session, locks);
     for (const [rev, file] of written) if (!live.has(file)) written.delete(rev);
   };
@@ -340,7 +439,7 @@ export function autosave(
       live.add(file);
       saved.push({ path, file });
     }
-    await writeFile(dir, INDEX.file, JSON.stringify(saved));
+    await writeIndex(dir, INDEX.file, JSON.stringify(saved));
     await collect(dir, "file", live, session, locks);
     for (const [version, file] of writtenFiles) {
       if (!live.has(file)) writtenFiles.delete(version);
@@ -351,6 +450,7 @@ export function autosave(
     try {
       const dir = await directory();
       if (!dir) return;
+      options.onState?.({ kind: "saving" });
       await lock.held;
       // A part is marked clean before it is written so that changes made
       // meanwhile mark it again, and marked again if writing it fails.
@@ -371,16 +471,23 @@ export function autosave(
       if (dirtyHistory) {
         dirtyHistory = false;
         const entries = trimHistory(history.getEntries());
-        await writeFile(dir, "history.json", JSON.stringify(entries)).catch((error: unknown) => {
+        await writeIndex(dir, HISTORY, JSON.stringify(entries)).catch((error: unknown) => {
           dirtyHistory = true;
           throw error;
         });
       }
       failures = 0;
+      options.onState?.({ kind: "saved", at: Date.now() });
     } catch (error) {
       console.warn("Autosave failed:", error);
       failures += 1;
-      schedule(Math.min(intervalMs * 2 ** failures, MAX_RETRY_MS));
+      const retryInMs = Math.min(intervalMs * 2 ** failures, MAX_RETRY_MS);
+      options.onState?.({
+        kind: "failed",
+        error: error instanceof Error ? error.message : String(error),
+        retryInMs,
+      });
+      schedule(retryInMs);
     }
   };
 
@@ -418,14 +525,24 @@ export function autosave(
   };
   const hasDocument = typeof document !== "undefined";
   if (hasDocument) document.addEventListener("visibilitychange", flush);
-  return () => {
-    stopped = true;
-    offDoc();
-    offHistory();
-    offFiles();
-    if (hasDocument) document.removeEventListener("visibilitychange", flush);
-    if (timer) clearTimeout(timer);
-    // Other tabs may collect this session's files once the lock is gone, so not before a save in flight ends.
-    void (saving ?? Promise.resolve()).finally(lock.release);
+  return {
+    stop: () => {
+      stopped = true;
+      offDoc();
+      offHistory();
+      offFiles();
+      if (hasDocument) document.removeEventListener("visibilitychange", flush);
+      if (timer) clearTimeout(timer);
+      // Other tabs may collect this session's files once the lock is gone, so not before a save in flight ends.
+      void (saving ?? Promise.resolve()).finally(lock.release);
+    },
+    saveNow: () => {
+      if (timer) clearTimeout(timer);
+      save();
+    },
+    markAll: () => {
+      dirtyDoc = dirtyFiles = dirtyHistory = true;
+      schedule();
+    },
   };
 }

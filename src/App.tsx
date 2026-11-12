@@ -365,7 +365,7 @@ export function App() {
       if (!proceed || cancelled) return;
       await restore(doc, history, files);
       if (cancelled) return;
-      stopSaving = autosave(doc, history, files);
+      stopSaving = autosave(doc, history, files).stop;
       kernel.start();
       openLaunchedFiles((launched) => void loadFiles(launched));
       // Once Python is up, everything a start needs has been loaded: keep it for offline use.
