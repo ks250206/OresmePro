@@ -22,10 +22,14 @@ export interface KernelOptions {
   files: FileStore;
   /** Called each time Python is (re)started, once it can be given code to run. */
   onStart?: () => void;
+  /** Called before an input is entered in the history: what must be written first goes in here. */
+  onExecute?: () => void;
   renderSvg: RpcContext["renderSvg"];
   exportGraph: RpcContext["exportGraph"];
   renderPageSvg: RpcContext["renderPageSvg"];
   exportPage: RpcContext["exportPage"];
+  measureText: RpcContext["measureText"];
+  importPresets: RpcContext["importPresets"];
   indexURL: string;
 }
 
@@ -112,6 +116,7 @@ export class KernelClient {
    */
   execute(code: string, source: "user" | "gui" = "user"): number {
     const { history } = this.options;
+    this.options.onExecute?.();
     const historyId = history.add(source, code, "queued");
     if (!this.worker || this.state.status === "unavailable" || this.state.status === "failed") {
       history.appendOutput(historyId, {
@@ -174,12 +179,24 @@ export class KernelClient {
     // Executions run in order, so the first one still pending is the one running.
     const [current] = this.running.keys();
     this.send({ type: "interrupt", id: current! });
-    setTimeout(() => {
-      if (!this.interruptAcked && this.interrupt && this.running.size > 0) this.interrupt[0] = 2;
-    }, 150);
+    // Everything below is about this execution only: by the time a timer
+    // fires it may have ended and another begun, which was not asked to stop.
+    const stillRunning = () => current !== undefined && this.running.has(current);
+    const signal = (repeats: number) => {
+      if (this.interruptAcked || !this.interrupt || !stillRunning()) return;
+      // Python takes the signal by setting the byte back to 0. Taken but still
+      // running means it was raised where it was swallowed: in the preparation
+      // before the user's code (IPython's hooks catch it and go on), after
+      // which the code itself would run on with nothing left to stop it. So
+      // it is sent again, a second apart, a few times. Code that catches
+      // KeyboardInterrupt to tidy up has that second to do it in.
+      if (this.interrupt[0] === 0) this.interrupt[0] = 2;
+      if (repeats > 0) setTimeout(() => signal(repeats - 1), 1000);
+    };
+    setTimeout(() => signal(3), 150);
     // Only offer the forced restart once the polite request has had a moment.
     setTimeout(() => {
-      if (this.running.size > 0 && !this.inputBuffer) {
+      if (stillRunning() && !this.inputBuffer) {
         this.setState({
           interrupting: true,
           message: "Still running… interrupt again to restart Python",
@@ -230,6 +247,10 @@ export class KernelClient {
     switch (message.type) {
       case "progress":
         if (!this.ready) this.setState({ status: "starting", message: message.message });
+        // Once Python is up, it reports what an input is waiting for: a package being loaded.
+        else if (this.running.size > 0 && !this.state.interrupting) {
+          this.setState({ message: message.message || "Running…" });
+        }
         break;
       case "ready":
         this.ready = true;
@@ -289,6 +310,10 @@ export class KernelClient {
           status: message.ok ? "ok" : "error",
           durationMs: Date.now() - run.startedAt,
         });
+        // The input that would not stop has ended: the one running now was not asked to.
+        if (this.running.size > 0 && this.state.interrupting) {
+          this.setState({ message: "Running…", interrupting: false });
+        }
         this.refreshStatus();
         break;
       }

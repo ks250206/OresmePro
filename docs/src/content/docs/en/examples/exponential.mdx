@@ -1,0 +1,13 @@
+---
+title: Fit an exponential decay
+sidebar:
+  order: 4
+---
+
+import Example from "../../../../components/Example.astro";
+import code from "../../../../snippets/exponential.py?raw";
+import image from "../../../../assets/exponential.png";
+
+Fit synthetic data with a 1.4-second time constant using `exp`. Constrain `tau` to a positive value and inspect the estimate in the Command Window.
+
+<Example code={code} image={image} alt="Decaying observations and their exponential fit" />

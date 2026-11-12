@@ -2,11 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "./doc";
 import {
   clearCommands,
+  clipboardCells,
+  clipboardText,
   pointCommands,
   selectionRange,
   tableEditCommands,
   type CellEdit,
   type TableColumn,
+  parseCell,
 } from "./tableEdit";
 
 const plane = { layer: 0, chunk: 0 };
@@ -95,6 +98,49 @@ describe("tableEditCommands", () => {
         plane,
       ),
     ).toBeNull();
+  });
+});
+
+describe("copy and paste", () => {
+  it("pastes back what was copied, whatever the cells hold", () => {
+    const cells = [
+      ["Li,Mg", 'say "hi"', '"quoted"'],
+      ["tab\there", "two\nlines", ""],
+      ["1,5", " spaced ", "crlf\r\nend"],
+    ];
+    const text = clipboardText(cells);
+    // As spreadsheets copy: tabs between cells, quotes only where needed.
+    expect(text.split("\n")[0]).toBe('Li,Mg\tsay "hi"\t"""quoted"""');
+    // Through another program, which may only keep the text, and change its line ends.
+    expect(clipboardCells(text.replace(/\r?\n/g, "\r\n"))).toEqual(
+      cells.map((row) => row.map((cell) => cell.replace(/\r\n/g, "\n"))),
+    );
+    // A single cell has no tab to tell it from comma-separated text: the
+    // app's own last copy is recognised and its cells used as they are.
+    const singles = [[["Li,Mg"]], [["1,5"]], [["1,2"], ["3,4"]], [[""]], [["  "]], [["a\r\nb"]]];
+    for (const single of singles) {
+      const own = { text: clipboardText(single), cells: single };
+      expect(clipboardCells(own.text.replace(/\r?\n/g, "\r\n"), own)).toEqual(single);
+    }
+  });
+
+  it("reads text copied from a spreadsheet", () => {
+    expect(clipboardCells('1\t"two\r\nlines"\tx\r\n3\t4\t\r\n')).toEqual([
+      ["1", "two\nlines", "x"],
+      ["3", "4", ""],
+    ]);
+    // A quote that does not enclose the whole cell is part of its text.
+    expect(clipboardCells('"a" b\t"c\n')).toEqual([['"a" b', '"c']]);
+  });
+
+  it("splits text without tabs on commas only when every piece is a number or date", () => {
+    expect(clipboardCells("1, 2.5,3\n4,,2026-11-11\n")).toEqual([
+      ["1", " 2.5", "3"],
+      ["4", "", "2026-11-11"],
+    ]);
+    expect(clipboardCells("Li,Mg")).toEqual([["Li,Mg"]]);
+    expect(clipboardCells("1\n2")).toEqual([["1"], ["2"]]);
+    expect(clipboardCells("  \n")).toEqual([]);
   });
 });
 
@@ -231,5 +277,18 @@ describe("complex and integer waves in a table", () => {
     ]);
     expect(Array.from(doc.getState().waves.n!.data)).toEqual([3, 0]);
     expect(doc.getState().waves.n!.type).toBe("int32");
+  });
+});
+
+describe("parseCell", () => {
+  it("reads what the importer reads: numbers, infinities and markers of missing values", () => {
+    expect(parseCell("1.5e3")).toBe(1500);
+    expect(parseCell(" -inf ")).toBe(-Infinity);
+    expect(parseCell("Infinity")).toBe(Infinity);
+    for (const text of ["", "NaN", "-nan", "N/A", "#N/A", "#DIV/0!", "NA", "-", "null"]) {
+      expect(parseCell(text), text).toBeNaN();
+    }
+    // Text is not a number, and "Na" is sodium, not "not available".
+    for (const text of ["abc", "Na", "1,5", "1 2"]) expect(parseCell(text), text).toBeNull();
   });
 });

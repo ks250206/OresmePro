@@ -1,5 +1,5 @@
 import { stripAnsi } from "../src/core/history/ansi";
-import { expect, test } from "./fixtures";
+import { type App, expect, test } from "./fixtures";
 
 test.describe("procedure windows", () => {
   test("a procedure is typed, run, and there again after a reload", async ({ app, page }) => {
@@ -86,6 +86,194 @@ test.describe("procedure windows", () => {
   });
 });
 
+test.describe("the procedure editor", () => {
+  /** A procedure holding `code`, its editor focused at the end of the text. */
+  async function procedure(app: App, code: string) {
+    await app.run(`p = op.new_procedure("Edit", ${JSON.stringify(code)})`);
+    await app.place("Edit", 20, 20, 600, 380);
+    const editor = app.window("Edit").getByRole("textbox", { name: "Edit.py" });
+    await editor.click();
+    await app.page.keyboard.press("Control+End");
+    return editor;
+  }
+  const code = async (app: App) => (await app.doc()).procedures.Edit!.code;
+  const status = (app: App) => app.window("Edit").locator("[data-editor-status]");
+
+  test("right-clicking gives the app's menu, which acts on the selection", async ({
+    app,
+    page,
+  }) => {
+    await procedure(app, "a = 1\nb = 2\n");
+    await page.evaluate(() => {
+      window.addEventListener("contextmenu", (event) => {
+        Object.assign(globalThis, { browserMenuShown: !event.defaultPrevented });
+      });
+    });
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "b = 2" }).click({
+      button: "right",
+    });
+    expect(
+      await page.evaluate(() => (globalThis as { browserMenuShown?: boolean }).browserMenuShown),
+    ).toBe(false);
+    const menu = page.getByRole("menu");
+    await expect(
+      menu.getByRole("menuitem", { name: /Run When the Experiment Opens$/ }),
+    ).toBeVisible();
+    // Nothing is selected and nothing has been typed.
+    await expect(menu.getByRole("menuitem", { name: /^Copy/ })).toBeDisabled();
+    await expect(menu.getByRole("menuitem", { name: /^Undo/ })).toBeDisabled();
+    await menu.getByRole("menuitem", { name: /^Select All/ }).click();
+    await expect(menu).toBeHidden();
+
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "a = 1" }).click({
+      button: "right",
+    });
+    await expect(menu.getByRole("menuitem", { name: /^Copy/ })).toBeEnabled();
+    await menu.getByRole("menuitem", { name: /^Comment\/Uncomment Lines/ }).click();
+    expect(await code(app)).toBe("# a = 1\n# b = 2\n");
+
+    // Undo in the editor undoes the edit, not something in the document.
+    await page.keyboard.press("Control+z");
+    expect(await code(app)).toBe("a = 1\nb = 2\n");
+    expect((await app.doc()).windows.map((window) => window.name)).toEqual(["Edit"]);
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "a = 1" }).click({
+      button: "right",
+    });
+    await menu.getByRole("menuitem", { name: /^Redo/ }).click();
+    expect(await code(app)).toBe("# a = 1\n# b = 2\n");
+
+    // The command line has a menu of its own.
+    await app.commandLine.click({ button: "right" });
+    await expect(menu.getByRole("menuitem", { name: /^Search History/ })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: /^Run Procedure/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+  });
+
+  test("Ruff marks undefined names, but not np and op", async ({ app, page }) => {
+    await procedure(app, "x = np.linspace(0, 1, 5)\nop.make('w', x * scale)\n");
+    const marks = app.window("Edit").locator(".cm-lintRange-warning");
+    await expect(marks).toHaveText(["scale"], { timeout: 30_000 });
+    await expect(status(app)).toContainText("1 problem");
+    await expect(app.window("Edit").locator(".cm-lint-marker-warning")).toHaveCount(1);
+
+    // The problems are listed, and one defined elsewhere can be said to be.
+    await status(app).getByRole("button", { name: "1 problem" }).click();
+    const panel = app.window("Edit").locator(".cm-panel-lint");
+    await expect(panel).toContainText("Undefined name `scale`");
+    await panel.getByRole("button", { name: "Defined elsewhere" }).click();
+    await expect
+      .poll(() => code(app))
+      .toBe("# defined elsewhere: scale\nx = np.linspace(0, 1, 5)\nop.make('w', x * scale)\n");
+    await expect(status(app)).toContainText("0 problems");
+    await expect(marks).toHaveCount(0);
+
+    // A syntax error is an error.
+    await app.window("Edit").getByRole("textbox", { name: "Edit.py" }).click();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("def broken(:");
+    await expect(app.window("Edit").locator(".cm-lint-marker-error")).toHaveCount(1);
+  });
+
+  test("Format Document formats the text, as one step that Ctrl+Z takes back", async ({
+    app,
+    page,
+  }) => {
+    const messy = "x=[1,2 ,3]\ndef  area( r ):\n  return 3*r*r\n";
+    await procedure(app, messy);
+    await page.keyboard.press("Shift+Alt+F");
+    const formatted = "x = [1, 2, 3]\n\n\ndef area(r):\n    return 3 * r * r\n";
+    await expect.poll(() => code(app), { timeout: 30_000 }).toBe(formatted);
+    await expect(app.window("Edit").getByRole("textbox")).toContainText("def area(r):");
+    await page.keyboard.press("Control+z");
+    expect(await code(app)).toBe(messy);
+    await page.keyboard.press("Control+Shift+z");
+    expect(await code(app)).toBe(formatted);
+
+    // From the menu; a syntax error is reported and the text left alone.
+    await page.keyboard.type("y = 1 +");
+    const broken = await code(app);
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "def area" }).click({
+      button: "right",
+    });
+    await page.getByRole("menuitem", { name: /^Format Document/ }).click();
+    await expect(status(app)).toContainText("Not formatted. Syntax error on line");
+    expect(await code(app)).toBe(broken);
+  });
+
+  test("Run Selection runs the selected line, which goes into the history", async ({
+    app,
+    page,
+  }) => {
+    await procedure(app, "x = 21\n    print(x * 2)\nprint('not this')\n");
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "x = 21" }).click();
+    await page.keyboard.press("Shift+Enter");
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe("x = 21");
+
+    // A line selected from the keyboard, run from the menu, without its indentation.
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "print(x * 2)" }).click();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Shift+End");
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "print(x * 2)" }).click({
+      button: "right",
+    });
+    await page.getByRole("menuitem", { name: /^Run Selection/ }).click();
+    await app.idle();
+    expect(await app.lastEntry()).toMatchObject({
+      code: "print(x * 2)",
+      output: "42\n",
+      source: "user",
+    });
+    await expect(app.window("Edit").locator("[data-editor-status]")).toContainText("Not run yet");
+
+    // Run Procedure, from the menu, and the status line follows edits after it.
+    await page.locator('[data-window="Edit"] .cm-line', { hasText: "x = 21" }).click({
+      button: "right",
+    });
+    await page.getByRole("menuitem", { name: /^Run Procedure/ }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.procedure("Edit").run()');
+    await expect(status(app)).toContainText("Unchanged since run");
+    await page.keyboard.type("#");
+    await expect(status(app)).toContainText("Edited since run");
+  });
+
+  test("find and replace, and go to line", async ({ app, page }) => {
+    await procedure(app, "old = 1\nprint(old)\nOLD_NAME = 2\n");
+    await page.keyboard.press("Control+f");
+    const panel = app.window("Edit").locator(".cm-search");
+    await panel.getByRole("textbox", { name: "Find" }).fill("old");
+    await panel.getByRole("textbox", { name: "Replace" }).fill("new");
+    await panel.getByRole("button", { name: "Replace All" }).click();
+    // Matching case is off by default; with it on, OLD_NAME is not touched.
+    expect(await code(app)).toBe("new = 1\nprint(new)\nnew_NAME = 2\n");
+    await page.keyboard.press("Control+z");
+    await panel.getByLabel("Match case").check();
+    await panel.getByRole("button", { name: "Replace All" }).click();
+    expect(await code(app)).toBe("new = 1\nprint(new)\nOLD_NAME = 2\n");
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+
+    await page.keyboard.press("Control+g");
+    await app.window("Edit").locator('.cm-panel [name="line"]').fill("3");
+    await page.keyboard.press("Enter");
+    await expect(status(app)).toContainText("Ln 3, Col 1");
+  });
+
+  test("a procedure made again under the same name has a new editor", async ({ app, page }) => {
+    const editor = await procedure(app, "first = 1\n");
+    await page.keyboard.type("x = 2");
+    await app.run('op.kill_window("Edit")');
+    await app.run('p = op.new_procedure("Edit", "second = 1\\n")');
+    await expect(editor).toContainText("second = 1");
+    await editor.click();
+    await page.keyboard.press("Control+z");
+    // Nothing of the old editor's history: there is nothing to undo.
+    expect(await code(app)).toBe("second = 1\n");
+  });
+});
+
 test.describe("opening an experiment with procedures", () => {
   test("asks before running them, and opens without running if refused", async ({ app, page }) => {
     await app.run('p = op.new_procedure(code="FROM_FILE = 42\\n")');
@@ -150,8 +338,9 @@ test.describe("the experiment's files", () => {
     expect((await app.run('import os; print(os.path.exists("notes.txt"))')).output).toBe("False\n");
 
     const saved = await app.download(() => page.keyboard.press("Control+s"));
-    page.once("dialog", (dialog) => void dialog.accept());
+    // A new experiment opens in the tab; the old one stays among the browser's experiments.
     await app.menu("File", "New Experiment");
+    await expect(page).toHaveTitle("Untitled — OresmePro");
     await expect.poll(() => app.files()).toEqual({});
     await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
     expect((await app.run("import os; print(os.listdir())")).output).toBe("[]\n");

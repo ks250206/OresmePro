@@ -1,0 +1,7 @@
+---
+import { LinkButton } from "@astrojs/starlight/components";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const app = import.meta.env.DEV ? "http://localhost:5173/" : `${base.slice(0, base.lastIndexOf("/"))}/`;
+---
+<LinkButton href={app} icon="external" variant="secondary">Open OresmePro</LinkButton>

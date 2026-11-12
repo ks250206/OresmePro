@@ -1,9 +1,14 @@
+import { arrangeLayout } from "../core/doc/arrange";
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
+import { changedInputs } from "../core/doc/results";
 import { DocError, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
+import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
+import { planIgorImport } from "../core/io/igorImport";
+import type { MeasureText } from "../core/plot/displayList";
 import { tracePosition, traceX } from "../core/plot/layout";
 
 export interface RpcContext {
@@ -17,6 +22,16 @@ export interface RpcContext {
   /** The same for page layouts. */
   renderPageSvg(page: string): string;
   exportPage(page: string, filename: string): void;
+  /** Measures text as it is drawn, to know how much room text on a page takes. */
+  measureText: MeasureText;
+  /** The import presets kept by the app, for `op.load_text(..., preset=...)`. */
+  importPresets(): readonly NamedImportSettings[];
+}
+
+/** A named set of import settings, as the app keeps them for the files of an instrument. */
+export interface NamedImportSettings {
+  name: string;
+  settings: ImportSettings;
 }
 
 export interface RpcReply {
@@ -88,7 +103,17 @@ export function handleRpc(
         delete command.complex;
       } else if (command.op === "setWavePoints") {
         if (!data) throw new DocError("Missing point values.");
-        command.values = data;
+        if (command.complex === true) {
+          command.values = data.subarray(0, data.length / 2);
+          command.imag = data.subarray(data.length / 2);
+        } else {
+          command.values = data;
+        }
+        delete command.complex;
+      }
+      if (command.op === "addResult" && typeof command.result === "object" && command.result) {
+        // Stamped here: the document's commands do not read the clock.
+        command.result = { created: Date.now(), ...command.result };
       }
       return { result: doc.dispatch(command as unknown as Command, { group }) };
     }
@@ -151,6 +176,13 @@ export function handleRpc(
       if (!graph) throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
       return { result: graph };
     }
+    case "listStyles":
+      return { result: { names: Object.keys(state.styles), default: state.defaultStyle } };
+    case "styleInfo": {
+      const style = typeof params.name === "string" ? state.styles[params.name] : undefined;
+      if (!style) throw new DocError(`No style named ${JSON.stringify(params.name)}.`);
+      return { result: style };
+    }
     case "tableInfo": {
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
@@ -177,6 +209,12 @@ export function handleRpc(
       }
       context.exportPage(params.name, filename);
       return { result: null };
+    }
+    case "arrangeLayout": {
+      const layout = typeof params.layout === "string" ? params.layout : "";
+      const { commands, leftOut } = arrangeLayout(state, layout, params, context.measureText);
+      for (const command of commands) doc.dispatch(command, { group });
+      return { result: { leftOut } };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
@@ -210,6 +248,71 @@ export function handleRpc(
     case "putFile": {
       const bytes = wordsToBytes(data, Number(params.size));
       return { result: context.files.put(String(params.path), bytes) };
+    }
+    case "listResults":
+      return {
+        result: Object.values(state.results)
+          .sort((a, b) => a.created - b.created)
+          .map((result) => result.name),
+      };
+    case "resultInfo": {
+      const name = params.name;
+      const result =
+        typeof name === "string" && Object.hasOwn(state.results, name)
+          ? state.results[name]
+          : undefined;
+      if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+      return { result: { ...result, changed: changedInputs(state, result) } };
+    }
+    case "importData": {
+      const filename = String(params.filename);
+      let settings = checkSettings(params.settings ?? {});
+      if (typeof params.preset === "string") {
+        const preset = context.importPresets().find((item) => item.name === params.preset);
+        if (!preset) {
+          const names = context.importPresets().map((item) => item.name);
+          throw new DocError(
+            `No import preset named ${JSON.stringify(params.preset)}. Presets: ${names.join(", ") || "none"}.`,
+          );
+        }
+        // What the call says goes before the preset, column by column.
+        settings = {
+          ...preset.settings,
+          ...settings,
+          columns: { ...preset.settings.columns, ...settings.columns },
+        };
+      }
+      const digest = typeof params.digest === "string" ? params.digest : undefined;
+      const bytes = wordsToBytes(data, Number(params.size));
+      const kind = params.kind === "excel" ? "excel" : "text";
+      const plan = planImport(bytes, filename, settings, state, digest, kind);
+      if (plan.commands.length === 0) throw new DocError(`${filename} has no columns.`);
+      const made: string[] = [];
+      for (const command of plan.commands) {
+        const result = doc.dispatch(command, { group });
+        if (command.op !== "makeWave" && result) made.push(result);
+      }
+      return {
+        result: {
+          tables: plan.tables.map(({ sheet, result }) => ({
+            sheet,
+            waves: result.names,
+            unreadable: result.unreadable.map((rows) => rows.length),
+          })),
+          windows: made,
+          summary: plan.summary,
+          encoding: plan.encoding,
+        },
+      };
+    }
+    case "importIgor": {
+      const filename = String(params.filename);
+      const digest = typeof params.digest === "string" ? params.digest : undefined;
+      const bytes = wordsToBytes(data, Number(params.size));
+      const plan = planIgorImport(bytes, filename, state, digest);
+      if (plan.waves.length === 0) throw new DocError(plan.summary);
+      for (const command of plan.commands) doc.dispatch(command, { group });
+      return { result: { waves: plan.waves, summary: plan.summary, skipped: plan.skipped } };
     }
     case "removeFile":
       return { result: context.files.remove(String(params.path)) };

@@ -1,20 +1,25 @@
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
-import type { DocState } from "../core/doc/types";
+import { figureSize, type DocState } from "../core/doc/types";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
+import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
+import { PresetStore } from "./importPresets";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { browserLibrary, LIBRARY_KEY } from "./styleLibrary";
 
 export type DialogRequest =
   | { kind: "newGraph" }
   | { kind: "newTable" }
+  /** `folder`: the data folder to make them in, "" for root; left out, root. */
+  | { kind: "makeWaves"; folder?: string }
   | { kind: "appendTraces"; graph: string }
   | { kind: "matrixPlot"; plot: "image" | "contour"; graph?: string }
   | { kind: "modifyTrace"; graph: string; trace?: string }
@@ -33,10 +38,25 @@ export type DialogRequest =
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
+  | { kind: "background"; wave?: string }
+  | { kind: "onset"; wave?: string }
   | { kind: "graphScript"; graph: string }
+  /** The styles of the experiment and the library; `graph` is the one to save or apply to. */
+  | { kind: "styles"; graph?: string }
   | { kind: "timeZone" }
   | { kind: "pageText"; layout: string; item?: string }
+  /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
+  | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
+  | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
+  | { kind: "results"; result?: string }
+  | { kind: "experiments" }
   | { kind: "about" };
+
+/** A file of data read into memory, waiting to be loaded through the Load Data dialog. */
+export interface PendingData {
+  name: string;
+  bytes: Uint8Array;
+}
 
 export interface MenuItem {
   label?: string;
@@ -45,6 +65,8 @@ export interface MenuItem {
   checked?: boolean;
   separator?: boolean;
   onSelect?: () => void;
+  /** Items of a menu that opens beside this one. */
+  submenu?: MenuItem[];
 }
 
 export interface UiState {
@@ -62,6 +84,11 @@ export interface UiState {
   selectedWaves: readonly string[];
   /** Data folders shown collapsed in the data browser. */
   collapsedFolders: readonly string[];
+  /**
+   * The items selected on each page layout, by layout name, in the order they
+   * were selected: the first is what "same size" matches.
+   */
+  pageSelection: Readonly<Record<string, readonly string[]>>;
   /** Text waiting to be placed in the command line; the editor consumes it. */
   commandLineInsert: { text: string; token: number } | null;
 }
@@ -70,6 +97,37 @@ export const doc = new Doc();
 export const history = new History();
 /** The experiment's files: what Python wrote, and what was added for it to read. */
 export const files = new FileStore();
+const LAST_EXPERIMENT = "oresme.experiment";
+
+/** The experiment this tab is for: the one named in the address, or the one opened last. */
+function experimentId(): string {
+  if (typeof location === "undefined") return DEFAULT_EXPERIMENT;
+  const named = /^#e=([a-z0-9]+)$/.exec(location.hash)?.[1];
+  if (isExperimentId(named)) return named;
+  try {
+    const last = localStorage.getItem(LAST_EXPERIMENT);
+    if (isExperimentId(last)) return last;
+  } catch {
+    // No storage for it: the first experiment.
+  }
+  return DEFAULT_EXPERIMENT;
+}
+
+/** Keeps the experiment in the browser, and decides whether this tab is the one saving it. */
+export const experiment = new ExperimentSession({ doc, history, files }, experimentId());
+
+/** Opens the experiment in this tab, to be opened again by a tab that names none. */
+export async function startExperiment(): Promise<void> {
+  try {
+    localStorage.setItem(LAST_EXPERIMENT, experiment.id);
+  } catch {
+    // It is only a convenience.
+  }
+  await experiment.start();
+}
+
+/** Ways of reading data files, kept in the browser from one experiment to the next. */
+export const importPresets = new PresetStore();
 export const ui = createStore<UiState>({
   dialog: null,
   alert: null,
@@ -81,21 +139,20 @@ export const ui = createStore<UiState>({
   commandHeight: 240,
   selectedWaves: [],
   collapsedFolders: [],
+  pageSelection: {},
   commandLineInsert: null,
 });
 
-/** Height of a window's title bar; the content area is the window minus this. */
-export const TITLE_BAR_HEIGHT = 24;
-/** Height of the cursor readout bar under a graph. */
-export const INFO_BAR_HEIGHT = 56;
+export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+/** How the command key is written in menus. */
+export const MOD = isMac ? "⌘" : "Ctrl+";
+
+export { INFO_BAR_HEIGHT, TITLE_BAR_HEIGHT } from "../core/doc/types";
 
 /** The size at which a graph is drawn in its window. */
 export function graphSize(state: DocState, name: string): { width: number; height: number } {
   const window = state.windows.find((item) => item.name === name);
-  const info = state.graphs[name]?.showInfo ? INFO_BAR_HEIGHT : 0;
-  return window
-    ? { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info }
-    : { width: 440, height: 280 };
+  return window ? figureSize(window, state.graphs[name]) : { width: 440, height: 280 };
 }
 
 /**
@@ -164,15 +221,30 @@ export const runProcedureCode = (name: string): string =>
   `op.procedure(${JSON.stringify(name)}).run()`;
 
 /**
+ * The text of each procedure as it was when it was last run in this Python,
+ * so that its window can say whether it has been edited since. A new Python
+ * has run none of them.
+ */
+export const procedureRuns = createStore<{ code: Readonly<Record<string, string>> }>({ code: {} });
+
+/** Runs a procedure in the interactive namespace, through the history like a typed command. */
+export function runProcedure(name: string, source: "user" | "gui" = "user"): number {
+  const code = doc.getState().procedures[name]?.code;
+  if (code !== undefined) {
+    procedureRuns.set((state) => ({ code: { ...state.code, [name]: code } }));
+  }
+  return kernel.execute(runProcedureCode(name), source);
+}
+
+/**
  * Runs the procedures of the experiment, as Igor compiles its procedure
  * windows: what they define is there whenever Python is, after a restart or
  * after opening an experiment.
  */
 function runProcedures(): void {
+  procedureRuns.set({ code: {} });
   for (const procedure of Object.values(doc.getState().procedures)) {
-    if (procedure.autoRun && procedure.code.trim()) {
-      kernel.execute(runProcedureCode(procedure.name), "gui");
-    }
+    if (procedure.autoRun && procedure.code.trim()) runProcedure(procedure.name, "gui");
   }
 }
 
@@ -181,10 +253,13 @@ export const kernel: KernelClient = new KernelClient({
   history,
   files,
   onStart: runProcedures,
+  onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),
   renderPageSvg,
   exportPage: (page, filename) => pageExportHandler(page, filename),
+  measureText,
+  importPresets: () => importPresets.list(),
   indexURL: PYODIDE_URL,
 });
 
@@ -199,10 +274,18 @@ let batchCounter = 0;
  * equivalent Python into the history, as Igor does for its dialogs. Returns
  * the result of the last command, or undefined if a command was rejected (the
  * user is told why).
+ *
+ * `echo` is the Python to write instead of a line per command, for an action
+ * that Python does in one call although it takes several commands. Should a
+ * command fail midway, the lines for those that ran are written instead.
  */
-export function runGui(commands: Command | readonly Command[]): string | null | undefined {
+export function runGui(
+  commands: Command | readonly Command[],
+  options: { echo?: string } = {},
+): string | null | undefined {
   const list: readonly Command[] = Array.isArray(commands) ? commands : [commands as Command];
   if (list.length === 0) return null;
+  flushEchoes();
   batchCounter += 1;
   const group = `gui${batchCounter}`;
   const echoes: string[] = [];
@@ -220,7 +303,8 @@ export function runGui(commands: Command | readonly Command[]): string | null | 
     if (echoes.length > 0) history.add("gui", echoes.join("\n"));
     return undefined;
   }
-  if (echoes.length > 0) history.add("gui", echoes.join("\n"));
+  if (options.echo !== undefined) history.add("gui", options.echo);
+  else if (echoes.length > 0) history.add("gui", echoes.join("\n"));
   return result;
 }
 
@@ -228,6 +312,21 @@ const pendingEchoes = new Map<
   string,
   { timer: ReturnType<typeof setTimeout>; text: () => string }
 >();
+
+/**
+ * Writes the echoes that are still waiting for their gesture to go quiet,
+ * except that of the gesture named. Whatever is written to the history next
+ * happened after them and must come after them: a drag followed at once by a
+ * menu command would otherwise be recorded in the wrong order.
+ */
+export function flushEchoes(except?: string): void {
+  for (const [key, pending] of pendingEchoes) {
+    if (key === except) continue;
+    clearTimeout(pending.timer);
+    pendingEchoes.delete(key);
+    history.add("gui", pending.text());
+  }
+}
 
 /**
  * Applies commands immediately but writes their echo only once the stream of
@@ -245,6 +344,7 @@ export function runGuiCoalesced(
     showError("That did not work", error);
     return;
   }
+  flushEchoes(key);
   const previous = pendingEchoes.get(key);
   if (previous) clearTimeout(previous.timer);
   const timer = setTimeout(() => {
@@ -256,6 +356,7 @@ export function runGuiCoalesced(
 
 /** Records a note in the history (a file load, say) without running anything. */
 export function note(text: string): void {
+  flushEchoes();
   history.add("system", text);
 }
 
@@ -271,12 +372,33 @@ export function useUi<T>(selector: (state: UiState) => T): T {
   return useStore(ui, selector);
 }
 
+export function useExperimentState() {
+  return useSyncExternalStore(experiment.subscribe, experiment.getState);
+}
+
+export function useExperimentInfo() {
+  return useSyncExternalStore(experiment.subscribe, experiment.getInfo);
+}
+
 export function useKernelState() {
   return useSyncExternalStore(kernel.subscribe, kernel.getState);
 }
 
 export function useFiles() {
   return useSyncExternalStore(files.subscribe, files.list);
+}
+
+/** The styles in the browser's library, following changes made in other tabs too. */
+export function useLibraryStyles() {
+  const library = browserLibrary();
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === LIBRARY_KEY) library.changed();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [library]);
+  return useSyncExternalStore(library.subscribe, library.list);
 }
 
 export function useHistoryEntries() {

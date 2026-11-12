@@ -57,7 +57,7 @@ test.describe("page layouts", () => {
 
     await window.getByRole("button", { name: "Add Text…" }).click();
     await page.getByRole("dialog").getByLabel("Text").fill("Figure 1. Sine and cosine");
-    await page.getByRole("dialog").getByLabel("Size").fill("9");
+    await page.getByRole("dialog").getByLabel("Size", { exact: true }).fill("9");
     await app.doIt();
     items = (await app.doc()).pages.Layout0!.items;
     expect(items.at(-1)).toMatchObject({
@@ -93,5 +93,166 @@ test.describe("page layouts", () => {
     await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
     expect((await app.doc()).pages.Layout0!.items).toHaveLength(2);
     await expect(app.window("Layout0").locator("canvas")).toBeVisible();
+  });
+});
+
+test.describe("arranging page layouts", () => {
+  /** Where a point of the page is on the screen. */
+  const onScreen = async (
+    canvas: import("@playwright/test").Locator,
+    width: number,
+    x: number,
+    y: number,
+  ) => {
+    const box = (await canvas.boundingBox())!;
+    const scale = box.width / width;
+    return { x: box.x + x * scale, y: box.y + y * scale, scale };
+  };
+
+  test("items are selected with Shift-click and a rubber band, lined up and moved together", async ({
+    app,
+    page,
+  }) => {
+    await app.run(
+      [
+        'w = op.make("w", np.sin(np.linspace(0, 6, 100)))',
+        'gs = [op.display(w, name=f"Panel{i}") for i in range(4)]',
+        'fig = op.new_layout("Fig")',
+        "for g, (x, y) in zip(gs, [(40, 40), (300, 100), (60, 400), (320, 450)]): fig.add_graph(g, x=x, y=y, w=200, h=150)",
+        'fig.add_text("Figure 1", x=40, y=700)',
+      ].join("\n"),
+    );
+    await app.place("Fig", 300, 10, 700, 760);
+    const window = app.window("Fig");
+    const canvas = window.locator("canvas");
+    const selected = () =>
+      window
+        .locator("[data-item][data-selected]")
+        .evaluateAll((items) => items.map((item) => item.getAttribute("data-item")));
+
+    // A click selects one item; Shift-click adds another.
+    let at = await onScreen(canvas, 595, 140, 115);
+    await page.mouse.click(at.x, at.y);
+    at = await onScreen(canvas, 595, 400, 175);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(at.x, at.y);
+    await page.keyboard.up("Shift");
+    expect(await selected()).toEqual(["graph0", "graph1"]);
+
+    await app.menu("Layout", "Align Top Edges");
+    let items = (await app.doc()).pages.Fig!.items;
+    expect(items.map((item) => item.y)).toEqual([40, 40, 400, 450, 700]);
+    expect((await app.lastEntry()).code).toBe(
+      'op.layout("Fig").align(["graph0", "graph1"], "top")',
+    );
+    // One step to undo, and back again.
+    await page.keyboard.press("Control+z");
+    expect((await app.doc()).pages.Fig!.items[1]!.y).toBe(100);
+    await page.keyboard.press("Control+y");
+    expect((await app.doc()).pages.Fig!.items[1]!.y).toBe(40);
+
+    // Dragging one of the selected items moves both by the same distance.
+    at = await onScreen(canvas, 595, 140, 115);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await page.mouse.move(at.x + 30, at.y + 20, { steps: 6 });
+    await page.mouse.up();
+    items = (await app.doc()).pages.Fig!.items;
+    const dx = items[0]!.x - 40;
+    const dy = items[0]!.y - 40;
+    expect(dx).toBeCloseTo(30 / at.scale, 0);
+    expect(dy).toBeCloseTo(20 / at.scale, 0);
+    expect([items[1]!.x - 300, items[1]!.y - 40]).toEqual([dx, dy]);
+    expect(items.slice(2).map((item) => [item.x, item.y])).toEqual([
+      [60, 400],
+      [320, 450],
+      [40, 700],
+    ]);
+    await expect
+      .poll(async () => (await app.lastEntry()).code)
+      .toBe(
+        [
+          `op.layout("Fig").item("graph0").set(x=${items[0]!.x}, y=${items[0]!.y})`,
+          `op.layout("Fig").item("graph1").set(x=${items[1]!.x}, y=${items[1]!.y})`,
+        ].join("\n"),
+      );
+    // The arrow keys nudge the whole selection.
+    await page.keyboard.press("ArrowLeft");
+    items = (await app.doc()).pages.Fig!.items;
+    expect([items[0]!.x, items[1]!.x]).toEqual([40 + dx - 1, 300 + dx - 1]);
+
+    // A rubber band from empty paper selects what it touches, and only that.
+    const from = await onScreen(canvas, 595, 10, 390);
+    const to = await onScreen(canvas, 595, 330, 460);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 6 });
+    await expect(window.locator("[data-band]")).toBeVisible();
+    await page.mouse.up();
+    await expect(window.locator("[data-band]")).toHaveCount(0);
+    expect(await selected()).toEqual(["graph2", "graph3"]);
+    await app.menu("Layout", "Align Left Edges");
+    expect((await app.doc()).pages.Fig!.items.map((item) => item.x).slice(2)).toEqual([60, 60, 40]);
+
+    // Select All takes everything, Escape lets go of it; Delete removes what is selected.
+    await page.keyboard.press("Control+a");
+    expect(await selected()).toEqual(["graph0", "graph1", "graph2", "graph3", "text0"]);
+    await page.keyboard.press("Escape");
+    expect(await selected()).toEqual([]);
+    at = await onScreen(canvas, 595, 100, 420);
+    await page.mouse.click(at.x, at.y);
+    at = await onScreen(canvas, 595, 100, 580);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(at.x, at.y);
+    await page.keyboard.up("Shift");
+    expect(await selected()).toEqual(["graph2", "graph3"]);
+    await page.keyboard.press("Delete");
+    expect((await app.doc()).pages.Fig!.items.map((item) => item.name)).toEqual([
+      "graph0",
+      "graph1",
+      "text0",
+    ]);
+    await page.keyboard.press("Control+z");
+    expect((await app.doc()).pages.Fig!.items).toHaveLength(5);
+  });
+
+  test("graphs are arranged in a 2 × 2 grid", async ({ app, page }) => {
+    await app.run(
+      [
+        'w = op.make("w", np.cos(np.linspace(0, 6, 100)))',
+        'grid = op.new_layout("Grid")',
+        'for i in range(4): grid.add_graph(op.display(w, name=f"Cell{i}"), w=200, h=150)',
+        'grid.add_text("Figure 2", x=40, y=780)',
+      ].join("\n"),
+    );
+    await app.place("Grid", 300, 10, 700, 760);
+    const window = app.window("Grid");
+    // Stacked one below the other, as added.
+    const before = (await app.doc()).pages.Grid!.items;
+    expect(before.map((item) => item.y)).toEqual([36, 198, 360, 522, 780]);
+
+    await window.getByRole("button", { name: "Arrange ▾" }).click();
+    await page.getByRole("menuitem", { name: "Arrange in Grid…" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("All 4 graphs of the page");
+    await dialog.getByRole("button", { name: "1 × 2" }).click();
+    await expect(dialog).toContainText("graph2, graph3 do not fit");
+    await dialog.getByRole("button", { name: "2 × 2" }).click();
+    await expect(dialog).not.toContainText("do not fit");
+    await app.doIt();
+    await expect(dialog).toHaveCount(0);
+
+    // A4 inside 36-point margins with 12-point gaps: cells 255.5 by 379, in reading order.
+    const items = (await app.doc()).pages.Grid!.items;
+    expect(items.map(({ name, x, y, w, h }) => [name, x, y, w, h])).toEqual([
+      ["graph0", 36, 36, 255.5, 379],
+      ["graph1", 303.5, 36, 255.5, 379],
+      ["graph2", 36, 427, 255.5, 379],
+      ["graph3", 303.5, 427, 255.5, 379],
+      ["text0", 40, 780, 0, 0],
+    ]);
+    expect((await app.lastEntry()).code).toBe('op.layout("Grid").arrange(2, 2, margin=36, gap=12)');
+    await page.keyboard.press("Control+z");
+    expect((await app.doc()).pages.Grid!.items).toEqual(before);
   });
 });

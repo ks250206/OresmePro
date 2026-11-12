@@ -88,6 +88,32 @@ test.describe("annotations", () => {
   });
 });
 
+test.describe("text formatting", () => {
+  test("a text box takes Igor's codes, typed or from the buttons", async ({ app, page }) => {
+    await pairGraph(app);
+    await app.menu("Graph", "Add Text…");
+    const dialog = page.getByRole("dialog", { name: /Add Text/ });
+    const text = dialog.getByLabel("Text");
+    await expect(text).toBeFocused();
+    await text.fill("\\Z20Big\\M and ");
+    await text.press("End");
+    await dialog.getByLabel("Insert size").selectOption("8");
+    await text.pressSequentially("small");
+    await expect(text).toHaveValue("\\Z20Big\\M and \\Z08small\\M");
+    await app.doIt();
+    expect((await app.lastEntry()).code).toBe(
+      'op.graph("Graph0").textbox("\\\\Z20Big\\\\M and \\\\Z08small\\\\M", anchor="RT", frame=True)',
+    );
+    const svg = (await app.run("print(g.svg())")).output;
+    expect(svg).toMatch(/font-size="20"[^>]*>Big</);
+    expect(svg).toMatch(/font-size="12"[^>]*> and </);
+    expect(svg).toMatch(/font-size="8"[^>]*>small</);
+    // Big text and small text share one baseline.
+    const y = (word: string) => new RegExp(`y="([\\d.]+)"[^>]*>${word}<`).exec(svg)![1];
+    expect(y("Big")).toBe(y("small"));
+  });
+});
+
 test.describe("axis and trace options", () => {
   test("an axis is reversed and given a tick step and label format", async ({ app, page }) => {
     await pairGraph(app);

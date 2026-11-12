@@ -1,3 +1,6 @@
+import { dict, type Dict } from "./dict";
+import type { AnalysisResult } from "./results";
+
 /** The number types a wave can hold, named as NumPy names them. */
 export const WAVE_TYPES = [
   "float64",
@@ -299,12 +302,20 @@ export const TICK_MODES = ["outside", "inside", "crossing", "none"] as const;
 export type TickMode = (typeof TICK_MODES)[number];
 export const GRID_MODES = ["off", "major", "all"] as const;
 export type GridMode = (typeof GRID_MODES)[number];
+export const LABEL_STYLES = ["plain", "italic", "bold", "bold italic"] as const;
+export type LabelStyle = (typeof LABEL_STYLES)[number];
 
 export interface AxisSpec {
   /** Which edge of the plot the axis belongs to. Fixed when the axis is made. */
   side: AxisSide;
   /** null means automatic (derived from wave units). */
   label: string | null;
+  /** Font size of the label; null is the graph's. Codes in the label can change it further. */
+  labelSize: number | null;
+  /** The style the whole label is set in, before any codes in it. */
+  labelStyle: LabelStyle;
+  /** Font size of the tick labels; null is the graph's. */
+  tickLabelSize: number | null;
   /** null means autoscale to the data. */
   min: number | null;
   max: number | null;
@@ -382,13 +393,86 @@ export interface GraphStyle {
 
 export interface GraphSpec extends GraphStyle {
   name: string;
+  /**
+   * The style (see {@link StyleSpec}) last given to the graph, or null.
+   * Traces and axes added to the graph later take their look from it.
+   */
+  style: string | null;
   traces: readonly TraceSpec[];
   images: readonly ImageSpec[];
   contours: readonly ContourSpec[];
   /** Keyed by axis name. "left", "bottom", "right" and "top" always exist. */
-  axes: Readonly<Record<string, AxisSpec>>;
+  axes: Dict<AxisSpec>;
   annotations: readonly AnnotationSpec[];
   cursors: Readonly<Partial<Record<CursorName, CursorSpec>>>;
+}
+
+/*
+ * A style is the look of a graph kept under a name, to give other graphs the
+ * same fonts, lines, colors and size. What it holds is the look and never the
+ * data, and the rule that tells them apart is: a property is look when the
+ * same value is right for a graph of any other data, and data when the right
+ * value depends on what is plotted. So font, the size and style of axis
+ * labels and tick labels, tick direction, mirror axes, grid, line width,
+ * colors and markers are look; ranges, labels (their words), log or
+ * linear, reversal, tick step and format (they follow the values), axis spans
+ * (they follow which axes there are), which waves are plotted, error bars,
+ * offsets, fills and color waves are data. Hidden traces and the cursor bar
+ * are the state of the work, not of the figure, so neither is held.
+ */
+
+/** The graph-wide properties a style can hold. */
+export const GRAPH_LOOK = ["fontSize", "fontFamily"] as const;
+/** The properties of an axis a style can hold. */
+export const AXIS_LOOK = [
+  "mirror",
+  "ticks",
+  "minor",
+  "grid",
+  "labelSize",
+  "labelStyle",
+  "tickLabelSize",
+] as const;
+/** The properties of a trace a style can hold, for each place in its cycle. */
+export const TRACE_LOOK = [
+  "mode",
+  "color",
+  "lineSize",
+  "lineStyle",
+  "marker",
+  "markerSize",
+  "markerFill",
+] as const;
+
+export type GraphLook = Pick<GraphStyle, (typeof GRAPH_LOOK)[number]>;
+export type AxisLook = Pick<AxisSpec, (typeof AXIS_LOOK)[number]>;
+export type TraceLook = Pick<TraceStyle, (typeof TRACE_LOOK)[number]>;
+
+/**
+ * The axes a style describes: the four sides by their names, and "other" for
+ * any axis that was added. An added axis without an "other" entry looks like
+ * the axis of its side, so stacked plots match.
+ */
+export const AXIS_ROLES = [...AXIS_SIDES, "other"] as const;
+export type AxisRole = (typeof AXIS_ROLES)[number];
+
+/** The size of the drawn graph (the figure, as exported), in CSS pixels. */
+export interface FigureSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The look of a graph kept under a name. Every part is optional and a style
+ * changes only what it holds. `traces` is a cycle: the graph's traces take
+ * its entries in order, starting again from the first when there are more
+ * traces than entries.
+ */
+export interface StyleSpec {
+  graph?: Partial<GraphLook>;
+  size?: FigureSize;
+  axes?: Partial<Record<AxisRole, Partial<AxisLook>>>;
+  traces?: readonly Partial<TraceLook>[];
 }
 
 export interface TableSpec {
@@ -398,7 +482,7 @@ export interface TableSpec {
   /** Significant digits numbers are shown with. */
   digits: number;
   /** Column widths in pixels, by wave, for columns the user has resized. */
-  widths: Readonly<Record<string, number>>;
+  widths: Dict<number>;
 }
 
 export const DEFAULT_TABLE_DIGITS = 8;
@@ -465,16 +549,23 @@ export interface WindowState {
   h: number;
 }
 
+/** Every record kept by name is a {@link Dict}, built with the functions of ./dict. */
 export interface DocState {
-  readonly waves: Readonly<Record<string, Wave>>;
+  readonly waves: Dict<Wave>;
   /** Creation order, for stable listing. */
   readonly waveOrder: readonly string[];
   /** Every data folder below root, as paths; a parent comes before its children. */
   readonly folders: readonly string[];
-  readonly graphs: Readonly<Record<string, GraphSpec>>;
-  readonly tables: Readonly<Record<string, TableSpec>>;
-  readonly procedures: Readonly<Record<string, ProcedureSpec>>;
-  readonly pages: Readonly<Record<string, PageSpec>>;
+  readonly graphs: Dict<GraphSpec>;
+  readonly tables: Dict<TableSpec>;
+  readonly procedures: Dict<ProcedureSpec>;
+  readonly pages: Dict<PageSpec>;
+  /** Graph styles, by name. */
+  readonly styles: Dict<StyleSpec>;
+  /** The style new graphs are given, or null. Always one of `styles`. */
+  readonly defaultStyle: string | null;
+  /** Analysis results (fits), by name, with what was asked for. */
+  readonly results: Dict<AnalysisResult>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -485,16 +576,30 @@ export interface DocState {
 }
 
 export const emptyDoc = (): DocState => ({
-  waves: {},
+  waves: dict(),
   waveOrder: [],
   folders: [],
-  graphs: {},
-  tables: {},
-  procedures: {},
-  pages: {},
+  graphs: dict(),
+  tables: dict(),
+  procedures: dict(),
+  pages: dict(),
+  styles: dict(),
+  defaultStyle: null,
+  results: dict(),
   timeZone: "UTC",
   windows: [],
 });
+
+/** Height of a window's title bar; the content area is the window minus this. */
+export const TITLE_BAR_HEIGHT = 24;
+/** Height of the cursor readout bar under a graph. */
+export const INFO_BAR_HEIGHT = 56;
+
+/** The size a graph is drawn at in its window, and exported at. */
+export function figureSize(window: WindowState, graph: GraphSpec | undefined): FigureSize {
+  const info = graph?.showInfo ? INFO_BAR_HEIGHT : 0;
+  return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info };
+}
 
 export class DocError extends Error {
   constructor(message: string) {
@@ -508,6 +613,9 @@ export const DEFAULT_FONT_FAMILY = "Helvetica Neue, Helvetica, Arial, sans-serif
 export const defaultAxis = (side: AxisSide): AxisSpec => ({
   side,
   label: null,
+  labelSize: null,
+  labelStyle: "plain",
+  tickLabelSize: null,
   min: null,
   max: null,
   log: false,

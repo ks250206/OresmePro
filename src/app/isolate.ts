@@ -43,10 +43,14 @@ export async function ensureIsolated(): Promise<boolean> {
 
 /**
  * Has the service worker keep everything the app has loaded and everything
- * Python is made of, so that the next start needs no network. Resolves to
+ * Python is made of, so that the next start needs no network, and the files
+ * named in `extra`: what the app loads only when it is needed. Resolves to
  * the number of files kept, or 0 if there is no worker to keep them.
  */
-export async function keepForOffline(pyodideUrl: string): Promise<number> {
+export async function keepForOffline(
+  pyodideUrl: string,
+  extra: () => Promise<readonly string[]> = async () => [],
+): Promise<number> {
   if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return 0;
   try {
     const registration = await navigator.serviceWorker.ready;
@@ -61,6 +65,7 @@ export async function keepForOffline(pyodideUrl: string): Promise<number> {
       location.href,
       new URL(import.meta.env.BASE_URL, location.href).href,
       ...loaded,
+      ...(await extra().catch(() => [])),
       `${pyodideUrl}files.json`,
       ...list.map((file) => new URL(file, pyodideUrl).href),
     ];
@@ -75,6 +80,37 @@ export async function keepForOffline(pyodideUrl: string): Promise<number> {
     });
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Has the service worker keep the packages that Python otherwise fetches the
+ * first time they are imported (SciPy, pandas, scikit-learn, lmfit), so that
+ * they are there without a network. Resolves to the names of the packages
+ * kept, or null if there is no worker to keep them.
+ */
+export async function keepPackagesForOffline(pyodideUrl: string): Promise<string[] | null> {
+  if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return null;
+  try {
+    const worker = (await navigator.serviceWorker.ready).active;
+    if (!worker) return null;
+    const list = (await (await fetch(`${pyodideUrl}packages.json`)).json()) as {
+      names: string[];
+      files: string[];
+    };
+    const urls = list.files.map((file) => new URL(file, new URL(pyodideUrl, location.href)).href);
+    const kept = await new Promise<number>((resolve) => {
+      const done = (event: MessageEvent<{ type?: string; count?: number }>) => {
+        if (event.data?.type !== "kept") return;
+        navigator.serviceWorker.removeEventListener("message", done);
+        resolve(event.data.count ?? 0);
+      };
+      navigator.serviceWorker.addEventListener("message", done);
+      worker.postMessage({ type: "keep", urls });
+    });
+    return kept >= urls.length ? list.names : null;
+  } catch {
+    return null;
   }
 }
 

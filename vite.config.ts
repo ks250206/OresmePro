@@ -13,6 +13,9 @@ const isolationHeaders = {
 /** Build output, downloaded packages and test reports: not ours to format or lint. */
 const GENERATED = [
   "dist/**",
+  ".pages/**",
+  "docs/dist/**",
+  "docs/.astro/**",
   "coverage/**",
   "public/pyodide/**",
   "test-results/**",
@@ -31,15 +34,22 @@ export default defineConfig({
   staged: {
     "*": "vp check --fix",
   },
-  fmt: { ignorePatterns: [...GENERATED] },
+  // Generated Markdown is checked against the Python source by docs:check.
+  fmt: {
+    ignorePatterns: [
+      ...GENERATED,
+      "src/core/io/testdata/igor/expected.json",
+      "docs/src/content/docs/**/reference/api/**",
+    ],
+  },
   lint: {
     ignorePatterns: [...GENERATED],
     options: { typeAware: true, typeCheck: true },
   },
   server: { headers: isolationHeaders },
   preview: { headers: isolationHeaders },
-  // Tests import workbook fixtures as binary assets.
-  assetsInclude: ["**/*.xlsx"],
+  // Tests import workbook and Igor fixtures as binary assets.
+  assetsInclude: ["**/*.xlsx", "**/*.ibw", "**/*.pxp"],
   worker: { format: "es" },
   build: {
     rolldownOptions: {

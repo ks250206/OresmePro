@@ -67,6 +67,13 @@ export function colorAt(table: ColorTable, fraction: number): string {
   return `#${hex(lookup[index]!)}${hex(lookup[index + 1]!)}${hex(lookup[index + 2]!)}`;
 }
 
+interface MatrixColors {
+  table: ColorTable;
+  zMin: number;
+  zMax: number;
+  reverse: boolean;
+}
+
 /**
  * Renders a matrix (C order, `nx` by `ny`, first index horizontal) as RGBA
  * pixels of `cols` by `rows`, sampling the nearest element. Row 0 of the
@@ -80,25 +87,45 @@ export function renderMatrix(
   ny: number,
   cols: number,
   rows: number,
-  options: {
-    table: ColorTable;
-    zMin: number;
-    zMax: number;
-    reverse: boolean;
-    flipX: boolean;
-    flipY: boolean;
-  },
+  options: MatrixColors & { flipX: boolean; flipY: boolean },
 ): Uint8ClampedArray<ArrayBuffer> {
-  const lookup = colorLookup(options.table);
-  const rgba = new Uint8ClampedArray(cols * rows * 4);
-  const range = options.zMax - options.zMin;
-  const scale = range === 0 ? 0 : (SIZE - 1) / range;
+  const columns = new Int32Array(cols);
+  for (let col = 0; col < cols; col += 1) {
+    const sampleX = Math.min(nx - 1, Math.floor(((col + 0.5) * nx) / cols));
+    columns[col] = options.flipX ? nx - 1 - sampleX : sampleX;
+  }
+  const lines = new Int32Array(rows);
   for (let row = 0; row < rows; row += 1) {
     const sampleY = Math.min(ny - 1, Math.floor(((row + 0.5) * ny) / rows));
-    const j = options.flipY ? sampleY : ny - 1 - sampleY;
+    lines[row] = options.flipY ? sampleY : ny - 1 - sampleY;
+  }
+  return renderCells(data, ny, columns, lines, options);
+}
+
+/**
+ * Renders a matrix (C order, first index horizontal, `ny` elements in the
+ * second dimension) as RGBA pixels: pixel (col, row) shows element
+ * (columns[col], rows[row]), row 0 being the top. An index of -1, like NaN,
+ * leaves the pixel transparent.
+ */
+export function renderCells(
+  data: ArrayLike<number>,
+  ny: number,
+  columns: Int32Array,
+  rows: Int32Array,
+  options: MatrixColors,
+): Uint8ClampedArray<ArrayBuffer> {
+  const lookup = colorLookup(options.table);
+  const cols = columns.length;
+  const rgba = new Uint8ClampedArray(cols * rows.length * 4);
+  const range = options.zMax - options.zMin;
+  const scale = range === 0 ? 0 : (SIZE - 1) / range;
+  for (let row = 0; row < rows.length; row += 1) {
+    const j = rows[row]!;
+    if (j < 0) continue;
     for (let col = 0; col < cols; col += 1) {
-      const sampleX = Math.min(nx - 1, Math.floor(((col + 0.5) * nx) / cols));
-      const i = options.flipX ? nx - 1 - sampleX : sampleX;
+      const i = columns[col]!;
+      if (i < 0) continue;
       const value = data[i * ny + j]!;
       const out = (row * cols + col) * 4;
       if (Number.isNaN(value)) continue;

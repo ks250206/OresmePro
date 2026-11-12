@@ -7,37 +7,52 @@ import {
   exportGraph,
   loadDelimitedText,
   loadExcelWorkbook,
+  loadIgorFiles,
   loadFiles,
+  newExperiment,
   openExperiment,
+  pageMenuItems,
+  revertExperiment,
   saveExperiment,
+  selectedItems,
+  selectItems,
 } from "./app/actions";
-import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
-import { autosave, restore } from "./app/persist";
+import {
+  ensureIsolated,
+  keepForOffline,
+  keepPackagesForOffline,
+  openLaunchedFiles,
+} from "./app/isolate";
+import { ruffFiles } from "./editor/loadRuff";
+import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
   activeWindow,
   doc,
+  experiment,
   files,
   history,
+  isMac,
   kernel,
+  type MenuItem,
+  MOD,
+  note,
   PYODIDE_URL,
   requestCommandLine,
   runGui,
+  showError,
+  startExperiment,
   ui,
   useDoc,
+  useExperimentInfo,
   useKernelState,
   useUi,
-  type MenuItem,
 } from "./app/session";
-import { emptyDoc } from "./core/doc/types";
 import { CommandWindow } from "./ui/CommandWindow";
 import { DataBrowser } from "./ui/DataBrowser";
 import { Desktop } from "./ui/Desktop";
 import { DialogHost } from "./ui/dialogs";
 import { ContextMenuHost, MenuBar, type MenuDefinition } from "./ui/Menu";
 import { StatusBar } from "./ui/StatusBar";
-
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const MOD = isMac ? "⌘" : "Ctrl+";
 
 function Splitter({
   vertical,
@@ -74,21 +89,20 @@ function Splitter({
   );
 }
 
-function newExperiment() {
-  if (!window.confirm("Start a new experiment? All waves, graphs and tables will be removed."))
-    return;
-  doc.load(emptyDoc());
-  history.clear();
-  files.load([]);
-  kernel.restart();
-}
-
 function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
+  const pages = useDoc((state) => state.pages);
+  const pageSelection = useUi((state) => state.pageSelection);
   const top = windows.at(-1);
   const graph = top?.kind === "graph" ? top.name : null;
   const spec = graph ? graphs[graph] : undefined;
+  // The Layout menu acts on the frontmost window when it is a page layout.
+  const page = top?.kind === "page" && Object.hasOwn(pages, top.name) ? pages[top.name] : undefined;
+  const layoutItems = pageMenuItems(
+    page ?? null,
+    page ? selectedItems(page.name, doc.getState(), pageSelection) : [],
+  );
   const showBrowser = useUi((state) => state.showBrowser);
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
@@ -115,12 +129,15 @@ function useMenus(): MenuDefinition[] {
     {
       title: "File",
       items: [
-        { label: "New Experiment", onSelect: newExperiment },
+        { label: "New Experiment", onSelect: () => void newExperiment() },
+        { label: "Experiments…", onSelect: open({ kind: "experiments" }) },
         { label: "Open Experiment…", onSelect: openExperiment },
         { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
+        { label: "Go Back to Opening State…", onSelect: () => void revertExperiment() },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
+        { label: "Load Igor Files…", onSelect: loadIgorFiles },
         { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
@@ -131,20 +148,30 @@ function useMenus(): MenuDefinition[] {
     {
       title: "Edit",
       items: [
-        { label: "Undo", shortcut: `${MOD}Z`, disabled: !doc.canUndo, onSelect: () => doc.undo() },
+        // With an editor focused (the menu leaves the focus where it is), these
+        // act on its text, as its keys do.
+        {
+          label: "Undo",
+          shortcut: `${MOD}Z`,
+          disabled: !doc.canUndo && !focusedEditor(),
+          onSelect: () => editorUndo() || doc.undo(),
+        },
         {
           label: "Redo",
           shortcut: isMac ? "⇧⌘Z" : "Ctrl+Y",
-          disabled: !doc.canRedo,
-          onSelect: () => doc.redo(),
+          disabled: !doc.canRedo && !focusedEditor(),
+          onSelect: () => editorRedo() || doc.redo(),
         },
       ],
     },
     {
       title: "Data",
       items: [
+        { label: "Make Waves…", onSelect: open({ kind: "makeWaves" }) },
+        { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
+        { label: "Load Igor Files…", onSelect: loadIgorFiles },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
         { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },
@@ -175,6 +202,9 @@ function useMenus(): MenuDefinition[] {
       items: [
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
         analysis("Multi-peak Fit…", "fit_peaks"),
+        { label: "Results…", onSelect: open({ kind: "results" }) },
+        { label: "Background…", onSelect: open({ kind: "background" }) },
+        { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },
         analysis("Wave Stats…", "stats"),
         analysis("Differentiate…", "differentiate"),
@@ -223,9 +253,15 @@ function useMenus(): MenuDefinition[] {
           disabled: !spec || spec.images.length === 0,
         },
         { separator: true },
+        // Styles can be managed with no graph open: the library, the default.
+        {
+          label: "Styles…",
+          onSelect: () => ui.set({ dialog: { kind: "styles", graph: graph ?? undefined } }),
+        },
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },
+    { title: "Layout", items: layoutItems },
     {
       title: "Windows",
       items: [
@@ -266,6 +302,21 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => kernel.interruptExecution(),
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
+        { separator: true },
+        {
+          label: "Keep SciPy, pandas, scikit-learn and lmfit for Offline Use",
+          onSelect: () =>
+            void keepPackagesForOffline(PYODIDE_URL).then((names) =>
+              names
+                ? note(`${names.join(", ")} are kept in this browser and can be imported offline.`)
+                : showError(
+                    "The packages could not be kept",
+                    "They are kept by the installed app's service worker, which is not running here " +
+                      "(a development server, or a browser without one), or a download failed. " +
+                      "Importing a package while online also keeps it.",
+                  ),
+            ),
+        },
       ],
     },
     {
@@ -295,7 +346,9 @@ function onGlobalKey(event: KeyboardEvent) {
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
-    target?.isContentEditable;
+    target?.isContentEditable ||
+    // The panels of an editor (find, problems) are part of it: Ctrl+Z there is the editor's.
+    Boolean(target?.closest?.(".cm-editor"));
   const mod = event.metaKey || event.ctrlKey;
   const key = event.key.toLowerCase();
   if (mod && key === "s") {
@@ -312,6 +365,17 @@ function onGlobalKey(event: KeyboardEvent) {
   } else if (key === "y") {
     event.preventDefault();
     doc.redo();
+  } else if (key === "a" && activeWindow(doc.getState())?.kind === "page") {
+    // Select All on a page layout selects its items, not the text of the app.
+    event.preventDefault();
+    const { pages } = doc.getState();
+    const name = activeWindow(doc.getState())!.name;
+    const page = Object.hasOwn(pages, name) ? pages[name] : undefined;
+    if (page)
+      selectItems(
+        name,
+        page.items.map((item) => item.name),
+      );
   } else if (key === "a" || key === "i") {
     const graph = activeGraph();
     if (graph) {
@@ -330,22 +394,34 @@ export function App() {
   const commandHeight = useUi((state) => state.commandHeight);
   // Re-render the Edit menu's enabled state as the undo stack changes.
   useDoc((state) => state);
+  const experimentName = useExperimentInfo().name;
+  useEffect(() => {
+    document.title = `${experimentName} — OresmePro`;
+  }, [experimentName]);
 
   useEffect(() => {
-    let stopSaving: (() => void) | undefined;
     let cancelled = false;
     void ensureIsolated().then(async (proceed) => {
       if (!proceed || cancelled) return;
-      await restore(doc, history, files);
+      // The experiment lives as long as the page: it is not stopped with this effect.
+      await startExperiment();
       if (cancelled) return;
-      stopSaving = autosave(doc, history, files);
+      const opened = experiment.getState();
+      if (opened.kind === "unread") {
+        ui.set({
+          alert: {
+            title: "The saved experiment could not be opened",
+            message: `${opened.error}\n\nWhat is saved has been left as it is and nothing is saved over it. Use the buttons in the status bar to go back to the last backup or to start afresh.`,
+          },
+        });
+      }
       kernel.start();
       openLaunchedFiles((launched) => void loadFiles(launched));
       // Once Python is up, everything a start needs has been loaded: keep it for offline use.
       const stop = kernel.subscribe(() => {
         if (kernel.getState().status !== "ready") return;
         stop();
-        void keepForOffline(PYODIDE_URL).then((count) => {
+        void keepForOffline(PYODIDE_URL, ruffFiles).then((count) => {
           Object.assign(debug, { offlineFiles: count });
         });
       });
@@ -353,7 +429,6 @@ export function App() {
     window.addEventListener("keydown", onGlobalKey);
     return () => {
       cancelled = true;
-      stopSaving?.();
       kernel.dispose();
       window.removeEventListener("keydown", onGlobalKey);
     };
@@ -394,7 +469,7 @@ export function App() {
           </>
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col">
-          <Desktop />
+          <Desktop menus={menus} />
           {showCommand ? (
             <>
               <Splitter
@@ -423,5 +498,5 @@ export function App() {
 }
 
 // Exposed for debugging from the browser console.
-const debug = { doc, history, kernel, files, activeWindow };
+const debug = { doc, history, kernel, files, activeWindow, experiment };
 Object.assign(globalThis, { oresme: debug });

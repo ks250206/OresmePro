@@ -1,0 +1,13 @@
+---
+title: 指数関数をフィットする
+sidebar:
+  order: 4
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/exponential.py?raw";
+import image from "../../../assets/exponential.png";
+
+時定数 1.4 秒の合成データを `exp` でフィットします。正の範囲に制約した `tau` の推定値をコマンド履歴で確認できます。
+
+<Example code={code} image={image} alt="減衰する観測点と指数関数のフィット曲線" />

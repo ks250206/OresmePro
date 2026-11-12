@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "./fixtures";
 
 test.describe("tables", () => {
@@ -88,6 +89,32 @@ test.describe("tables", () => {
     await app.paste("7\t8\n9\t10");
     expect((await app.wave("a"))!.data).toEqual([NaN, NaN, 7, 9]);
     expect((await app.wave("b"))!.data).toEqual([NaN, NaN, 8, 10]);
+  });
+
+  test("text cells copied from a table paste back unchanged", async ({ app, page }) => {
+    await app.run(
+      'op.make("labels", ["Li,Mg", "a\\tb", "say \\"hi\\""]); op.make("other", ["x", "y", "z"]); t = op.edit("labels", "other")',
+    );
+    const cells = page.getByRole("grid", { name: "Table0" }).getByRole("gridcell");
+    // A single cell with a comma: nothing on the clipboard says the comma is not a separator.
+    await cells.nth(0).click();
+    expect(await app.copy()).toBe("Li,Mg");
+    await cells.nth(1).click();
+    await app.paste("Li,Mg");
+    expect((await app.wave("other"))!.text).toEqual(["Li,Mg", "y", "z"]);
+
+    // A tab in a cell is quoted, as spreadsheets do.
+    await cells.nth(2).click();
+    await cells.nth(4).click({ modifiers: ["Shift"] });
+    expect(await app.copy()).toBe('"a\tb"\nsay "hi"');
+    await cells.nth(3).click();
+    await app.paste('"a\tb"\r\nsay "hi"\r\n');
+    expect((await app.wave("other"))!.text).toEqual(["Li,Mg", "a\tb", 'say "hi"']);
+
+    // Text with commas from elsewhere stays in one cell.
+    await cells.nth(1).click();
+    await app.paste("Mg,Ca");
+    expect((await app.wave("other"))!.text).toEqual(["Mg,Ca", "a\tb", 'say "hi"']);
   });
 
   test("rows and columns are selected by their headers and points deleted", async ({
@@ -218,6 +245,74 @@ test.describe("data browser", () => {
   });
 });
 
+test.describe("making waves", () => {
+  test("Make Waves makes several scaled waves, then a matrix in a table", async ({ app, page }) => {
+    await app.menu("Data", "Make Waves…");
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    await expect(dialog.getByLabel("Names")).toHaveValue("wave0");
+    await dialog.getByLabel("Names").fill("v1, v2");
+    await dialog.getByLabel("Rows").fill("100");
+    await dialog.getByLabel("Type", { exact: true }).selectOption("float32");
+    await dialog.getByLabel("X start").fill("1");
+    await dialog.getByLabel("X step").fill("0.01");
+    await dialog.getByLabel("X unit").fill("s");
+    await dialog.getByLabel("Data unit").fill("V");
+    await app.doIt();
+    await expect(dialog).toBeHidden();
+    expect((await app.doc()).order).toEqual(["v1", "v2"]);
+    expect(await app.wave("v2")).toMatchObject({ shape: [100], length: 100, unit: "V" });
+    expect((await app.wave("v1"))!.data.every((value) => value === 0)).toBe(true);
+    expect((await app.lastEntry()).code).toBe(
+      'op.make("v1", n=100, dtype="float32", x0=1, dx=0.01, x_unit="s", unit="V")\n' +
+        'op.make("v2", n=100, dtype="float32", x0=1, dx=0.01, x_unit="s", unit="V")',
+    );
+
+    await app.menu("Data", "Make Waves…");
+    await dialog.getByLabel("Names").fill("img");
+    await dialog.getByLabel("Rows").fill("20");
+    await dialog.getByLabel("Columns").fill("30");
+    await dialog.getByLabel("Edit in a table").check();
+    await app.doIt();
+    expect((await app.wave("img"))!.shape).toEqual([20, 30]);
+    expect((await app.doc()).tables.Table0!.columns).toEqual(["img"]);
+    expect((await app.lastEntry()).code).toBe('op.make("img", n=(20, 30))\nop.edit("img")');
+    // The wave and its table were one step.
+    await page.keyboard.press("Control+z");
+    const doc = await app.doc();
+    expect(doc.order).toEqual(["v1", "v2"]);
+    expect(doc.tables).toEqual({});
+  });
+
+  test("a taken name is refused before anything is made", async ({ app, page }) => {
+    await app.run('op.make("taken", [1.0, 2.0])');
+    await app.menu("Data", "Make Waves…");
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    const problems = dialog.getByRole("status", { name: "Problems" });
+    await dialog.getByLabel("Names").fill("fresh 2x");
+    await expect(problems).toContainText('"2x" is not a valid wave name');
+    await dialog.getByLabel("Names").fill("fresh, taken");
+    await expect(problems).toHaveText(/A wave named taken already exists/);
+    await expect(dialog.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await dialog.getByLabel("Overwrite existing waves").check();
+    await expect(problems).toBeHidden();
+    await expect(dialog.getByRole("button", { name: "Do It" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect((await app.doc()).order).toEqual(["taken"]);
+    expect((await app.wave("taken"))!.data).toEqual([1, 2]);
+  });
+
+  test("the data browser makes waves in the folder clicked", async ({ app, page }) => {
+    await app.run('op.new_folder("run1")');
+    await page.getByRole("treeitem").filter({ hasText: "run1" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Make Waves…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    await expect(dialog.getByLabel("Data folder")).toHaveValue("run1");
+    await app.doIt();
+    expect((await app.doc()).order).toEqual(["run1:wave0"]);
+    expect((await app.lastEntry()).code).toBe('op.make("run1:wave0")');
+  });
+});
+
 test.describe("loading delimited text", () => {
   test("files dropped together get separate waves", async ({ app }) => {
     await app.drop([
@@ -253,10 +348,194 @@ test.describe("loading delimited text", () => {
     expect(edited.data[1]! - edited.data[0]!).toBe(2700);
   });
 
+  test("the Load Data dialog shows how a file reads and takes corrections", async ({
+    app,
+    page,
+  }) => {
+    // Shift_JIS, two lines above the table, semicolons, decimal commas:
+    //   測定装置 X-1 / 2026-11-11 / 電圧 (V);電流 (mA);備考 / 1,5;2;a / 2,5;4,25;b / 3;高;c
+    const content = [
+      145, 170, 146, 232, 145, 149, 146, 117, 32, 88, 45, 49, 13, 10, 50, 48, 50, 54, 45, 49, 49,
+      45, 49, 49, 13, 10, 147, 100, 136, 179, 32, 40, 86, 41, 59, 147, 100, 151, 172, 32, 40, 109,
+      65, 41, 59, 148, 245, 141, 108, 13, 10, 49, 44, 53, 59, 50, 59, 97, 13, 10, 50, 44, 53, 59,
+      52, 44, 50, 53, 59, 98, 13, 10, 51, 59, 141, 130, 59, 99, 13, 10,
+    ];
+    await app.drop([{ name: "bench.txt", content }], { load: false });
+    const dialog = page.getByRole("dialog", { name: "Load Data: bench.txt" });
+    const reads = dialog.getByLabel("How the file reads");
+    // The encoding, the delimiter and the lines above the table are found.
+    await expect(reads).toHaveText(
+      "3 rows · 3 columns · separated by semicolon · shift_jis · 2 lines above the table (found) · with a header",
+    );
+    const preview = dialog.getByRole("region", { name: "Preview" });
+    await expect(preview.locator("thead tr").nth(1)).toHaveText("Header電圧 (V)電流 (mA)備考");
+    await expect(dialog.getByLabel("Name of column 1")).toHaveAttribute("placeholder", "電圧");
+    await expect(dialog.getByLabel("Unit of column 2")).toHaveAttribute("placeholder", "mA");
+    // With a decimal point "1,5" is text; told of the comma, the column is numbers.
+    await expect(dialog.getByLabel("Type of column 1")).toContainText("Auto (text)");
+    await dialog.getByLabel("Decimal mark").selectOption(",");
+    await expect(dialog.getByLabel("Type of column 1")).toContainText("Auto (number)");
+    // A column read as numbers shows the cell that is not one.
+    await dialog.getByLabel("Type of column 2").selectOption("number");
+    await expect(preview.locator("td[data-unreadable]")).toHaveText(["高"]);
+    await expect(dialog.getByRole("status")).toContainText("電流 (1)");
+    await dialog.getByLabel("Name of column 1").fill("U");
+    await dialog.getByLabel("Role of column 1").selectOption("x");
+    await dialog.getByLabel("Make a graph").check();
+    // Saved for the next file of this kind.
+    await dialog.getByRole("button", { name: "Save As…" }).click();
+    await dialog.getByLabel("Preset name").fill("Bench");
+    await expect(dialog.getByLabel("File names it is for")).toHaveValue("*.txt");
+    await dialog.getByRole("button", { name: "Save Preset" }).click();
+    await expect(dialog.getByRole("combobox", { name: "Preset" })).toHaveValue("Bench");
+    await dialog.getByRole("button", { name: "Load", exact: true }).click();
+
+    await expect.poll(async () => (await app.doc()).order).toEqual(["U", "電流", "備考"]);
+    expect((await app.wave("U"))!).toMatchObject({ data: [1.5, 2.5, 3], unit: "V" });
+    const current = (await app.wave("電流"))!;
+    expect([current.data[0], current.data[1], Number.isNaN(current.data[2]), current.unit]).toEqual(
+      [2, 4.25, true, "mA"],
+    );
+    expect((await app.wave("備考"))!.text).toEqual(["a", "b", "c"]);
+    const doc = await app.doc();
+    expect(doc.graphs.Graph0!.traces).toMatchObject([{ y: "電流", x: "U" }]);
+    expect(doc.tables.Table0!.columns).toEqual(["U", "電流", "備考"]);
+    // The file is kept, and the history has the call that loads it again.
+    expect(Object.keys(await app.files())).toEqual(["bench.txt"]);
+    const entries = await app.entries();
+    const echo = entries.at(-2)!.code;
+    expect(echo).toBe(
+      'op.load_text("bench.txt", decimal=",", columns={0: {"name": "U"}, 1: {"type": "number"}}, x=0, graph=True)',
+    );
+    expect(entries.at(-1)!.code).toContain("cells that could not be read: 電流 (1)");
+    await app.run(echo);
+    expect((await app.doc()).order).toEqual(["U", "電流", "備考", "U_1", "電流_1", "備考_1"]);
+    expect((await app.wave("U_1"))!.data).toEqual([1.5, 2.5, 3]);
+
+    // The next file with a name the preset is for comes up with the preset chosen.
+    await app.drop([{ name: "next.txt", content: "a;b\n7,5;1\n" }], { load: false });
+    const next = page.getByRole("dialog", { name: "Load Data: next.txt" });
+    await expect(next.getByRole("combobox", { name: "Preset" })).toHaveValue("Bench");
+    await expect(next.getByLabel("Decimal mark")).toHaveValue(",");
+    await expect(next.getByLabel("Name of column 1")).toHaveValue("U");
+    await next.getByRole("button", { name: "Load", exact: true }).click();
+    await expect.poll(async () => (await app.wave("U_2"))?.data).toEqual([7.5]);
+  });
+
+  test("several files are loaded the same way without asking again", async ({ app, page }) => {
+    await app.drop(
+      [
+        { name: "a.dat", content: "1 2\n3 4\n" },
+        { name: "b.dat", content: "5 6\n7 8\n" },
+        { name: "c.dat", content: "9 10\n" },
+      ],
+      { load: false },
+    );
+    const dialog = page.getByRole("dialog", { name: "Load Data: a.dat" });
+    await dialog.getByLabel("Name of column 1").fill("first");
+    await dialog.getByLabel("Type of column 2").selectOption("skip");
+    await dialog.getByLabel("Make a table").uncheck();
+    await dialog.getByLabel("Load the other 2 the same way, without asking").check();
+    await dialog.getByRole("button", { name: "Load", exact: true }).click();
+    await expect.poll(async () => (await app.doc()).order).toEqual(["first", "first_1", "first_2"]);
+    expect((await app.wave("first_2"))!.data).toEqual([9]);
+    expect(Object.keys((await app.doc()).tables)).toEqual([]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
   test("a file with 200,000 rows loads", async ({ app }) => {
     const rows = 200_000;
     const content = `v\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
     await app.drop([{ name: "big.csv", content }]);
     await expect.poll(async () => (await app.wave("v"))?.length, { timeout: 20_000 }).toBe(rows);
+  });
+});
+
+test.describe("loading Igor files", () => {
+  /** One of the files that scripts/igor-fixtures.py writes, as a file to drop. */
+  const igorFile = async (fixture: string, name = fixture) => ({
+    name,
+    content: [
+      ...(await readFile(new URL(`../src/core/io/testdata/igor/${fixture}`, import.meta.url))),
+    ],
+  });
+
+  test("a dropped binary wave loads at once, with its scaling, units and note", async ({
+    app,
+    page,
+  }) => {
+    await app.drop([await igorFile("v5-be-3d.ibw", "cube.ibw")]);
+    await expect.poll(async () => (await app.doc()).order).toEqual(["cube"]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const cube = (await app.wave("cube"))!;
+    // Igor's value i + 10j + 100k at (i, j, k), in C order here.
+    expect(cube).toMatchObject({ shape: [4, 3, 2], unit: "counts per second" });
+    expect(cube.data.slice(0, 4)).toEqual([0, 100, 10, 110]);
+    const scaling = await page.evaluate(() => {
+      const wave = globalThis.oresme.doc.getState().waves.cube!;
+      return [wave.x0, wave.dx, wave.xUnit, wave.y0, wave.dy, wave.yUnit, wave.note];
+    });
+    expect(scaling.slice(0, 6)).toEqual([0.5, 0.1, "nanometre", -1, 2, "µm"]);
+    expect(scaling[6]).toMatch(/^Loaded from cube\.ibw \(SHA-256 [0-9a-f]{64}\): Igor wave cube/);
+    expect(scaling[6]).toMatch(/\nIgor's note:\n測定 1\n温度 300 K$/);
+    expect((await app.lastEntry()).code).toMatch(
+      /^Loaded cube \(float64, 4×3×2\) from cube\.ibw\./,
+    );
+
+    // Again: the new wave gets a suffix, and the first is left as it was.
+    await app.drop([await igorFile("v5-be-3d.ibw", "cube.ibw")]);
+    await expect.poll(async () => (await app.doc()).order).toEqual(["cube", "cube_1"]);
+  });
+
+  test("a dropped packed experiment loads its waves under their data folders, as one step", async ({
+    app,
+    page,
+  }) => {
+    await app.drop([await igorFile("experiment-le.pxp", "run.pxp")]);
+    await expect.poll(async () => (await app.doc()).order.length).toBe(21);
+    const doc = await app.doc();
+    expect(doc.folders).toEqual([
+      "raw_data",
+      "raw_data:run_1",
+      "a_folder_whose_name_is_longer_than_31_bytes",
+      "dup_1",
+    ]);
+    expect(doc.order.slice(0, 8)).toEqual([
+      "wave0",
+      "my_wave",
+      "a_b",
+      "a_b_1",
+      "wave_2nd",
+      "dup",
+      "raw_data:sig",
+      "raw_data:run_1:t0_int8",
+    ]);
+    expect((await app.wave("raw_data:run_1:t5_uint32"))!.data).toEqual([0, 0, 4294967295]);
+    expect((await app.wave("a_folder_whose_name_is_longer_than_31_bytes:labels"))!.text).toEqual([
+      "one",
+      "two",
+    ]);
+    const summary = (await app.lastEntry()).code;
+    expect(summary).toMatch(
+      /^Loaded 21 waves from run\.pxp: 6 in root, 1 in raw_data, 12 in raw_data:run_1/,
+    );
+    expect(summary).toContain("Not loaded: root:dep (Igor computes it from a formula");
+    expect(summary).toContain(
+      "Not brought over: 2 graphs, 1 table (Igor's window recreation macros)",
+    );
+    // Nothing of the file opens a window, and the whole load is one step to undo.
+    expect(doc.windows).toEqual([]);
+    await page.getByRole("complementary", { name: "Data Browser" }).getByText("root").click();
+    await page.keyboard.press("Control+z");
+    await expect.poll(async () => (await app.doc()).order).toEqual([]);
+    expect((await app.doc()).folders).toEqual([]);
+  });
+
+  test("a damaged Igor file loads nothing and says why", async ({ app, page }) => {
+    const file = await igorFile("experiment-be.pxp", "cut.pxp");
+    await app.drop([{ name: file.name, content: file.content.slice(0, 4000) }]);
+    const alert = page.getByRole("dialog", { name: "Could not load cut.pxp" });
+    await expect(alert.getByRole("alert")).toContainText("The file is cut short or damaged");
+    expect((await app.doc()).order).toEqual([]);
   });
 });

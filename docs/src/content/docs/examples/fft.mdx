@@ -1,0 +1,13 @@
+---
+title: FFT で周波数を求める
+sidebar:
+  order: 5
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/fft.py?raw";
+import image from "../../../assets/fft.png";
+
+256 Hz でサンプリングした信号を片側振幅スペクトルに変換します。12 Hz と 33 Hz に高さ約 1 と 0.45 のピークが現れます。
+
+<Example code={code} image={image} alt="12 Hz と 33 Hz にピークがある振幅スペクトル" />

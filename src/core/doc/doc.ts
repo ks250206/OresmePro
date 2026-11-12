@@ -1,10 +1,61 @@
 import { applyCommand, isTransient, type Command } from "./commands";
-import { emptyDoc, type DocState } from "./types";
+import { dictFrom, filterDict, type Dict } from "./dict";
+import { emptyDoc, type DocState, type WindowState } from "./types";
 
 interface UndoEntry {
   state: DocState;
   /** Commands sharing a group (one Python execution, say) undo together. */
   group: string | null;
+  /** The windows as the step left them, to tell what it resized from what was dragged since. */
+  after: readonly WindowState[];
+}
+
+interface RedoEntry {
+  state: DocState;
+  /** The windows as the undo left them. */
+  after: readonly WindowState[];
+}
+
+/** A record as it must be in the document: itself if it has no prototype, else a copy that has none. */
+const asDict = <T>(record: Dict<T>): Dict<T> =>
+  Object.getPrototypeOf(record) === null ? record : dictFrom(record);
+
+/**
+ * A document whose records kept by name all have no prototype (see ./dict):
+ * the same document if that already holds. The commands build them so, but
+ * nothing in the types says a record must be one, so every state that enters
+ * the document passes through here rather than trusting each command.
+ */
+function withDicts(state: DocState): DocState {
+  let graphs = asDict(state.graphs);
+  for (const [name, graph] of Object.entries(graphs)) {
+    const axes = asDict(graph.axes);
+    const cursors = asDict(graph.cursors);
+    if (axes === graph.axes && cursors === graph.cursors) continue;
+    if (graphs === state.graphs) graphs = dictFrom(graphs);
+    (graphs as Record<string, typeof graph>)[name] = { ...graph, axes, cursors };
+  }
+  let tables = asDict(state.tables);
+  for (const [name, table] of Object.entries(tables)) {
+    const widths = asDict(table.widths);
+    if (widths === table.widths) continue;
+    if (tables === state.tables) tables = dictFrom(tables);
+    (tables as Record<string, typeof table>)[name] = { ...table, widths };
+  }
+  const waves = asDict(state.waves);
+  const procedures = asDict(state.procedures);
+  const pages = asDict(state.pages);
+  const styles = asDict(state.styles);
+  const results = asDict(state.results);
+  const same =
+    graphs === state.graphs &&
+    tables === state.tables &&
+    waves === state.waves &&
+    procedures === state.procedures &&
+    pages === state.pages &&
+    styles === state.styles &&
+    results === state.results;
+  return same ? state : { ...state, waves, graphs, tables, procedures, pages, styles, results };
 }
 
 const UNDO_LIMIT = 100;
@@ -34,7 +85,7 @@ export class Doc {
   private state: DocState = emptyDoc();
   private readonly listeners = new Set<() => void>();
   private undoStack: UndoEntry[] = [];
-  private redoStack: DocState[] = [];
+  private redoStack: RedoEntry[] = [];
 
   readonly getState = (): DocState => this.state;
 
@@ -46,15 +97,19 @@ export class Doc {
   /** Applies a command and returns the name of what it created, if anything. */
   dispatch(command: Command, options: DispatchOptions = {}): string | null {
     const before = this.state;
-    const { state, result } = applyCommand(before, command);
-    if (state === before) return result;
+    const applied = applyCommand(before, command);
+    const { result } = applied;
+    if (applied.state === before) return result;
+    const state = withDicts(applied.state);
     if (isTransient(command)) {
       this.state = state;
     } else {
       const group = options.group ?? null;
       const last = this.undoStack.at(-1);
-      if (!(group !== null && last?.group === group)) {
-        this.undoStack.push({ state: before, group });
+      if (group !== null && last?.group === group) {
+        last.after = state.windows;
+      } else {
+        this.undoStack.push({ state: before, group, after: state.windows });
         if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
         this.trimUndo(state);
       }
@@ -76,24 +131,26 @@ export class Doc {
   undo(): boolean {
     const entry = this.undoStack.pop();
     if (!entry) return false;
-    this.redoStack.push(this.state);
-    this.state = this.keepViewState(entry.state);
+    const now = this.state;
+    this.state = this.keepViewState(entry.state, entry.after);
+    this.redoStack.push({ state: now, after: this.state.windows });
     this.emit();
     return true;
   }
 
   redo(): boolean {
-    const state = this.redoStack.pop();
-    if (!state) return false;
-    this.undoStack.push({ state: this.state, group: null });
-    this.state = this.keepViewState(state);
+    const entry = this.redoStack.pop();
+    if (!entry) return false;
+    const now = this.state;
+    this.state = this.keepViewState(entry.state, entry.after);
+    this.undoStack.push({ state: now, group: null, after: this.state.windows });
     this.emit();
     return true;
   }
 
   /** Replaces the whole document, for opening an experiment. */
   load(state: DocState): void {
-    this.state = state;
+    this.state = withDicts(state);
     this.undoStack = [];
     this.redoStack = [];
     this.emit();
@@ -133,19 +190,24 @@ export class Doc {
    * Undo restores content, not what is outside its reach: where the user has
    * since dragged windows, column widths, and the text of procedures (their
    * editors have their own undo). Whatever exists in both states keeps its
-   * current value.
+   * current value. The one exception is a window the step itself resized (a
+   * style with a size does), as long as it is still as the step left it
+   * (`stepWindows`): its size is part of what is undone.
    */
-  private keepViewState(target: DocState): DocState {
+  private keepViewState(target: DocState, stepWindows: readonly WindowState[]): DocState {
     const now = this.state;
     const current = new Map(now.windows.map((window) => [window.name, window]));
-    const tables = { ...target.tables };
+    const left = new Map(stepWindows.map((window) => [window.name, window]));
+    const tables = dictFrom(target.tables);
     for (const [name, table] of Object.entries(tables)) {
       const widths = now.tables[name]?.widths;
       if (!widths || widths === table.widths) continue;
-      const kept = Object.entries(widths).filter(([wave]) => table.columns.includes(wave));
-      tables[name] = { ...table, widths: Object.fromEntries(kept) };
+      tables[name] = {
+        ...table,
+        widths: filterDict(widths, (_, wave) => table.columns.includes(wave)),
+      };
     }
-    const procedures = { ...target.procedures };
+    const procedures = dictFrom(target.procedures);
     for (const name of Object.keys(procedures)) {
       if (now.procedures[name]) procedures[name] = now.procedures[name];
     }
@@ -155,7 +217,11 @@ export class Doc {
       procedures,
       windows: target.windows.map((window) => {
         const live = current.get(window.name);
-        return live ? { ...window, x: live.x, y: live.y, w: live.w, h: live.h } : window;
+        if (!live) return window;
+        const step = left.get(window.name);
+        const untouched = step !== undefined && step.w === live.w && step.h === live.h;
+        const size = untouched ? { w: window.w, h: window.h } : { w: live.w, h: live.h };
+        return { ...window, x: live.x, y: live.y, ...size };
       }),
     };
   }

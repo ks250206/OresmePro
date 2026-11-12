@@ -1,8 +1,19 @@
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
+import { dict, filterDict, withEntry, withoutEntries } from "./dict";
+import {
+  checkResult,
+  renameInResult,
+  RESULT_BASE,
+  RESULT_KINDS,
+  type AnalysisResult,
+} from "./results";
+import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
+  AXIS_LOOK,
+  AXIS_ROLES,
   AXIS_SIDES,
   COLOR_TABLES,
   COMPLEX_PARTS,
@@ -11,13 +22,16 @@ import {
   DEFAULT_TABLE_DIGITS,
   DocError,
   FILL_MODES,
+  GRAPH_LOOK,
   GRID_MODES,
+  LABEL_STYLES,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
   PAGE_SIZES,
   TAG_OFFSET,
   TICK_MODES,
+  TRACE_LOOK,
   TRACE_MODES,
   WAVE_TYPES,
   isComplexType,
@@ -32,15 +46,21 @@ import {
   leafName,
   parentFolder,
   type AnnotationSpec,
+  type AxisLook,
+  type AxisRole,
   type AxisSpec,
   type ContourSpec,
   type CursorName,
   type DocState,
   type ErrorSource,
+  type FigureSize,
+  type GraphLook,
   type GraphSpec,
   type GraphStyle,
   type ImageSpec,
   type TableSpec,
+  type StyleSpec,
+  type TraceLook,
   type TraceSpec,
   type TraceStyle,
   type Wave,
@@ -122,7 +142,14 @@ export type Command =
   | { op: "newFolder"; path: string }
   | { op: "renameFolder"; path: string; newPath: string }
   | { op: "killFolder"; path: string }
-  | { op: "display"; y: readonly string[]; x?: string | null; name?: string }
+  | {
+      op: "display";
+      y: readonly string[];
+      x?: string | null;
+      name?: string;
+      /** The style to give the new graph: left out, the default style; null, none. */
+      style?: string | null;
+    }
   | {
       op: "appendTraces";
       graph: string;
@@ -199,6 +226,18 @@ export type Command =
   | { op: "removeLayoutItem"; layout: string; item: string }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
+  /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
+  | { op: "saveStyle"; name: string; graph: string; size?: boolean }
+  /** Defines a style from its parts (see StyleSpec), replacing one of that name. */
+  | { op: "setStyle"; name: string; style: unknown }
+  | { op: "removeStyle"; name: string }
+  | { op: "renameStyle"; name: string; newName: string }
+  | { op: "applyStyle"; style: string; graphs: readonly string[] }
+  | { op: "setDefaultStyle"; name: string | null }
+  /** Keeps the outcome of an analysis. `result` is as Python reports it (see checkResult). */
+  | { op: "addResult"; result: unknown; name?: string }
+  | { op: "removeResults"; names: readonly string[] }
+  | { op: "renameResult"; name: string; newName: string }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
@@ -304,7 +343,7 @@ function bool(value: unknown, what: string): boolean {
   return value;
 }
 
-function oneOf<T extends string>(value: unknown, choices: readonly T[], what: string): T {
+export function oneOf<T extends string>(value: unknown, choices: readonly T[], what: string): T {
   if (typeof value !== "string" || !choices.includes(value as T)) {
     throw new DocError(`${what} must be one of: ${choices.join(", ")}.`);
   }
@@ -332,17 +371,17 @@ function putWave(state: DocState, wave: Wave): DocState {
   const next = withFolders(state, parentFolder(wave.name));
   return {
     ...next,
-    waves: { ...next.waves, [wave.name]: wave },
+    waves: withEntry(next.waves, wave.name, wave),
     waveOrder: known ? next.waveOrder : [...next.waveOrder, wave.name],
   };
 }
 
 function putGraph(state: DocState, graph: GraphSpec): DocState {
-  return { ...state, graphs: { ...state.graphs, [graph.name]: graph } };
+  return { ...state, graphs: withEntry(state.graphs, graph.name, graph) };
 }
 
 function putTable(state: DocState, table: TableSpec): DocState {
-  return { ...state, tables: { ...state.tables, [table.name]: table } };
+  return { ...state, tables: withEntry(state.tables, table.name, table) };
 }
 
 function checkShape(shape: readonly number[] | undefined, length: number): readonly number[] {
@@ -417,7 +456,8 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-const windowTaken = (state: DocState) => (name: string) =>
+/** Whether a window (graph, table, procedure or page layout) already has this name. */
+export const windowTaken = (state: DocState) => (name: string) =>
   name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
 
 function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
@@ -571,12 +611,21 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
 const nullableNumber = (what: string) => (value: unknown) =>
   value === null ? null : finite(value, what);
 
+function fontSize(value: unknown, what: string): number {
+  const size = positive(value, what);
+  if (size < 4 || size > 96) throw new DocError(`${what} must be between 4 and 96.`);
+  return size;
+}
+
 const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown) => AxisSpec[K] } =
   {
     label: (value) => {
       if (value === null || typeof value === "string") return value;
       throw new DocError("label must be text, or null for the automatic label.");
     },
+    labelSize: (value) => (value === null ? null : fontSize(value, "labelSize")),
+    labelStyle: (value) => oneOf(value, LABEL_STYLES, "labelStyle"),
+    tickLabelSize: (value) => (value === null ? null : fontSize(value, "tickLabelSize")),
     min: nullableNumber("min"),
     max: nullableNumber("max"),
     log: (value) => bool(value, "log"),
@@ -604,17 +653,144 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
   };
 
 const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyle[K] } = {
-  fontSize: (value) => {
-    const size = positive(value, "fontSize");
-    if (size < 4 || size > 96) throw new DocError("fontSize must be between 4 and 96.");
-    return size;
-  },
+  fontSize: (value) => fontSize(value, "fontSize"),
   fontFamily: (value) => {
     if (typeof value !== "string" || !value.trim()) throw new DocError("fontFamily must be text.");
     return value;
   },
   showInfo: (value) => bool(value, "showInfo"),
 };
+
+type Validators<T> = { [K in keyof T]: (value: unknown) => T[K] };
+
+/** The validators of some properties, for the part of an object a style can hold. */
+function someOf<T, K extends keyof T>(validators: Validators<T>, keys: readonly K[]) {
+  const result = {} as Validators<Pick<T, K>>;
+  for (const key of keys) result[key] = validators[key];
+  return result;
+}
+
+const GRAPH_LOOK_VALIDATORS = someOf<GraphStyle, keyof GraphLook>(GRAPH_VALIDATORS, GRAPH_LOOK);
+const AXIS_LOOK_VALIDATORS = someOf<Omit<AxisSpec, "side">, keyof AxisLook>(
+  AXIS_VALIDATORS,
+  AXIS_LOOK,
+);
+const TRACE_LOOK_VALIDATORS = someOf<TraceStyle, keyof TraceLook>(TRACE_VALIDATORS, TRACE_LOOK);
+
+const figureSide = (what: string, least: number) => (value: unknown) => {
+  const size = finite(value, what);
+  if (size < least || size > 4000) {
+    throw new DocError(`${what} must be between ${least} and 4000 pixels.`);
+  }
+  return size;
+};
+const SIZE_VALIDATORS = { width: figureSide("width", 160), height: figureSide("height", 100) };
+
+/** A dict of properties, or an error naming what it should have been. */
+function propsOf(value: unknown, what: string): Props {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DocError(`${what} must be a dict of properties.`);
+  }
+  return value as Props;
+}
+
+/** The validated properties, in the order of `keys`, so equal parts are written alike. */
+function ordered<T, K extends keyof T>(props: Partial<T>, keys: readonly K[]): Partial<T> {
+  const result: Partial<T> = {};
+  for (const key of keys) if (props[key] !== undefined) result[key] = props[key];
+  return result;
+}
+
+const STYLE_PARTS = ["graph", "size", "axes", "traces"] as const;
+
+/**
+ * Checks a style given as data (from Python, a file or the browser's
+ * library) and returns it in its usual form. Unknown parts and properties
+ * and bad values are refused; parts that hold nothing are left out.
+ */
+export function checkStyle(value: unknown): StyleSpec {
+  const parts = validateProps<Required<StyleSpec>>(
+    propsOf(value, "A style"),
+    {
+      graph: (item) =>
+        ordered(
+          validateProps<GraphLook>(propsOf(item, "graph"), GRAPH_LOOK_VALIDATORS, "graph style"),
+          GRAPH_LOOK,
+        ),
+      size: (item): FigureSize => {
+        const size = validateProps<FigureSize>(propsOf(item, "size"), SIZE_VALIDATORS, "size");
+        if (size.width === undefined || size.height === undefined) {
+          throw new DocError("size needs both width and height.");
+        }
+        return { width: size.width, height: size.height };
+      },
+      axes: (item) => {
+        const roles = validateProps<Record<AxisRole, unknown>>(
+          propsOf(item, "axes"),
+          Object.fromEntries(
+            AXIS_ROLES.map((role) => [role, (look: unknown) => look]),
+          ) as Validators<Record<AxisRole, unknown>>,
+          "axes",
+        );
+        const axes: Partial<Record<AxisRole, Partial<AxisLook>>> = {};
+        for (const role of AXIS_ROLES) {
+          if (roles[role] === undefined) continue;
+          const look = ordered(
+            validateProps<AxisLook>(
+              propsOf(roles[role], `axes.${role}`),
+              AXIS_LOOK_VALIDATORS,
+              "axis style",
+            ),
+            AXIS_LOOK,
+          );
+          if (Object.keys(look).length > 0) axes[role] = look;
+        }
+        return axes;
+      },
+      traces: (item) => {
+        if (!Array.isArray(item) || item.length > 1000) {
+          throw new DocError("traces must be a list of trace properties, one for each trace.");
+        }
+        // An empty entry is a place in the cycle that leaves its trace alone.
+        return item.map((entry: unknown) =>
+          ordered(
+            validateProps<TraceLook>(
+              propsOf(entry, "A trace in a style"),
+              TRACE_LOOK_VALIDATORS,
+              "trace style",
+            ),
+            TRACE_LOOK,
+          ),
+        );
+      },
+    },
+    "style",
+  );
+  const style: Record<string, unknown> = {};
+  for (const part of STYLE_PARTS) {
+    const content = parts[part];
+    const empty =
+      content === undefined ||
+      (Array.isArray(content) ? content : Object.keys(content)).length === 0;
+    if (!empty) style[part] = content;
+  }
+  return style as StyleSpec;
+}
+
+function requireStyle(state: DocState, name: unknown): StyleSpec {
+  const style = typeof name === "string" ? state.styles[name] : undefined;
+  if (!style) throw new DocError(`No style named ${JSON.stringify(name)}.`);
+  return style;
+}
+
+/** Gives a graph a style, and its window the style's size. */
+function withStyle(state: DocState, graph: GraphSpec, name: string): DocState {
+  const style = requireStyle(state, name);
+  return {
+    ...putGraph(state, styledGraph(graph, style, name)),
+    windows: styledWindows(state.windows, graph, style),
+  };
+}
 
 type ImageProps = Pick<
   ImageSpec,
@@ -699,7 +875,7 @@ function requirePage(state: DocState, name: string): PageSpec {
 
 const putPage = (state: DocState, page: PageSpec): DocState => ({
   ...state,
-  pages: { ...state.pages, [page.name]: page },
+  pages: withEntry(state.pages, page.name, page),
 });
 
 function validateProps<T>(
@@ -709,7 +885,10 @@ function validateProps<T>(
 ): Partial<T> {
   const result: Partial<T> = {};
   for (const [key, value] of Object.entries(props)) {
-    const validate = (validators as Record<string, ((value: unknown) => unknown) | undefined>)[key];
+    // Own properties only: "constructor" is not a property, though every object has one.
+    const validate = Object.hasOwn(validators, key)
+      ? (validators as Record<string, (value: unknown) => unknown>)[key]
+      : undefined;
     if (!validate) {
       throw new DocError(
         `Unknown ${what} property ${JSON.stringify(key)}. Known properties: ${Object.keys(validators).join(", ")}.`,
@@ -722,7 +901,7 @@ function validateProps<T>(
 
 /** Rewrites every reference to a wave after waves have been renamed or moved. */
 function renameReferences(state: DocState, rename: (name: string) => string): DocState {
-  const graphs: Record<string, GraphSpec> = {};
+  const graphs = dict<GraphSpec>();
   for (const graph of Object.values(state.graphs)) {
     const traces: TraceSpec[] = [];
     const traceNames = new Map<string, string>();
@@ -741,7 +920,7 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
         colorWave: trace.colorWave === null ? null : rename(trace.colorWave),
       });
     }
-    const cursors: GraphSpec["cursors"] = Object.fromEntries(
+    const cursors: GraphSpec["cursors"] = dict(
       Object.entries(graph.cursors).map(([key, cursor]) => [
         key,
         { ...cursor, trace: traceNames.get(cursor.trace) ?? cursor.trace },
@@ -758,17 +937,19 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
       contours: graph.contours.map((contour) => ({ ...contour, wave: rename(contour.wave) })),
     };
   }
-  const tables: Record<string, TableSpec> = {};
+  const tables = dict<TableSpec>();
   for (const table of Object.values(state.tables)) {
     tables[table.name] = {
       ...table,
       columns: table.columns.map(rename),
-      widths: Object.fromEntries(
-        Object.entries(table.widths).map(([wave, width]) => [rename(wave), width]),
-      ),
+      widths: dict(Object.entries(table.widths).map(([wave, width]) => [rename(wave), width])),
     };
   }
-  return { ...state, graphs, tables };
+  const results = dict<AnalysisResult>();
+  for (const result of Object.values(state.results)) {
+    results[result.name] = renameInResult(result, rename);
+  }
+  return { ...state, graphs, tables, results };
 }
 
 function waveUsers(state: DocState, name: string): string[] {
@@ -794,7 +975,6 @@ function waveUsers(state: DocState, name: string): string[] {
 }
 
 function removeWaves(state: DocState, names: readonly string[]): DocState {
-  const waves = { ...state.waves };
   for (const name of names) {
     const users = waveUsers(state, name);
     if (users.length > 0) {
@@ -802,8 +982,8 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
         `Wave ${JSON.stringify(name)} is in use by ${users.join(", ")}. Remove it from there first.`,
       );
     }
-    delete waves[name];
   }
+  const waves = withoutEntries(state.waves, names);
   return { ...state, waves, waveOrder: state.waveOrder.filter((name) => name in waves) };
 }
 
@@ -817,12 +997,13 @@ function emptyGraph(name: string): GraphSpec {
     traces: [],
     images: [],
     contours: [],
-    axes: Object.fromEntries(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
+    axes: dict(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
     annotations: [],
-    cursors: {},
+    cursors: dict(),
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
     showInfo: false,
+    style: null,
   };
 }
 
@@ -1017,9 +1198,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.waves) {
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
-      const waves = { ...state.waves };
-      delete waves[wave.name];
-      waves[newName] = changed(wave, { name: newName });
+      const waves = withEntry(
+        withoutEntries(state.waves, [wave.name]),
+        newName,
+        changed(wave, { name: newName }),
+      );
       const renamed = renameReferences(
         {
           ...withFolders(state, parentFolder(newName)),
@@ -1071,7 +1254,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       }
       const move = (name: string) =>
         name === path || name.startsWith(`${path}:`) ? newPath + name.slice(path.length) : name;
-      const waves: Record<string, Wave> = {};
+      const waves = dict<Wave>();
       for (const wave of Object.values(state.waves)) {
         const name = move(wave.name);
         if (name !== wave.name && name in state.waves) {
@@ -1110,18 +1293,18 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (windowTaken(state)(name)) {
         throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
       }
+      const style = command.style === undefined ? state.defaultStyle : command.style;
+      if (style !== null) requireStyle(state, style);
       const empty = emptyGraph(name);
       const graph =
         command.y.length === 0
           ? empty
           : addTraces(state, empty, command.y, command.x ?? null, "left", "bottom");
-      return {
-        state: {
-          ...putGraph(state, graph),
-          windows: [...state.windows, placeWindow(state, name, "graph")],
-        },
-        result: name,
+      const made = {
+        ...putGraph(state, graph),
+        windows: [...state.windows, placeWindow(state, name, "graph")],
       };
+      return { state: style === null ? made : withStyle(made, graph, style), result: name };
     }
     case "appendTraces": {
       const graph = requireGraph(state, command.graph);
@@ -1133,17 +1316,18 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         command.vAxis ?? "left",
         command.hAxis ?? "bottom",
       );
-      return { state: putGraph(state, next), result: next.traces.at(-1)!.name };
+      // New traces take their places in the cycle of the graph's style.
+      const style = graph.style === null ? undefined : state.styles[graph.style];
+      const traces = next.traces.map((trace, index) =>
+        index < graph.traces.length ? trace : { ...trace, ...traceLook(style, index) },
+      );
+      return { state: putGraph(state, { ...next, traces }), result: next.traces.at(-1)!.name };
     }
     case "removeTraces": {
       const graph = requireGraph(state, command.graph);
       for (const name of command.traces) requireItem(graph.traces, name, graph.name, "trace");
       const traces = graph.traces.filter((trace) => !command.traces.includes(trace.name));
-      const cursors = Object.fromEntries(
-        Object.entries(graph.cursors).filter(
-          ([, cursor]) => !command.traces.includes(cursor.trace),
-        ),
-      );
+      const cursors = filterDict(graph.cursors, (cursor) => !command.traces.includes(cursor.trace));
       // A tag goes with the trace it points at.
       const annotations = graph.annotations.filter(
         (item) => item.trace === null || !command.traces.includes(item.trace),
@@ -1175,9 +1359,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (name in graph.axes) {
         throw new DocError(`${graph.name} already has an axis named ${JSON.stringify(name)}.`);
       }
-      const axis = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
+      const plain = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
+      const style = graph.style === null ? undefined : state.styles[graph.style];
+      const axis = { ...plain, ...axisLook(style, name, plain) };
       return {
-        state: putGraph(state, { ...graph, axes: { ...graph.axes, [name]: axis } }),
+        state: putGraph(state, { ...graph, axes: withEntry(graph.axes, name, axis) }),
         result: name,
       };
     }
@@ -1197,8 +1383,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
         );
       }
-      const axes = { ...graph.axes };
-      delete axes[command.axis];
+      const axes = withoutEntries(graph.axes, [command.axis]);
       return { state: putGraph(state, { ...graph, axes }), result: null };
     }
     case "modifyAxis": {
@@ -1220,7 +1405,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError("A log axis needs a range greater than 0.");
       }
       return {
-        state: putGraph(state, { ...graph, axes: { ...graph.axes, [command.axis]: axis } }),
+        state: putGraph(state, { ...graph, axes: withEntry(graph.axes, command.axis, axis) }),
         result: null,
       };
     }
@@ -1322,7 +1507,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: putGraph(state, {
           ...graph,
-          cursors: { ...graph.cursors, [cursor]: { trace: trace.name, point: command.point } },
+          cursors: withEntry(graph.cursors, cursor, { trace: trace.name, point: command.point }),
         }),
         result: null,
       };
@@ -1330,8 +1515,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeCursor": {
       const graph = requireGraph(state, command.graph);
       const cursor: CursorName = oneOf(command.cursor, CURSOR_NAMES, "cursor");
-      const cursors = { ...graph.cursors };
-      delete cursors[cursor];
+      const cursors = withoutEntries(graph.cursors, [cursor]);
       return { state: putGraph(state, { ...graph, cursors }), result: null };
     }
     case "addAnnotation": {
@@ -1398,7 +1582,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
         state: {
-          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: {} }),
+          ...putTable(state, { name, columns, digits: DEFAULT_TABLE_DIGITS, widths: dict() }),
           windows: [...state.windows, placeWindow(state, name, "table")],
         },
         result: name,
@@ -1413,9 +1597,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeFromTable": {
       const table = requireTable(state, command.table);
       const columns = table.columns.filter((column) => !command.waves.includes(column));
-      const widths = Object.fromEntries(
-        Object.entries(table.widths).filter(([wave]) => columns.includes(wave)),
-      );
+      const widths = filterDict(table.widths, (_, wave) => columns.includes(wave));
       return { state: putTable(state, { ...table, columns, widths }), result: null };
     }
     case "modifyTable": {
@@ -1439,7 +1621,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!table.columns.includes(command.wave)) return { state, result: null };
       const width = Math.round(Math.max(32, Math.min(800, command.width)));
       return {
-        state: putTable(state, { ...table, widths: { ...table.widths, [command.wave]: width } }),
+        state: putTable(state, { ...table, widths: withEntry(table.widths, command.wave, width) }),
         result: null,
       };
     }
@@ -1468,7 +1650,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: {
           ...state,
-          pages: { ...state.pages, [name]: page },
+          pages: withEntry(state.pages, name, page),
           windows: [...state.windows, placeWindow(state, name, "page")],
         },
         result: name,
@@ -1567,7 +1749,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return {
         state: {
           ...state,
-          procedures: { ...state.procedures, [name]: procedure },
+          procedures: withEntry(state.procedures, name, procedure),
           windows: [...state.windows, placeWindow(state, name, "procedure")],
         },
         result: name,
@@ -1589,39 +1771,139 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         return { state, result: null };
       }
       return {
-        state: { ...state, procedures: { ...state.procedures, [command.name]: next } },
+        state: { ...state, procedures: withEntry(state.procedures, command.name, next) },
         result: null,
       };
+    }
+    case "saveStyle": {
+      const name = checkName(command.name, "style");
+      requireGraph(state, command.graph);
+      const style = captureStyle(state, command.graph, command.size === true);
+      return { state: { ...state, styles: withEntry(state.styles, name, style) }, result: name };
+    }
+    case "setStyle": {
+      const name = checkName(command.name, "style");
+      const style = checkStyle(command.style);
+      return { state: { ...state, styles: withEntry(state.styles, name, style) }, result: name };
+    }
+    case "addResult": {
+      const kind = RESULT_KINDS.find(
+        (item) => item === (command.result as { kind?: unknown } | null)?.kind,
+      );
+      const taken = (name: string) => name in state.results;
+      // A name that is given replaces the result of that name: the same analysis, run again.
+      const name =
+        command.name === undefined
+          ? uniqueName(RESULT_BASE[kind ?? "fit"], taken)
+          : checkName(command.name, "result");
+      const result = checkResult(command.result, name, state);
+      return { state: { ...state, results: withEntry(state.results, name, result) }, result: name };
+    }
+    case "removeResults": {
+      for (const name of command.names) {
+        if (!(name in state.results))
+          throw new DocError(`No result named ${JSON.stringify(name)}.`);
+      }
+      return {
+        state: { ...state, results: withoutEntries(state.results, command.names) },
+        result: null,
+      };
+    }
+    case "renameResult": {
+      const result = state.results[command.name];
+      if (!result) throw new DocError(`No result named ${JSON.stringify(command.name)}.`);
+      const newName = checkName(command.newName, "result");
+      if (newName === command.name) return { state, result: newName };
+      if (newName in state.results) {
+        throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
+      }
+      return {
+        state: {
+          ...state,
+          results: withEntry(withoutEntries(state.results, [command.name]), newName, {
+            ...result,
+            name: newName,
+          }),
+        },
+        result: newName,
+      };
+    }
+    case "removeStyle": {
+      requireStyle(state, command.name);
+      const graphs = dict<GraphSpec>();
+      for (const graph of Object.values(state.graphs)) {
+        graphs[graph.name] = graph.style === command.name ? { ...graph, style: null } : graph;
+      }
+      return {
+        state: {
+          ...state,
+          graphs,
+          styles: withoutEntries(state.styles, [command.name]),
+          defaultStyle: state.defaultStyle === command.name ? null : state.defaultStyle,
+        },
+        result: null,
+      };
+    }
+    case "renameStyle": {
+      const style = requireStyle(state, command.name);
+      const newName = checkName(command.newName, "style");
+      if (newName === command.name) return { state, result: null };
+      if (newName in state.styles) {
+        throw new DocError(`Style ${JSON.stringify(newName)} already exists.`);
+      }
+      const follow = (name: string | null) => (name === command.name ? newName : name);
+      const graphs = dict<GraphSpec>();
+      for (const graph of Object.values(state.graphs)) {
+        graphs[graph.name] = graph.style === command.name ? { ...graph, style: newName } : graph;
+      }
+      return {
+        state: {
+          ...state,
+          graphs,
+          styles: withEntry(withoutEntries(state.styles, [command.name]), newName, style),
+          defaultStyle: follow(state.defaultStyle),
+        },
+        result: newName,
+      };
+    }
+    case "applyStyle": {
+      requireStyle(state, command.style);
+      if (!Array.isArray(command.graphs))
+        throw new DocError("graphs must be a list of graph names.");
+      let next = state;
+      for (const name of new Set<string>(command.graphs)) {
+        next = withStyle(next, requireGraph(next, name), command.style);
+      }
+      return { state: next, result: null };
+    }
+    case "setDefaultStyle": {
+      if (command.name !== null) requireStyle(state, command.name);
+      if (command.name === state.defaultStyle) return { state, result: null };
+      return { state: { ...state, defaultStyle: command.name }, result: null };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
         throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
       }
-      const graphs = { ...state.graphs };
-      const tables = { ...state.tables };
-      const procedures = { ...state.procedures };
-      const pages = { ...state.pages };
+      const gone = [command.name];
+      let pages = withoutEntries(state.pages, gone);
       // A graph that is closed leaves the pages it was on.
-      if (command.name in graphs) {
+      if (command.name in state.graphs) {
         for (const [name, page] of Object.entries(pages)) {
           if (page.items.some((item) => item.graph === command.name)) {
-            pages[name] = {
+            pages = withEntry(pages, name, {
               ...page,
               items: page.items.filter((item) => item.graph !== command.name),
-            };
+            });
           }
         }
       }
-      delete graphs[command.name];
-      delete tables[command.name];
-      delete procedures[command.name];
-      delete pages[command.name];
       return {
         state: {
           ...state,
-          graphs,
-          tables,
-          procedures,
+          graphs: withoutEntries(state.graphs, gone),
+          tables: withoutEntries(state.tables, gone),
+          procedures: withoutEntries(state.procedures, gone),
           pages,
           windows: state.windows.filter((window) => window.name !== command.name),
         },

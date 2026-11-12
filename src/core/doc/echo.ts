@@ -1,3 +1,4 @@
+import type { Arrangement } from "./arrange";
 import type { Command } from "./commands";
 
 /** Python source to be written as it is, where a literal would otherwise go. */
@@ -12,16 +13,6 @@ class PyExpression {
 const same = (a: unknown, b: unknown): boolean =>
   a instanceof PyExpression && b instanceof PyExpression ? a.source === b.source : Object.is(a, b);
 
-/** A number as an argument of float() or complex(): plain, or a quoted nan or inf. */
-const pyNumber = (value: number): string =>
-  Number.isFinite(value)
-    ? String(value)
-    : Number.isNaN(value)
-      ? '"nan"'
-      : value > 0
-        ? '"inf"'
-        : '"-inf"';
-
 /** Formats a JavaScript value as a Python literal. */
 export function pyLiteral(value: unknown): string {
   if (value instanceof PyExpression) return value.source;
@@ -35,11 +26,26 @@ export function pyLiteral(value: unknown): string {
   }
   if (typeof value === "string") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(pyLiteral).join(", ")}]`;
+  if (typeof value === "object" && !ArrayBuffer.isView(value)) {
+    const entries = Object.entries(value).map(
+      ([key, item]) => `${pyLiteral(key)}: ${pyLiteral(item)}`,
+    );
+    return `{${entries.join(", ")}}`;
+  }
   throw new Error(`Cannot write ${typeof value} as a Python literal.`);
 }
 
 export const snakeCase = (name: string): string =>
   name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+/** Data with the keys of its dicts in Python's spelling, as Python reads a style. */
+export function snakeKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(snakeKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [snakeCase(key), snakeKeys(item)]),
+  );
+}
 
 export const camelCase = (name: string): string =>
   name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
@@ -82,6 +88,7 @@ export function echoPython(
   shapeOf?: (wave: string) => readonly number[] | undefined,
 ): string | null {
   switch (command.op) {
+    case "addResult":
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
@@ -89,6 +96,10 @@ export function echoPython(
     case "resizeColumn":
     case "setProcedure":
       return null;
+    case "removeResults":
+      return command.names.map((name) => `op.result(${pyLiteral(name)}).remove()`).join("\n");
+    case "renameResult":
+      return `op.result(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
     case "newLayout":
       return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
     case "modifyLayout":
@@ -115,12 +126,14 @@ export function echoPython(
     case "setWavePoints": {
       const wave = `op.wave(${pyLiteral(command.name)})`;
       const { start } = command;
-      // Complex points are written as complex(re, im), which also takes nan and inf.
+      // Complex points are written as complex(re, im). Its two arguments must be
+      // numbers, so nan and inf are float("nan") and float("inf"), not text.
       const { imag } = command;
       const values: ArrayLike<number | PyExpression> = imag
         ? Array.from(
             command.values,
-            (re, index) => new PyExpression(`complex(${pyNumber(re)}, ${pyNumber(imag[index]!)})`),
+            (re, index) =>
+              new PyExpression(`complex(${pyLiteral(re)}, ${pyLiteral(imag[index]!)})`),
           )
         : command.values;
       const shape = shapeOf?.(command.name) ?? [];
@@ -181,6 +194,8 @@ export function echoPython(
       return `op.display(${joinArgs(
         names(command.y),
         keywords({ x: command.x ?? undefined, name: command.name }),
+        // A style of null is written, as None: it means no style, not the default.
+        command.style === undefined ? "" : `style=${pyLiteral(command.style)}`,
       )})`;
     case "appendTraces":
       return `op.graph(${pyLiteral(command.graph)}).append(${joinArgs(
@@ -261,7 +276,79 @@ export function echoPython(
       return `op.table(${pyLiteral(command.table)}).append(${names(command.waves)})`;
     case "removeFromTable":
       return `op.table(${pyLiteral(command.table)}).remove(${names(command.waves)})`;
+    case "saveStyle":
+      return `op.graph(${pyLiteral(command.graph)}).save_style(${joinArgs(
+        pyLiteral(command.name),
+        command.size ? "size=True" : "",
+      )})`;
+    case "setStyle":
+      return `op.set_style(${pyLiteral(command.name)}, ${pyLiteral(snakeKeys(command.style))})`;
+    case "removeStyle":
+      return `op.style(${pyLiteral(command.name)}).remove()`;
+    case "renameStyle":
+      return `op.style(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "applyStyle":
+      return command.graphs.length === 1
+        ? `op.graph(${pyLiteral(command.graphs[0])}).apply_style(${pyLiteral(command.style)})`
+        : `op.apply_style(${pyLiteral(command.style)}, graphs=${pyLiteral([...command.graphs])})`;
+    case "setDefaultStyle":
+      return `op.set_default_style(${pyLiteral(command.name)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
+  }
+}
+
+/**
+ * The `op.make` call that makes the same empty wave as a command does (the
+ * command's data is all zeros; makeWave carries data, so loads are not echoed
+ * through here). A keyword is left out where `op.make` gives the same without
+ * it: the default for a new wave, the old value for a wave that `previous`
+ * says is being overwritten, which keeps its scaling and units unless told.
+ */
+export function echoMake(
+  command: Extract<Command, { op: "makeWave" }>,
+  previous?: { x0: number; dx: number; xUnit: string; unit: string },
+): string {
+  const shape = command.shape ?? [command.data?.length ?? 0];
+  const unless = <T>(value: T | undefined, otherwise: T): T | undefined =>
+    value === undefined || Object.is(value, otherwise) ? undefined : value;
+  return `op.make(${joinArgs(
+    pyLiteral(command.name),
+    keywords({
+      // op.make makes 128 points when not told otherwise, as Igor's Make does.
+      n: shape.length > 1 ? new PyExpression(`(${shape.join(", ")})`) : unless(shape[0], 128),
+      dtype: unless(command.type, "float64"),
+      x0: unless(command.x0, previous?.x0 ?? 0),
+      dx: unless(command.dx, previous?.dx ?? 1),
+      xUnit: unless(command.xUnit, previous?.xUnit ?? ""),
+      unit: unless(command.unit, previous?.unit ?? ""),
+    }),
+  )})`;
+}
+
+/**
+ * The Python call that rearranges items on a page as the layout window did:
+ * one call for the whole arrangement, so the history reads as what was done
+ * and not as the item changes it took.
+ */
+export function echoArrangement(layout: string, arrangement: Arrangement): string {
+  const page = `op.layout(${pyLiteral(layout)})`;
+  switch (arrangement.action) {
+    case "align":
+      return `${page}.align(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.edge)})`;
+    case "distribute":
+      return `${page}.distribute(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.direction)})`;
+    case "matchSize":
+      return `${page}.match_size(${pyLiteral([...arrangement.items])}, ${pyLiteral(arrangement.dimension)})`;
+    case "arrange": {
+      const [across, down] = arrangement.gap;
+      return `${page}.arrange(${joinArgs(
+        String(arrangement.rows),
+        String(arrangement.columns),
+        arrangement.items ? `items=${pyLiteral([...arrangement.items])}` : "",
+        `margin=${pyLiteral(arrangement.margin)}`,
+        `gap=${across === down ? pyLiteral(across) : `(${pyLiteral(across)}, ${pyLiteral(down)})`}`,
+      )})`;
+    }
   }
 }

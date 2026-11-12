@@ -45,11 +45,12 @@ test.describe("experiments", () => {
     await sample(app);
     const before = await app.doc();
     const saved = await app.download(() => page.keyboard.press("Control+s"));
-    expect(saved.file.suggestedFilename()).toBe("experiment.oresme");
+    expect(saved.file.suggestedFilename()).toBe("Experiment.oresme");
     expect(saved.bytes.subarray(0, 2).toString()).toBe("PK");
 
-    page.once("dialog", (dialog) => void dialog.accept());
+    // A new experiment opens in the tab; the old one stays among the browser's experiments.
     await app.menu("File", "New Experiment");
+    await expect(page).toHaveTitle("Untitled — OresmePro");
     await expect.poll(async () => (await app.doc()).order).toEqual([]);
 
     const [chooser] = await Promise.all([

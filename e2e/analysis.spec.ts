@@ -31,6 +31,87 @@ g = op.display(pk)`);
     expect((await app.wave("W_coef"))!.length).toBe(4);
   });
 
+  test("fits are kept as results that can be compared, fitted again and applied to other waves", async ({
+    app,
+    page,
+  }) => {
+    await app.run(`xr = np.arange(20.0)
+ra = op.make("ra", 1 + 2 * xr)
+rb = op.make("rb", 3 + 0.5 * xr)
+rc = op.make("rc", -1 + 4 * xr)
+bad = ra.data.copy(); bad[5:8] += 50; ra.data = bad`);
+    await app.menu("Analysis", "Curve Fitting…");
+    await page.getByLabel("Function").selectOption("line");
+    await page.getByLabel("Y data").selectOption("ra");
+    await page.getByLabel("Leave out").fill("5 to 7.5, x");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await page.getByLabel("Leave out").fill("5..7");
+    await app.doIt();
+    await app.idle();
+    const fit = await app.lastEntry();
+    expect(fit.code).toBe('op.fit("line", "ra", exclude=[(5, 7)])');
+    expect(fit.output).toMatch(/b += 2 ±/);
+
+    // The fit is listed in the data browser, and says when its data has changed.
+    const listed = page.getByRole("complementary", { name: "Data Browser" }).getByLabel("Results");
+    await expect(listed.getByRole("listitem")).toHaveText(["Fit0line(ra)"]);
+    await app.run("ra[0] = 5");
+    await expect(listed.getByLabel("data changed")).toBeVisible();
+
+    await app.menu("Analysis", "Results…");
+    const dialog = page.getByRole("dialog", { name: "Analysis Results" });
+    const rows = dialog.getByRole("region", { name: "Results" }).locator("tbody tr");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText("Fit0(data changed)line(ra)");
+    await expect(rows.nth(0)).toContainText("1 ± ");
+    await rows.nth(0).click();
+    const details = dialog.getByRole("region", { name: "Details" });
+    await expect(details).toContainText("The data has changed since: ra.");
+    await expect(details).toContainText('function="line", y="ra", exclude=[[5, 7]]');
+    // Fitted again, the new result stands beside the old one.
+    await dialog.getByRole("button", { name: "Fit Again" }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.result("Fit0").rerun()');
+    expect(Object.keys((await app.doc()).results)).toEqual(["Fit0", "Fit1"]);
+
+    // The same fit for the other waves, then all of them in a table.
+    await app.menu("Analysis", "Results…");
+    await rows.nth(1).click();
+    await dialog.getByRole("button", { name: "Apply to Waves…" }).click();
+    const waves = dialog.getByRole("listbox", { name: "Waves to fit" });
+    await waves.getByRole("option", { name: "rb", exact: true }).click();
+    await waves.getByRole("option", { name: "rc", exact: true }).click({ modifiers: ["Control"] });
+    await dialog.getByRole("button", { name: "Fit 2 Waves" }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.result("Fit1").apply(["rb", "rc"])');
+    const doc = await app.doc();
+    expect(Object.keys(doc.results)).toEqual(["Fit0", "Fit1", "Fit2", "Fit3"]);
+    expect(doc.results.Fit3).toMatchObject({ label: "line(rc)", converged: true });
+    expect(doc.results.Fit3!.coef.map((value) => Math.round(value! * 1e9) / 1e9)).toEqual([-1, 4]);
+    expect(doc.tables.Results!.columns.slice(0, 4)).toEqual([
+      "Results_result",
+      "Results_data",
+      "Results_a",
+      "Results_a_sd",
+    ]);
+    const slopes = (await app.wave("Results_b"))!.data;
+    expect(slopes.map((value) => Math.round(value * 1e9) / 1e9)).toEqual([0.5, 4]);
+
+    await app.menu("Analysis", "Results…");
+    await expect(rows).toHaveCount(4);
+    await dialog.getByLabel("Select Fit0").check();
+    await dialog.getByRole("button", { name: "Delete" }).click();
+    await expect(rows).toHaveCount(3);
+    expect((await app.lastEntry()).code).toBe('op.result("Fit0").remove()');
+    // Results are part of the experiment: they come back with it.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("group", { name: "Saving" })).toHaveText(/^Saved \d/);
+    await page.reload();
+    await expect
+      .poll(async () => Object.keys((await app.doc()).results))
+      .toEqual(["Fit1", "Fit2", "Fit3"]);
+  });
+
   test("the hold field must be readable before the fit can run", async ({ app, page }) => {
     await app.run('op.make("pk", [1, 2, 3, 2, 1])');
     await app.menu("Analysis", "Curve Fitting…");
@@ -48,6 +129,33 @@ g = op.display(pk)`);
     await app.idle();
     expect((await app.lastEntry()).code).toBe('op.smooth("sig", n=7)');
     expect((await app.doc()).order).toEqual(["sig", "sig_smth"]);
+  });
+
+  test("integrate takes an X wave from the dialog", async ({ app, page }) => {
+    await app.run(`op.make("current", [2.0, 2.0, 2.0, 2.0], unit="A")
+op.make("time", [0.0, 1.0, 3.0, 6.0], unit="s")`);
+    await app.menu("Analysis", "Integrate…");
+    const dialog = page.getByRole("dialog", { name: "Integrate" });
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("current");
+    await dialog.getByLabel("X wave").selectOption("time");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.integrate("current", x="time")');
+    expect(entry.status).toBe("ok");
+    const charge = (await app.wave("current_INT"))!;
+    expect(charge.data).toEqual([0, 2, 6, 12]);
+    expect(charge.unit).toBe("A·s");
+
+    // Without an X wave the call is what it always was.
+    await app.menu("Analysis", "Differentiate…");
+    await page
+      .getByRole("dialog", { name: "Differentiate" })
+      .getByLabel("Wave", { exact: true })
+      .selectOption("time");
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.differentiate("time")');
   });
 
   test("a fit can add residuals and a confidence band to the graph", async ({ app, page }) => {
@@ -103,6 +211,117 @@ g = op.display(spectrum)`);
       "fit_spectrum_p2",
       "fit_spectrum",
     ]);
+  });
+
+  test("Voigt and pseudo-Voigt peaks are fitted from the menus", async ({ app, page }) => {
+    await app.run(`import _oresme_analysis as oa
+xv = np.linspace(0, 20, 801)
+vs = op.make("vs", 0.4 + 2 * oa._voigt(xv - 6, 0.5, 0.3) + 1.5 * oa._voigt(xv - 13, 0.4, 0.5), dx=xv[1] - xv[0])
+pv = op.make("pv", 0.1 + 3 * oa._pseudo_voigt(xv - 9, 0.8, 0.4), dx=xv[1] - xv[0])
+g = op.display(vs)`);
+    await app.menu("Analysis", "Curve Fitting…");
+    await page.getByLabel("Function").selectOption("pseudo_voigt");
+    // eta means something only between 0 and 1: the dialog starts with that constraint.
+    await expect(page.getByLabel("Constraints")).toHaveValue("0 <= eta <= 1");
+    await page.getByLabel("Y data").selectOption("pv");
+    await app.doIt();
+    await app.idle();
+    const fit = await app.lastEntry();
+    expect(fit.code).toBe('op.fit("pseudo_voigt", "pv", bounds={"eta": (0, 1)})');
+    expect(fit.output).toMatch(/eta += 0\.4\d* ±/);
+
+    await app.menu("Analysis", "Multi-peak Fit…");
+    const dialog = page.getByRole("dialog", { name: "Multi-peak Fit" });
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("vs");
+    await dialog.getByLabel("Peak shape").selectOption("voigt");
+    await app.doIt();
+    await app.idle();
+    const peaks = await app.lastEntry();
+    expect(peaks.code).toBe('op.fit_peaks("vs", shape="voigt", baseline="constant")');
+    expect(peaks.output).toContain("Multi-peak fit: 2 voigt peaks");
+    expect(peaks.output).toContain("Gauss FWHM");
+    // Position, height, FWHM, area, Gaussian FWHM and Lorentzian FWHM of each peak.
+    const table = (await app.wave("W_peaks"))!;
+    expect(table.shape).toEqual([2, 6]);
+    expect(table.data[0]).toBeCloseTo(6, 3);
+    expect(table.data[5]).toBeCloseTo(0.6, 3);
+  });
+
+  test("a Shirley background is made and subtracted from the menu", async ({ app, page }) => {
+    await app.run(`bx = np.linspace(270, 310, 801)
+bp = 5 * np.exp(-((bx - 290) / 0.8) ** 2)
+xps = op.make("xps", 1 + 2 / (1 + np.exp(-(bx - 290) / 0.5)) + bp, x0=270, dx=0.05, x_unit="eV")
+g = op.display(xps)`);
+    await app.menu("Analysis", "Background…");
+    const dialog = page.getByRole("dialog", { name: "Background" });
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("xps");
+    await dialog.getByLabel("From", { exact: true }).fill("280");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await dialog.getByLabel("To", { exact: true }).fill("300");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.background("xps", "shirley", range=(280, 300), subtract=True)');
+    expect(entry.status).toBe("ok");
+    const bg = (await app.wave("xps_bg"))!;
+    expect(bg.length).toBe(801);
+    // NaN outside the range, which starts at point 200.
+    expect(bg.data[0]).toBeNaN();
+    expect((await app.doc()).order).toEqual(["xps", "xps_bg", "xps_sub"]);
+
+    // The range can come from the cursors instead.
+    await app.run('g.cursor("A", "xps", 300); g.cursor("B", "xps", 500)');
+    await app.menu("Analysis", "Background…");
+    await page
+      .getByRole("dialog", { name: "Background" })
+      .getByLabel("Method")
+      .selectOption("linear");
+    await page.getByLabel("Between cursors A and B of Graph0").check();
+    await page.getByLabel("Subtracted spectrum").uncheck();
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.background("xps", "linear", cursors=True)');
+  });
+
+  test("an onset is found from the menu, with ranges from the cursors", async ({ app, page }) => {
+    await app.run(`ox = np.arange(0, 8, 0.05)
+ups = op.make("ups", np.maximum(0.1 + 0.02 * (ox - 3), 2 * ox - 8), dx=0.05, x_unit="eV")
+g = op.display(ups)
+g.cursor("A", "ups", 120); g.cursor("B", "ups", 90)`);
+    await app.menu("Analysis", "Onset…");
+    const dialog = page.getByRole("dialog", { name: "Onset" });
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("ups");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    // A–B fills the edge range with the cursors' X values, lower first.
+    await dialog.getByLabel("Edge from cursors").click();
+    await expect(dialog.getByLabel("Edge from", { exact: true })).toHaveValue("4.5");
+    await expect(dialog.getByLabel("Edge to", { exact: true })).toHaveValue("6");
+    await dialog.getByLabel("Over from", { exact: true }).fill("2");
+    await dialog.getByLabel("Over to", { exact: true }).fill("3.5");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.onset("ups", edge=(4.5, 6), baseline=(2, 3.5), graph=True)');
+    expect(entry.output).toMatch(/^Onset of ups: x = 4\.06060\d*( ± [\d.e-]+)? eV/);
+    expect((await app.doc()).graphs.Graph0!.traces.map((trace) => trace.name)).toEqual([
+      "ups",
+      "ups_edge",
+      "ups_base",
+      "ups_onset",
+    ]);
+    expect((await app.doc()).graphs.Graph0!.annotations[0]!.text).toMatch(/^onset 4\.06/);
+
+    // A constant level instead of a fitted baseline.
+    await app.menu("Analysis", "Onset…");
+    const again = page.getByRole("dialog", { name: "Onset" });
+    await again.getByLabel("Edge from", { exact: true }).fill("4.5");
+    await again.getByLabel("Edge to", { exact: true }).fill("6");
+    await again.getByLabel("Baseline").selectOption("level");
+    await again.getByLabel("Level").fill("0.1");
+    await again.getByLabel("Draw the lines on Graph0").uncheck();
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.onset("ups", edge=(4.5, 6), baseline=0.1)');
   });
 
   test("an image is filtered from the menu", async ({ app, page }) => {

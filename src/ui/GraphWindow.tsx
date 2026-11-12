@@ -5,8 +5,9 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { autoscaleGraph, exportGraph } from "../app/actions";
+import { applyLibraryStyle, autoscaleGraph, exportGraph } from "../app/actions";
 import { measureText } from "../app/measure";
+import { browserLibrary } from "../app/styleLibrary";
 import {
   doc,
   INFO_BAR_HEIGHT,
@@ -491,6 +492,26 @@ export function GraphWindow({ name }: { name: string }) {
     }
   };
 
+  /** The styles of the experiment, then those only the library has: a click gives one to this graph. */
+  const styleItems = (): MenuItem[] => {
+    const own = Object.keys(doc.getState().styles);
+    const items: MenuItem[] = own.map((style) => ({
+      label: style,
+      checked: graph.style === style,
+      onSelect: () => runGui({ op: "applyStyle", style, graphs: [name] }),
+    }));
+    // Read as the menu opens: the library has no part in drawing the graph.
+    const elsewhere = Object.keys(browserLibrary().list()).filter((style) => !own.includes(style));
+    if (items.length > 0 && elsewhere.length > 0) items.push({ separator: true });
+    for (const style of elsewhere) {
+      items.push({
+        label: `${style} (library)`,
+        onSelect: () => applyLibraryStyle(style, [name]),
+      });
+    }
+    return items.length > 0 ? items : [{ label: "No styles yet", disabled: true }];
+  };
+
   const onContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (!layout) return;
@@ -565,6 +586,8 @@ export function GraphWindow({ name }: { name: string }) {
         onSelect: open({ kind: "modifyContour", graph: name, contour: contour.name }),
       })),
       { label: "Modify Graph…", onSelect: open({ kind: "modifyGraph", graph: name }) },
+      { label: "Apply Style", submenu: styleItems() },
+      { label: "Styles…", onSelect: open({ kind: "styles", graph: name }) },
       { separator: true },
       { label: "Append Traces…", onSelect: open({ kind: "appendTraces", graph: name }) },
       {

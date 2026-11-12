@@ -19,8 +19,11 @@ Waves can be kept in data folders: ``"run1:signal"`` is the wave ``signal`` in
 the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 """
 
+import hashlib
 import json
+import os
 import re
+import warnings
 
 import numpy as np
 
@@ -50,6 +53,11 @@ __all__ = [
     "folder",
     "folders",
     "edit",
+    "load_text",
+    "to_dataframe",
+    "from_dataframe",
+    "load_excel",
+    "load_igor",
     "graph",
     "graphs",
     "table",
@@ -67,6 +75,13 @@ __all__ = [
     "new_layout",
     "layout",
     "layouts",
+    "Style",
+    "style",
+    "styles",
+    "set_style",
+    "apply_style",
+    "set_default_style",
+    "default_style",
 ]
 
 
@@ -102,6 +117,19 @@ def _dispatch(command, data=None):
 
 def _camel(name):
     return re.sub(r"_([a-z])", lambda match: match.group(1).upper(), name)
+
+
+def _snake(name):
+    return re.sub(r"[A-Z]", lambda match: "_" + match.group(0).lower(), name)
+
+
+def _keys(value, spell):
+    """Data with every dict key respelled (and NumPy numbers made plain), at any depth."""
+    if isinstance(value, dict):
+        return {spell(str(key)): _keys(item, spell) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_keys(item, spell) for item in value]
+    return _plain(value)
 
 
 def _is_text(values):
@@ -173,7 +201,10 @@ def _content(command, values, dtype=None):
         return None
     if isinstance(values, np.ndarray) and values.dtype.kind == "M":
         # Dates are stored as seconds since 1970-01-01 UTC, with the unit "dat".
+        missing = np.isnat(values)
         values = values.astype("datetime64[ms]").astype(np.float64) / 1000.0
+        # "Not a time" has no number of its own among the dates: it is a missing value.
+        values[missing] = np.nan
         command.setdefault("unit", "dat")
     array = _as_array(values)
     kind = _wave_type(array, dtype)
@@ -500,7 +531,9 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             values[key] = [value] if isinstance(value, str) else [str(item) for item in value]
             self.data = values
             return
-        if len(info["shape"]) > 1 or info["type"].startswith("complex") or np.iscomplexobj(value):
+        is_complex = info["type"].startswith("complex")
+        # A complex value turns a real wave complex, which only a copy of the whole wave can do.
+        if len(info["shape"]) > 1 or (np.iscomplexobj(value) and not is_complex):
             values = self.data.copy()
             if np.iscomplexobj(value) and not np.iscomplexobj(values):
                 values = values.astype(np.complex128)
@@ -508,27 +541,33 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
             self.data = values
             return
         # Writing just past the end grows a 1-D wave, as typing below its last point in a table does.
+        kind = np.complex128 if is_complex else np.float64
         if isinstance(key, (int, np.integer)):
             index = int(key) + count if key < 0 else int(key)
             if not 0 <= index <= count:
                 raise IndexError(f"Point {key} is out of range for a wave of {count} points.")
-            _dispatch(
-                {"op": "setWavePoints", "name": self._name, "start": index},
-                np.array([value], dtype=np.float64),
-            )
+            self._write_points(index, np.array([value], dtype=kind))
             return
         if isinstance(key, slice) and key.step in (None, 1):
             start, stop, _ = key.indices(count)
             if key.stop is not None and key.stop > count and (key.start or 0) <= count:
                 stop = int(key.stop)
             if stop > start:
-                values = np.empty(stop - start, dtype=np.float64)
+                values = np.empty(stop - start, dtype=kind)
                 values[:] = value
-                _dispatch({"op": "setWavePoints", "name": self._name, "start": start}, values)
+                self._write_points(start, values)
                 return
         values = self.data.copy()
         values[key] = value
         self.data = values
+
+    def _write_points(self, start, values):
+        """Store a run of points from ``start``; complex ones go as real parts, then imaginary."""
+        command = {"op": "setWavePoints", "name": self._name, "start": start}
+        if np.iscomplexobj(values):
+            command["complex"] = True
+            values = np.concatenate([values.real, values.imag])
+        _dispatch(command, values.astype(np.float64))
 
     @property
     def flat(self):
@@ -658,10 +697,22 @@ class Axis(_Props):
     major ticks that far apart. ``tick_format`` writes the tick labels like
     Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
     goes back to automatic labels.
+
+    ``label_size`` and ``tick_label_size`` are the font sizes of the axis
+    label and of the tick labels (``None``: the graph's ``font_size``).
+    ``label_style`` sets the whole label in ``"plain"``, ``"italic"``,
+    ``"bold"`` or ``"bold italic"``. Codes in the label change part of it,
+    as in Igor: ``r"Voltage (\\f02V\\f00)"`` has an italic V, ``\\Z14``
+    makes what follows 14 high, ``\\u`` puts the units there. Write such
+    labels as raw strings (``r"..."``), or Python reads ``\\f`` and ``\\u``
+    as its own escapes.
     """
 
     _props = (
         "label",
+        "label_size",
+        "label_style",
+        "tick_label_size",
         "min",
         "max",
         "log",
@@ -1122,6 +1173,28 @@ class Graph(_Props):
     def annotation(self, name):
         return Annotation(self, name)
 
+    def save_style(self, name, size=False):
+        """Keep this graph's look as a style named ``name`` and return it.
+
+        The style holds the fonts, the look of the axes (ticks, mirror, grid)
+        and of the traces in order (color, line, markers), not the data; with
+        ``size=True`` also the size the graph is drawn at. A style of that
+        name is replaced.
+        """
+        _dispatch({"op": "saveStyle", "name": name, "graph": self._name, "size": bool(size)})
+        return Style(name)
+
+    def apply_style(self, style):
+        """Give this graph the look of a style (a name or a Style). Returns self."""
+        apply_style(style, graphs=[self])
+        return self
+
+    @property
+    def style(self):
+        """The Style last given to the graph, or None. Traces added later follow it."""
+        name = self._info()["style"]
+        return None if name is None else Style(name)
+
     def svg(self, width=None, height=None, cursors=False):
         """The graph as an SVG document; by default at its window's size."""
         return _call(
@@ -1245,6 +1318,13 @@ class LayoutItem(_Props):
         return f"LayoutItem({self._name!r} on {self._layout.name})"
 
 
+def _item_names(items):
+    """Names of page items, given as names or as items; one alone is taken as a list."""
+    if isinstance(items, (str, LayoutItem)):
+        items = [items]
+    return [item.name if isinstance(item, LayoutItem) else str(item) for item in items]
+
+
 class Layout(_Props):
     """A page layout: graphs and text arranged on a sheet of paper.
 
@@ -1294,6 +1374,54 @@ class Layout(_Props):
 
     def item(self, name):
         return LayoutItem(self, name)
+
+    def _arrange(self, request):
+        return _call("arrangeLayout", {"layout": self._name, **request})[0]
+
+    def align(self, items, edge):
+        """Line items up: ``"left"``, ``"right"``, ``"top"`` or ``"bottom"`` edges,
+        or their middles, ``"center"`` (one above the other) or ``"middle"``
+        (side by side). They line up with the outermost of them; a single item
+        lines up with the page. ``items`` are names or items of this page.
+        """
+        self._arrange({"action": "align", "items": _item_names(items), "edge": edge})
+
+    def distribute(self, items, direction="horizontal"):
+        """Space three or more items so the gaps between them are equal,
+        ``"horizontal"``-ly or ``"vertical"``-ly. The outermost stay where they are.
+        """
+        self._arrange({"action": "distribute", "items": _item_names(items), "direction": direction})
+
+    def match_size(self, items, dimension="both"):
+        """Give graphs the ``"width"``, ``"height"`` or ``"both"`` of the first one named.
+
+        Text keeps the size its words need and is left as it is.
+        """
+        self._arrange({"action": "matchSize", "items": _item_names(items), "dimension": dimension})
+
+    def arrange(self, rows, columns, items=None, margin=36, gap=12):
+        """Put graphs in a grid of ``rows`` by ``columns`` that fills the page inside
+        ``margin`` points, with ``gap`` points between cells (or a pair: between
+        columns, between rows). The graphs fill the cells row by row, in the order
+        given; without ``items``, every graph of the page in the order they read on it
+        now. Text is not moved; graphs beyond the cells stay where they are.
+        """
+        request = {
+            "action": "arrange",
+            "rows": _plain(rows),
+            "columns": _plain(columns),
+            "margin": _plain(margin),
+            "gap": _plain(tuple(gap) if isinstance(gap, (list, tuple)) else gap),
+        }
+        if items is not None:
+            request["items"] = _item_names(items)
+        left_out = self._arrange(request)["leftOut"]
+        if left_out:
+            warnings.warn(
+                f"{', '.join(left_out)} did not fit in the {rows} × {columns} grid "
+                "and stayed where they were.",
+                stacklevel=2,
+            )
 
     def svg(self):
         """The page as an SVG document."""
@@ -1370,6 +1498,10 @@ class Table(_Props):
     def columns(self):
         return [Wave(name) for name in _call("tableInfo", {"name": self._name})[0]["columns"]]
 
+    def to_dataframe(self):
+        """The table's columns as a pandas DataFrame (see ``op.to_dataframe``)."""
+        return to_dataframe(self)
+
     def append(self, *waves_):
         _dispatch(
             {
@@ -1402,8 +1534,10 @@ def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y
     """Create a wave (or replace an existing one) and return it.
 
     ``data`` may be numbers with up to 4 dimensions, or a list of strings for
-    a text wave. Without ``data`` the wave has ``n`` zeros. An existing wave
-    keeps its scaling and units unless new ones are given.
+    a text wave. Without ``data`` the wave has ``n`` zeros; ``n=(rows,
+    columns)``, with up to 4 sizes, makes a matrix of zeros. An existing wave
+    keeps its scaling and units unless new ones are given; with
+    ``overwrite=False`` making one is refused instead.
 
     The wave takes the type of the data when it is one a wave can have:
     float64 or float32, int8 to int32 and uint8 to uint32, complex128 or
@@ -1418,7 +1552,11 @@ def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y
     for key, value in (("xUnit", x_unit), ("yUnit", y_unit), ("unit", unit), ("note", note)):
         if value is not None:
             command[key] = str(value)
-    values = np.zeros(int(n)) if data is None else data
+    if data is None:
+        shape = tuple(int(size) for size in n) if isinstance(n, (tuple, list)) else int(n)
+        values = np.zeros(shape)
+    else:
+        values = data
     return Wave(_dispatch(command, _content(command, values, dtype)))
 
 
@@ -1515,11 +1653,17 @@ def kill(*waves_):
         _data_cache.pop(name, None)
 
 
-def display(*y, x=None, name=None):
+_DEFAULT = object()
+
+
+def display(*y, x=None, name=None, style=_DEFAULT):
     """Make a new graph of the given waves (or arrays) and return it.
 
     ``x`` plots them against an X wave instead of their own X scaling. A text
     wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
+    The graph is given the default style, if there is one (see
+    ``set_default_style``); ``style="paper"`` gives it another, and
+    ``style=None`` none.
     """
     command = {
         "op": "display",
@@ -1528,6 +1672,8 @@ def display(*y, x=None, name=None):
     }
     if name is not None:
         command["name"] = name
+    if style is not _DEFAULT:
+        command["style"] = style.name if isinstance(style, Style) else style
     return Graph(_dispatch(command))
 
 
@@ -1559,6 +1705,226 @@ def edit(*waves_, name=None):
     if name is not None:
         command["name"] = name
     return Table(_dispatch(command))
+
+
+def _read_source(source, name):
+    """The bytes of a file to load, and the file name that goes into the notes of the waves."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        if name is None:
+            raise OresmeError("Give name=, a file name for the notes of the waves, with bytes.")
+        return bytes(source), name
+    path = os.fspath(source)
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError as error:
+        raise OresmeError(
+            f"Could not read {path}: {error.strerror or error}. Files added with "
+            "File > Add Files for Python are in the working directory."
+        ) from None
+    return data, name or os.path.basename(path)
+
+
+def _file_words(data):
+    """A file's bytes as they travel to the application: float64 words, padded with zeros."""
+    return np.frombuffer(data + b"\0" * (-len(data) % 8), dtype=np.float64)
+
+
+def _import(kind, source, name, preset, options):
+    """Read a file's bytes here and have the application turn them into waves."""
+    data, filename = _read_source(source, name)
+    settings = {key: value for key, value in options.items() if value is not None}
+    if isinstance(settings.get("header"), bool):
+        settings["header"] = "yes" if settings["header"] else "no"
+    if isinstance(settings.get("sheets"), str):
+        settings["sheets"] = [settings["sheets"]]
+    for key in ("columns", "errors"):
+        if key in settings:
+            if not isinstance(settings[key], dict):
+                raise OresmeError(f"{key} must be a dict keyed by column number, counted from 0.")
+            settings[key] = {str(column): value for column, value in settings[key].items()}
+    reply = _call(
+        "importData",
+        {
+            "kind": kind,
+            "filename": filename,
+            "settings": settings,
+            "preset": preset,
+            "size": len(data),
+            "digest": hashlib.sha256(data).hexdigest(),
+        },
+        _file_words(data),
+    )[0]
+    for table in reply["tables"]:
+        unread = [
+            f"{wave_} ({count})" for wave_, count in zip(table["waves"], table["unreadable"]) if count
+        ]
+        if unread:
+            warnings.warn(
+                f"{filename}: cells that could not be read are NaN in {', '.join(unread)}.",
+                stacklevel=3,
+            )
+    return reply
+
+
+def load_text(source, *, preset=None, encoding=None, delimiter=None, decimal=None, comment=None,
+              skip=None, header=None, units=None, columns=None, x=None, errors=None,
+              graph=False, table=True, name=None):
+    """Load a file of delimited text (CSV, TSV, columns separated by spaces) as waves.
+
+    ``source`` is a file in the working directory (the files of the
+    experiment are there), any other path, or the file's bytes with
+    ``name=``. Each column becomes a wave, returned in a list. What is not
+    given is detected:
+
+    - ``encoding``: "utf-8", "shift_jis", "euc-jp", "utf-16le", "utf-16be", "windows-1252".
+    - ``delimiter``: "tab", "comma", "semicolon" or "space".
+    - ``decimal``: "," for numbers written like 1,5 (a point then groups thousands).
+    - ``comment``: lines starting with this are passed over; "#" unless given, "" for none.
+    - ``skip``: lines above the table to pass over.
+    - ``header``: True if the first row names the columns, False if it is data.
+    - ``units``: "auto" takes units from headers like "Voltage (V)" or "I [mA]",
+      "slash" from "Ewe/V", "row" from the row below the header, "none" leaves them.
+    - ``columns``: choices by column number, counted from 0:
+      ``{0: {"name": "t", "unit": "s"}, 3: {"type": "skip"}}``. A type is "number",
+      "date", "text" or "skip". Cells that do not fit a type chosen become NaN, with
+      a warning; a column left to be detected is text if any cell is not a number.
+    - ``graph=True`` plots the numeric columns, against column ``x`` if given, with
+      error bars from ``errors={value_column: uncertainty_column}``.
+    - ``table=False`` makes no table.
+    - ``preset``: the name of an import preset saved in the Load Data dialog; what is
+      given here goes before it.
+    """
+    reply = _import("text", source, name, preset, dict(
+        encoding=encoding, delimiter=delimiter, decimal=decimal, comment=comment, skip=skip,
+        header=header, units=units, columns=columns, x=x, errors=errors,
+        graph=bool(graph), table=bool(table),
+    ))
+    return [Wave(wave_) for wave_ in reply["tables"][0]["waves"]]
+
+
+def load_excel(source, *, sheets=None, preset=None, decimal=None, skip=None, header=None,
+               units=None, columns=None, x=None, errors=None, graph=False, table=True,
+               name=None):
+    """Load an Excel workbook (.xlsx, .xlsm) as waves: a dict of sheet name to its waves.
+
+    ``sheets`` names the sheets to read (one name or a list); all that have
+    cells otherwise. ``skip`` counts rows above the table. The other options
+    are those of ``load_text`` and apply to every sheet read.
+    """
+    reply = _import("excel", source, name, preset, dict(
+        sheets=sheets, decimal=decimal, skip=skip, header=header, units=units, columns=columns,
+        x=x, errors=errors, graph=bool(graph), table=bool(table),
+    ))
+    return {table["sheet"]: [Wave(wave_) for wave_ in table["waves"]] for table in reply["tables"]}
+
+
+def load_igor(source, *, name=None):
+    """Load the waves of an Igor Pro file: a binary wave (.ibw) or a packed experiment (.pxp, .pxt).
+
+    ``source`` is a file in the working directory, any other path, or the
+    file's bytes with ``name=`` (whose extension says which kind it is).
+    Returns the waves made, in a list in the order of the file: one for a
+    binary wave, all of an experiment's waves otherwise, each in the data
+    folder it was in (``w.name`` is then like ``"run1:signal"``). The values,
+    dimensions, scaling, units and note are Igor's; names Igor allows but this
+    app does not ("raw data") are made legal ("raw_data"), and a name that is
+    taken gets a suffix. Each wave's note says which file it came from and
+    what could not be kept as Igor had it. An experiment's graphs, tables,
+    procedures, variables and history are not loaded, nor a wave whose values
+    Igor did not save (it computes them from a formula); such waves are named
+    in a warning.
+    """
+    data, filename = _read_source(source, name)
+    reply = _call(
+        "importIgor",
+        {"filename": filename, "size": len(data), "digest": hashlib.sha256(data).hexdigest()},
+        _file_words(data),
+    )[0]
+    if reply["skipped"]:
+        warnings.warn(
+            f"{filename}: not loaded, without saved values: {', '.join(reply['skipped'])}.",
+            stacklevel=2,
+        )
+    return [Wave(wave_) for wave_ in reply["waves"]]
+
+
+def _column_name(text, taken, prefix=""):
+    """A legal wave name for a column title, not one of ``taken``."""
+    leaf = re.sub(r"[^0-9A-Za-z_]+", "_", str(text)).strip("_") or "column"
+    if not leaf[0].isalpha():
+        leaf = f"wave_{leaf}"
+    name = base = f"{prefix}{leaf}"
+    suffix = 0
+    while name in taken:
+        suffix += 1
+        name = f"{base}_{suffix}"
+    taken.add(name)
+    return name
+
+
+def to_dataframe(*waves_):
+    """The given waves as the columns of a pandas DataFrame.
+
+    Each wave is a column named after it (without its data folder). Date
+    waves become ``datetime64`` columns and text waves columns of strings. A
+    table can be given in place of waves: its columns are used. Waves of
+    different lengths are padded with NaN at the end.
+    """
+    import pandas as pd
+
+    columns = {}
+    for item in waves_:
+        for wave_ in item.columns if isinstance(item, Table) else [item]:
+            source = wave(_wave_name(wave_))
+            values = source.data
+            if getattr(values, "ndim", 1) != 1:
+                raise OresmeError(f"{source.name} is not 1-D: a DataFrame column holds one dimension.")
+            if source.unit == "dat":
+                values = pd.to_datetime(np.asarray(values, dtype=float), unit="s")
+            columns[source.name.rsplit(":", 1)[-1]] = pd.Series(values)
+    return pd.DataFrame(columns)
+
+
+def from_dataframe(frame, prefix="", *, index=None, table=True):
+    """Make a wave of each column of a pandas DataFrame (or Series); returns the waves.
+
+    Numbers become numeric waves, dates date waves (in UTC), and anything
+    else text waves. Names are the column titles made into legal wave names,
+    after ``prefix`` (which may name a data folder: ``"run1:"``); a name that
+    is taken gets ``_1``, ``_2``, .... The index becomes a wave too unless it
+    is the plain 0, 1, 2, ... (``index=False`` leaves it out, ``True`` forces
+    it). With ``table`` the new waves are shown in a table.
+    """
+    import pandas as pd
+
+    if isinstance(frame, pd.Series):
+        frame = frame.to_frame(frame.name if frame.name is not None else "values")
+    columns = []
+    plain = isinstance(frame.index, pd.RangeIndex) and frame.index.start == 0 and frame.index.step == 1
+    if index is True or (index is None and not plain):
+        columns.append((frame.index.name if frame.index.name is not None else "index", frame.index.to_series()))
+    columns += [(title, frame[title]) for title in frame.columns]
+    taken = set(_call("listWaves")[0])
+    made = []
+    for title, column in columns:
+        name = _column_name(title, taken, prefix)
+        if pd.api.types.is_datetime64_any_dtype(column.dtype):
+            if getattr(column.dt, "tz", None) is not None:
+                column = column.dt.tz_convert("UTC").dt.tz_localize(None)
+            values = column.to_numpy(dtype="datetime64[ns]")
+        elif pd.api.types.is_bool_dtype(column.dtype):
+            values = column.to_numpy(dtype=np.uint8)
+        elif pd.api.types.is_numeric_dtype(column.dtype):
+            # Missing values of pandas' nullable types become NaN.
+            kind = column.dtype.kind if isinstance(column.dtype, np.dtype) else "f"
+            values = column.to_numpy() if kind in "iufc" else column.to_numpy(dtype=float, na_value=np.nan)
+        else:
+            values = ["" if pd.isna(item) else str(item) for item in column.tolist()]
+        made.append(make(name, values))
+    if table and made:
+        edit(*made)
+    return made
 
 
 def graphs():
@@ -1636,6 +2002,102 @@ def set_time_zone(zone):
 def kill_window(name):
     """Close a graph, table or procedure window."""
     _dispatch({"op": "killWindow", "name": name})
+
+
+class Style:
+    """A graph style: the look of a graph kept in the experiment under a name.
+
+    ``data`` is what it holds, as a plain dict with any of ``"graph"``
+    (``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
+    the drawn graph, in pixels), ``"axes"`` (by ``"left"``, ``"bottom"``,
+    ``"right"``, ``"top"`` and ``"other"`` for added axes: ``mirror``,
+    ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of trace looks
+    (``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
+    ``marker_size``, ``marker_fill``) that the traces of a graph take in
+    turn, starting again from the first when there are more traces. A style
+    changes only what it holds.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def data(self):
+        """What the style holds, as a dict (a copy: change it with ``op.set_style``)."""
+        return _keys(_call("styleInfo", {"name": self._name})[0], _snake)
+
+    def apply(self, graphs=None):
+        """Give graphs this look; every graph when ``graphs`` is None."""
+        apply_style(self, graphs)
+        return self
+
+    def rename(self, new_name):
+        _dispatch({"op": "renameStyle", "name": self._name, "newName": new_name})
+        self._name = new_name
+        return self
+
+    def remove(self):
+        """Delete the style. Graphs keep the look it gave them."""
+        _dispatch({"op": "removeStyle", "name": self._name})
+
+    def __repr__(self):
+        return f"Style({self._name!r})"
+
+
+def _style_name(style):
+    return style.name if isinstance(style, Style) else style
+
+
+def styles():
+    """Every style of the experiment."""
+    return [Style(name) for name in _call("listStyles")[0]["names"]]
+
+
+def style(name):
+    """The style with this name."""
+    if name not in _call("listStyles")[0]["names"]:
+        raise OresmeError(f"No style named {name!r}.")
+    return Style(name)
+
+
+def set_style(name, data):
+    """Define a style from a dict (see ``Style``) or copy another Style; returns it.
+
+    A style of that name is replaced. Unknown keys and bad values are refused.
+    """
+    if isinstance(data, Style):
+        data = data.data
+    _dispatch({"op": "setStyle", "name": name, "style": _keys(data, _camel)})
+    return Style(name)
+
+
+def apply_style(style, graphs=None):
+    """Give graphs the look of a style; every graph when ``graphs`` is None.
+
+    It is one step to undo, however many graphs it changes.
+    """
+    if graphs is None:
+        names = _call("listWindows", {"kind": "graph"})[0]
+    else:
+        if isinstance(graphs, (Graph, str)):
+            graphs = [graphs]
+        names = [item.name if isinstance(item, Graph) else item for item in graphs]
+    _dispatch({"op": "applyStyle", "style": _style_name(style), "graphs": names})
+
+
+def set_default_style(style):
+    """Give new graphs this style (a name or a Style); None to give them none."""
+    _dispatch({"op": "setDefaultStyle", "name": _style_name(style)})
+
+
+def default_style():
+    """The Style new graphs are given, or None."""
+    name = _call("listStyles")[0]["default"]
+    return None if name is None else Style(name)
 
 
 def _input(prompt=""):

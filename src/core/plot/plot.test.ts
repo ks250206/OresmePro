@@ -285,13 +285,13 @@ describe("category ticks", () => {
 
 describe("rich text", () => {
   it("parses superscripts and subscripts", () => {
-    expect(parseRichText("cm^{-1} V_{out}")).toEqual([
-      { text: "cm", shift: 0 },
-      { text: "-1", shift: 1 },
-      { text: " V", shift: 0 },
-      { text: "out", shift: -1 },
+    expect(parseRichText("cm^{-1} V_{out}", { size: 100 })).toEqual([
+      { text: "cm", size: 100, dy: 0 },
+      { text: "-1", size: 70, dy: -40 },
+      { text: " V", size: 100, dy: 0 },
+      { text: "out", size: 70, dy: 18 },
     ]);
-    expect(parseRichText("a^b")).toEqual([{ text: "a^b", shift: 0 }]);
+    expect(parseRichText("a^b")).toEqual([{ text: "a^b", size: 1, dy: 0 }]);
   });
 });
 
@@ -649,6 +649,81 @@ describe("layoutGraph", () => {
     expect(svg).toContain('fill-opacity="0.25"');
   });
 
+  describe("fills across gaps in the data", () => {
+    /** The X span of each filled area, in data values, rounded to hundredths. */
+    const filledSpans = (layout: ReturnType<typeof lay>) =>
+      find(layout.prims, "polygon").map((area) => {
+        const xs = Array.from(area.points).filter((_, index) => index % 2 === 0);
+        const { scale } = layout.axes.bottom!;
+        return [Math.min(...xs), Math.max(...xs)].map(
+          (pixel) => Math.round(scale.toValue(pixel) * 100) / 100,
+        );
+      });
+
+    it("breaks the fill between two traces wherever either one has a gap", () => {
+      const doc = new Doc();
+      const a = Float64Array.of(3, 3, 3, NaN, 3, 3, 3, 3, 3, 3);
+      const b = Float64Array.of(1, 1, 1, 1, 1, 1, NaN, 1, 1, 1);
+      doc.dispatch({ op: "makeWave", name: "a", data: a });
+      doc.dispatch({ op: "makeWave", name: "b", data: b });
+      doc.dispatch({ op: "display", y: ["a", "b"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 2],
+        [4, 5],
+        [7, 9],
+      ]);
+    });
+
+    it("fills between traces with different X only where both have data", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "xa", data: Float64Array.of(0, 1, 2, 3, 4, 5, 6) });
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, 3, NaN, 3, 3, 3) });
+      // Three points at X 0.5, 2.5 and 4.5.
+      doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(1, 1, 1), x0: 0.5, dx: 2 });
+      doc.dispatch({ op: "display", y: ["a"], x: "xa" });
+      doc.dispatch({ op: "appendTraces", graph: "Graph0", y: ["b"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      const layout = lay(doc);
+      expect(filledSpans(layout)).toEqual([
+        [0.5, 2],
+        [4, 4.5],
+      ]);
+      // The band's edges follow the two traces.
+      const { scale } = layout.axes.left!;
+      const ys = find(layout.prims, "polygon").flatMap((area) =>
+        Array.from(area.points).filter((_, index) => index % 2 === 1),
+      );
+      expect(new Set(ys.map((pixel) => Math.round(scale.toValue(pixel) * 100) / 100))).toEqual(
+        new Set([1, 3]),
+      );
+    });
+
+    it("breaks a fill to zero at gaps", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, NaN, 3, 3) });
+      doc.dispatch({ op: "display", y: ["a"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "zero" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 1],
+        [3, 4],
+      ]);
+    });
+
+    it("pairs points in order when X goes back and forth", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "xs", data: Float64Array.of(0, 2, 1, 3, 2, 4) });
+      doc.dispatch({ op: "makeWave", name: "a", data: Float64Array.of(3, 3, 3, NaN, 3, 3) });
+      doc.dispatch({ op: "makeWave", name: "b", data: Float64Array.of(1, 1, 1, 1, 1, 1) });
+      doc.dispatch({ op: "display", y: ["a", "b"], x: "xs" });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "a", props: { fill: "next" } });
+      expect(filledSpans(lay(doc))).toEqual([
+        [0, 2],
+        [2, 4],
+      ]);
+    });
+  });
+
   it("draws a trace shifted by its offsets and makes room for it", () => {
     const doc = pairDoc();
     const before = lay(doc);
@@ -740,6 +815,112 @@ describe("layoutGraph", () => {
     const decade = scale.toPixel(10) - scale.toPixel(1);
     for (const bar of bars) expect(bar.w).toBeCloseTo(decade * 0.8, 3);
     expect(bars[1]!.x + bars[1]!.w / 2).toBeCloseTo(scale.toPixel(10), 3);
+  });
+
+  describe("bars and sticks that reach beyond the axis range", () => {
+    function barDoc(data: number[], mode: "bars" | "sticks", left: Record<string, unknown>) {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "v", data: Float64Array.from(data) });
+      doc.dispatch({ op: "display", y: ["v"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "v", props: { mode } });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: left });
+      return lay(doc);
+    }
+    /** Each bar as [top, bottom] in pixels, rounded, in point order. */
+    const spans = (layout: ReturnType<typeof lay>) =>
+      find(layout.prims, "rect")
+        .filter((rect) => rect.fill === "#ff0000")
+        .map((rect) => [Math.round(rect.y), Math.round(rect.y + rect.h)]);
+    const stickSpans = (layout: ReturnType<typeof lay>) => {
+      const stick = find(layout.prims, "segments").find((prim) => prim.stroke === "#ff0000")!;
+      const points = Array.from(stick.points);
+      const out: number[][] = [];
+      for (let index = 0; index < points.length; index += 4) {
+        const [a, b] = [points[index + 1]!, points[index + 3]!];
+        out.push([Math.round(Math.min(a, b)), Math.round(Math.max(a, b))]);
+      }
+      return out;
+    };
+    const top = (layout: ReturnType<typeof lay>) => layout.plot.y;
+    const bottom = (layout: ReturnType<typeof lay>) => layout.plot.y + layout.plot.h;
+    const at = (layout: ReturnType<typeof lay>, value: number) =>
+      Math.round(layout.axes.left!.scale.toPixel(value));
+
+    it("cuts a bar off at the edge of the plot instead of dropping it", () => {
+      let layout = barDoc([2, 10], "bars", { min: 0, max: 5 });
+      expect(spans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 10], "sticks", { min: 0, max: 5 });
+      expect(stickSpans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("cuts off negative bars below the range, and fills from the edge when zero is out of view", () => {
+      let layout = barDoc([-2, -10], "bars", { min: -5, max: 0 });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, -2)],
+        [top(layout), bottom(layout)],
+      ]);
+      // Zero is below the range: every bar stands on the bottom edge.
+      layout = barDoc([4, 10], "bars", { min: 3, max: 5 });
+      expect(spans(layout)).toEqual([
+        [at(layout, 4), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([4, 10], "sticks", { min: 3, max: 5 });
+      expect(stickSpans(layout)).toEqual([
+        [at(layout, 4), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("cuts bars off on reversed and log axes", () => {
+      // Reversed: zero is at the top and bars hang down to the bottom edge.
+      let layout = barDoc([2, 10], "bars", { min: 0, max: 5, reverse: true });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 1000], "bars", { min: 1, max: 100, log: true });
+      expect(spans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      // On a reversed log axis the smallest value, where bars start, is at the top.
+      layout = barDoc([2, 1000], "bars", { min: 1, max: 100, log: true, reverse: true });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 1000], "sticks", { min: 1, max: 100, log: true, reverse: true });
+      expect(stickSpans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("draws the part of a bar that is in view when its middle is not", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "v", data: Float64Array.of(1, 2, 3) });
+      doc.dispatch({ op: "display", y: ["v"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "v", props: { mode: "bars" } });
+      // The first bar spans X -0.4 to 0.4; its middle is well left of the axis.
+      doc.dispatch({
+        op: "modifyAxis",
+        graph: "Graph0",
+        axis: "bottom",
+        props: { min: 0.3, max: 2.5 },
+      });
+      const layout = lay(doc);
+      const bars = find(layout.prims, "rect").filter((rect) => rect.fill === "#ff0000");
+      expect(bars).toHaveLength(3);
+      const { scale } = layout.axes.bottom!;
+      expect(bars[0]!.x + bars[0]!.w).toBeCloseTo(scale.toPixel(0.4), 3);
+    });
   });
 
   it("moves annotations by their offsets and keeps them inside the graph", () => {
@@ -960,6 +1141,134 @@ describe("layoutGraph", () => {
     expect(contour.length).toBeGreaterThan(0);
     expect(contour[0]).toMatchObject({ stroke: "#000000" });
     expect(toSvg(layout.prims, 400, 300)).toContain("data:image/png;base64,");
+  });
+
+  describe("images on log axes", () => {
+    type Props = Record<string, unknown>;
+    /**
+     * An nx by ny matrix whose element (i, j) has the value 1 + 16 i + j,
+     * drawn in grays from 0 to 255 so that a pixel's red is that value.
+     */
+    function imageLayout(nx: number, ny: number, scaling: Props, bottom: Props, left: Props) {
+      const doc = new Doc();
+      const data = new Float64Array(nx * ny).map((_, k) => 1 + 16 * Math.floor(k / ny) + (k % ny));
+      doc.dispatch({ op: "makeWave", name: "m", data, shape: [nx, ny], ...scaling });
+      doc.dispatch({ op: "display", y: [] });
+      doc.dispatch({
+        op: "appendImage",
+        graph: "Graph0",
+        wave: "m",
+        props: { colorTable: "grays", zMin: 0, zMax: 255 },
+      });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "bottom", props: bottom });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: left });
+      return lay(doc);
+    }
+    /** The value drawn at a pixel, or null where the image is transparent or absent. */
+    const valueAt = (layout: ReturnType<typeof lay>, px: number, py: number): number | null => {
+      const [image] = find(layout.prims, "image");
+      if (!image) return null;
+      const col = Math.floor(((px - image.x) / image.w) * image.cols);
+      const row = Math.floor(((py - image.y) / image.h) * image.rows);
+      if (col < 0 || col >= image.cols || row < 0 || row >= image.rows) return null;
+      const at = (row * image.cols + col) * 4;
+      return image.rgba[at + 3] === 0 ? null : image.rgba[at]!;
+    };
+    /** Pixels one in from the ends of a span of values, cut to the axis; null if none is in view. */
+    const inside = (scale: ReturnType<typeof makeScale>, lo: number, hi: number) => {
+      const low = Math.min(scale.p0, scale.p1);
+      const high = Math.max(scale.p0, scale.p1);
+      const lowValueEnd = scale.min < scale.max ? scale.p0 : scale.p1;
+      const pixel = (value: number) => {
+        const p = scale.toPixel(value);
+        return Number.isFinite(p) ? Math.min(high, Math.max(low, p)) : lowValueEnd;
+      };
+      const [a, b] = [pixel(lo), pixel(hi)].sort((one, other) => one - other);
+      return b! - a! > 3 ? [a! + 1, b! - 1] : null;
+    };
+    /** Checks that each cell of the matrix is drawn exactly between its edges on the axes. */
+    function expectCellsInPlace(layout: ReturnType<typeof lay>, nx: number, ny: number, s: Props) {
+      const { x0 = 0, dx = 1, y0 = 0, dy = 1 } = s as Record<string, number>;
+      let checked = 0;
+      for (let i = 0; i < nx; i += 1) {
+        const across = inside(
+          layout.axes.bottom!.scale,
+          Math.min(x0 + (i - 0.5) * dx, x0 + (i + 0.5) * dx),
+          Math.max(x0 + (i - 0.5) * dx, x0 + (i + 0.5) * dx),
+        );
+        for (let j = 0; j < ny; j += 1) {
+          const up = inside(
+            layout.axes.left!.scale,
+            Math.min(y0 + (j - 0.5) * dy, y0 + (j + 0.5) * dy),
+            Math.max(y0 + (j - 0.5) * dy, y0 + (j + 0.5) * dy),
+          );
+          if (!across || !up) continue;
+          for (const px of across) {
+            for (const py of up) {
+              expect([i, j, px, py, valueAt(layout, px, py)]).toEqual([
+                i,
+                j,
+                px,
+                py,
+                1 + 16 * i + j,
+              ]);
+              checked += 1;
+            }
+          }
+        }
+      }
+      return checked;
+    }
+
+    it("puts each cell where a log X axis puts its edges", () => {
+      const scaling = { x0: 1, dx: 1 };
+      const layout = imageLayout(4, 3, scaling, { log: true }, {});
+      expect(expectCellsInPlace(layout, 4, 3, scaling)).toBe(4 * 3 * 4);
+      // The linear direction is sampled as before: one row per element.
+      expect(find(layout.prims, "image")[0]!.rows).toBe(3);
+    });
+
+    it("puts each cell in place with log Y, both axes log, and reversed axes", () => {
+      let scaling: Props = { y0: 2, dy: 2, x0: 5, dx: -1 };
+      let layout = imageLayout(3, 4, scaling, {}, { log: true });
+      expect(expectCellsInPlace(layout, 3, 4, scaling)).toBe(3 * 4 * 4);
+      expect(find(layout.prims, "image")[0]!.cols).toBe(3);
+
+      scaling = { x0: 2, dx: 3, y0: 10, dy: 10 };
+      layout = imageLayout(5, 4, scaling, { log: true }, { log: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+      layout = imageLayout(5, 4, scaling, { log: true, reverse: true }, { log: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+      layout = imageLayout(5, 4, scaling, { log: true }, { log: true, reverse: true });
+      expect(expectCellsInPlace(layout, 5, 4, scaling)).toBe(5 * 4 * 4);
+    });
+
+    it("keeps cells in place when zoomed in, and stays small for a large matrix", () => {
+      let scaling: Props = { x0: 1, dx: 1, y0: 1, dy: 1 };
+      let layout = imageLayout(8, 8, scaling, { log: true, min: 2.2, max: 5.3 }, { log: true });
+      expect(expectCellsInPlace(layout, 8, 8, scaling)).toBeGreaterThan(0);
+      // Part of cell 1 (1.5 to 2.5) is in view at the left edge.
+      const { bottom } = layout.axes;
+      expect(valueAt(layout, bottom!.scale.p0 + 1, layout.plot.y + layout.plot.h - 1)).toBe(
+        1 + 16 * 1 + 0,
+      );
+      scaling = { x0: 1, dx: 0.01 };
+      layout = imageLayout(3000, 2, scaling, { log: true }, {});
+      const [image] = find(layout.prims, "image");
+      expect(image!.cols).toBeLessThanOrEqual(2048);
+      expect(image!.cols * image!.rows).toBeLessThan(4 * layout.plot.w * layout.plot.h);
+    });
+
+    it("draws cells whose lower edge is at or below zero from where the axis starts", () => {
+      const scaling = { x0: 0, dx: 1 };
+      // Automatically, the axis starts at the lowest edge above zero.
+      let layout = imageLayout(4, 2, scaling, { log: true }, {});
+      expect(layout.axes.bottom!.scale.min).toBe(0.5);
+      expect(expectCellsInPlace(layout, 4, 2, scaling)).toBe(3 * 2 * 4);
+      // With the axis reaching further down, the cell around zero shows from there.
+      layout = imageLayout(4, 2, scaling, { log: true, min: 0.05 }, {});
+      expect(expectCellsInPlace(layout, 4, 2, scaling)).toBe(4 * 2 * 4);
+    });
   });
 
   it("draws error bars and cursors, and leaves cursors out when asked", () => {

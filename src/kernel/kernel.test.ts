@@ -1,10 +1,16 @@
 import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
+import { appendPlan, newGraphPlan, nextGraphName } from "../app/newGraph";
 import { Doc } from "../core/doc/doc";
+import { echoPython } from "../core/doc/echo";
+import { planMakeWaves, type MakeWavesRequest } from "../core/doc/makeWaves";
+import { tableEditCommands, type CellEdit } from "../core/doc/tableEdit";
 import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
+import excelWorkbook from "../core/io/testdata/excel.xlsx?inline";
+import { igorFixture } from "../core/io/testdata/igor";
 import { bootPython, type PythonKernel } from "./boot";
 import { answerRpc } from "./rpc";
 
@@ -32,7 +38,11 @@ async function run(code: string): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  const pyodide = await loadPyodide({ packageCacheDir: "public/pyodide" });
+  // The lock file the app serves: it also knows the packages added from PyPI (lmfit).
+  const pyodide = await loadPyodide({
+    packageCacheDir: "public/pyodide",
+    lockFileURL: "public/pyodide/pyodide-lock.json",
+  });
   kernel = await bootPython(pyodide, {
     rpc: (method, paramsJson, data) =>
       answerRpc(
@@ -63,6 +73,8 @@ beforeAll(async () => {
             return toSvg(layout.prims, layout.width, layout.height);
           },
           exportPage: (name, filename) => exported.push(`${name}:${filename}`),
+          measureText: (text, size) => text.length * size * 0.55,
+          importPresets: () => [{ name: "bench", settings: { decimal: ",", skip: 1 } }],
         },
         method,
         paramsJson,
@@ -258,6 +270,46 @@ describe("oresme Python API", () => {
     expect(doc.getState().waves.m!.shape).toEqual([2, 3]);
   });
 
+  it("makes the same waves from the Make Waves echo as the dialog does", async () => {
+    expect(
+      await run(
+        'op.make("mwOld", [1.0, 2.0], x0=5, dx=0.5, x_unit="s", unit="V"); op.new_folder("mwf")',
+      ),
+    ).toBe(true);
+    const requests: Partial<MakeWavesRequest>[] = [
+      { names: ["mwA", "mwB"], shape: [50], type: "float32", x0: 1, dx: 0.01, xUnit: "s" },
+      { names: ["mwM"], folder: "mwf", shape: [3, 4, 2], type: "complex64", unit: "V" },
+      { names: ["mwDefault"], shape: [128] },
+      // Overwriting a wave with the default scaling: op.make would keep the old one unless told.
+      { names: ["mwOld"], shape: [4], overwrite: true },
+    ];
+    for (const change of requests) {
+      const gui = new Doc();
+      gui.load(doc.getState());
+      const plan = planMakeWaves(gui.getState(), {
+        names: [],
+        folder: "",
+        shape: [128],
+        type: "float64",
+        x0: 0,
+        dx: 1,
+        xUnit: "",
+        unit: "",
+        overwrite: false,
+        edit: false,
+        ...change,
+      });
+      for (const command of plan.commands) gui.dispatch(command);
+      expect(await run(plan.echo), `${plan.echo}\n${errors.join("\n")}`).toBe(true);
+      for (const name of change.names!) {
+        const path = change.folder ? `${change.folder}:${name}` : name;
+        const { rev: _made, ...expected } = gui.getState().waves[path]!;
+        const { rev: _replayed, ...replayed } = doc.getState().waves[path]!;
+        expect(replayed, plan.echo).toEqual(expected);
+      }
+    }
+  });
+
   it("makes image and contour plots with free axes", async () => {
     expect(
       await run(
@@ -353,6 +405,47 @@ describe("oresme Python API", () => {
     expect(stdout).toBe(
       "10.0 20.0 5.0\n[4.0, 4.0, 4.0] 50.0 ramp_INT\n2.0 Hz [2.0, 2.0, 2.0, 2.0, 3.0]\n10.0 (22,)\n",
     );
+  });
+
+  it("differentiates and integrates against an X wave", async () => {
+    expect(
+      await run(
+        [
+          // Uneven steps: the three-point formula is exact for a parabola inside, first order at the ends.
+          'dxv = op.make("dxv", [0.0, 0.5, 2.0, 2.25, 4.0], unit="V")',
+          'dq = op.differentiate(op.make("dqv", np.array([0.0, 0.5, 2.0, 2.25, 4.0]) ** 2, unit="mAh"), x=dxv)',
+          "print(dq.name, dq.data.tolist(), dq.unit, dq.x0, dq.dx, repr(dq.x_unit))",
+          // Evenly spaced X gives what the X scaling gives.
+          'even = op.make("dxeven", np.sin(np.arange(20) * 0.3), x0=1, dx=0.3)',
+          'same = op.differentiate(even, name="dxeven_a").data; byx = op.differentiate(even, x=1 + 0.3 * np.arange(20), name="dxeven_b").data',
+          "print(bool(np.allclose(same, byx, rtol=0, atol=1e-12)), op.exists('wave1'))",
+          // A repeated X value, and X coming back to where it was, have no slope.
+          'print(op.differentiate(op.make("dxrep", [0.0, 1, 2, 3, 4]), x=[0.0, 1, 1, 2, 3]).data.tolist())',
+          'print(op.differentiate(op.make("dxturn", [0.0, 1, 4, 1, 0]), x=[0.0, 1, 2, 1, 0]).data.tolist())',
+          // Constant current over uneven time steps, and a loop that comes back.
+          'itime = op.make("itime", [0.0, 1.0, 3.0, 3.5, 10.0], unit="s")',
+          'q = op.integrate(op.make("icur", np.full(5, 2.0), unit="A"), x=itime)',
+          "print(q.name, q.data.tolist(), q.unit)",
+          'print(op.integrate(op.make("iloop", np.ones(5)), x=[0.0, 1, 2, 1, 0]).data.tolist())',
+          // With the X scaling the units follow the same rule.
+          'sv = op.make("dxscaled", np.arange(4.0), dx=0.5, x_unit="s", unit="V")',
+          "print(op.differentiate(sv).unit, op.integrate(sv).unit, repr(op.integrate(op.make('dxnounit', [1.0, 2.0])).unit))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "dqv_DIF [0.5, 1.0, 4.0, 4.5, 6.25] mAh/V 0.0 1.0 ''",
+      "True False",
+      "[1.0, nan, nan, 1.0, 1.0]",
+      "[1.0, 2.0, nan, 2.0, 1.0]",
+      "icur_INT [0.0, 2.0, 6.0, 7.0, 20.0] A·s",
+      "[0.0, 1.0, 2.0, 1.0, 0.0]",
+      "V/s V·s ''",
+    ]);
+    expect(await run('op.integrate("icur", x=[0.0, 1, np.nan, 3, 4])')).toBe(false);
+    expect(errors[0]).toContain("The X wave is NaN or infinite at point 2, where Y has a value.");
+    expect(await run('op.differentiate("icur", x=[0.0, 1, 2])')).toBe(false);
+    expect(errors[0]).toContain("must be 1-D with 5 points");
   });
 
   it("saves a graph through the application", async () => {
@@ -574,6 +667,41 @@ describe("oresme Python API", () => {
     expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Styled, name: "" });
   });
 
+  it("replays what the New Graph dialog writes for traces on several X waves and axes", async () => {
+    expect(
+      await run(
+        'op.make("ng_a", [1.0, 2.0, 3.0]); op.make("ng_b", [3.0, 1.0]); op.make("ng_x", [0.0, 5.0, 9.0])',
+      ),
+    ).toBe(true);
+    const traces = [
+      { y: "ng_a", x: "ng_x", vAxis: "left", hAxis: "bottom" },
+      { y: "ng_b", x: null, vAxis: "right", hAxis: "bottom" },
+      { y: "ng_a", x: null, vAxis: "right", hAxis: "top" },
+    ];
+    const plan = newGraphPlan(traces, null, nextGraphName(doc.getState()));
+    for (const command of plan.commands) doc.dispatch(command);
+    const display = plan.commands[0]!;
+    const made = display.op === "display" ? display.name! : "";
+    expect(await run(`${plan.echo}\nprint(g.name)`)).toBe(true);
+    const again = stdout.trim();
+    expect(again).not.toBe(made);
+    const { graphs } = doc.getState();
+    expect({ ...graphs[again], name: "" }).toEqual({ ...graphs[made], name: "" });
+
+    const appended = appendPlan(again, [
+      { y: "ng_b", x: null, vAxis: "left", hAxis: "bottom" },
+      { y: "ng_a", x: "ng_x", vAxis: "left", hAxis: "top" },
+    ]);
+    expect(await run(appended.echo)).toBe(true);
+    expect(doc.getState().graphs[again]!.traces.map((item) => item.name)).toEqual([
+      "ng_a",
+      "ng_b",
+      "ng_a#1",
+      "ng_b#1",
+      "ng_a#2",
+    ]);
+  });
+
   it("styles traces and axes, tags points and moves annotations", async () => {
     expect(
       await run(
@@ -609,6 +737,50 @@ describe("oresme Python API", () => {
     const made = stdout.trim();
     const { graphs } = doc.getState();
     expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Polish, name: "" });
+  });
+
+  it("sizes and styles axis labels, and reads codes in label text", async () => {
+    expect(
+      await run(
+        [
+          'lv = op.make("lbl_v", [0.001, 0.004, 0.002], unit="V")',
+          'lg = op.display(lv, name="LabelSizes")',
+          'ax = lg.axis("left")',
+          "print(ax.label_size, ax.label_style, ax.tick_label_size)",
+          'ax.label_size = 20; ax.label_style = "italic"',
+          String.raw`lg.bottom.set(tick_label_size=9, label=r"\f02t\f00 / \u", label_style="bold")`,
+          "print(ax.label_size, ax.label_style, lg.bottom.tick_label_size, lg.bottom.label)",
+          "svg = lg.svg()",
+          'print(\'font-size="20" font-style="italic"\' in svg, \'font-size="9"\' in svg)',
+          // \f sets the style outright, as in Igor: the italic t is not also bold.
+          'print(\'font-style="italic" fill="#000000" xml:space="preserve">t<\' in svg)',
+          "try:",
+          '    ax.label_style = "slanted"',
+          "except op.OresmeError as error:",
+          '    print(str(error).split(":")[0])',
+          "try:",
+          "    ax.label_size = 200",
+          "except op.OresmeError as error:",
+          "    print(error)",
+          "ax.label_size = None",
+          "print(ax.label_size)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "None plain None",
+        "20 italic 9 \\f02t\\f00 / \\u",
+        "True True",
+        "True",
+        "labelStyle must be one of",
+        "labelSize must be between 4 and 96.",
+        "None",
+        "",
+      ].join("\n"),
+    );
+    const left = doc.getState().graphs.LabelSizes!.axes.left!;
+    expect(left).toMatchObject({ labelSize: null, labelStyle: "italic" });
   });
 
   it("shows dates in the experiment's time zone", async () => {
@@ -702,6 +874,229 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("9.0 4.0 1.4 8.8\n");
     expect(await run('op.fit_peaks(op.make("flat", np.zeros(50)))')).toBe(false);
     expect(errors[0]).toContain("No peaks were found");
+  });
+
+  it("computes the Faddeeva function and the Voigt profile", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "def c(v): return f'{v.real:.13f}{v.imag:+.13f}j'",
+          "print(c(oa._faddeeva(0)), c(oa._faddeeva(1)), c(oa._faddeeva(1j)), c(oa._faddeeva(1 + 1j)), c(oa._faddeeva(-2.5 + 0.3j)))",
+          "vu = np.linspace(-30, 30, 6001)",
+          // The limits: a Gaussian when the Lorentzian width is 0, a Lorentzian when the Gaussian width is 0 or tiny.
+          "print(float(np.max(np.abs(oa._voigt(vu, 1.3, 0) - np.exp(-(vu / 1.3) ** 2)))) < 1e-14,",
+          "      bool(np.array_equal(oa._voigt(vu, 0, 0.7), 1 / (1 + (vu / 0.7) ** 2))),",
+          "      float(np.max(np.abs(oa._voigt(vu, 1e-6, 0.7) - 1 / (1 + (vu / 0.7) ** 2)))) < 1e-11)",
+          // The normalized profile Re w(z) / (gauss sqrt(pi)) has unit area; the tails past +-L hold 2 lorentz / (pi L).
+          "big = np.linspace(-2000, 2000, 400001); g_, l_ = 0.8, 0.5",
+          "total = np.trapezoid(oa._voigt(big, g_, l_), big) / oa._voigt_area(g_, l_) + 2 * l_ / (np.pi * 2000)",
+          "print(abs(total - 1) < 1e-7, round(oa._voigt_area(1, 0), 12) == round(np.sqrt(np.pi), 12), round(oa._voigt_area(0, 1), 12) == round(np.pi, 12))",
+          // The FWHM is exact for the pure shapes, and within 0.02% of Olivero and Longbothum's formula between them.
+          "fg, fl = 2 * np.sqrt(np.log(2)), 2.0",
+          "print(round(oa._voigt_fwhm(1, 0), 12) == round(fg, 12), oa._voigt_fwhm(0, 1), abs(oa._voigt_fwhm(1, 1) / (0.5346 * fl + np.sqrt(0.2166 * fl ** 2 + fg ** 2)) - 1) < 2e-4,",
+          "      round(float(oa._voigt(oa._voigt_fwhm(0.6, 0.9) / 2, 0.6, 0.9)), 12))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      // w(0) = 1, w(1) = exp(-1) + 2i/sqrt(pi) D(1), w(i) = erfcx(1); mpmath at 40 digits for the others.
+      "1.0000000000000+0.0000000000000j 0.3678794411714+0.6071577058414j 0.4275835761558+0.0000000000000j 0.3047442052569+0.2082189382028j 0.0382265062607-0.2430420085310j",
+      "True True True",
+      "True True True",
+      "True 2.0 True 0.5",
+    ]);
+  });
+
+  it("fits Voigt and pseudo-Voigt peaks", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "vx = np.linspace(-6, 8, 701); vrng = np.random.default_rng(11)",
+          'vw = op.make("voigtpk", 0.2 + 3 * oa._voigt(vx - 1.0, 0.6, 0.4) + vrng.normal(scale=0.002, size=vx.size), x0=vx[0], dx=vx[1] - vx[0])',
+          'r = op.fit("voigt", vw, quiet=True)',
+          "print(r.names, np.round(r.coef, 2).tolist(), r.converged, bool(np.all(np.abs(r.coef - [0.2, 3, 1.0, 0.6, 0.4]) < 3 * r.sigma + 1e-9)))",
+          'pw = op.make("pvpk", 0.1 + 2 * oa._pseudo_voigt(vx + 0.5, 0.7, 0.3) + vrng.normal(scale=0.002, size=vx.size), x0=vx[0], dx=vx[1] - vx[0])',
+          'r = op.fit("pseudo_voigt", pw, quiet=True)',
+          "print(r.names, np.round(r.coef, 2).tolist(), r.converged)",
+          // Two Voigt peaks of different mixtures on a sloping baseline.
+          "mx = np.linspace(0, 20, 1001)",
+          "two = 0.5 + 0.01 * mx + 2 * oa._voigt(mx - 7, 0.5, 0.3) + 1.2 * oa._voigt(mx - 12, 0.3, 0.6)",
+          'mw = op.make("voigt2", two + vrng.normal(scale=0.002, size=mx.size), x0=0, dx=mx[1] - mx[0])',
+          'res = op.fit_peaks(mw, shape="voigt", baseline="linear", quiet=True)',
+          "print(len(res), res.converged, [round(p['x'], 2) for p in res], [round(p['height'], 2) for p in res])",
+          "print([round(p['gauss_fwhm'], 2) for p in res], [round(p['lorentz_fwhm'], 2) for p in res])",
+          // The FWHM and area of each peak against the profile they were made from.
+          "print([round(p['width'] / oa._voigt_fwhm(g, l), 3) for p, (g, l) in zip(res, [(0.5, 0.3), (0.3, 0.6)])],",
+          "      [round(float(p['area'] / (h * oa._voigt_area(g, l))), 3) for p, (h, g, l) in zip(res, [(2, 0.5, 0.3), (1.2, 0.3, 0.6)])],",
+          "      all(0 < p['area_sigma'] < 0.01 and 0 < p['lorentz_fwhm_sigma'] < 0.05 for p in res), op.wave('W_peaks').data.shape)",
+          "print(str(res).splitlines()[1])",
+          "pv2 = 0.3 + 2 * oa._pseudo_voigt(mx - 6, 0.6, 0.2) + 1.5 * oa._pseudo_voigt(mx - 13, 0.9, 0.8)",
+          'pm = op.make("pvoigt2", pv2 + vrng.normal(scale=0.002, size=mx.size), x0=0, dx=mx[1] - mx[0])',
+          'res = op.fit_peaks(pm, shape="pseudo_voigt", quiet=True)',
+          "print(len(res), [round(p['x'], 2) for p in res], [round(p['width'], 2) for p in res], [round(p['eta'], 2) for p in res], op.wave('W_peaks').data.shape)",
+          // A pure Lorentzian pushes eta to its bound, and the rest still fits.
+          'one = op.fit_peaks("lz", peaks=[8.5], shape="pseudo_voigt", baseline=None, components=False, quiet=True)[0]',
+          "print(round(one['eta'], 6), round(one['x'], 3), round(one['width'], 3), round(one['area'], 2))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('y0', 'A', 'x0', 'gwidth', 'lwidth') [0.2, 3.0, 1.0, 0.6, 0.4] True True",
+      "('y0', 'A', 'x0', 'width', 'eta') [0.1, 2.0, -0.5, 0.7, 0.3] True",
+      "2 True [7.0, 12.0] [2.0, 1.2]",
+      // Gaussian FWHM 1.665 times the Gaussian width, Lorentzian FWHM twice the half width.
+      "[0.83, 0.5] [0.6, 1.2]",
+      "[1.0, 1.0] [0.999, 1.001] True (2, 6)",
+      "   #      position        height          FWHM          area    Gauss FWHM     Lor. FWHM",
+      "2 [6.0, 13.0] [1.2, 1.8] [0.2, 0.8] (2, 5)",
+      "1.0 9.0 1.4 8.8",
+    ]);
+  });
+
+  it("makes Shirley, Tougaard and linear backgrounds", async () => {
+    expect(
+      await run(
+        [
+          // Peaks on a step that is their own Shirley background: it rises from 1 to 3 as their area is passed.
+          "bx = np.linspace(280, 300, 401)",
+          "bp = 5 * np.exp(-((bx - 290) / 0.8) ** 2) + 2 * np.exp(-((bx - 293) / 1.0) ** 2)",
+          "barea = np.concatenate(([0], np.cumsum((bp[1:] + bp[:-1]) / 2 * np.diff(bx))))",
+          "bstep = 1 + 2 * barea / barea[-1]",
+          'sb = op.background(op.make("shirbe", bstep + bp, x0=280, dx=0.05, x_unit="eV", unit="cps"), "shirley")',
+          "print(sb.name, float(np.max(np.abs(sb.data - bstep))) < 1e-6, bool(np.all(np.diff(sb.data) >= 0)), round(sb.data[0], 9), round(sb.data[-1], 9), sb.x0, sb.dx, sb.x_unit, sb.unit)",
+          // The same spectrum with binding energy running down, and in kinetic energy as XY data.
+          'down = op.background(op.make("shirdown", (bstep + bp)[::-1], x0=300, dx=-0.05), "shirley")',
+          'op.make("shirke", 1486.6 - bx[::-1])',
+          'ke = op.background(op.make("shirkey", (bstep + bp)[::-1]), "shirley", x="shirke")',
+          "print(float(np.max(np.abs(down.data[::-1] - bstep))) < 1e-6, float(np.max(np.abs(ke.data[::-1] - bstep))) < 1e-6)",
+          // Over a range of a longer spectrum: NaN outside it, and the subtracted spectrum is the peaks.
+          "lx = np.linspace(270, 310, 801); lp = np.interp(lx, bx, bp); ls = np.interp(lx, bx, bstep)",
+          'bg, sub = op.background(op.make("shirwide", ls + lp, x0=270, dx=0.05), "shirley", range=(300, 280), subtract=True)',
+          "inside = ~np.isnan(bg.data)",
+          "print(bg.name, sub.name, int(inside.sum()), float(lx[inside][0]), float(lx[inside][-1]), float(np.max(np.abs(sub.data[inside] - lp[inside]))) < 1e-6, bool(np.isnan(sub.data[0])))",
+          "print(bg.note)",
+          // Tougaard: a spectrum made from its primary peaks by the loss model, on a constant level of 50.
+          "tx = np.arange(601) * 0.1; tf = 1000 * np.exp(-((tx - 20) / 1.0) ** 2) + 600 * np.exp(-((tx - 25) / 1.5) ** 2)",
+          "tj = tf.copy()",
+          "for i in range(1, tx.size):",
+          "    lost = tx[i] - tx[: i + 1]; f = lost / (1643 + lost ** 2) ** 2 * tj[: i + 1]",
+          "    tj[i] = tf[i] + 2866 * np.sum((f[1:] + f[:-1]) / 2 * np.diff(tx[: i + 1]))",
+          'tw = op.make("tougbe", 50 + tj, x0=0, dx=0.1, x_unit="eV")',
+          'tb, ts = op.background(tw, "tougaard", scale=False, subtract=True)',
+          "print(float(np.max(np.abs(ts.data - tf))) < 1e-9, round(float(tb.data[-1] - 50), 3), round(float(tj[-1]), 3))",
+          // Scaled to meet the data at the far end, B comes out as the universal value; and in kinetic energy.
+          'tb = op.background(tw, "tougaard"); print(tb.note)',
+          'tk = op.background(op.make("tougke", (50 + tj)[::-1], x0=1486.6 - 60, dx=0.1), "tougaard", subtract=True)[1]',
+          "print(float(np.max(np.abs(tk.data[::-1] - tf))) < 1e-6, 'B = 2866 ' in tk.note)",
+          // Told the wrong way, the background would have to fall.
+          'print(op.background(tw, "tougaard", energy="binding").note == tb.note)',
+          // Linear: the line through the averaged ends, exact for a sloping baseline.
+          "lb = op.background(op.make('linbg', 2 + 0.1 * bx + bp, x0=280, dx=0.05), 'linear', average=10)",
+          "print(float(np.max(np.abs(lb.data - (2 + 0.1 * bx)))) < 1e-9)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "shirbe_bg True True 1.0 3.0 280.0 0.05 eV cps",
+      "True True",
+      "shirwide_bg shirwide_sub 401 280.0 300.0 True True",
+      "shirley background over x = 280 to 300, ends averaged over 5 points",
+      "True 54.266 54.266",
+      "tougaard background over x = 0 to 60, ends averaged over 5 points, B = 2866 eV^2, C = 1643 eV^2",
+      "True True",
+      "True",
+      "True",
+    ]);
+    for (const [code, error] of [
+      ['op.background("tougbe", "tougaard", energy="kinetic")', "check energy= or the range"],
+      ['op.background("shirbe", "shirley", average=300)', "too few to average 300"],
+      ['op.background("shirbe", "magic")', 'method must be "shirley", "tougaard" or "linear"'],
+      ['op.background("shirbe", range=(500, 600))', "No points have X between 500 and 600"],
+      [
+        'op.background(op.make("shirnan", [1.0, 2, np.nan, 4, 5, 6, 7, 8, 9, 10, 11, 12]), average=2)',
+        "NaN or infinite",
+      ],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toContain(error);
+    }
+    // Between the cursors of the graph showing the spectrum.
+    expect(
+      await run(
+        [
+          'cg = op.display("shirwide", name="BgCursors"); cg.cursor("A", "shirwide", 600); cg.cursor("B", "shirwide", 200)',
+          'cb = op.background("shirwide", cursors=True, name="shirwide_cur")',
+          "print(cb.name, int(np.sum(~np.isnan(cb.data))), bool(np.allclose(cb.data, bg.data, equal_nan=True)))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("shirwide_cur 401 True\n");
+  });
+
+  it("finds an onset where the edge line crosses the baseline", async () => {
+    expect(
+      await run(
+        [
+          // The edge is 2(x - 4) and the baseline 0.1 + 0.02(x - 3): they cross at x = 8.04 / 1.98.
+          "ox = np.arange(0, 8, 0.05); oclean = np.maximum(0.1 + 0.02 * (ox - 3), 2 * ox - 8)",
+          'ow = op.make("onsetpk", oclean, dx=0.05, x_unit="eV", unit="cps")',
+          "r = op.onset(ow, edge=(4.5, 6), baseline=(2, 3.5), quiet=True)",
+          "print(abs(r.x - 8.04 / 1.98) < 1e-12, r.x_sigma < 1e-12, round(r.y, 9), round(r.edge['slope'], 9), round(r.edge['intercept'], 9), r.edge['points'], round(r.baseline['slope'], 9), r.baseline['range'])",
+          // With noise the answer lies within the uncertainty, which is a fraction of the noise.
+          'nw = op.make("onsetnz", oclean + np.random.default_rng(7).normal(scale=0.05, size=ox.size), dx=0.05, x_unit="eV")',
+          "r = op.onset(nw, edge=(4.5, 6), baseline=(3.5, 2))",
+          "print(abs(r.x - 8.04 / 1.98) < 3 * r.x_sigma, 0.002 < r.x_sigma < 0.05, float(r) == r.x)",
+          // A falling edge (a secondary cutoff) down to a level of 0, the default.
+          'fw = op.make("onsetfall", np.maximum(0, 5 - 2.5 * (ox - 1)), dx=0.05)',
+          "r = op.onset(fw, edge=(1.5, 2.5), quiet=True)",
+          "print(round(r.x, 12), r.baseline, round(op.onset(fw, edge=(1.5, 2.5), baseline=0.5, quiet=True).x, 12))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("True True 0.121212121 2.0 -8.0 31 0.02 (2.0, 3.5)");
+    expect(lines[1]).toMatch(/^Onset of onsetnz: x = 4\.0\d+ ± 0\.0\d+ eV \(y = 0\.1\d*\)$/);
+    expect(lines[2]).toMatch(
+      /^ {2}edge: {6}slope = 2\.\d+ ± 0\.0\d+, intercept = -8\.\d+ ± 0\.\d+ \(31 points, x = 4\.5 to 6\)$/,
+    );
+    expect(lines[3]).toMatch(/^ {2}baseline: {2}slope = .* \(31 points, x = 2 to 3\.5\)$/);
+    expect(lines.slice(4)).toEqual(["True True True", "3.0 {'level': 0.0} 2.8"]);
+  });
+
+  it("draws the lines of an onset on the graph of XY data", async () => {
+    expect(
+      await run(
+        [
+          // Binding energy running down, unevenly spaced, as XY data.
+          "import _oresme_analysis as oa",
+          "orng = np.random.default_rng(3); be = np.sort(orng.uniform(0, 6, 200))[::-1]",
+          'op.make("onsetbe", be, unit="eV"); op.make("onsetxy", np.where(be < 2, 0.2, 0.2 + 3 * (be - 2)) + orng.normal(scale=0.01, size=200))',
+          'og = op.display("onsetxy", x="onsetbe", name="Onset")',
+          'r = op.onset("onsetxy", x="onsetbe", edge=(2.5, 4), baseline=(0.5, 1.8), graph=True, quiet=True)',
+          "print(abs(r.x - 2) < 3 * r.x_sigma, r.edge['points'] + r.baseline['points'], [w.name for w in r.waves], [t.name for t in og.traces])",
+          "print(og.annotations[0].text == f'onset {oa._with_error(r.x, r.x_sigma)} eV', og.trace('onsetxy_onset').mode, len(op.wave('onsetxy_edge')))",
+          "e = op.wave('onsetxy_edge'); print(round(e.x[0], 2), round(e.x[-1], 2), e.x_unit, op.wave('onsetxy_onset').x0 == r.x)",
+          // Again: the same waves and tag, updated rather than added.
+          'r = op.onset("onsetxy", x="onsetbe", edge=(2.5, 3.5), baseline=0.2, graph=og, quiet=True)',
+          "print(len(og.traces), len(og.annotations), og.annotations[0].text == f'onset {oa._with_error(r.x, r.x_sigma)} eV')",
+          // Uncertainties are written to the digits they leave meaningful.
+          "print(oa._with_error(4.51234, 0.00213), oa._with_error(1234.5, 25), oa._with_error(2.0, 1.7e-16), oa._with_error(3.0, 0.0))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "True 98 ['onsetxy_edge', 'onsetxy_base', 'onsetxy_onset'] ['onsetxy', 'onsetxy_edge', 'onsetxy_base', 'onsetxy_onset']",
+      "True markers 50",
+      "1.9 4.1 eV True",
+      "4 1 True",
+      "4.5123 ± 0.0021 1234 ± 25 2 ± 1.7e-16 3",
+    ]);
+    expect(await run('op.onset("onsetfall", edge=(1.5, 2.5), graph=True)')).toBe(false);
+    expect(errors[0]).toContain("graph=True needs a graph that shows the wave");
+    expect(await run('op.onset("onsetfall", edge=(1.5, 1.55))')).toBe(false);
+    expect(errors[0]).toContain("The edge range has 2 points; a line with an uncertainty needs 3.");
   });
 
   it("interpolates, filters images and takes line profiles", async () => {
@@ -801,7 +1196,8 @@ describe("oresme Python API", () => {
     expect(stdout.trim().split("\n")).toEqual([
       "sg_FFT complex128 51 Hz 0.9901 5",
       "sg_FFT_IFFT 101 s 0.01 True",
-      "float64 1.0",
+      // The DC part is the mean, 0.5, and is not doubled.
+      "float64 0.5",
       "magnitude True True",
     ]);
   });
@@ -835,5 +1231,892 @@ describe("oresme Python API", () => {
       await run("g1.kill(); print([i.name for i in page.items]); page.kill(); print(op.layouts())"),
     ).toBe(true);
     expect(stdout).toBe("['graph1']\n[]\n");
+  });
+
+  it("loads text files and workbooks as waves, as told", async () => {
+    expect(
+      await run(
+        [
+          'open("lt_run.csv", "w").write("Instrument X\\nlt_t (s),lt_U (V),lt_dU (V),lt_label\\n0,1.5,0.1,a\\n1,2.5,0.2,b\\n")',
+          'ws = op.load_text("lt_run.csv", graph=True, x=0, errors={1: 2})',
+          "print([w.name for w in ws], ws[1].unit, ws[1].data.tolist(), ws[1].note[:32])",
+          // The preset passes over one line and reads decimal commas; the call adds to it.
+          'ps = op.load_text(b"junk\\nlt_a;lt_b\\n1,5;2\\n2,5;x\\n", name="p.txt", preset="bench", table=False, columns={1: {"type": "number", "name": "lt_c"}})',
+          "print([w.name for w in ps], ps[0].data.tolist(), ps[1].data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "['lt_t', 'lt_U', 'lt_dU', 'lt_label'] V [1.5, 2.5] Loaded from lt_run.csv (SHA-256 ",
+      "['lt_a', 'lt_c'] [1.5, 2.5] [2.0, nan]",
+    ]);
+    expect(stderr).toMatch(/p\.txt: cells that could not be read are NaN in lt_c \(1\)/);
+    const state = doc.getState();
+    const graph = Object.values(state.graphs).find((item) => item.traces[0]?.y === "lt_U")!;
+    expect(graph.traces).toMatchObject([{ y: "lt_U", x: "lt_t", yError: "lt_dU" }]);
+    expect(Object.values(state.tables).some((table) => table.columns.includes("lt_label"))).toBe(
+      true,
+    );
+    expect(Object.values(state.tables).some((table) => table.columns.includes("lt_a"))).toBe(false);
+    // One input is one step to undo, whatever it loaded.
+    doc.undo();
+    expect(doc.getState().waves.lt_a).toBeUndefined();
+    expect(doc.getState().waves.lt_U).toBeUndefined();
+    doc.redo();
+    expect(doc.getState().waves.lt_U).toBeDefined();
+
+    const workbook = Uint8Array.from(
+      atob(excelWorkbook.slice(excelWorkbook.indexOf(",") + 1)),
+      (c) => c.charCodeAt(0),
+    );
+    files.put("lt_book.xlsx", workbook);
+    expect(
+      await run(
+        [
+          'book = op.load_excel("lt_book.xlsx", table=False)',
+          "first = list(book)[0]",
+          'one = op.load_excel("lt_book.xlsx", sheets=first, table=False, columns={0: {"type": "skip"}})',
+          "print(len(book) > 1, list(one) == [first], len(one[first]) == len(book[first]) - 1)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("True True True\n");
+    for (const [code, error] of [
+      ['op.load_text("lt_missing.csv")', /Could not read lt_missing\.csv/],
+      [
+        'op.load_text("lt_run.csv", preset="nope")',
+        /No import preset named "nope". Presets: bench/,
+      ],
+      ['op.load_text("lt_run.csv", delimiter="pipe")', /delimiter must be one of/],
+      ['op.load_text(b"1,2")', /Give name=/],
+      ['op.load_excel("lt_run.csv")', /not an Excel workbook/],
+      ['op.load_excel("lt_book.xlsx", sheets="Nope")', /no sheet named "Nope"/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("loads Igor binary waves and packed experiments through the same reader", async () => {
+    files.put("li_frames.ibw", igorFixture("v5-le-4d-uint16.ibw"));
+    files.put("li_exp.pxp", igorFixture("experiment-be.pxp"));
+    const order = doc.getState().waveOrder;
+    expect(
+      await run(
+        [
+          'fr = op.load_igor("li_frames.ibw")',
+          "print([w.name for w in fr], fr[0].dtype, fr[0].shape, int(fr[0].data[2, 1, 0, 1]))",
+          'ex = op.load_igor("li_exp.pxp")',
+          'm = op.wave("raw_data:run_1:matrix")',
+          "print(len(ex), ex[-3].name, m.data.tolist(), m.y0, m.dy, m.y_unit)",
+          'print(op.wave("raw_data:run_1:t3_uint16").data.tolist(), op.wave("raw_data:run_1:c64").data.tolist())',
+          'again = op.load_igor(open("li_frames.ibw", "rb").read(), name="copy.ibw")',
+          "print(again[0].name, again[0].note.splitlines()[0][:30])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The 3×2×2×2 wave counts 0, 1, 2, ... in Igor's order (rows fastest), so the
+    // value at row 2, column 1, layer 0, chunk 1 is 2 + 3 + 12.
+    expect(stdout.trim().split("\n")).toEqual([
+      "['frames'] uint16 (3, 2, 2, 2) 17",
+      "21 raw_data:run_1:matrix [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]] 10.0 5.0 mm",
+      "[0, 0, 65535] [(1+2j), (-0-3.5j)]",
+      "frames_1 Loaded from copy.ibw (SHA-256",
+    ]);
+    expect(stderr).toMatch(/li_exp\.pxp: not loaded, without saved values: root:dep/);
+    // One input is one step to undo, whatever it loaded; the document is left as it was.
+    doc.undo();
+    expect(doc.getState().waveOrder).toEqual(order);
+    for (const [code, error] of [
+      ['op.load_igor("li_missing.ibw")', /Could not read li_missing\.ibw/],
+      ['op.load_igor(b"x,y\\n1,2\\n", name="table.ibw")', /not an Igor binary wave/],
+      ['op.load_igor(b"x,y\\n1,2\\n", name="table.pxp")', /not an Igor packed experiment/],
+      ['op.load_igor(b"1")', /Give name=/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("fits the points that are chosen: ranges in X, spans left out, a mask", async () => {
+    expect(
+      await run(
+        [
+          "sx = np.arange(20.0)",
+          "sy = 1 + 2 * sx",
+          "sy[5:8] += 50; sy[15] = -30",
+          'sw = op.make("sel_w", sy)',
+          // Left to itself the line is pulled by the bad points.
+          'print(abs(op.fit("line", sw, quiet=True)["b"] - 2) > 0.1)',
+          'r = op.fit("line", sw, exclude=[(5, 7), (15, 15)], quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.points, r.freedom)",
+          'r = op.fit("line", sw, xrange=(8, 14), quiet=True); print(np.round(r.coef, 9).tolist(), r.points)',
+          'sm = op.make("sel_mask", (sy == 1 + 2 * sx).astype(float))',
+          'r = op.fit("line", sw, mask=sm, range=(0, 12), quiet=True); print(np.round(r.coef, 9).tolist(), r.points)',
+          // The wave itself is untouched, and the curve runs across what was left out.
+          'print(sw.data[6], np.isfinite(op.wave("fit_sel_w").data).all())',
+          'r = op.fit("line", sw, mask=np.ones(20), exclude=(5, 7), residuals=True, quiet=True)',
+          "print(round(float(r.residuals.data[6]), 6), round(float(r.residuals.data[2]), 6))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "True",
+      "[1.0, 2.0] 16 14",
+      "[1.0, 2.0] 7",
+      "[1.0, 2.0] 10",
+      "63.0 True",
+      // The residual of a point left out shows how far off it is.
+      expect.stringMatching(/^5\d\.\d+ -?\d\.\d+$/),
+    ]);
+    for (const [code, error] of [
+      ['op.fit("line", sw, mask=[1, 0])', /mask needs one value per point/],
+      ['op.fit("line", sw, exclude=(0, 100))', /No points are left to fit/],
+      ['op.fit("line", sw, exclude=5)', /exclude takes \(low, high\)/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("keeps each fit with its settings, to be compared, run again and applied to other waves", async () => {
+    expect(
+      await run(
+        [
+          "kx = np.linspace(0, 4, 41)",
+          'ka = op.make("keep_a", 1 + 3 * np.exp(-kx / 0.5), x0=0, dx=0.1)',
+          'kb = op.make("keep_b", 2 + 5 * np.exp(-kx / 0.8), x0=0, dx=0.1)',
+          'kc = op.make("keep_c", 0.5 + 1 * np.exp(-kx / 1.5), x0=0, dx=0.1)',
+          'r = op.fit("exp", ka, hold={"y0": 1}, xrange=(0, 3), quiet=True)',
+          "kept = op.result(r.name)",
+          "print(kept.kind, kept.label, kept.names, kept.held, np.round(kept.coef, 6).tolist())",
+          "print(kept.settings['hold'], kept.settings['xrange'], kept.settings['y'], kept.reason, kept.changed)",
+          "print(kept.covariance.shape, round(float(kept.correlation[1, 2]), 2), np.isnan(kept.correlation[0, 1]), list(kept.outputs))",
+          // The data changes: the result says so, and running it again gives a new one beside it.
+          "ka.data = 1 + 4 * np.exp(-kx / 0.5)",
+          "again = kept.rerun(quiet=True)",
+          "print(kept.changed, again.name != kept.name, round(kept['A'], 6), round(again['A'], 6), op.result(again.name).changed)",
+          "same = kept.rerun(replace=True, quiet=True); print(same.name == kept.name, round(kept['A'], 6))",
+          // The same settings on other waves, and all of them side by side.
+          "others = kept.apply([kb, 'keep_c'])",
+          "print([o.function for o in others], [round(o['tau'], 6) for o in others], [round(o['y0'], 6) for o in others])",
+          't = op.table("Results"); print([c.name for c in t.columns][:6])',
+          'print(op.wave("Results_data").data[-2:], np.round(op.wave("Results_tau").data[-2:], 6).tolist())',
+          "print(str(kept).splitlines()[0])",
+          "kept.rename('sampleA'); print(op.result('sampleA')['tau'] == same['tau'], 'sampleA' in [x.name for x in op.results()])",
+          "again.result.remove(); print(again.name in [x.name for x in op.results()])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "fit exp(keep_a) ('y0', 'A', 'tau') ('y0',) [1.0, 3.0, 0.5]",
+      "{'y0': 1} [0, 3] keep_a converged []",
+      // A and tau of a decay lean on each other; the held y0 has no correlation to give.
+      "(3, 3) -0.63 True ['fit']",
+      "['keep_a'] True 3.0 4.0 []",
+      "True 4.0",
+      // y0 stays held at 1 for the others too, so their fits are of other curves.
+      expect.stringMatching(
+        /^\['exp\(keep_b\)', 'exp\(keep_c\)'\] \[\d\.\d+, \d\.\d+\] \[1\.0, 1\.0\]$/,
+      ),
+      "['Results_result', 'Results_data', 'Results_y0', 'Results_y0_sd', 'Results_A', 'Results_A_sd']",
+      expect.stringMatching(/^\['keep_b' 'keep_c'\] \[\d\.\d+, \d\.\d+\]$/),
+      expect.stringMatching(/^Fit\d+: exp\(keep_a\), 31 points, chi-square = /),
+      "True True",
+      "False",
+    ]);
+    // In the document: with fingerprints of the inputs, and undone with the fit that made it.
+    const kept = doc.getState().results.sampleA!;
+    expect(kept.inputs.map((input) => input.wave)).toEqual(["keep_a"]);
+    expect(kept.created).toBeGreaterThan(Date.now() - 600_000);
+    expect(await run('q = op.fit("line", "keep_b", quiet=True, record=False); print(q.name)')).toBe(
+      true,
+    );
+    expect(stdout).toBe("None\n");
+  });
+
+  it("finds a function of the user's again, and says what cannot be repeated", async () => {
+    expect(
+      await run(
+        [
+          "def keep_fn(x, a, b): return a * np.sqrt(x) + b",
+          "fx = np.linspace(1, 9, 30)",
+          'fw = op.make("keep_fn_w", 2 * np.sqrt(fx) + 1, x0=1, dx=fx[1] - fx[0])',
+          "r = op.fit(keep_fn, fw, guess=[1, 0], quiet=True)",
+          "print(np.round(r.rerun(quiet=True).coef, 6).tolist(), r.result.settings['function'])",
+          "s = op.fit('line', fw, sigma=np.full(30, 0.1), quiet=True)",
+          "print(np.round(s.rerun(sigma=0.2, quiet=True).sigma / s.sigma, 6).tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("[2.0, 1.0] keep_fn\n[2.0, 2.0]\n");
+    expect(await run("s.rerun()")).toBe(false);
+    expect(errors[0]).toMatch(/was given sigma as data, which was not kept\. Give sigma= again/);
+    expect(await run("del keep_fn; r.rerun()")).toBe(false);
+    expect(errors[0]).toMatch(/used your function 'keep_fn', which is not defined now/);
+  });
+
+  it("says what makes a fit doubtful: parameters that stand in for each other, and why it stopped", async () => {
+    expect(
+      await run(
+        [
+          "dx_ = np.linspace(1000, 1001, 40)",
+          'dw = op.make("doubt_w", 3 + 0.5 * dx_ + np.random.default_rng(3).normal(0, 0.01, 40), x0=1000, dx=dx_[1] - dx_[0])',
+          'r = op.fit("line", dw, quiet=True); print(str(r).splitlines()[-1]); print(r.reason)',
+          'z = op.fit(lambda x, a: np.exp(-a * x), op.make("doubt_z", np.zeros(20), x0=1, dx=1), guess=[1.0], quiet=True)',
+          "print(z.converged, z.reason, str(z).splitlines()[1])",
+          // eta of a pseudo-Voigt stays within 0..1 without being told to.
+          "px = np.linspace(-8, 8, 161)",
+          'pw = op.make("doubt_pv", 1 / (1 + (px / 0.7) ** 4), x0=-8, dx=0.1)',
+          'p = op.fit("pseudo_voigt", pw, quiet=True); print(0 <= p["eta"] <= 1)',
+          // A limit given on one side leaves the function's own limit on the other.
+          'p = op.fit("pseudo_voigt", pw, bounds={"eta": (None, 0.25)}, quiet=True); print(round(p["eta"], 6))',
+          'pl = op.make("doubt_lor", 1 / (1 + (px / 0.7) ** 2), x0=-8, dx=0.1)',
+          'p = op.fit("pseudo_voigt", pl, bounds={"eta": (None, 0.25)}, quiet=True); print(round(p["eta"], 6))',
+          'p = op.fit("pseudo_voigt", pl, bounds={"eta": (0.5, None)}, quiet=True); print(round(p["eta"], 6))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "strongly correlated: a and b (-1.000)",
+      "converged",
+      expect.stringMatching(
+        /^False (stopped[^(]*?) {3}\(did not converge: \1; showing the best parameters found\)$/,
+      ),
+      "True",
+      "0.0",
+      "0.25",
+      "1.0",
+    ]);
+  });
+
+  it("fits several waves at once with parameters in common, and many waves one by one", async () => {
+    expect(
+      await run(
+        [
+          "gx = np.linspace(0, 5, 51)",
+          "gn = np.random.default_rng(7)",
+          'gs = [op.make(f"glob_{i}", y0 + A * np.exp(-gx / 0.9) + gn.normal(0, 0.01, 51), x0=0, dx=0.1) for i, (y0, A) in enumerate([(0, 1), (0.5, 3), (-1, 0.2)])]',
+          'g = op.fit_global("exp", gs, shared=["tau"], quiet=True)',
+          "print(g.names, g.shared, g.coef.shape, round(g['tau'], 2), np.round(g['A'], 1).tolist(), (np.round(g['y0'], 1) + 0.0).tolist())",
+          // One time constant fitted to all three is known better than from any one of them.
+          'alone = [op.fit("exp", w, quiet=True) for w in gs]',
+          "print(g.sigma[0, 2] < min(r.sigma[2] for r in alone), np.all(g.sigma[:, 2] == g.sigma[0, 2]), g.converged)",
+          "kept = g.result; print(kept.kind, kept.names[:3], len(kept.names), kept.settings['shared'], list(kept.outputs))",
+          'h = op.fit_global("exp", gs, shared=["tau"], hold={"y0": 0}, quiet=True); print(h.held, h.coef[:, 0].tolist(), h.chisq > g.chisq)',
+          "print(str(g).splitlines()[1].strip().split(' ±')[0][:9], len(str(g).splitlines()))",
+          "print(round(kept.rerun(quiet=True)['tau'], 2))",
+          'b = op.fit_batch("exp", gs); print(len(b), [round(r["tau"], 1) for r in b])',
+          'print(op.wave("Results_data").data[-3:])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('y0', 'A', 'tau') ('tau',) (3, 3) 0.9 [1.0, 3.0, 0.2] [0.0, 0.5, -1.0]",
+      "True True True",
+      "global ('tau', 'y0[0]', 'A[0]') 7 ['tau'] ['fit0', 'fit1', 'fit2']",
+      "('y0',) [0.0, 0.0, 0.0] True",
+      "tau = 0.9 6",
+      "0.9",
+      expect.stringMatching(/^Fit\d+: exp\(glob_0\), chi-square = /),
+      expect.stringMatching(/^Fit\d+: exp\(glob_1\), chi-square = /),
+      expect.stringMatching(/^Fit\d+: exp\(glob_2\), chi-square = /),
+      "3 [0.9, 0.9, 0.9]",
+      "['glob_0' 'glob_1' 'glob_2']",
+    ]);
+    for (const [code, error] of [
+      ['op.fit_global("exp", gs[:1])', /needs two waves or more/],
+      ['op.fit_global("exp", gs, shared=["rate"])', /no parameter named 'rate'/],
+      ['op.fit_global("exp", gs, xs=[gs[0]])', /one X wave for each wave/],
+      ["kept.apply(gs)", /cannot be applied wave by wave/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("ties peaks to each other: a spacing, a ratio of areas, the same width", async () => {
+    expect(
+      await run(
+        [
+          "tx = np.linspace(0, 20, 801)",
+          "tg = lambda x0, h, w: h * np.exp(-((tx - x0) / w) ** 2)",
+          // A doublet that overlaps: 1.5 apart, areas 2:1, the same width.
+          'tw = op.make("tie_w", 0.2 + tg(9, 4, 0.9) + tg(10.5, 2, 0.9) + np.random.default_rng(5).normal(0, 0.02, 801), x0=0, dx=0.025)',
+          "free = op.fit_peaks(tw, peaks=[9, 10.5], quiet=True)",
+          "tied = op.fit_peaks(tw, peaks=[9, 10.5], same_width=True, spacing={(1, 2): 1.5}, area_ratio={(1, 2): 0.5}, quiet=True)",
+          "a, b = tied.peaks",
+          "print(round(b['x'] - a['x'], 9), round(b['area'] / a['area'], 9), round(b['width'] - a['width'], 9))",
+          "print(round(a['x'], 2), round(a['height'], 1), round(a['width'] / (2 * np.sqrt(np.log(2))), 2), tied.converged)",
+          // With fewer free parameters the position is known better, and the tied one as well as its source.
+          "print(a['x_sigma'] < free.peaks[0]['x_sigma'], round(b['x_sigma'] / a['x_sigma'], 6), b['area_sigma'] > 0)",
+          "kept = tied.result; print(kept.kind, kept.names, kept.freedom - free.result.freedom)",
+          "print(kept.settings['spacing'], kept.settings['area_ratio'], kept.settings['same_width'], kept.settings['peaks'])",
+          "again = kept.rerun(quiet=True); print(round(again.peaks[1]['x'] - again.peaks[0]['x'], 9))",
+          // A chain of spacings, given as a list.
+          'tw3 = op.make("tie_w3", tg(5, 1, 0.5) + tg(7, 1, 0.5) + tg(9, 1, 0.5), x0=0, dx=0.025)',
+          "c = op.fit_peaks(tw3, peaks=[5.1, 6.8, 9.2], baseline=None, spacing=[(1, 2, 2), (2, 3, 2)], quiet=True)",
+          "print([round(p['x'], 6) for p in c.peaks])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "1.5 0.5 0.0",
+      "9.0 4.0 0.9 True",
+      "True 1.0 True",
+      "peaks ('x1', 'height1', 'fwhm1', 'area1', 'x2', 'height2', 'fwhm2', 'area2', 'offset') 3",
+      "[[1, 2, 1.5]] [[1, 2, 0.5]] True [9, 10.5]",
+      "1.5",
+      "[5.0, 7.0, 9.0]",
+    ]);
+    for (const [code, error] of [
+      [
+        "op.fit_peaks(tw, peaks=[9, 10.5], spacing={(1, 3): 1})",
+        /there is no peak 3; the peaks are 1 to 2/,
+      ],
+      [
+        "op.fit_peaks(tw, peaks=[9, 10.5], spacing={(1, 2): 1, (2, 1): -1})",
+        /go round in a circle/,
+      ],
+      ["op.fit_peaks(tw, peaks=[9, 10.5], spacing=[(1, 2, 1), (1, 2, 2)])", /tied twice over/],
+      ["op.fit_peaks(tw, peaks=[9, 10.5], area_ratio=[1, 2])", /area_ratio takes/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  });
+
+  it("differentiates a matrix along X, keeping its other scaling", async () => {
+    expect(
+      await run(
+        [
+          'dm = op.make("dif_m", np.outer(np.arange(4.0) ** 2, [1, 2, 3]), x0=0, dx=0.5, y0=10, dy=2, y_unit="K")',
+          "dd = op.differentiate(dm)",
+          "print(dd.shape, dd.data[:, 1].tolist(), dd.dx, dd.y0, dd.dy, dd.y_unit)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // d/dx of 2 i^2 with x = i / 2: one-sided at the ends, central inside.
+    expect(stdout).toBe("(4, 3) [4.0, 8.0, 16.0, 20.0] 0.5 10.0 2.0 K\n");
+  });
+
+  it("fits a peak that fills the range it is given, as between two cursors at its feet", async () => {
+    expect(
+      await run(
+        [
+          // The demo: a decaying sine. Each half wave is a hump or a trough of its own.
+          "hx = np.linspace(0, 10, 2000)",
+          'hw = op.make("hump_w", np.sin(2 * np.pi * hx) * np.exp(-hx / 3), dx=hx[1] - hx[0])',
+          "for a, b in [(0, 0.5), (0.5, 1.0), (2.0, 2.5), (0.05, 0.45)]:",
+          '    r = op.fit("gauss", hw, xrange=(a, b), quiet=True)',
+          "    print(round(r['x0'], 2), r['A'] > 0, bool(np.sqrt(r.chisq / r.points) < 0.02), r.converged)",
+          // By point numbers, as the cursors give them, and with a Lorentzian.
+          'r = op.fit("lor", hw, range=(0, 100), quiet=True); print(round(r["x0"], 2), bool(np.sqrt(r.chisq / r.points) < 0.02))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "0.25 True True True",
+      "0.75 False True True",
+      "2.25 True True True",
+      "0.24 True True True",
+      "0.25 True",
+    ]);
+  });
+
+  it("installs SciPy, pandas, scikit-learn and lmfit when they are first imported", async () => {
+    expect(
+      await run(
+        [
+          "import sys",
+          "print(any(name in sys.modules for name in ('scipy', 'pandas', 'sklearn', 'lmfit')))",
+          "from scipy.optimize import curve_fit",
+          "from scipy import integrate as sp_integrate",
+          "pkx = np.linspace(0, 4, 50)",
+          'pkw = op.make("pkg_w", 2.5 * np.exp(-pkx / 0.7) + 0.3, x0=0, dx=pkx[1])',
+          // A wave goes where an array goes.
+          "popt, _ = curve_fit(lambda x, a, t, c: a * np.exp(-x / t) + c, pkw.x, pkw, p0=[1, 1, 0])",
+          "print(np.round(popt, 6).tolist(), round(float(sp_integrate.trapezoid(pkw, pkw.x)), 3))",
+          "from sklearn.linear_model import LinearRegression",
+          "lr = LinearRegression().fit(pkw.x.reshape(-1, 1), 3 * pkw.x + 1)",
+          "print(round(float(lr.coef_[0]), 6), round(float(lr.intercept_), 6))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual(["False", "[2.5, 0.7, 0.3] 2.946", "3.0 1.0"]);
+    expect(stderr).toBe("");
+  }, 120_000);
+
+  it("moves waves to pandas and back, with dates and text", async () => {
+    expect(
+      await run(
+        [
+          "import pandas as pd",
+          'op.make("pd_t", np.array(["2026-11-11T09:00", "2026-11-11T09:30", "NaT"], dtype="datetime64[s]"))',
+          'op.make("pd_v", [1.5, 2.5, 3.5]); op.make("pd_s", ["a", "b", "c"]); op.make("pd_short", [7.0])',
+          'df = op.to_dataframe("pd_t", "pd_v", "pd_s", "pd_short")',
+          "print(list(df.columns), [str(t) for t in df.dtypes], df.shape)",
+          "print(str(df.pd_t[1]), pd.isna(df.pd_t[2]), df.pd_s.tolist(), df.pd_short.isna().tolist())",
+          // And back: an index that means something, dates with a zone, missing values, a column to rename.
+          'frame = pd.DataFrame({"T (K)": [300.0, 310.0], "label": ["x", None], "n": pd.array([1, None], dtype="Int64"), "ok": [True, False], "pd_v": [9.0, 8.0]},',
+          '    index=pd.DatetimeIndex(["2026-01-01T09:00+09:00", "2026-01-02T09:00+09:00"], name="when"))',
+          'made = op.from_dataframe(frame, "pdx_", table=False)',
+          "print([w.name for w in made], made[0].unit, made[0].data[0] == 1767225600.0)",
+          "print(made[1].data.tolist(), made[2].data.tolist(), made[3].data.tolist(), made[4].dtype, made[4].data.tolist())",
+          'print([w.name for w in op.from_dataframe(frame[["pd_v"]], index=False, table=False)])',
+          't = op.edit("pd_v", "pd_s"); print(t.to_dataframe().to_dict("list"))',
+          'print(op.from_dataframe(pd.Series([1.0, 2.0], name="solo"), "pdx_", table=False)[0].name)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "['pd_t', 'pd_v', 'pd_s', 'pd_short'] ['datetime64[s]', 'float64', 'str', 'float64'] (3, 4)",
+      "2026-11-11 09:30:00 True ['a', 'b', 'c'] [False, True, True]",
+      "['pdx_when', 'pdx_T_K', 'pdx_label', 'pdx_n', 'pdx_ok', 'pdx_pd_v'] dat True",
+      "[300.0, 310.0] ['x', ''] [1.0, nan] uint8 [1, 0]",
+      "['pd_v_1']",
+      "{'pd_v': [1.5, 2.5, 3.5], 'pd_s': ['a', 'b', 'c']}",
+      "pdx_solo",
+    ]);
+  }, 120_000);
+
+  it("fits an lmfit model through op.fit, kept and drawn like any other fit", async () => {
+    expect(
+      await run(
+        [
+          "from lmfit.models import GaussianModel, LinearModel",
+          "lx = np.linspace(-5, 5, 201)",
+          'lw = op.make("lm_w", 0.5 + 0.1 * lx + 3 * np.exp(-((lx - 1.2) ** 2) / (2 * 0.8**2)) + np.random.default_rng(4).normal(0, 0.02, 201), x0=-5, dx=0.05)',
+          "lg = op.display(lw)",
+          "model = GaussianModel() + LinearModel()",
+          "p = model.make_params(amplitude=5, center=1, sigma=1, slope=0, intercept=0)",
+          "r = op.fit(model, lw, params=p, residuals=True, band=0.95, quiet=True)",
+          "print(r.names[:3], round(r['center'], 2), round(r['sigma'], 2), round(r['slope'], 2), r.converged, r.reason)",
+          // fwhm and height follow the others by expressions: lmfit holds them, op.fit reports them so.
+          "print('fwhm' in r.held, round(r['fwhm'] / r['sigma'], 4), r.lmfit.nfev > 0, r.covariance.shape, bool(r.sigma[r.names.index('center')] > 0))",
+          "print([t.name for t in lg.traces], r.band[0].name, r.residuals.name)",
+          "kept = r.result; print(kept.label, kept.settings['custom'], kept.held[:1], kept.reason)",
+          // Held and bounded through op.fit's own options, on chosen points.
+          "h = op.fit(model, lw, params=p, hold={'slope': 0.1}, bounds={'sigma': (None, 0.5)}, xrange=(-2, 4), quiet=True)",
+          "print('slope' in h.held, h['slope'], round(h['sigma'], 6), h.points)",
+          // A single model guesses for itself.
+          'g = op.fit(GaussianModel(), op.make("lm_g", np.exp(-((lx - 0.5) ** 2) / 2), x0=-5, dx=0.05), quiet=True); print(round(g["center"], 3), round(g["sigma"], 3))',
+          "print(round(kept.rerun(function=model, params=p, quiet=True)['center'], 2))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('amplitude', 'center', 'sigma') 1.2 0.8 0.1 True Fit succeeded.",
+      "True 2.3548 True (7, 7) True",
+      "['lm_w', 'fit_lm_w_hi', 'fit_lm_w_lo', 'fit_lm_w', 'res_lm_w'] fit_lm_w_lo res_lm_w",
+      "lmfit (Model(gaussian) + Model(linear))(lm_w) True ('fwhm',) Fit succeeded.",
+      "True 0.1 0.5 121",
+      "0.5 1.0",
+      "1.2",
+    ]);
+    for (const [code, error] of [
+      ["op.fit(model, lw, guess=[1, 2])", /give starting values as params=/],
+      ["op.fit(model, lw, hold={'nope': 1})", /hold: no parameter named 'nope'/],
+      ['op.fit("gauss", lw, params=p)', /params= goes with an lmfit model/],
+      ["kept.rerun()", /which is not defined now/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  }, 120_000);
+
+  it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
+    expect(
+      await run(
+        [
+          'lw = op.make("lineup_w", [1.0, 3.0, 2.0])',
+          'lg = [op.display(lw, name=f"Lineup{i}") for i in range(5)]',
+          'lp = op.new_layout("Lineup", size=(600, 800))',
+          "li = [lp.add_graph(g, x=40 + 50 * i, y=40 + 150 * i, w=100 + 10 * i, h=60 + 20 * i) for i, g in enumerate(lg[:4])]",
+          'lt = lp.add_text("Caption", x=300, y=700, size=10)',
+          'lp.align([li[0], "graph2", lt], "right"); print([i.x for i in lp.items])',
+          'lp.align(li[1], "center"); print(li[1].x)',
+          'lp.distribute(li[:3], "vertical"); print([i.y for i in li])',
+          'lp.match_size(["graph3", "graph0", lt]); print([(i.w, i.h) for i in li], lt.size)',
+          "lp.arrange(2, 2, margin=50, gap=(20, 10)); print([(i.x, i.y, i.w, i.h) for i in li], lt.x)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      // "Caption" is 38.5 points wide, so its right edge, at 338.5, is the outermost.
+      "[238.5, 90, 218.5, 190, 300]",
+      // One item alone lines up with the page: (600 - 110) / 2.
+      "245",
+      // From 40 to 440 with 240 points of graphs: gaps of 80.
+      "[40, 180, 340, 490]",
+      // The size of graph3, the first named; text keeps its own.
+      "[(130, 120), (110, 80), (120, 100), (130, 120)] 10",
+      // Cells (500 - 20) / 2 wide and (700 - 10) / 2 high, filled in reading order.
+      "[(50, 50, 240, 345), (310, 50, 240, 345), (50, 405, 240, 345), (310, 405, 240, 345)] 300",
+    ]);
+    // A graph beyond the cells stays where it is, and Python is told.
+    expect(await run('lp.add_graph("Lineup4", x=10, y=10); lp.arrange(1, 2)')).toBe(true);
+    // The new graph reads first, at the top left; the next row is graph2 and graph3.
+    expect(stderr).toMatch(/graph1, graph2, graph3 did not fit in the 1 × 2 grid/);
+    expect(
+      await run('lp.arrange(1, 2, items=["graph3", lt, "graph1"], gap=0); print(li[3].x, li[1].x)'),
+    ).toBe(true);
+    expect(stdout).toBe("36 300\n");
+    // All of one input is one step to undo.
+    const before = doc.getState().pages.Lineup!.items;
+    expect(
+      await run('lp.align(["graph0", "graph2"], "top"); lp.distribute(li, "horizontal")'),
+    ).toBe(true);
+    doc.undo();
+    expect(doc.getState().pages.Lineup!.items).toEqual(before);
+    expect(await run('lp.align(["graph0", "nope"], "left")')).toBe(false);
+    expect(errors[0]).toMatch(/OresmeError: Lineup has no item named "nope"/);
+    expect(await run('lp.distribute(li[:2], "vertical")')).toBe(false);
+    expect(errors[0]).toMatch(/three or more/);
+  });
+
+  it("takes names that JavaScript objects inherit, such as constructor and toString", async () => {
+    expect(
+      await run(
+        [
+          'cw = op.make("constructor", [1.0, 2.0, 3.0], unit="V"); op.make("toString", [0.0, 1.0, 2.0])',
+          'cg = op.display(cw, x="toString", name="valueOf"); cg.add_axis("hasOwnProperty", "right")',
+          'cg.append(op.wave("toString").duplicate("toLocaleString"), axis="hasOwnProperty")',
+          'ct = op.edit("constructor", name="isPrototypeOf"); cp = op.new_layout("propertyIsEnumerable")',
+          "cp.add_graph(cg); cw[3] = 4",
+          'print(op.wave("constructor").data.tolist(), op.wave("constructor").unit, op.exists("toString"))',
+          "print([w.name for w in op.waves()][-3:], [a.name for a in cg.axes][-1], cg.axis('hasOwnProperty').side)",
+          'print(op.graph("valueOf"), op.table("isPrototypeOf").columns, op.layout("propertyIsEnumerable").items[0].graph)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[1.0, 2.0, 3.0, 4.0] V True",
+      "['constructor', 'toString', 'toLocaleString'] hasOwnProperty right",
+      "Graph('valueOf') [Wave('constructor', n=4, x0=0, dx=1, unit='V')] Graph('valueOf')",
+    ]);
+    expect(doc.getState().waveOrder).toContain("constructor");
+    expect(doc.getState().graphs["valueOf" as string]!.traces.map((trace) => trace.y)).toEqual([
+      "constructor",
+      "toLocaleString",
+    ]);
+    for (const [code, error] of [
+      ['op.wave("__proto__")', 'OresmeError: No wave named "__proto__".'],
+      ['op.wave("valueOf")', 'OresmeError: No wave named "valueOf".'],
+      ['op.make("__proto__", [1.0])', /OresmeError: "__proto__" is not a valid wave name/],
+      ['cw.rename("__proto__")', /OresmeError: "__proto__" is not a valid wave name/],
+      ['op.graph("constructor")', "OresmeError: No graph named 'constructor'."],
+      ['cg.axis("constructor")', /OresmeError: valueOf has no axis named 'constructor'/],
+      ['cg.axis("__proto__").label = "x"', /OresmeError: valueOf has no axis named '__proto__'/],
+      ['op.kill_window("__proto__")', 'OresmeError: No window named "__proto__".'],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+    expect(await run('op.kill_window("valueOf"); op.kill(op.wave("toLocaleString"))')).toBe(true);
+    expect(doc.getState().waveOrder).not.toContain("toLocaleString");
+    doc.undo();
+    expect(doc.getState().waveOrder).toContain("toLocaleString");
+    expect(doc.getState().graphs["valueOf" as string]).toBeDefined();
+  });
+
+  it("replays table edits of complex waves from the history, appending points as well", async () => {
+    expect(
+      await run(
+        [
+          'op.make("ztab", np.array([1 + 2j, 3 - 4j]))',
+          'op.make("ztab32", np.array([5 + 6j], dtype=np.complex64))',
+          'op.make("ztab2", np.array([[1 + 1j, 2 + 2j], [3 + 3j, np.nan + 4j]]))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    /**
+     * Makes the edits as the table does, in a copy of the document, and runs
+     * the Python the table writes to the history against the document as it
+     * was. Both must end up the same.
+     */
+    async function replay(edits: CellEdit[]) {
+      const before = doc.getState();
+      const commands = tableEditCommands(before.waves, edits, { layer: 0, chunk: 0 })!;
+      expect(commands.length).toBeGreaterThan(0);
+      const gui = new Doc();
+      gui.load(before);
+      const lines = commands.map((command) => {
+        gui.dispatch(command);
+        return echoPython(command, (wave) => gui.getState().waves[wave]?.shape)!;
+      });
+      const code = lines.join("\n");
+      expect(await run(code), `${code}\n${errors.join("\n")}`).toBe(true);
+      for (const name of new Set(edits.map((edit) => edit.wave))) {
+        const replayed = doc.getState().waves[name]!;
+        const expected = gui.getState().waves[name]!;
+        const content = (wave: typeof replayed) => ({
+          type: wave.type,
+          shape: wave.shape,
+          data: Array.from(wave.data),
+          imag: Array.from(wave.imag ?? []),
+        });
+        expect(content(replayed), code).toEqual(content(expected));
+      }
+      return code;
+    }
+    // Typing the real part, then the imaginary part, into the row after the last point.
+    expect(await replay([{ wave: "ztab", j: null, row: 2, text: "7" }])).toBe(
+      'op.wave("ztab")[2] = complex(7, 0)',
+    );
+    expect(await replay([{ wave: "ztab", j: null, row: 3, text: "8", imag: true }])).toBe(
+      'op.wave("ztab")[3] = complex(float("nan"), 8)',
+    );
+    // A paste of two rows that extends several complex columns, one of them complex64.
+    await replay([
+      { wave: "ztab", j: null, row: 3, text: "9" },
+      { wave: "ztab", j: null, row: 4, text: "10" },
+      { wave: "ztab", j: null, row: 3, text: "-1", imag: true },
+      { wave: "ztab", j: null, row: 4, text: "nan", imag: true },
+      { wave: "ztab32", j: null, row: 1, text: "0.5" },
+      { wave: "ztab32", j: null, row: 2, text: "1.5" },
+      { wave: "ztab32", j: null, row: 1, text: "2.5", imag: true },
+    ]);
+    // A paste that starts inside a wave and runs past its end.
+    await replay([
+      { wave: "ztab32", j: null, row: 2, text: "3", imag: true },
+      { wave: "ztab32", j: null, row: 3, text: "4", imag: true },
+    ]);
+    expect(doc.getState().waves.ztab32!.shape).toEqual([4]);
+    // A matrix keeps its shape: cells inside it are written, cells below it are not.
+    await replay([
+      { wave: "ztab2", j: 1, row: 1, text: "6" },
+      { wave: "ztab2", j: 0, row: 0, text: "nan", imag: true },
+      { wave: "ztab2", j: 0, row: 2, text: "1" },
+    ]);
+    expect(doc.getState().waves.ztab2!.shape).toEqual([2, 2]);
+  });
+
+  it("fits the free parameters while a bounded one rests on its bound", async () => {
+    expect(
+      await run(
+        [
+          'bw = op.make("bounded", 3 + 2 * np.arange(10))',
+          'r = op.fit("line", bw, bounds={"b": (None, 1)}, quiet=True)',
+          // With b = 1 the best a is the mean of y - x: 7.5, leaving sum((x - 4.5)^2) = 82.5.
+          "print(np.round(r.coef, 6).tolist(), round(r.chisq, 6), r.converged)",
+          'r = op.fit("line", bw, bounds={"b": (None, 5)}, quiet=True)',
+          "print(np.round(r.coef, 6).tolist(), round(r.chisq, 6), r.converged)",
+          "bx = np.linspace(-5, 5, 201)",
+          'bg = op.make("bgauss", 0.5 + 3 * np.exp(-((bx - 1.2) / 0.8) ** 2), x0=bx[0], dx=bx[1] - bx[0])',
+          'r = op.fit("gauss", bg, bounds={"width": (None, 0.5)}, quiet=True)',
+          "print(np.round(r.coef, 5).tolist(), round(r.chisq, 5), r.converged)",
+          'r = op.fit("gauss", bg, hold={"y0": 0.5}, bounds={"width": (0.1, 0.5)}, quiet=True)',
+          "print(np.round(r.coef, 5).tolist(), round(r.chisq, 5), r.converged, r.sigma[0])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The Gaussian references come from fixing the width at 0.5 and searching
+    // x0 by golden section, with y0 and A by linear least squares at each x0.
+    expect(stdout.trim().split("\n")).toEqual([
+      "[7.5, 1.0] 82.5 True",
+      "[3.0, 2.0] 0.0 True",
+      "[0.62112, 3.42646, 1.2, 0.5] 15.6695 True",
+      "[0.5, 3.59775, 1.2, 0.5] 18.25051 True 0.0",
+    ]);
+  });
+
+  it("lets a fitted peak rest on the edge of the data", async () => {
+    expect(
+      await run(
+        [
+          "ex = np.linspace(0, 20, 401)",
+          // A peak centred just beyond the data, so its position stops at x = 20.
+          'ep = op.make("edgepk", 0.3 + 2 * np.exp(-((ex - 21) / 1.5) ** 2), x0=0, dx=ex[1] - ex[0])',
+          "res = op.fit_peaks(ep, peaks=[19.5], components=False, quiet=True)",
+          "p = res[0]",
+          "print(p['x'], round(p['height'], 5), round(p['width'], 4), round(res.baseline['offset'], 5), round(res.chisq, 5), res.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Reference: position fixed at 20, width by golden section, the rest linear.
+    expect(stdout).toBe("20.0 1.103 1.4987 0.30221 0.13836 True\n");
+  });
+
+  it("converges from a guess a width away, and on a background of a million", async () => {
+    expect(
+      await run(
+        [
+          "rx = np.linspace(0, 10, 200)",
+          "rnoise = np.random.default_rng(1).normal(0, 0.1, rx.size)",
+          'rw = op.make("rpeak", 1 + 5 * np.exp(-((rx - 4) / 0.8) ** 2) + rnoise, x0=0, dx=rx[1])',
+          // A full Gauss-Newton step from here flattens the peak and throws it out of the data.
+          'r = op.fit("gauss", rw, guess=[0, 3, 5, 0.4], quiet=True)',
+          "print(np.round(r.coef, 2).tolist(), r.chisq < 3, r.converged)",
+          // Rounding at 1e6 hides the last gains; the fit is at its minimum and must say so.
+          'rb = op.make("rpeak_bg", rw.data + 1e6, x0=0, dx=rx[1])',
+          'r = op.fit("gauss", rb, guess=[1e6, 3, 4.5, 1], quiet=True)',
+          "print(np.round(r.coef - [1e6, 0, 0, 0], 2).tolist(), r.chisq < 3, r.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[0.99, 5.0, 4.0, 0.8] True True",
+      "[0.99, 5.0, 4.0, 0.8] True True",
+    ]);
+  });
+
+  it("fits on a large offset and says when a fit cannot converge", async () => {
+    expect(
+      await run(
+        [
+          'ow = op.make("offset", 1e8 + 3 * np.arange(10))',
+          'r = op.fit("line", ow, quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.chisq, r.converged)",
+          // The same model as a custom function goes through the iterative solver.
+          "r = op.fit(lambda x, a, b: a + b * x, ow, guess=[1e8, 0], quiet=True)",
+          "print(round(r['a'] - 1e8, 6), round(r['b'], 6), r.chisq < 1e-10, r.converged)",
+          'r = op.fit("poly3", op.make("offpoly", 1e8 + 2 * np.arange(10) + 0.5 * np.arange(10) ** 2), hold={"K0": 1e8}, quiet=True)',
+          "print(np.round(r.coef, 9).tolist(), r.converged)",
+          // y = exp(-a*x) approaches 0 only as a goes to infinity: there is no minimum.
+          "r = op.fit(lambda x, a: np.exp(-a * x), op.make('nofit', np.zeros(10)), x=op.make('nofit_x', np.arange(1.0, 11)), guess=[0.5], quiet=True)",
+          "print(r.converged, 'did not converge' in str(r))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[100000000.0, 3.0] 0.0 True",
+      "0.0 3.0 True True",
+      "[100000000.0, 2.0, 0.5] True",
+      "False True",
+    ]);
+  });
+
+  it("weights a linear fit by the uncertainties of the points", async () => {
+    expect(
+      await run(
+        [
+          'op.make("wline", [0.0, 1.0, 3.0]); op.make("wline_err", [1.0, 1.0, 0.5])',
+          'r = op.fit("line", "wline", sigma="wline_err", quiet=True)',
+          "print(np.round(r.coef * 21, 9).tolist(), round(r.chisq * 21, 9), np.round(r.sigma ** 2 * 21, 9).tolist(), r.converged)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Weights 1, 1, 4: the weighted normal equations give a = -4/21, b = 33/21,
+    // chi-square 4/21, and variances 17/21 and 6/21.
+    expect(stdout).toBe("[-4.0, 33.0] 4.0 [17.0, 6.0] True\n");
+  });
+
+  it("gives the amplitude of DC and Nyquist components without doubling them", async () => {
+    expect(
+      await run(
+        [
+          'print(op.fft(op.make("ones8", np.ones(8))).data.tolist())',
+          'print(np.round(op.fft(op.make("alt8", (-1.0) ** np.arange(8))).data, 12).tolist())',
+          // 0.25 + 2 cos at bin 1 + 0.5 cos at the Nyquist frequency, and an odd length with no Nyquist bin.
+          'print(np.round(op.fft(op.make("mix8", 0.25 + 2 * np.cos(2 * np.pi * np.arange(8) / 8) + 0.5 * (-1.0) ** np.arange(8))).data, 12).tolist())',
+          'print(np.round(op.fft(op.make("odd7", 1 + 3 * np.cos(2 * np.pi * 3 * np.arange(7) / 7))).data, 12).tolist())',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "[1.0, 0.0, 0.0, 0.0, 0.0]",
+      "[0.0, 0.0, 0.0, 0.0, 1.0]",
+      "[0.25, 2.0, 0.0, 0.0, 0.5]",
+      "[1.0, 0.0, 0.0, 3.0]",
+    ]);
+  });
+
+  it("widens the confidence band by Student's t for few degrees of freedom", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "print([round(oa._student_quantile(0.975, n), 4) for n in (1, 2, 3, 5, 10, 30)])",
+          "print([round(oa._student_quantile(0.995, n), 4) for n in (1, 2)], round(oa._student_quantile(0.95, 1), 4))",
+          // Three points leave one degree of freedom. The line is -1/6 + 1.5x with
+          // chi-square 1/6, so the standard error of the curve at x = 1 is sqrt(1/18).
+          'op.make("tband", [0.0, 1.0, 3.0]); op.make("tband_x", [0.0, 1.0, 2.0])',
+          'r = op.fit("line", "tband", x="tband_x", band=0.95, quiet=True)',
+          "lo, hi = r.band",
+          "print(round((hi.data[1] - lo.data[1]) / 2 / np.sqrt(1 / 18), 4))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Table values of the t distribution.
+    expect(stdout.trim().split("\n")).toEqual([
+      "[12.7062, 4.3027, 3.1824, 2.5706, 2.2281, 2.0423]",
+      "[63.6567, 9.9248] 6.3138",
+      "12.7062",
+    ]);
+  });
+
+  it("leaves infinities out of the statistics and of the positions of the extremes", async () => {
+    expect(
+      await run(
+        [
+          's = op.stats(op.make("infs", [1, np.inf, 4, -np.inf, np.nan, 2], x0=10, dx=0.5), quiet=True)',
+          "print(s['min'], s['min_x'], s['max'], s['max_x'], s['points'], s['nans'], s['mean'], s['sum'])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // The finite values are 1, 4 and 2, at x = 10, 11 and 12.5.
+    expect(stdout).toBe("1.0 10.0 4.0 11.0 6 3 2.3333333333333335 7.0\n");
+  });
+
+  it("keeps graph styles, gives them to graphs, and gives new graphs the default one", async () => {
+    expect(
+      await run(
+        [
+          'sa = op.make("st_a", [1.0, 2.0, 3.0]); sb = op.make("st_b", [2.0, 1.0, 0.0])',
+          'src = op.display(sa, sb, name="StyleSource")',
+          'src.set(font_size=15); src.trace("st_a").set(line_size=3, color="red")',
+          'src.left.set(ticks="inside", mirror="on")',
+          'paper = src.save_style("stPaper")',
+          "data = paper.data",
+          'print(paper, data["graph"]["font_size"], data["traces"][0]["line_size"], data["axes"]["left"])',
+          'other = op.display(sb, sa, sb, name="StyleTarget", style=None)',
+          'other.apply_style("stPaper")',
+          "print(other.font_size, other.style, [t.line_size for t in other.traces], other.left.mirror)",
+          'op.set_style("stTalk", {"graph": {"font_size": 22}, "traces": [{"line_size": 4}]})',
+          'op.apply_style("stTalk", graphs=[other, "StyleSource"])',
+          'print(other.font_size, src.font_size, src.trace("st_a").color, src.trace("st_a").line_size)',
+          'op.set_default_style("stTalk")',
+          'made = op.display(sa, name="StyleNew")',
+          "print(made.font_size, made.style, op.default_style())",
+          'op.style("stTalk").rename("stPoster")',
+          'print(op.default_style(), made.style, [s.name for s in op.styles() if s.name.startswith("st")])',
+          "try:",
+          '    op.set_style("stBad", {"traces": [{"y_error": 1}]})',
+          "except op.OresmeError as error:",
+          '    print(str(error).split(".")[0])',
+          'op.style("stPoster").remove()',
+          "print(op.default_style(), made.style, made.font_size)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'tick_label_size': None}",
+        "15 Style('stPaper') [3, 1, 3] on",
+        "22 22 #ff0000 4",
+        "22 Style('stTalk') Style('stTalk')",
+        "Style('stPoster') Style('stPoster') ['stPaper', 'stPoster']",
+        'Unknown trace style property "yError"',
+        "None None 22",
+        "",
+      ].join("\n"),
+    );
+    expect(doc.getState().graphs.StyleTarget!.traces.map((trace) => trace.color)).toEqual([
+      "#ff0000",
+      "#0000ff",
+      "#ff0000",
+    ]);
+
+    // What the GUI writes into the history does the same when it is run.
+    const { styles } = doc.getState();
+    const line = echoPython({ op: "setStyle", name: "stEcho", style: styles.stPaper });
+    expect(await run(`${line}\nop.set_style("stCopy", op.style("stPaper"))`)).toBe(true);
+    expect(doc.getState().styles.stEcho).toEqual(styles.stPaper);
+    expect(doc.getState().styles.stCopy).toEqual(styles.stPaper);
+    expect(
+      await run(echoPython({ op: "saveStyle", name: "stSized", graph: "StyleNew", size: true })!),
+    ).toBe(true);
+    expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
   });
 });

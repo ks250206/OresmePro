@@ -115,7 +115,7 @@ test.describe("Excel workbooks", () => {
       .poll(async () => (await app.doc()).order)
       .toEqual([
         "time",
-        "temp_C",
+        "temp",
         "sample",
         "count",
         "ok",
@@ -128,7 +128,7 @@ test.describe("Excel workbooks", () => {
     const doc = await app.doc();
     expect(Object.keys(doc.tables)).toEqual(["Table0", "Table1"]);
     expect(doc.tables.Table0!.columns).toHaveLength(7);
-    expect((await app.wave("temp_C"))!.data).toEqual([20.5, 21.25, 0.3]);
+    expect((await app.wave("temp"))!.data).toEqual([20.5, 21.25, 0.3]);
     expect((await app.wave("sample"))!.text).toEqual(["alpha", "β & <tag>", "試料 3"]);
     expect((await app.wave("time"))!).toMatchObject({
       unit: "dat",
@@ -138,7 +138,7 @@ test.describe("Excel workbooks", () => {
     await expect(
       page.getByRole("grid", { name: "Table0" }).getByRole("gridcell").first(),
     ).toHaveText("2026-01-15 09:00:00");
-    expect((await app.lastEntry()).code).toContain("Run 1: time, temp_C, sample");
+    expect((await app.lastEntry()).code).toContain("Run 1: time, temp, sample");
     // The whole workbook is one step to undo.
     await page.getByRole("complementary", { name: "Data Browser" }).getByText("root").click();
     await page.keyboard.press("Control+z");
@@ -146,7 +146,11 @@ test.describe("Excel workbooks", () => {
   });
 
   test("a file that is not a workbook is refused with a reason", async ({ app, page }) => {
-    await app.drop([{ name: "old.xls", content: [0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3] }]);
-    await expect(page.getByRole("alert")).toContainText("have to be saved as .xlsx");
+    await app.drop([{ name: "old.xls", content: [0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3] }], {
+      load: false,
+    });
+    const dialog = page.getByRole("dialog", { name: "Load Data: old.xls" });
+    await expect(dialog).toContainText("have to be saved as .xlsx");
+    await expect(dialog.getByRole("button", { name: "Load" })).toBeDisabled();
   });
 });

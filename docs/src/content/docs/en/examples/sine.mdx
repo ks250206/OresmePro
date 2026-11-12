@@ -1,0 +1,13 @@
+---
+title: Plot a sine wave
+sidebar:
+  order: 1
+---
+
+import Example from "../../../../components/Example.astro";
+import code from "../../../../snippets/sine.py?raw";
+import image from "../../../../assets/sine.png";
+
+Sample a 3 Hz sine wave at 200 Hz. Set `dx=0.005` seconds so the graph uses elapsed time as its X coordinate.
+
+<Example code={code} image={image} alt="Graph showing six periods in just under two seconds" />

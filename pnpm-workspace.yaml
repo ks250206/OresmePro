@@ -1,4 +1,8 @@
+packages:
+  - docs
+
 overrides:
+  astro>vite: "^8.3.6"
   vite@*: "catalog:"
   vitest@*: "catalog:"
 catalog:
@@ -12,3 +16,9 @@ peerDependencyRules:
   allowedVersions:
     vite: "*"
     vitest: "*"
+minimumReleaseAgeExclude:
+  - "@astrojs/markdown-remark@7.3.8"
+  - "@astrojs/markdown-satteri@0.4.9"
+  - "@astrojs/runtime@0.1.1"
+  - "@astrojs/vite-plugin-astro@0.1.2"
+  - astro@7.4.11

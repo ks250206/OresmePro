@@ -1,7 +1,8 @@
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
-import { timeZone } from "../plot/ticks";
+import { timeZone, UTC } from "../plot/ticks";
 import { columnsFromRows, parseDelimited } from "./delimited";
+import { checkSettings, decodeText, importPython, planImport } from "./importData";
 import { Doc } from "../doc/doc";
 import { History } from "../history/history";
 import { unzipExperiment, zipExperiment } from "./experiment";
@@ -74,9 +75,119 @@ describe("parseDelimited", () => {
 
   it("reads CSV with a header", () => {
     const result = parseDelimited("time (s),signal\n0,1.5\n1,2.5\n", free);
-    expect(result.names).toEqual(["time_s", "signal"]);
+    expect(result.names).toEqual(["time", "signal"]);
+    expect(result.units).toEqual(["s", ""]);
     expect([...result.columns[1]!]).toEqual([1.5, 2.5]);
     expect(result.rows).toBe(2);
+  });
+
+  it("finds units in the header, after a slash or in the row below when told", () => {
+    const text = "Ewe/V,I [mA],f(x)\nV,mA,-\n1,2,3\n";
+    const auto = parseDelimited(text, free);
+    // "f(x)" reads as a unit too: what stands in brackets at the end is taken for one.
+    expect([auto.names, auto.units]).toEqual([
+      ["Ewe_V", "I", "f"],
+      ["", "mA", "x"],
+    ]);
+    expect(auto.columns[0]).toEqual(["V", "1"]);
+    const slash = parseDelimited(text, free, UTC, { units: "slash" });
+    expect([slash.names, slash.units]).toEqual([
+      ["Ewe", "I_mA", "f_x"],
+      ["V", "", ""],
+    ]);
+    const row = parseDelimited(text, free, UTC, { units: "row" });
+    expect([row.names, row.units, row.rows]).toEqual([
+      ["Ewe_V", "I_mA", "f_x"],
+      ["V", "mA", "-"],
+      1,
+    ]);
+    expect([...row.columns[0]!]).toEqual([1]);
+    const none = parseDelimited(text, free, UTC, { units: "none" });
+    expect([none.names, none.units]).toEqual([
+      ["Ewe_V", "I_mA", "f_x"],
+      ["", "", ""],
+    ]);
+  });
+
+  it("reads decimal commas, with semicolons or tabs between the columns", () => {
+    const result = parseDelimited("U;I\n1,5;2,25e-3\n1.234,5;3\n-,5;4.5\n", free, UTC, {
+      decimal: ",",
+    });
+    expect(result.delimiter).toBe("semicolon");
+    expect([...result.columns[0]!]).toEqual([1.5, 1234.5, -0.5]);
+    expect([...result.columns[1]!]).toEqual([0.00225, 3, 4.5]);
+    // Without being told, "1,5" is text and the column keeps it as written.
+    expect(parseDelimited("U;I\n1,5;2\n", free).columns[0]).toEqual(["1,5"]);
+  });
+
+  it("passes over lines above the table and takes the header as told", () => {
+    const text = "Instrument: X-1\nDate: 2026-11-11\nt,v\n0,1\n1,2\n";
+    // The table is found where the lines begin to have the same number of columns.
+    const found = parseDelimited(text, free);
+    expect([found.names, found.rows, found.skip, found.delimiter]).toEqual([
+      ["t", "v"],
+      2,
+      2,
+      "comma",
+    ]);
+    const spaced = parseDelimited("Sample A\nrun 3 of 5, at 20 C\n\n1 2 3\n4 5 6\n", free);
+    expect([spaced.rows, spaced.skip, [...spaced.columns[2]!]]).toEqual([2, 3, [3, 6]]);
+    // A number of lines given is taken as given, even where another would be found.
+    const given = parseDelimited(text, free, UTC, { skip: 3 });
+    expect([given.names, given.rows, given.hasHeader]).toEqual([["column0", "column1"], 2, false]);
+    const none = parseDelimited("1,2\n3,4\n", free, UTC, { header: "yes" });
+    expect([none.names, none.rows]).toEqual([["wave_1", "wave_2"], 1]);
+    const data = parseDelimited("a,b\nc,d\n", free, UTC, { header: "no" });
+    expect([data.names, data.columns[0]]).toEqual([
+      ["column0", "column1"],
+      ["a", "c"],
+    ]);
+  });
+
+  it("reads a column as the type chosen and lists the cells it could not read", () => {
+    const text = "id,value,when\n1,2.5,2026-11-11\n2,over,n/a\n3,,soon\n4,7,2026-11-12\n";
+    const result = parseDelimited(text, free, UTC, {
+      columns: { 0: { type: "text" }, 1: { type: "number" }, 2: { type: "date" } },
+    });
+    expect(result.columns[0]).toEqual(["1", "2", "3", "4"]);
+    expect([...result.columns[1]!]).toEqual([2.5, Number.NaN, Number.NaN, 7]);
+    expect(result.dates).toEqual([false, false, true]);
+    // Empty cells and markers of missing values are not failures to read.
+    expect(result.unreadable).toEqual([[], [1], [2]]);
+    // Left to be detected, the same columns are text and nothing is unreadable.
+    const detected = parseDelimited(text, free);
+    expect(detected.columns[1]).toEqual(["2.5", "over", "", "7"]);
+    expect(detected.unreadable).toEqual([[], [], []]);
+  });
+
+  it("leaves out, names and gives units to columns as chosen", () => {
+    const result = parseDelimited("a,b,c\n1,2,3\n", (name) => name === "x", UTC, {
+      columns: { 0: { type: "skip" }, 1: { name: "x", unit: "V" }, 2: { name: "2 theta" } },
+    });
+    expect([result.names, result.units, result.indices, result.width]).toEqual([
+      ["x_1", "wave_2_theta"],
+      ["V", ""],
+      [1, 2],
+      3,
+    ]);
+    expect(result.header).toEqual(["a", "b", "c"]);
+    expect(result.cells).toEqual([["1", "2", "3"]]);
+  });
+
+  it("splits on the delimiter and skips the comments it is told to", () => {
+    const text = "% made by X\na;b,c\n1;2,5\n";
+    const result = parseDelimited(text, free, UTC, { delimiter: "semicolon", comment: "%" });
+    expect([result.names, result.columns[1]]).toEqual([["a", "b_c"], ["2,5"]]);
+    const kept = parseDelimited("#1,2\n3,4\n", free, UTC, { comment: "", header: "no" });
+    expect(kept.columns[0]).toEqual(["#1", "3"]);
+  });
+
+  it("reads only the first rows when asked for a preview", () => {
+    const text = `x,y\n${Array.from({ length: 50 }, (_, index) => `${index},${index * 2}`).join("\n")}`;
+    const result = parseDelimited(text, free, UTC, { limit: 10 });
+    expect(result.names).toEqual(["x", "y"]);
+    expect(result.rows).toBeGreaterThanOrEqual(10);
+    expect(result.rows).toBeLessThan(13);
   });
 
   it("reads whitespace-separated numbers without a header", () => {
@@ -107,12 +218,95 @@ describe("parseDelimited", () => {
     expect(Array.from(result.columns[1] as Float64Array)).toEqual([10, 20, 30]);
   });
 
+  it("keeps blank lines and lines starting with # inside quoted fields", () => {
+    const text = 'note,value\n# a comment\n"first\n\n# not a comment",1\n\n"second",2\n';
+    const result = parseDelimited(text, free);
+    expect(result.columns[0]).toEqual(["first\n\n# not a comment", "second"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([1, 2]);
+    // The delimiter is judged from records, past comments and blank lines.
+    const commented = `${"# header comment\n".repeat(50)}\na;b\n1;2\n"x\n\ny";3\n`;
+    expect(parseDelimited(commented, free).names).toEqual(["a", "b"]);
+  });
+
   it("loads files with more rows than a function call can take arguments", () => {
     const rows = 200_000;
     const text = `value\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
     const result = parseDelimited(text, free);
     expect(result.rows).toBe(rows);
     expect((result.columns[0] as Float64Array)[rows - 1]).toBe(rows - 1);
+  });
+
+  it("takes the first row as a header only when the columns below say so", () => {
+    const dates = parseDelimited("2026-11-11T09:00,1\n2026-11-11T09:01,2\n", free);
+    expect([dates.names, dates.dates, dates.rows]).toEqual([
+      ["column0", "column1"],
+      [true, false],
+      2,
+    ]);
+    // Text above text says nothing; the number above numbers says it is data.
+    const labels = parseDelimited("A,1\nB,2\n", free);
+    expect([labels.names, labels.columns[0]]).toEqual([
+      ["column0", "column1"],
+      ["A", "B"],
+    ]);
+    // Text above numbers or dates is a header, even where another column disagrees.
+    const header = parseDelimited("name,when,2\nA,2026-11-11,1\nB,2026-11-12,3\n", free);
+    expect([header.names, header.rows]).toEqual([["name", "when", "wave_2"], 2]);
+    // All text, or nothing to judge by: a header, as before.
+    expect(parseDelimited("a,b\nc,d\n", free).names).toEqual(["a", "b"]);
+    expect(parseDelimited("a,b\n", free).names).toEqual(["a", "b"]);
+    // A missing value in the first row is not a header.
+    expect(parseDelimited("NaN,1\n2,3\n", free).rows).toBe(2);
+    // Numbers alone: data, as before.
+    expect(parseDelimited("1\n2\n", free).rows).toBe(2);
+  });
+
+  it("keeps a column that mixes text and numbers as text, every cell as written", () => {
+    const result = parseDelimited("name,value\nA,1\nB,2\n3,3\n4,4\n5,5\n", free);
+    expect(result.names).toEqual(["name", "value"]);
+    expect(result.columns[0]).toEqual(["A", "B", "3", "4", "5"]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([1, 2, 3, 4, 5]);
+    // A column of dates with a stray number is text too.
+    const dates = parseDelimited("when\n2026-11-11\n7\n", free);
+    expect([dates.dates[0], dates.columns[0]]).toEqual([false, ["2026-11-11", "7"]]);
+  });
+
+  it("reads markers of missing values as NaN, and infinities", () => {
+    const markers =
+      "NaN,nan,NA,na,N/A,#N/A,null,NULL,None,-,--,#DIV/0!,#VALUE!,#REF!,#NAME?,#NUM!,#NULL!";
+    const text = [
+      "value",
+      "1",
+      ...markers.split(","),
+      "inf",
+      "+Inf",
+      "-inf",
+      "Infinity",
+      "-Infinity",
+      "",
+    ];
+    const result = parseDelimited(text.map((cell, index) => `${index},${cell}`).join("\n"), free);
+    expect(result.dates).toEqual([false, false]);
+    expect(Array.from(result.columns[1] as Float64Array)).toEqual([
+      1,
+      ...markers.split(",").map(() => Number.NaN),
+      Infinity,
+      Infinity,
+      -Infinity,
+      Infinity,
+      -Infinity,
+      Number.NaN,
+    ]);
+    const dates = parseDelimited("when\n2026-11-11\nN/A\n\n", free);
+    expect(dates.dates).toEqual([true]);
+    expect((dates.columns[0] as Float64Array)[1]).toBeNaN();
+    // A marker in a column of text is text like the rest.
+    expect(parseDelimited("label\nA\nN/A\n-\n", free).columns[0]).toEqual(["A", "N/A", "-"]);
+    // An Excel error at the start of a line is a value, not a comment.
+    const first = parseDelimited("a,b\n#N/A,1\n#DIV/0!,2\n# note\n3,3\n", free);
+    expect(Array.from(first.columns[0] as Float64Array)).toEqual([NaN, NaN, 3]);
+    // "Na" is sodium, not "not available".
+    expect(parseDelimited("element\nNa\n", free).columns[0]).toEqual(["Na"]);
   });
 
   it("avoids names that are taken", () => {
@@ -226,7 +420,7 @@ describe("Excel workbooks", () => {
   it("turns a sheet into waves: numbers, dates and text", () => {
     const [sheet] = load(excelWorkbook);
     const result = columnsFromRows(sheet!.rows, () => false);
-    expect(result.names).toEqual(["time", "temp_C", "sample", "count", "ok", "double", "day"]);
+    expect(result.names).toEqual(["time", "temp", "sample", "count", "ok", "double", "day"]);
     expect(result.dates).toEqual([true, false, false, false, false, false, true]);
     expect(Array.from(result.columns[0] as Float64Array)).toEqual(
       [9, 9.5, 10].map((hour) => Date.UTC(2026, 0, 15) / 1000 + hour * 3600),
@@ -257,5 +451,159 @@ describe("Excel workbooks", () => {
   it("says what is wrong with a file that is not a workbook", () => {
     expect(() => readXlsx(new Uint8Array([1, 2, 3, 4]))).toThrow(/not an Excel workbook/);
     expect(() => readXlsx(zipSync({ "hello.txt": new Uint8Array(1) }))).toThrow(/\.xlsx/);
+  });
+});
+
+describe("importing a file", () => {
+  const bytesOf = (text: string) => new TextEncoder().encode(text);
+
+  it("reads text in the encoding it is written in", () => {
+    expect(decodeText(bytesOf("温度,x\n")).encoding).toBe("utf-8");
+    expect(decodeText(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61)).text).toBe("a");
+    // 電圧,電流 in Shift_JIS, as instruments on Japanese Windows write it.
+    const sjis = Uint8Array.of(
+      0x93,
+      0x64,
+      0x88,
+      0xb3,
+      0x2c,
+      0x93,
+      0x64,
+      0x97,
+      0xac,
+      0x0a,
+      0x31,
+      0x2c,
+      0x32,
+    );
+    expect(decodeText(sjis)).toEqual({ text: "電圧,電流\n1,2", encoding: "shift_jis" });
+    expect(decodeText(Uint8Array.of(0xff, 0xfe, 0x61, 0x00, 0x2c, 0x00))).toEqual({
+      text: "a,",
+      encoding: "utf-16le",
+    });
+    // Bytes that are valid in none of them still read, as Western European text.
+    expect(decodeText(Uint8Array.of(0x61, 0xff, 0x80)).encoding).toBe("windows-1252");
+    expect(decodeText(sjis, "utf-8").text).toContain("\ufffd");
+  });
+
+  it("plans waves, a table and a graph with error bars from a text file", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "t", data: Float64Array.of(0) });
+    doc.dispatch({ op: "display", y: ["t"] });
+    const text = "t (s),U (V),dU (V),label\n0,1,0.1,a\n1,2,0.2,b\n";
+    const plan = planImport(
+      bytesOf(text),
+      "run.csv",
+      { graph: true, x: 0, errors: { 1: 2 } },
+      doc.getState(),
+      "abc123",
+    );
+    expect(plan.encoding).toBe("utf-8");
+    expect(plan.summary).toEqual(["t_1, U, dU, label (2 points each)"]);
+    expect(plan.commands.map((command) => command.op)).toEqual([
+      "makeWave",
+      "makeWave",
+      "makeWave",
+      "makeWave",
+      "edit",
+      "display",
+      "modifyTrace",
+    ]);
+    expect(plan.commands[1]).toMatchObject({
+      name: "U",
+      unit: "V",
+      note: "Loaded from run.csv (SHA-256 abc123)",
+    });
+    // Text and the error column are not plotted; the graph is named so the trace can be found.
+    expect(plan.commands[5]).toEqual({ op: "display", y: ["U"], x: "t_1", name: "Graph1" });
+    expect(plan.commands[6]).toEqual({
+      op: "modifyTrace",
+      graph: "Graph1",
+      trace: "U",
+      props: { yError: "dU" },
+    });
+    for (const command of plan.commands) doc.dispatch(command);
+    expect(doc.getState().graphs.Graph1!.traces[0]).toMatchObject({
+      y: "U",
+      x: "t_1",
+      yError: "dU",
+    });
+    // Without a table or a graph, only the waves are made.
+    const bare = planImport(bytesOf("a\n1\n"), "a.txt", { table: false }, doc.getState());
+    expect(bare.commands.map((command) => command.op)).toEqual(["makeWave"]);
+  });
+
+  it("reports cells that could not be read as the type chosen", () => {
+    const plan = planImport(
+      new TextEncoder().encode("a,b\n1,x\n2,3\n"),
+      "bad.csv",
+      { columns: { 1: { type: "number" } } },
+      new Doc().getState(),
+    );
+    expect(plan.summary).toEqual(["a, b (2 points each); cells that could not be read: b (1)"]);
+  });
+
+  it("reads the sheets of a workbook that are asked for", () => {
+    const state = new Doc().getState();
+    const raw = Uint8Array.from(atob(excelWorkbook.slice(excelWorkbook.indexOf(",") + 1)), (char) =>
+      char.charCodeAt(0),
+    );
+    const names = readXlsx(raw).map((sheet) => sheet.name);
+    const all = planImport(raw, "book.xlsx", {}, state);
+    expect(all.tables.map((table) => table.sheet)).toEqual(names);
+    const one = planImport(raw, "book.xlsx", { sheets: [names[1]!] }, state);
+    expect(one.tables.map((table) => table.sheet)).toEqual([names[1]]);
+    expect(one.summary[0]).toMatch(new RegExp(`^${names[1]}: `));
+    expect(() => planImport(raw, "book.xlsx", { sheets: ["Nope"] }, state)).toThrow(
+      /no sheet named "Nope"/,
+    );
+  });
+
+  it("writes the Python that repeats an import, naming only what was chosen", () => {
+    expect(importPython("run.csv", {})).toBe('op.load_text("run.csv")');
+    expect(importPython("run.csv", { delimiter: "auto", decimal: ".", table: true })).toBe(
+      'op.load_text("run.csv")',
+    );
+    expect(
+      importPython("run 1.csv", {
+        encoding: "shift_jis",
+        delimiter: "semicolon",
+        decimal: ",",
+        skip: 3,
+        header: "yes",
+        units: "row",
+        columns: { 0: { name: "t", unit: "s" }, 2: { type: "skip" }, 3: {} },
+        x: 0,
+        errors: { 1: 4 },
+        graph: true,
+        table: false,
+      }),
+    ).toBe(
+      'op.load_text("run 1.csv", encoding="shift_jis", delimiter="semicolon", decimal=",", skip=3, ' +
+        'header="yes", units="row", columns={0: {"name": "t", "unit": "s"}, 2: {"type": "skip"}}, ' +
+        "x=0, errors={1: 4}, graph=True, table=False)",
+    );
+    expect(importPython("book.xlsx", { sheets: ["Data"] })).toBe(
+      'op.load_excel("book.xlsx", sheets=["Data"])',
+    );
+  });
+
+  it("checks settings that come from elsewhere", () => {
+    expect(
+      checkSettings({
+        delimiter: "tab",
+        skip: 2,
+        columns: { "1": { type: "date" } },
+        errors: { "0": 1 },
+      }),
+    ).toEqual({ delimiter: "tab", skip: 2, columns: { 1: { type: "date" } }, errors: { 0: 1 } });
+    expect(checkSettings({ encoding: null })).toEqual({});
+    expect(() => checkSettings({ delimiter: "pipe" })).toThrow(/delimiter must be one of/);
+    expect(() => checkSettings({ skip: -1 })).toThrow(/skip must be a whole number/);
+    expect(() => checkSettings({ colums: {} })).toThrow(/Unknown import setting "colums"/);
+    expect(() => checkSettings({ columns: { a: {} } })).toThrow(/by column number/);
+    expect(() => checkSettings({ columns: { 0: { kind: "x" } } })).toThrow(
+      /name, a type and a unit/,
+    );
   });
 });

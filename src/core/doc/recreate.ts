@@ -64,6 +64,9 @@ export function recreationCommands(
     y: startsPlain ? first.y : [],
     ...(startsPlain && first.x !== null ? { x: first.x } : {}),
     name,
+    // Everything that differs from a plain graph is written out below, so
+    // where new graphs get a style the copy must start plain.
+    ...(state.defaultStyle !== null ? { style: null } : {}),
   });
   for (const [axis, spec] of Object.entries(target.axes)) {
     if (!(AXIS_SIDES as readonly string[]).includes(axis)) {
@@ -151,6 +154,8 @@ export function recreationCommands(
     "axes",
     "annotations",
     "cursors",
+    // Which style the graph was given is not part of how it looks.
+    "style",
   ]);
   if (hasKeys(style)) run({ op: "modifyGraph", graph: name, props: style });
   return commands;

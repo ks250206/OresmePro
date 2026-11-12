@@ -24,6 +24,18 @@ test.describe("installed app", () => {
     const missing = await app.run("import scipy");
     expect(missing.status).toBe("error");
     expect((await app.run("print(1 + 1)")).output).toBe("2\n");
+
+    // Ruff was kept although no procedure window was open before: it lints and formats.
+    await app.menu("Windows", "New Procedure");
+    await app.window("Procedure").getByRole("textbox", { name: "Procedure.py" }).click();
+    await page.keyboard.type("print(np.pi,missing)");
+    await expect(app.window("Procedure").locator(".cm-lintRange-warning")).toHaveText(["missing"], {
+      timeout: 30_000,
+    });
+    await page.keyboard.press("Shift+Alt+F");
+    await expect
+      .poll(async () => (await app.doc()).procedures.Procedure!.code)
+      .toBe("print(np.pi, missing)\n");
     await context.setOffline(false);
   });
 

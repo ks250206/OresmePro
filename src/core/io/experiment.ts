@@ -1,7 +1,10 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand } from "../doc/commands";
+import { applyCommand, checkName, checkStyle } from "../doc/commands";
+import { dict, dictFrom } from "../doc/dict";
+import { checkResult, type AnalysisResult } from "../doc/results";
 import {
   AXIS_SIDES,
+  CURSOR_NAMES,
   DEFAULT_TABLE_DIGITS,
   defaultAxis,
   defaultTraceStyle,
@@ -12,6 +15,7 @@ import {
   type GraphSpec,
   type PageSpec,
   type ProcedureSpec,
+  type StyleSpec,
   type TableSpec,
   type TraceSpec,
   type Wave,
@@ -50,6 +54,9 @@ export interface SavedExperiment {
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
+  styles?: Record<string, StyleSpec>;
+  defaultStyle?: string | null;
+  results?: Record<string, AnalysisResult>;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -75,25 +82,34 @@ export function describeExperiment(
         : { name, file: fileFor(wave), ...scaling };
     }),
     folders: [...state.folders],
-    graphs: { ...state.graphs },
-    tables: { ...state.tables },
-    procedures: { ...state.procedures },
-    pages: { ...state.pages },
+    graphs: dictFrom(state.graphs),
+    tables: dictFrom(state.tables),
+    procedures: dictFrom(state.procedures),
+    pages: dictFrom(state.pages),
+    styles: dictFrom(state.styles),
+    defaultStyle: state.defaultStyle,
+    results: dictFrom(state.results),
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
 }
 
 /** Fills in what graphs saved by earlier versions do not have. */
-function upgradeGraph(saved: GraphSpec): GraphSpec {
-  const axes: Record<string, AxisSpec> = {};
+function upgradeGraph(
+  graphName: string,
+  saved: GraphSpec,
+  styles: Readonly<Record<string, StyleSpec>>,
+): GraphSpec {
+  const axes = dict<AxisSpec>();
   for (const side of AXIS_SIDES) axes[side] = defaultAxis(side);
   for (const [name, axis] of Object.entries(saved.axes ?? {})) {
     const side = (axis.side as AxisSide | undefined) ?? (name as AxisSide);
-    axes[name] = { ...defaultAxis(side), ...axis, side };
+    axes[checkName(name, "axis")] = { ...defaultAxis(side), ...axis, side };
   }
+  const cursors = saved.cursors ?? {};
   return {
     ...saved,
+    name: graphName,
     traces: (saved.traces ?? []).map((trace, index): TraceSpec => ({
       ...defaultTraceStyle(index),
       ...trace,
@@ -117,8 +133,14 @@ function upgradeGraph(saved: GraphSpec): GraphSpec {
       trace: annotation.trace ?? null,
       point: annotation.point ?? 0,
     })),
-    cursors: saved.cursors ?? {},
+    cursors: dict(
+      CURSOR_NAMES.filter((cursor) => Object.hasOwn(cursors, cursor)).map((cursor) => [
+        cursor,
+        cursors[cursor]!,
+      ]),
+    ),
     showInfo: saved.showInfo ?? false,
+    style: typeof saved.style === "string" && saved.style in styles ? saved.style : null,
     axes,
   };
 }
@@ -151,23 +173,48 @@ export function buildState(
     // Waves are rebuilt through makeWave so the document assigns their revisions.
     state = applyCommand(state, { op: "makeWave", name, ...decodeNpy(bytes), ...scaling }).state;
   }
-  const graphs: Record<string, GraphSpec> = {};
-  for (const [name, graph] of Object.entries(saved.graphs)) graphs[name] = upgradeGraph(graph);
-  const tables: Record<string, TableSpec> = {};
+  // Names are checked as the commands that make these would check them. The
+  // records are rebuilt without a prototype (see ../doc/dict), whatever JSON gave.
+  const styles = dict<StyleSpec>();
+  for (const [name, style] of Object.entries(saved.styles ?? {})) {
+    checkName(name, "style");
+    // A style that cannot be read (one written by a later version, say) is
+    // left behind rather than keeping the experiment's data from opening.
+    try {
+      styles[name] = checkStyle(style);
+    } catch {
+      continue;
+    }
+  }
+  const defaultStyle =
+    typeof saved.defaultStyle === "string" && saved.defaultStyle in styles
+      ? saved.defaultStyle
+      : null;
+  const graphs = dict<GraphSpec>();
+  for (const [name, graph] of Object.entries(saved.graphs)) {
+    graphs[checkName(name, "graph")] = upgradeGraph(name, graph, styles);
+  }
+  const tables = dict<TableSpec>();
   for (const [name, table] of Object.entries(saved.tables)) {
-    tables[name] = {
+    tables[checkName(name, "table")] = {
       ...table,
+      name,
       digits: table.digits ?? DEFAULT_TABLE_DIGITS,
-      widths: table.widths ?? {},
+      widths: dictFrom(table.widths),
     };
   }
-  const procedures: Record<string, ProcedureSpec> = {};
+  const procedures = dict<ProcedureSpec>();
   for (const [name, procedure] of Object.entries(saved.procedures ?? {})) {
-    procedures[name] = { name, code: procedure.code ?? "", autoRun: procedure.autoRun ?? true };
+    procedures[checkName(name, "procedure")] = {
+      name,
+      code: procedure.code ?? "",
+      autoRun: procedure.autoRun ?? true,
+    };
   }
   // A window whose content did not come along would be an empty frame.
-  const pages: Record<string, PageSpec> = {};
+  const pages = dict<PageSpec>();
   for (const [name, page] of Object.entries(saved.pages ?? {})) {
+    checkName(name, "page layout");
     // A page keeps only the graphs that came along.
     const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
     pages[name] = { ...page, name, items };
@@ -179,8 +226,29 @@ export function buildState(
       window.name in procedures ||
       window.name in pages,
   );
+  const results = dict<AnalysisResult>();
+  for (const [name, result] of Object.entries(saved.results ?? {})) {
+    checkName(name, "result");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      results[name] = checkResult(result, name, null);
+    } catch {
+      continue;
+    }
+  }
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
-  return { ...state, graphs, tables, procedures, pages, timeZone, windows };
+  return {
+    ...state,
+    graphs,
+    tables,
+    procedures,
+    pages,
+    styles,
+    defaultStyle,
+    results,
+    timeZone,
+    windows,
+  };
 }
 
 /** The history as it is saved: bounded, and without oversized inline images. */

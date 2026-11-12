@@ -536,7 +536,7 @@ describe("wave types", () => {
     ).toThrow(/not a complex wave/);
     expect(
       echoPython({ op: "setWavePoints", name: "c", start: 0, values: [1, NaN], imag: [2, 0] }),
-    ).toBe('op.wave("c")[0:2] = [complex(1, 2), complex("nan", 0)]');
+    ).toBe('op.wave("c")[0:2] = [complex(1, 2), complex(float("nan"), 0)]');
   });
 
   it("changes a wave's type, keeping what the new type can hold", () => {

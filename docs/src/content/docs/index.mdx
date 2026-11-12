@@ -1,0 +1,44 @@
+---
+title: OresmePro
+description: 実験データをグラフにし、Python で解析するための OresmePro 公式ドキュメント。
+template: splash
+hero:
+  tagline: 実験データを読み込み、グラフにし、Python で解析する。
+  image:
+    file: ../../assets/sine.png
+    alt: OresmePro で表示した正弦波のグラフ
+  actions:
+    - text: はじめる
+      link: ./getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: Open OresmePro
+      link: ../
+      icon: external
+      variant: secondary
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <LinkCard
+    title="ユーザーガイド"
+    href="./guides/waves/"
+    description="Wave、グラフ、解析、Experiment の操作を調べる。"
+  />
+  <LinkCard
+    title="Python API"
+    href="./reference/"
+    description="公開関数、クラス、引数を検索する。"
+  />
+  <LinkCard
+    title="サンプル"
+    href="./examples/sine/"
+    description="正弦波、フィッティング、FFT、2D プロットを試す。"
+  />
+  <LinkCard
+    title="アーキテクチャ"
+    href="./architecture/"
+    description="Python カーネル、描画、保存の実装を読む。"
+  />
+</CardGrid>

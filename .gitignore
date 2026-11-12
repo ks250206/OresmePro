@@ -32,3 +32,6 @@ public/pyodide/
 # Playwright
 test-results/
 playwright-report/
+
+# Local assembly of the combined GitHub Pages artifact
+.pages/

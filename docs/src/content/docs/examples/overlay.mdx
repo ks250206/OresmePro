@@ -1,0 +1,13 @@
+---
+title: 複数の波形を重ねる
+sidebar:
+  order: 2
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/overlay.py?raw";
+import image from "../../../assets/overlay.png";
+
+正弦と余弦で同じ X Wave を共有します。余弦を破線にし、凡例で見分けます。
+
+<Example code={code} image={image} alt="位相の異なる2つの波形と凡例" />

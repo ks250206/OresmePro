@@ -1,5 +1,5 @@
 import type { MarkerShape } from "../doc/types";
-import type { Prim } from "./displayList";
+import { cssFont, type Prim } from "./displayList";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -180,7 +180,7 @@ export function drawPrims(ctx: Ctx, prims: readonly Prim[], dpr: number): void {
         break;
       }
       case "text":
-        ctx.font = `${prim.size}px ${prim.family}`;
+        ctx.font = cssFont(prim.size, prim.family, prim);
         ctx.fillStyle = prim.fill;
         ctx.textBaseline = "alphabetic";
         ctx.textAlign = "left";

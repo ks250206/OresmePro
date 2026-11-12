@@ -1,0 +1,44 @@
+---
+title: OresmePro
+description: Official documentation for the OresmePro data analysis workspace.
+template: splash
+hero:
+  tagline: Import experimental data, plot it, and analyze it in Python.
+  image:
+    file: ../../../assets/sine.png
+    alt: A sine wave plotted in OresmePro
+  actions:
+    - text: Get started
+      link: ./getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: Open OresmePro
+      link: ../../
+      icon: external
+      variant: secondary
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <LinkCard
+    title="User guide"
+    href="./guides/waves/"
+    description="Work with waves, graphs, analysis, and experiments."
+  />
+  <LinkCard
+    title="Python API"
+    href="./reference/"
+    description="Look up public functions, classes, and arguments."
+  />
+  <LinkCard
+    title="Examples"
+    href="./examples/sine/"
+    description="Try curve fitting, FFT, and two-dimensional plots."
+  />
+  <LinkCard
+    title="Architecture"
+    href="./architecture/"
+    description="Explore the Python kernel, rendering, and persistence."
+  />
+</CardGrid>

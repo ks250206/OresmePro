@@ -1,0 +1,13 @@
+---
+title: 左右の軸を使い分ける
+sidebar:
+  order: 8
+---
+
+import Example from "../../../components/Example.astro";
+import code from "../../../snippets/multiple-axes.py?raw";
+import image from "../../../assets/multiple-axes.png";
+
+電圧を左軸、電流を右側の `current_axis` に割り当てます。時刻は共通ですが、各 Y 軸の単位とスケールは独立です。
+
+<Example code={code} image={image} alt="左に電圧軸、右に電流軸を持つ2系列のグラフ" />

@@ -1,0 +1,17 @@
+---
+title: Use separate Y axes
+sidebar:
+  order: 8
+---
+
+import Example from "../../../../components/Example.astro";
+import code from "../../../../snippets/multiple-axes.py?raw";
+import image from "../../../../assets/multiple-axes.png";
+
+Use the left axis for voltage and the right-side `current_axis` for current. The traces share time while their Y scales and units are independent.
+
+<Example
+  code={code}
+  image={image}
+  alt="Two traces with voltage on the left axis and current on the right"
+/>

@@ -1,16 +1,37 @@
-import { useState } from "react";
-import { newMatrixPlot, pyName, runPython } from "../app/actions";
-import { parseConstraints, parseHold } from "../app/fitOptions";
+import { useRef, useState, type ReactNode } from "react";
+import {
+  applyLibraryStyle,
+  arrangeItems,
+  exportStyles,
+  importStyles,
+  libraryStyleCommands,
+  newMatrixPlot,
+  pyName,
+  runPython,
+} from "../app/actions";
+import { parseConstraints, parseHold, parseSpans } from "../app/fitOptions";
 import {
   doc,
+  graphSize,
   requestCommandLine,
   runGui,
+  showError,
   ui,
   useDoc,
+  useLibraryStyles,
   useUi,
   type DialogRequest,
 } from "../app/session";
-import type { Command } from "../core/doc/commands";
+import { browserLibrary, sameStyle } from "../app/styleLibrary";
+import { GRID_GAP, GRID_MARGIN, GRID_PRESETS, readingOrder } from "../core/doc/arrange";
+import { checkName, uniqueName, type Command } from "../core/doc/commands";
+import {
+  nameProblems,
+  parseShape,
+  planMakeWaves,
+  splitNames,
+  wavePath,
+} from "../core/doc/makeWaves";
 import { graphScript } from "../core/doc/recreate";
 import {
   ANCHORS,
@@ -19,6 +40,7 @@ import {
   COMPLEX_PARTS,
   DEFAULT_FONT_FAMILY,
   GRID_MODES,
+  LABEL_STYLES,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
@@ -33,11 +55,28 @@ import {
   type ErrorSource,
   type GraphSpec,
   type ImageSpec,
+  type LabelStyle,
+  type StyleSpec,
   type TraceStyle,
   type WaveType,
 } from "../core/doc/types";
+import { traceX } from "../core/plot/layout";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
-import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
+import {
+  Button,
+  Checkbox,
+  Dialog,
+  Field,
+  MarkupButtons,
+  MarkupHelp,
+  NameList,
+  Select,
+  TextInput,
+} from "./controls";
+import { ExperimentsDialog } from "./ExperimentsDialog";
+import { ImportDialog } from "./ImportDialog";
+import { NewGraphDialog } from "./NewGraphDialog";
+import { ResultsDialog } from "./ResultsDialog";
 
 const close = () => ui.set({ dialog: null });
 
@@ -181,37 +220,6 @@ function PlaneFields({
   );
 }
 
-function NewGraphDialog({ append }: { append?: string }) {
-  const order = useNumericWaves(1);
-  const graph = useDoc((state) => (append ? state.graphs[append] : undefined));
-  const preselected = useUi((state) => state.selectedWaves);
-  const [y, setY] = useState<string[]>(() => preselected.filter((name) => order.includes(name)));
-  const [x, setX] = useState(CALCULATED);
-  const [axes, setAxes] = useState({ vAxis: "left", hAxis: "bottom" });
-  const xWave = x === CALCULATED ? null : x;
-  return (
-    <Dialog
-      title={append ? `Append Traces to ${append}` : "New Graph"}
-      onClose={close}
-      submitDisabled={y.length === 0}
-      onSubmit={() =>
-        submit(
-          append
-            ? { op: "appendTraces", graph: append, y, x: xWave, ...axes }
-            : { op: "display", y, x: xWave },
-        )
-      }
-    >
-      <div className="text-muted">Y waves</div>
-      <NameList label="Y waves" names={order} selected={y} onChange={setY} />
-      <Field label="X wave">
-        <XWaveSelect value={x} onChange={setX} categories />
-      </Field>
-      {graph ? <AxisSelects graph={graph} {...axes} onChange={setAxes} /> : null}
-    </Dialog>
-  );
-}
-
 function ColorTableSelect({
   value,
   onChange,
@@ -316,6 +324,183 @@ function NewTableDialog() {
     >
       <div className="text-muted">Columns</div>
       <NameList label="Columns" names={order} selected={waves} onChange={setWaves} />
+    </Dialog>
+  );
+}
+
+const DIMENSIONS = ["Rows", "Columns", "Layers", "Chunks"] as const;
+
+/** Makes empty waves, several alike at once, as Igor's Make Waves dialog does. */
+function MakeWavesDialog({ folder: requested = "" }: { folder?: string }) {
+  const state = useDoc((current) => current);
+  const [fields, setFields] = useState(() => {
+    const folder = state.folders.includes(requested) ? requested : "";
+    return {
+      folder,
+      names: uniqueName("wave", (name) => wavePath(folder, name) in state.waves),
+      sizes: ["128", "", "", ""],
+      type: "float64" as WaveType,
+      x0: "0",
+      dx: "1",
+      xUnit: "",
+      unit: "",
+      overwrite: false,
+      edit: false,
+    };
+  });
+  const set = (change: Partial<typeof fields>) => setFields({ ...fields, ...change });
+  const names = splitNames(fields.names);
+  const nameIssues = nameProblems(state, names, fields.folder, fields.overwrite);
+  const shape = parseShape(fields.sizes);
+  const x0 = parseNumber(fields.x0);
+  const dx = parseNumber(fields.dx);
+  const problems = [
+    ...nameIssues.filter((problem): problem is string => problem !== null),
+    ...(typeof shape === "string" ? [shape] : []),
+    ...(x0 === null ? ["X start must be a number."] : []),
+    ...(dx === null || dx === 0 ? ["X step must be a number other than 0."] : []),
+  ];
+  const make = () => {
+    let plan: ReturnType<typeof planMakeWaves>;
+    try {
+      plan = planMakeWaves(doc.getState(), {
+        names,
+        folder: fields.folder,
+        shape: shape as readonly number[],
+        type: fields.type,
+        x0: x0!,
+        dx: dx!,
+        xUnit: fields.xUnit,
+        unit: fields.unit,
+        overwrite: fields.overwrite,
+        edit: fields.edit,
+      });
+    } catch (error) {
+      showError("The waves were not made", error);
+      return;
+    }
+    if (runGui(plan.commands, { echo: plan.echo }) !== undefined) close();
+  };
+  return (
+    <Dialog
+      title="Make Waves"
+      width={440}
+      onClose={close}
+      submitDisabled={names.length === 0 || problems.length > 0}
+      onSubmit={make}
+    >
+      <Field label="Names">
+        <TextInput
+          aria-label="Names"
+          aria-invalid={nameIssues.some((problem) => problem !== null)}
+          className="flex-1"
+          value={fields.names}
+          onChange={(event) => set({ names: event.target.value })}
+        />
+      </Field>
+      <div className="-mt-1 pl-[104px] text-[11px] text-muted">
+        Several at once: separate them with commas or spaces.
+      </div>
+      <Field label="Points" group>
+        {DIMENSIONS.map((label, index) => (
+          <label key={label} className="flex flex-col items-center gap-0.5">
+            <TextInput
+              aria-label={label}
+              aria-invalid={typeof shape === "string" && shape.startsWith(label)}
+              className="w-[60px] text-right"
+              placeholder={index === 0 ? "" : "0"}
+              value={fields.sizes[index]}
+              onChange={(event) =>
+                set({
+                  sizes: fields.sizes.map((size, at) => (at === index ? event.target.value : size)),
+                })
+              }
+            />
+            <span className="text-[10.5px] text-muted">{label}</span>
+          </label>
+        ))}
+      </Field>
+      <Field label="Type">
+        <Select
+          aria-label="Type"
+          value={fields.type}
+          onChange={(event) => set({ type: event.target.value as WaveType })}
+        >
+          {WAVE_TYPES.map((item) => (
+            <option key={item}>{item}</option>
+          ))}
+        </Select>
+        <span className="truncate text-muted">{TYPE_NOTES[fields.type]}</span>
+      </Field>
+      <Field label="X start, step">
+        <TextInput
+          aria-label="X start"
+          aria-invalid={x0 === null}
+          className="w-24"
+          value={fields.x0}
+          onChange={(event) => set({ x0: event.target.value })}
+        />
+        <TextInput
+          aria-label="X step"
+          aria-invalid={dx === null || dx === 0}
+          className="w-24"
+          value={fields.dx}
+          onChange={(event) => set({ dx: event.target.value })}
+        />
+      </Field>
+      <Field label="X unit">
+        <TextInput
+          aria-label="X unit"
+          className="w-20"
+          value={fields.xUnit}
+          onChange={(event) => set({ xUnit: event.target.value })}
+        />
+      </Field>
+      <Field label="Data unit">
+        <TextInput
+          aria-label="Data unit"
+          className="w-20"
+          value={fields.unit}
+          onChange={(event) => set({ unit: event.target.value })}
+        />
+      </Field>
+      <Field label="Data folder">
+        <Select
+          aria-label="Data folder"
+          value={fields.folder}
+          onChange={(event) => set({ folder: event.target.value })}
+        >
+          <option value="">root</option>
+          {state.folders.map((folder) => (
+            <option key={folder} value={folder}>
+              {folder}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex flex-col gap-1 pl-[104px]">
+        <Checkbox
+          label="Overwrite existing waves"
+          checked={fields.overwrite}
+          onChange={(event) => set({ overwrite: event.target.checked })}
+        />
+        <Checkbox
+          label="Edit in a table"
+          checked={fields.edit}
+          onChange={(event) => set({ edit: event.target.checked })}
+        />
+      </div>
+      {problems.length > 0 ? (
+        <ul
+          role="status"
+          aria-label="Problems"
+          className="m-0 list-none p-0 pl-[104px] text-danger"
+        >
+          {problems.map((problem, index) => (
+            <li key={index}>{problem}</li>
+          ))}
+        </ul>
+      ) : null}
     </Dialog>
   );
 }
@@ -651,6 +836,9 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const [max, setMax] = useState<string | null>(null);
   const [span, setSpan] = useState<[string, string] | null>(null);
   const [step, setStep] = useState<string | null>(null);
+  const [labelSize, setLabelSize] = useState<string | null>(null);
+  const [tickSize, setTickSize] = useState<string | null>(null);
+  const labelField = useRef<HTMLInputElement>(null);
   const base = graph?.axes[axis];
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -681,6 +869,17 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const parsedStep = step === null ? undefined : step.trim() === "" ? null : parseNumber(step);
   const stepInvalid = step !== null && step.trim() !== "" && !(parsedStep! > 0);
   if (parsedStep !== undefined && !stepInvalid) props.tickStep = parsedStep;
+  // Font sizes: empty is the graph's own size.
+  const fontSize = (text: string | null) =>
+    text === null ? undefined : text.trim() === "" ? null : parseNumber(text);
+  const sizeInvalid = (text: string | null, size: number | null | undefined) =>
+    text !== null && text.trim() !== "" && !(size !== null && size! >= 4 && size! <= 96);
+  const parsedLabelSize = fontSize(labelSize);
+  const labelSizeInvalid = sizeInvalid(labelSize, parsedLabelSize);
+  if (parsedLabelSize !== undefined && !labelSizeInvalid) props.labelSize = parsedLabelSize;
+  const parsedTickSize = fontSize(tickSize);
+  const tickSizeInvalid = sizeInvalid(tickSize, parsedTickSize);
+  if (parsedTickSize !== undefined && !tickSizeInvalid) props.tickLabelSize = parsedTickSize;
   const formats: [string, string][] = [
     ["", "Automatic"],
     [".0f", "0 decimals"],
@@ -702,13 +901,22 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
     setMax(null);
     setSpan(null);
     setStep(null);
+    setLabelSize(null);
+    setTickSize(null);
   };
 
   return (
     <Dialog
       title={`Modify Axis — ${graphName}`}
       onClose={close}
-      submitDisabled={invalid || spanInvalid || stepInvalid || Object.keys(props).length === 0}
+      submitDisabled={
+        invalid ||
+        spanInvalid ||
+        stepInvalid ||
+        labelSizeInvalid ||
+        tickSizeInvalid ||
+        Object.keys(props).length === 0
+      }
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
     >
       <Field label="Axis">
@@ -727,6 +935,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
       </Field>
       <Field label="Label">
         <TextInput
+          ref={labelField}
           aria-label="Label"
           className="flex-1"
           disabled={current.label === null}
@@ -739,6 +948,33 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           checked={current.label === null}
           onChange={(event) => set({ label: event.target.checked ? null : "" })}
         />
+      </Field>
+      <div className="pl-[104px]">
+        <MarkupButtons
+          field={labelField}
+          value={current.label ?? ""}
+          onChange={(label) => set({ label })}
+          disabled={current.label === null}
+        />
+      </div>
+      <Field label="Label font" group>
+        <TextInput
+          aria-label="Label size"
+          aria-invalid={labelSizeInvalid}
+          className="w-14"
+          placeholder={String(graph.fontSize)}
+          value={labelSize ?? (current.labelSize === null ? "" : String(current.labelSize))}
+          onChange={(event) => setLabelSize(event.target.value)}
+        />
+        <Select
+          aria-label="Label style"
+          value={current.labelStyle}
+          onChange={(event) => set({ labelStyle: event.target.value as LabelStyle })}
+        >
+          {LABEL_STYLES.map((style) => (
+            <option key={style}>{style}</option>
+          ))}
+        </Select>
       </Field>
       <Field label="Range">
         <TextInput
@@ -818,6 +1054,15 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
             </option>
           ))}
         </Select>
+        <span className="text-muted">size</span>
+        <TextInput
+          aria-label="Tick label size"
+          aria-invalid={tickSizeInvalid}
+          className="w-14"
+          placeholder={String(graph.fontSize)}
+          value={tickSize ?? (current.tickLabelSize === null ? "" : String(current.tickLabelSize))}
+          onChange={(event) => setTickSize(event.target.value)}
+        />
       </Field>
       <Field label="Mirror">
         <Select
@@ -864,8 +1109,8 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         />
         <span className="text-muted">% of the plot area</span>
       </Field>
-      <div className="pl-[104px] text-[11px] text-muted">
-        In labels, <code>^{"{...}"}</code> is a superscript and <code>_{"{...}"}</code> a subscript.
+      <div className="pl-[104px]">
+        <MarkupHelp />
       </div>
     </Dialog>
   );
@@ -1149,6 +1394,7 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
   const [text, setText] = useState(existing?.text ?? "");
   const [anchor, setAnchor] = useState<string>(existing?.anchor ?? "RT");
   const [frame, setFrame] = useState(existing?.frame ?? true);
+  const field = useRef<HTMLTextAreaElement>(null);
   if (annotation && !existing) return null;
   const kind = existing?.kind ?? "text";
   const hint =
@@ -1156,9 +1402,7 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
       ? "Leave empty to list every trace. \\s(traceName) draws a trace's symbol."
       : kind === "tag"
         ? "{x}, {y} and {point} stand for the point's values. Leave empty to show x, y."
-        : kind === "colorscale"
-          ? ""
-          : "^{...} is a superscript and _{...} a subscript.";
+        : "";
   const props: Record<string, unknown> = {};
   if (existing) {
     if (text !== existing.text) props.text = text;
@@ -1182,15 +1426,20 @@ function AddTextDialog({ graph, annotation }: { graph: string; annotation?: stri
       }
     >
       {kind === "colorscale" ? null : (
-        <textarea
-          aria-label="Text"
-          autoFocus
-          rows={4}
-          spellCheck={false}
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-        />
+        <>
+          <textarea
+            ref={field}
+            aria-label="Text"
+            autoFocus
+            rows={4}
+            spellCheck={false}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+          />
+          <MarkupButtons field={field} value={text} onChange={setText} />
+          <MarkupHelp />
+        </>
       )}
       {hint ? <div className="text-[11px] text-muted">{hint}</div> : null}
       <Field label={kind === "tag" ? "Box" : "Position"}>
@@ -1454,6 +1703,316 @@ function GraphScriptDialog({ graph }: { graph: string }) {
   );
 }
 
+/** What a style holds, in a few words. */
+function describeStyle(style: StyleSpec): string {
+  const parts: string[] = [];
+  const { graph, size, axes, traces } = style;
+  if (graph) {
+    const family =
+      graph.fontFamily === undefined
+        ? ""
+        : (FONTS.find(([, value]) => value === graph.fontFamily)?.[0] ?? graph.fontFamily);
+    const fontSize = graph.fontSize === undefined ? "" : `${graph.fontSize} px`;
+    parts.push(`font ${[fontSize, family].filter(Boolean).join(" ")}`);
+  }
+  if (axes) parts.push(`axes ${Object.keys(axes).join(", ")}`);
+  if (traces) parts.push(`${traces.length} trace look${traces.length === 1 ? "" : "s"}`);
+  if (size) parts.push(`size ${size.width} × ${size.height}`);
+  return parts.join(" · ") || "nothing yet";
+}
+
+const isStyleName = (name: string): boolean => {
+  try {
+    checkName(name, "style");
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Runs something on the browser's library, telling the user if the browser would not. */
+function inLibrary(action: () => void): void {
+  try {
+    action();
+  } catch (error) {
+    showError("The style library did not change", error);
+  }
+}
+
+type StylePlace = "experiment" | "library";
+
+/**
+ * The styles of the experiment and of the browser's library: save a graph's
+ * look as one, give it to graphs, choose the one new graphs get, and move
+ * styles between the experiment, the library and files.
+ */
+function StylesDialog({ graph: initial }: { graph?: string }) {
+  const styles = useDoc((state) => state.styles);
+  const defaultStyle = useDoc((state) => state.defaultStyle);
+  const windows = useDoc((state) => state.windows);
+  const graph = useDoc((state) => (initial && state.graphs[initial] ? initial : null));
+  const current = useDoc((state) => (graph ? state.graphs[graph]!.style : null));
+  const width = useDoc((state) => (graph ? graphSize(state, graph).width : 0));
+  const height = useDoc((state) => (graph ? graphSize(state, graph).height : 0));
+  const library = useLibraryStyles();
+  const graphNames = windows.filter((window) => window.kind === "graph").map((w) => w.name);
+
+  const [name, setName] = useState(
+    () => current ?? uniqueName("style", (taken) => taken in doc.getState().styles),
+  );
+  const [withSize, setWithSize] = useState(false);
+  const [picked, setPicked] = useState<{ place: StylePlace; names: string[] }>(() => ({
+    place: "experiment",
+    names: current ? [current] : [],
+  }));
+  const [targets, setTargets] = useState<string[]>(graph ? [graph] : []);
+  const [renaming, setRenaming] = useState<string | null>(null);
+
+  const source = (place: StylePlace) => (place === "experiment" ? styles : library);
+  const chosen = picked.names.filter((item) => item in source(picked.place));
+  const one = chosen.length === 1 ? chosen[0]! : null;
+  const style = one ? source(picked.place)[one] : undefined;
+  const pick = (place: StylePlace) => (names: string[]) => {
+    setPicked({ place, names });
+    setRenaming(null);
+  };
+
+  const save = () => {
+    if (!graph) return;
+    if (name in styles && !window.confirm(`Replace the style ${name}?`)) return;
+    const command: Command = { op: "saveStyle", name, graph, ...(withSize ? { size: true } : {}) };
+    if (runGui(command) !== undefined) pick("experiment")([name]);
+  };
+  const apply = (list: readonly string[]) => {
+    if (!one || list.length === 0) return;
+    if (picked.place === "library") applyLibraryStyle(one, list);
+    else runGui({ op: "applyStyle", style: one, graphs: list });
+  };
+  const rename = () => {
+    if (!one || renaming === null) return;
+    const newName = renaming.trim();
+    if (picked.place === "experiment") {
+      if (runGui({ op: "renameStyle", name: one, newName }) === undefined) return;
+    } else {
+      let done = false;
+      inLibrary(() => {
+        browserLibrary().rename(one, newName);
+        done = true;
+      });
+      if (!done) return;
+    }
+    pick(picked.place)([newName]);
+  };
+  const remove = () => {
+    if (picked.place === "experiment") {
+      runGui(chosen.map((item): Command => ({ op: "removeStyle", name: item })));
+    } else if (
+      window.confirm(`Delete ${chosen.join(", ")} from the library? This cannot be undone.`)
+    ) {
+      inLibrary(() => {
+        for (const item of chosen) browserLibrary().remove(item);
+      });
+    }
+  };
+  const toLibrary = () =>
+    inLibrary(() => {
+      for (const item of chosen) {
+        const there = library[item];
+        if (
+          there &&
+          !sameStyle(there, styles[item]!) &&
+          !window.confirm(`The library has a style ${item} already. Replace it?`)
+        ) {
+          continue;
+        }
+        browserLibrary().put(item, styles[item]!);
+      }
+    });
+  const toExperiment = () => {
+    const commands: Command[] = [];
+    for (const item of chosen) commands.push(...(libraryStyleCommands(item) ?? []));
+    runGui(commands);
+  };
+
+  const list = (place: StylePlace, title: string, buttons: ReactNode) => {
+    const names = Object.keys(source(place));
+    const selected = picked.place === place ? chosen : [];
+    const renamingHere = renaming !== null && picked.place === place && one !== null;
+    return (
+      <div role="group" aria-label={title} className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="text-muted">{title}</div>
+        <NameList
+          label={title}
+          names={names}
+          selected={selected}
+          onChange={pick(place)}
+          height={120}
+        />
+        {renamingHere ? (
+          <div className="flex gap-1.5">
+            <TextInput
+              aria-label="New name"
+              aria-invalid={!isStyleName(renaming.trim())}
+              autoFocus
+              className="min-w-0 flex-1"
+              value={renaming}
+              onChange={(event) => setRenaming(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  rename();
+                }
+              }}
+            />
+            <Button disabled={!isStyleName(renaming.trim())} onClick={rename}>
+              Rename
+            </Button>
+            <Button onClick={() => setRenaming(null)}>Cancel</Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              disabled={selected.length !== 1}
+              onClick={() => setRenaming(selected[0] ?? null)}
+            >
+              Rename…
+            </Button>
+            <Button disabled={selected.length === 0} onClick={remove}>
+              Delete
+            </Button>
+            {buttons}
+            <Button
+              disabled={selected.length === 0}
+              onClick={() =>
+                exportStyles(selected.map((item) => [item, source(place)[item]!] as const))
+              }
+            >
+              Export…
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const libraryMissing = !browserLibrary().available;
+  return (
+    <Dialog title="Graph Styles" onClose={close} width={660}>
+      {graph ? (
+        <div role="group" aria-label="Save style" className="flex flex-col gap-1.5">
+          <Field label={`Save ${graph} as`} group>
+            <TextInput
+              aria-label="Style name"
+              aria-invalid={!isStyleName(name)}
+              className="w-36"
+              value={name}
+              onChange={(event) => setName(event.target.value.trim())}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && isStyleName(name)) {
+                  event.preventDefault();
+                  save();
+                }
+              }}
+            />
+            <Checkbox
+              label={`Include size (${width} × ${height})`}
+              checked={withSize}
+              onChange={(event) => setWithSize(event.target.checked)}
+            />
+            <Button disabled={!isStyleName(name)} onClick={save}>
+              Save
+            </Button>
+          </Field>
+          <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+            A style keeps fonts, ticks, mirror axes, grids and each trace&apos;s color, line and
+            markers; not ranges, labels or data.
+          </div>
+        </div>
+      ) : null}
+      <div className="flex gap-3 border-t border-line-soft pt-2">
+        {list(
+          "experiment",
+          "In this experiment",
+          <Button
+            disabled={chosen.length === 0 || picked.place !== "experiment" || libraryMissing}
+            onClick={toLibrary}
+          >
+            To Library
+          </Button>,
+        )}
+        {list(
+          "library",
+          "Library (this browser)",
+          <>
+            <Button
+              disabled={chosen.length === 0 || picked.place !== "library"}
+              onClick={toExperiment}
+            >
+              To Experiment
+            </Button>
+            <Button disabled={libraryMissing} onClick={importStyles}>
+              Import…
+            </Button>
+          </>,
+        )}
+      </div>
+      {libraryMissing ? (
+        <div className="text-[11px] text-muted">
+          This browser keeps no library: its storage is turned off. Export styles to keep them.
+        </div>
+      ) : null}
+      <div className="text-[11px] text-muted">
+        {one && style
+          ? `${one}: ${describeStyle(style)}`
+          : "Select a style to see what it holds and to apply it."}
+      </div>
+      <div className="flex flex-col gap-1.5 border-t border-line-soft pt-2">
+        <Field label="New graphs get">
+          <Select
+            aria-label="Default style"
+            value={defaultStyle ?? ""}
+            onChange={(event) =>
+              runGui({ op: "setDefaultStyle", name: event.target.value || null })
+            }
+          >
+            <option value="">No style</option>
+            {Object.keys(styles).map((item) => (
+              <option key={item}>{item}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Apply to" group>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <NameList
+              label="Graphs"
+              names={graphNames}
+              selected={targets.filter((item) => graphNames.includes(item))}
+              onChange={setTargets}
+              height={84}
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {graph ? (
+                <Button disabled={!one} onClick={() => apply([graph])}>
+                  Apply to {graph}
+                </Button>
+              ) : null}
+              <Button
+                disabled={!one || targets.length === 0}
+                onClick={() => apply(targets.filter((item) => graphNames.includes(item)))}
+              >
+                Apply to Selected Graphs
+              </Button>
+              <Button disabled={!one || graphNames.length === 0} onClick={() => apply(graphNames)}>
+                Apply to All Graphs
+              </Button>
+            </div>
+          </div>
+        </Field>
+      </div>
+    </Dialog>
+  );
+}
+
 /** Adds a block of text to a page layout, or changes one that is there. */
 function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
   const existing = useDoc((state) =>
@@ -1461,6 +2020,7 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
   );
   const [text, setText] = useState(existing?.text ?? "");
   const [size, setSize] = useState(String(existing?.size ?? 12));
+  const field = useRef<HTMLTextAreaElement>(null);
   if (item && !existing) return null;
   const points = parseNumber(size);
   const invalid = points === null || points < 4 || points > 200;
@@ -1485,6 +2045,7 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
       }
     >
       <textarea
+        ref={field}
         aria-label="Text"
         autoFocus
         rows={3}
@@ -1493,6 +2054,8 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
         onChange={(event) => setText(event.target.value)}
         className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
       />
+      <MarkupButtons field={field} value={text} onChange={setText} />
+      <MarkupHelp />
       <Field label="Size">
         <TextInput
           aria-label="Size"
@@ -1503,6 +2066,128 @@ function PageTextDialog({ layout, item }: { layout: string; item?: string }) {
         />
         <span className="text-muted">points</span>
       </Field>
+    </Dialog>
+  );
+}
+
+/**
+ * Puts graphs of a page layout in a grid of rows and columns that fills the
+ * paper inside its margins: the selected graphs, or all of them.
+ */
+function ArrangeLayoutDialog({ layout, items }: { layout: string; items: readonly string[] }) {
+  const page = useDoc((state) =>
+    Object.hasOwn(state.pages, layout) ? state.pages[layout] : undefined,
+  );
+  const [rows, setRows] = useState("2");
+  const [columns, setColumns] = useState("2");
+  const [margin, setMargin] = useState(String(GRID_MARGIN));
+  const [across, setAcross] = useState(String(GRID_GAP));
+  const [down, setDown] = useState(String(GRID_GAP));
+  if (!page) return null;
+  const count = (text: string) => {
+    const value = parseNumber(text);
+    return value !== null && Number.isInteger(value) && value >= 1 && value <= 20 ? value : null;
+  };
+  const points = (text: string) => {
+    const value = parseNumber(text);
+    return value !== null && value >= 0 ? value : null;
+  };
+  const values = {
+    rows: count(rows),
+    columns: count(columns),
+    margin: points(margin),
+    across: points(across),
+    down: points(down),
+  };
+  const valid = Object.values(values).every((value) => value !== null);
+  // The order the cells are filled in, as Python would take them.
+  const graphs = page.items.filter((item) => item.kind === "graph");
+  const order =
+    items.length > 0 ? [...items] : readingOrder(graphs).map((index) => graphs[index]!.name);
+  const cells = (values.rows ?? 0) * (values.columns ?? 0);
+  const leftOut = valid ? order.slice(cells) : [];
+  const number = (
+    label: string,
+    value: string,
+    set: (text: string) => void,
+    invalid: boolean,
+    unit?: string,
+  ) => (
+    <Field label={label}>
+      <TextInput
+        aria-label={label}
+        aria-invalid={invalid}
+        className="w-16"
+        value={value}
+        onChange={(event) => set(event.target.value)}
+      />
+      {unit ? <span className="text-muted">{unit}</span> : null}
+    </Field>
+  );
+  return (
+    <Dialog
+      title={`Arrange in Grid — ${layout}`}
+      onClose={close}
+      submitDisabled={!valid}
+      onSubmit={() => {
+        const done = arrangeItems(layout, {
+          action: "arrange",
+          items: items.length > 0 ? items : null,
+          rows: values.rows!,
+          columns: values.columns!,
+          margin: values.margin!,
+          gap: [values.across!, values.down!],
+        });
+        if (done) close();
+      }}
+    >
+      <Field label="Presets" group>
+        {GRID_PRESETS.map(([presetRows, presetColumns]) => (
+          <Button
+            key={`${presetRows}x${presetColumns}`}
+            className="!px-2"
+            aria-pressed={values.rows === presetRows && values.columns === presetColumns}
+            onClick={() => {
+              setRows(String(presetRows));
+              setColumns(String(presetColumns));
+            }}
+          >
+            {presetRows} × {presetColumns}
+          </Button>
+        ))}
+      </Field>
+      {number("Rows", rows, setRows, values.rows === null)}
+      {number("Columns", columns, setColumns, values.columns === null)}
+      {number("Margin", margin, setMargin, values.margin === null, "points around the grid")}
+      <Field label="Gaps" group>
+        <TextInput
+          aria-label="Gap between columns"
+          aria-invalid={values.across === null}
+          className="w-16"
+          value={across}
+          onChange={(event) => setAcross(event.target.value)}
+        />
+        <span className="text-muted">across,</span>
+        <TextInput
+          aria-label="Gap between rows"
+          aria-invalid={values.down === null}
+          className="w-16"
+          value={down}
+          onChange={(event) => setDown(event.target.value)}
+        />
+        <span className="text-muted">down, in points</span>
+      </Field>
+      <p className="m-0 pl-[104px] text-[11px] leading-relaxed text-muted">
+        {items.length > 0
+          ? `The ${order.length} selected graph${order.length === 1 ? "" : "s"}`
+          : `All ${order.length} graph${order.length === 1 ? "" : "s"} of the page`}{" "}
+        fill the cells row by row, in the order they read on the page now. Text stays where it is.
+        {leftOut.length > 0
+          ? ` ${leftOut.join(", ")} ${leftOut.length === 1 ? "does" : "do"} not fit and ${
+              leftOut.length === 1 ? "stays" : "stay"
+            } where ${leftOut.length === 1 ? "it is" : "they are"}.`
+          : ""}
+      </p>
     </Dialog>
   );
 }
@@ -1595,6 +2280,8 @@ const FIT_FUNCTIONS: [string, string][] = [
   ["poly4", "K0 + K1·x + K2·x² + K3·x³"],
   ["gauss", "y0 + A·exp(−((x−x0)/width)²)"],
   ["lor", "y0 + A/((x−x0)² + B)"],
+  ["voigt", "y0 + A·V(x−x0): Gaussian (gwidth) ∗ Lorentzian (lwidth), height A"],
+  ["pseudo_voigt", "y0 + A·(eta·L + (1−eta)·G), half width at half max: width"],
   ["exp", "y0 + A·exp(−x/tau)"],
   ["dblexp", "y0 + A1·exp(−x/tau1) + A2·exp(−x/tau2)"],
   ["sin", "y0 + A·sin(f·x + phi)"],
@@ -1602,11 +2289,26 @@ const FIT_FUNCTIONS: [string, string][] = [
   ["sigmoid", "base + max/(1 + exp((xhalf−x)/rate))"],
 ];
 
+/** Constraints a function starts with in the dialog: the range in which its parameters mean anything. */
+const FIT_CONSTRAINTS: Record<string, string> = { pseudo_voigt: "0 <= eta <= 1" };
+
+/**
+ * The frontmost graph showing a wave, which is the one Python looks at for
+ * its cursors, and whether both cursors are on it.
+ */
+function useGraphShowing(wave: string): { graph: GraphSpec | undefined; hasCursors: boolean } {
+  const graphs = useDoc((state) => state.graphs);
+  const windows = useDoc((state) => state.windows);
+  const graph = [...windows]
+    .reverse()
+    .map((window) => graphs[window.name])
+    .find((candidate) => candidate?.traces.some((trace) => trace.y === wave));
+  return { graph, hasCursors: Boolean(graph?.cursors.A && graph.cursors.B) };
+}
+
 /** Builds an `op.fit(...)` call; the fit itself runs in Python and reports in the history. */
 function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const waves = useNumericWaves(1);
-  const graphs = useDoc((state) => state.graphs);
-  const windows = useDoc((state) => state.windows);
   const preselected = useUi((state) => state.selectedWaves);
   const [func, setFunc] = useState("gauss");
   const [y, setY] = useState(
@@ -1619,15 +2321,13 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const [weight, setWeight] = useState("");
   const [residuals, setResiduals] = useState(false);
   const [band, setBand] = useState(false);
+  const [leaveOut, setLeaveOut] = useState("");
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
-  const graph = [...windows]
-    .reverse()
-    .map((window) => graphs[window.name])
-    .find((candidate) => candidate?.traces.some((trace) => trace.y === y));
-  const hasCursors = Boolean(graph?.cursors.A && graph.cursors.B);
+  const { graph, hasCursors } = useGraphShowing(y);
   const formula = FIT_FUNCTIONS.find(([name]) => name === func)?.[1] ?? "";
   const held = parseHold(hold);
   const limits = parseConstraints(constraints);
+  const excluded = parseSpans(leaveOut);
   const args = [
     pyName(func),
     pyName(y),
@@ -1636,6 +2336,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     ...(limits ? [`bounds=${limits}`] : []),
     ...(weight === "" ? [] : [`sigma=${pyName(weight)}`]),
     ...(useCursors && hasCursors ? ["cursors=True"] : []),
+    ...(excluded ? [`exclude=${excluded}`] : []),
     ...(residuals ? ["residuals=True"] : []),
     ...(band ? ["band=0.95"] : []),
   ];
@@ -1643,7 +2344,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     <Dialog
       title="Curve Fitting"
       onClose={close}
-      submitDisabled={y === "" || held === null || limits === null}
+      submitDisabled={y === "" || held === null || limits === null || excluded === null}
       onSubmit={() => {
         runPython(`op.fit(${args.join(", ")})`);
         close();
@@ -1653,7 +2354,14 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
         <Select
           aria-label="Function"
           value={func}
-          onChange={(event) => setFunc(event.target.value)}
+          onChange={(event) => {
+            const next = event.target.value;
+            // The constraints a function brings go with it, unless they have been edited.
+            if (constraints.trim() === "" || constraints === FIT_CONSTRAINTS[func]) {
+              setConstraints(FIT_CONSTRAINTS[next] ?? "");
+            }
+            setFunc(next);
+          }}
         >
           {FIT_FUNCTIONS.map(([name]) => (
             <option key={name}>{name}</option>
@@ -1725,6 +2433,16 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
           onChange={(event) => setUseCursors(event.target.checked)}
         />
       </Field>
+      <Field label="Leave out">
+        <TextInput
+          aria-label="Leave out"
+          aria-invalid={excluded === null}
+          className="flex-1"
+          placeholder="spans of X not to fit: 5..7, 15"
+          value={leaveOut}
+          onChange={(event) => setLeaveOut(event.target.value)}
+        />
+      </Field>
       <Field label="Also make" group>
         <Checkbox
           label="Residuals"
@@ -1751,8 +2469,8 @@ interface AnalysisField {
   key: string;
   label: string;
   initial: string;
-  /** integer and number are typed in; anything else is a list of choices. */
-  kind: "integer" | "number" | readonly string[];
+  /** integer and number are typed in, xwave picks an X wave; anything else is a list of choices. */
+  kind: "integer" | "number" | "xwave" | readonly string[];
   /** May be left empty, which leaves the argument out. */
   optional?: boolean;
   hint?: string;
@@ -1763,8 +2481,16 @@ const ANALYSES: Record<
   { title: string; dimensions?: 1 | 2; fields?: AnalysisField[]; note?: string }
 > = {
   stats: { title: "Wave Stats" },
-  differentiate: { title: "Differentiate" },
-  integrate: { title: "Integrate" },
+  differentiate: {
+    title: "Differentiate",
+    fields: [{ key: "x", label: "X data", initial: CALCULATED, kind: "xwave" }],
+    note: "Against an X wave, the result has one point per point of the data: plot it against the same X wave.",
+  },
+  integrate: {
+    title: "Integrate",
+    fields: [{ key: "x", label: "X data", initial: CALCULATED, kind: "xwave" }],
+    note: "Against an X wave, the result has one point per point of the data: plot it against the same X wave.",
+  },
   smooth: {
     title: "Smooth",
     fields: [{ key: "n", label: "Points", initial: "5", kind: "integer" }],
@@ -1791,7 +2517,12 @@ const ANALYSES: Record<
   fit_peaks: {
     title: "Multi-peak Fit",
     fields: [
-      { key: "shape", label: "Peak shape", initial: "gauss", kind: ["gauss", "lor"] },
+      {
+        key: "shape",
+        label: "Peak shape",
+        initial: "gauss",
+        kind: ["gauss", "lor", "voigt", "pseudo_voigt"],
+      },
       {
         key: "baseline",
         label: "Baseline",
@@ -1854,6 +2585,10 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
   const bad = new Set<string>();
   for (const field of fields) {
     const text = (values[field.key] ?? "").trim();
+    if (field.kind === "xwave") {
+      if (text !== CALCULATED) args.push(`${field.key}=${pyName(text)}`);
+      continue;
+    }
     if (typeof field.kind !== "string") {
       // The Python None is the one choice that is not a string.
       args.push(`${field.key}=${text === "None" ? "None" : JSON.stringify(text)}`);
@@ -1898,7 +2633,12 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
       </Field>
       {fields.map((field) => (
         <Field key={field.key} label={field.label}>
-          {typeof field.kind === "string" ? (
+          {field.kind === "xwave" ? (
+            <XWaveSelect
+              value={values[field.key] ?? CALCULATED}
+              onChange={(value) => setValues({ ...values, [field.key]: value })}
+            />
+          ) : typeof field.kind === "string" ? (
             <TextInput
               aria-label={field.label}
               aria-invalid={bad.has(field.key)}
@@ -1927,6 +2667,319 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
   );
 }
 
+/** Python's literal for a number typed into a field, or null if it is not one. */
+const pyNumber = (text: string): string | null => {
+  const value = parseNumber(text);
+  return value === null ? null : String(value);
+};
+
+/** Builds an `op.background(...)` call for a spectrum. */
+function BackgroundDialog({ wave: initial }: { wave?: string }) {
+  const waves = useNumericWaves(1);
+  const preselected = useUi((state) => state.selectedWaves);
+  const [wave, setWave] = useState(
+    initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
+  );
+  const [x, setX] = useState(CALCULATED);
+  const [method, setMethod] = useState("shirley");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [useCursors, setUseCursors] = useState(false);
+  const [average, setAverage] = useState("5");
+  const [subtract, setSubtract] = useState(true);
+  const { graph, hasCursors } = useGraphShowing(wave);
+  const between = useCursors && hasCursors;
+  const low = pyNumber(from);
+  const high = pyNumber(to);
+  // Both ends of the range, or neither for the whole wave.
+  const rangeBad = !between && (from.trim() !== "" || to.trim() !== "") && (!low || !high);
+  const count = Number(average);
+  const averageBad = !(Number.isInteger(count) && count >= 1);
+  const args = [
+    pyName(wave),
+    JSON.stringify(method),
+    ...(x === CALCULATED ? [] : [`x=${pyName(x)}`]),
+    ...(between ? ["cursors=True"] : low && high ? [`range=(${low}, ${high})`] : []),
+    ...(count === 5 ? [] : [`average=${count}`]),
+    ...(subtract ? ["subtract=True"] : []),
+  ];
+  return (
+    <Dialog
+      title="Background"
+      width={420}
+      onClose={close}
+      submitDisabled={wave === "" || rangeBad || averageBad}
+      onSubmit={() => {
+        runPython(`op.background(${args.join(", ")})`);
+        close();
+      }}
+    >
+      <Field label="Wave">
+        <Select
+          aria-label="Wave"
+          value={wave}
+          onChange={(event) => setWave(event.target.value)}
+          className="flex-1"
+        >
+          {waves.map((name) => (
+            <option key={name}>{name}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="X data">
+        <XWaveSelect value={x} onChange={setX} />
+      </Field>
+      <Field label="Method">
+        <Select
+          aria-label="Method"
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+        >
+          <option>shirley</option>
+          <option>tougaard</option>
+          <option>linear</option>
+        </Select>
+      </Field>
+      <Field label="Range" group>
+        <TextInput
+          aria-label="From"
+          aria-invalid={rangeBad}
+          className="w-20"
+          placeholder="from x"
+          disabled={between}
+          value={from}
+          onChange={(event) => setFrom(event.target.value)}
+        />
+        <TextInput
+          aria-label="To"
+          aria-invalid={rangeBad}
+          className="w-20"
+          placeholder="to x"
+          disabled={between}
+          value={to}
+          onChange={(event) => setTo(event.target.value)}
+        />
+        <span className="text-muted">empty: the whole wave</span>
+      </Field>
+      <div className="pl-[104px]">
+        <Checkbox
+          label={
+            hasCursors
+              ? `Between cursors A and B of ${graph!.name}`
+              : "Between cursors (place A and B on the graph first)"
+          }
+          disabled={!hasCursors}
+          checked={between}
+          onChange={(event) => setUseCursors(event.target.checked)}
+        />
+      </div>
+      <Field label="Average">
+        <TextInput
+          aria-label="Average"
+          aria-invalid={averageBad}
+          className="w-20"
+          value={average}
+          onChange={(event) => setAverage(event.target.value)}
+        />
+        <span className="text-muted">points at each end, for its level</span>
+      </Field>
+      <Field label="Also make" group>
+        <Checkbox
+          label="Subtracted spectrum"
+          checked={subtract}
+          onChange={(event) => setSubtract(event.target.checked)}
+        />
+      </Field>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Makes <code>{leafName(wave) || "wave"}_bg</code>
+        {subtract ? (
+          <>
+            {" "}
+            and <code>{leafName(wave) || "wave"}_sub</code>
+          </>
+        ) : null}
+        , NaN outside the range. Tougaard needs X in eV and scales its strength to meet the data at
+        the far end.
+      </div>
+    </Dialog>
+  );
+}
+
+/** The X values of cursors A and B on a graph, lower first; null unless both are set. */
+function useCursorXs(graph: GraphSpec | undefined): [number, number] | null {
+  const waves = useDoc((state) => state.waves);
+  if (!graph?.cursors.A || !graph.cursors.B) return null;
+  const xs = [graph.cursors.A, graph.cursors.B].map((cursor) => {
+    const trace = graph.traces.find((item) => item.name === cursor.trace);
+    const y = trace ? waves[trace.y] : undefined;
+    if (!trace || !y) return Number.NaN;
+    const x = trace.x === null ? null : (waves[trace.x] ?? null);
+    // Enough digits that the cursor's own point stays inside the range.
+    return Number(traceX(y, x?.text ? null : x, cursor.point).toPrecision(15));
+  });
+  return xs.every(Number.isFinite) ? [Math.min(xs[0]!, xs[1]!), Math.max(xs[0]!, xs[1]!)] : null;
+}
+
+/** Two X values for a range, with a button that takes them from the cursors. */
+function RangeField({
+  label,
+  range,
+  onChange,
+  cursors,
+  invalid,
+}: {
+  label: string;
+  range: [string, string];
+  onChange: (range: [string, string]) => void;
+  cursors: [number, number] | null;
+  invalid: boolean;
+}) {
+  return (
+    <Field label={label} group>
+      <TextInput
+        aria-label={`${label} from`}
+        aria-invalid={invalid}
+        className="w-20"
+        placeholder="from x"
+        value={range[0]}
+        onChange={(event) => onChange([event.target.value, range[1]])}
+      />
+      <TextInput
+        aria-label={`${label} to`}
+        aria-invalid={invalid}
+        className="w-20"
+        placeholder="to x"
+        value={range[1]}
+        onChange={(event) => onChange([range[0], event.target.value])}
+      />
+      <Button
+        aria-label={`${label} from cursors`}
+        disabled={!cursors}
+        title={cursors ? "Take the range from cursors A and B" : "Place cursors A and B first"}
+        onClick={() => cursors && onChange([String(cursors[0]), String(cursors[1])])}
+      >
+        A–B
+      </Button>
+    </Field>
+  );
+}
+
+/** Builds an `op.onset(...)` call: an edge extrapolated to a baseline. */
+function OnsetDialog({ wave: initial }: { wave?: string }) {
+  const waves = useNumericWaves(1);
+  const preselected = useUi((state) => state.selectedWaves);
+  const [wave, setWave] = useState(
+    initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
+  );
+  const [x, setX] = useState(CALCULATED);
+  const [edge, setEdge] = useState<[string, string]>(["", ""]);
+  const [kind, setKind] = useState("range");
+  const [base, setBase] = useState<[string, string]>(["", ""]);
+  const [level, setLevel] = useState("0");
+  const { graph } = useGraphShowing(wave);
+  const [draw, setDraw] = useState(true);
+  const cursors = useCursorXs(graph);
+  const edgeLow = pyNumber(edge[0]);
+  const edgeHigh = pyNumber(edge[1]);
+  const baseLow = pyNumber(base[0]);
+  const baseHigh = pyNumber(base[1]);
+  const levelValue = pyNumber(level);
+  const edgeBad = !edgeLow || !edgeHigh;
+  const baseBad = kind === "range" && (!baseLow || !baseHigh);
+  const levelBad = kind === "level" && !levelValue;
+  const baseline =
+    kind === "range"
+      ? [`baseline=(${baseLow}, ${baseHigh})`]
+      : kind === "level" && levelValue !== "0"
+        ? [`baseline=${levelValue}`]
+        : [];
+  const args = [
+    pyName(wave),
+    ...(x === CALCULATED ? [] : [`x=${pyName(x)}`]),
+    `edge=(${edgeLow}, ${edgeHigh})`,
+    ...baseline,
+    ...(draw && graph ? ["graph=True"] : []),
+  ];
+  return (
+    <Dialog
+      title="Onset"
+      width={440}
+      onClose={close}
+      submitDisabled={wave === "" || edgeBad || baseBad || levelBad}
+      onSubmit={() => {
+        runPython(`op.onset(${args.join(", ")})`);
+        close();
+      }}
+    >
+      <Field label="Wave">
+        <Select
+          aria-label="Wave"
+          value={wave}
+          onChange={(event) => setWave(event.target.value)}
+          className="flex-1"
+        >
+          {waves.map((name) => (
+            <option key={name}>{name}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="X data">
+        <XWaveSelect value={x} onChange={setX} />
+      </Field>
+      <RangeField
+        label="Edge"
+        range={edge}
+        onChange={setEdge}
+        cursors={cursors}
+        invalid={edgeBad && (edge[0] !== "" || edge[1] !== "")}
+      />
+      <Field label="Baseline">
+        <Select
+          aria-label="Baseline"
+          value={kind}
+          onChange={(event) => setKind(event.target.value)}
+        >
+          <option value="range">a line fitted over a range</option>
+          <option value="level">a constant level</option>
+        </Select>
+      </Field>
+      {kind === "range" ? (
+        <RangeField
+          label="Over"
+          range={base}
+          onChange={setBase}
+          cursors={cursors}
+          invalid={baseBad && (base[0] !== "" || base[1] !== "")}
+        />
+      ) : (
+        <Field label="Level">
+          <TextInput
+            aria-label="Level"
+            aria-invalid={levelBad}
+            className="w-20"
+            value={level}
+            onChange={(event) => setLevel(event.target.value)}
+          />
+        </Field>
+      )}
+      <div className="pl-[104px]">
+        <Checkbox
+          label={
+            graph ? `Draw the lines on ${graph.name}` : "Draw the lines (no graph shows the wave)"
+          }
+          disabled={!graph}
+          checked={draw && Boolean(graph)}
+          onChange={(event) => setDraw(event.target.checked)}
+        />
+      </div>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Fits a straight line to the edge and another to the baseline, and reports where they cross
+        with its uncertainty. Ranges are X values; A–B takes them from the cursors.
+      </div>
+    </Dialog>
+  );
+}
+
 function renderDialog(dialog: DialogRequest) {
   switch (dialog.kind) {
     case "newGraph":
@@ -1937,6 +2990,8 @@ function renderDialog(dialog: DialogRequest) {
       return <MatrixPlotDialog plot={dialog.plot} graph={dialog.graph} />;
     case "newTable":
       return <NewTableDialog />;
+    case "makeWaves":
+      return <MakeWavesDialog folder={dialog.folder} />;
     case "modifyTrace":
       return <ModifyTraceDialog graph={dialog.graph} trace={dialog.trace} />;
     case "modifyAxis":
@@ -1969,12 +3024,33 @@ function renderDialog(dialog: DialogRequest) {
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
+    case "background":
+      return <BackgroundDialog wave={dialog.wave} />;
+    case "onset":
+      return <OnsetDialog wave={dialog.wave} />;
     case "graphScript":
       return <GraphScriptDialog graph={dialog.graph} />;
+    case "styles":
+      return <StylesDialog graph={dialog.graph} />;
     case "timeZone":
       return <TimeZoneDialog />;
     case "pageText":
       return <PageTextDialog layout={dialog.layout} item={dialog.item} />;
+    case "arrangeLayout":
+      return <ArrangeLayoutDialog layout={dialog.layout} items={dialog.items} />;
+    case "importData":
+      // Keyed by the file: the next file starts from its own preset, not this one's choices.
+      return (
+        <ImportDialog
+          key={`${dialog.file.name}:${dialog.rest.length}`}
+          file={dialog.file}
+          rest={dialog.rest}
+        />
+      );
+    case "results":
+      return <ResultsDialog {...(dialog.result ? { focus: dialog.result } : {})} />;
+    case "experiments":
+      return <ExperimentsDialog />;
     case "about":
       return <AboutDialog />;
   }

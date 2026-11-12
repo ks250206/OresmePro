@@ -1,0 +1,13 @@
+---
+title: Fit a Gaussian peak
+sidebar:
+  order: 3
+---
+
+import Example from "../../../../components/Example.astro";
+import code from "../../../../snippets/gaussian.py?raw";
+import image from "../../../../assets/gaussian.png";
+
+Add seeded noise to a peak centered at 0.7 and fit the `gauss` model. Markers show the observations and the line shows the fitted curve. Check the fitted center and convergence in the Command Window.
+
+<Example code={code} image={image} alt="Fitted Gaussian curve over the observed points" />

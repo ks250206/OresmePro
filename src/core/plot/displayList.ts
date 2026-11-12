@@ -64,6 +64,9 @@ export type Prim =
       family: string;
       size: number;
       fill: string;
+      /** Left out for upright, regular text, so plain text is drawn as it always was. */
+      bold?: boolean;
+      italic?: boolean;
       /** Clockwise rotation in degrees about (x, y). */
       rotate?: number;
     }
@@ -88,8 +91,22 @@ export interface Rect {
   h: number;
 }
 
+/** Bold and italic, where text has them; left out (or false) for regular upright text. */
+export interface FontStyle {
+  bold?: boolean;
+  italic?: boolean;
+}
+
 /** Measures the advance width of text; the only thing layout needs from a font. */
-export type MeasureText = (text: string, size: number, family: string) => number;
+export type MeasureText = (text: string, size: number, family: string, style?: FontStyle) => number;
+
+/**
+ * The CSS font that draws and measures text, the same way for the canvas,
+ * the measuring context and pictures of text, so that what is measured is
+ * what is drawn.
+ */
+export const cssFont = (size: number, family: string, style: FontStyle = {}): string =>
+  `${style.italic ? "italic " : ""}${style.bold ? "bold " : ""}${size}px ${family}`;
 
 export const DASHES: Record<string, readonly number[] | undefined> = {
   solid: undefined,
