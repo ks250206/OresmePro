@@ -23,6 +23,7 @@ import {
   keepPackagesForOffline,
   openLaunchedFiles,
 } from "./app/isolate";
+import { ruffFiles } from "./editor/loadRuff";
 import {
   activeWindow,
   doc,
@@ -410,7 +411,7 @@ export function App() {
       const stop = kernel.subscribe(() => {
         if (kernel.getState().status !== "ready") return;
         stop();
-        void keepForOffline(PYODIDE_URL).then((count) => {
+        void keepForOffline(PYODIDE_URL, ruffFiles).then((count) => {
           Object.assign(debug, { offlineFiles: count });
         });
       });

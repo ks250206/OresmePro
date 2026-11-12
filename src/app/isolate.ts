@@ -43,10 +43,14 @@ export async function ensureIsolated(): Promise<boolean> {
 
 /**
  * Has the service worker keep everything the app has loaded and everything
- * Python is made of, so that the next start needs no network. Resolves to
+ * Python is made of, so that the next start needs no network, and the files
+ * named in `extra`: what the app loads only when it is needed. Resolves to
  * the number of files kept, or 0 if there is no worker to keep them.
  */
-export async function keepForOffline(pyodideUrl: string): Promise<number> {
+export async function keepForOffline(
+  pyodideUrl: string,
+  extra: () => Promise<readonly string[]> = async () => [],
+): Promise<number> {
   if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return 0;
   try {
     const registration = await navigator.serviceWorker.ready;
@@ -61,6 +65,7 @@ export async function keepForOffline(pyodideUrl: string): Promise<number> {
       location.href,
       new URL(import.meta.env.BASE_URL, location.href).href,
       ...loaded,
+      ...(await extra().catch(() => [])),
       `${pyodideUrl}files.json`,
       ...list.map((file) => new URL(file, pyodideUrl).href),
     ];
