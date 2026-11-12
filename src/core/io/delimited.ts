@@ -163,6 +163,28 @@ export function parseDelimited(
 }
 
 /**
+ * Whether the first row names the columns, judged column by column. Text
+ * above a column of numbers or dates says it does; a number or date above a
+ * column of the same says it is data; anything else says nothing. With
+ * nothing to go on either way, the first row is a header if it has text.
+ */
+function isHeader(rows: readonly string[][]): boolean {
+  const [first, ...rest] = rows;
+  let against = false;
+  for (let column = 0; column < first!.length; column += 1) {
+    const top = cellKind(first![column]!);
+    if (top === "empty" || top === "missing") continue;
+    const kinds = rest.map((row) => cellKind(row[column] ?? ""));
+    const below = columnKind(kinds);
+    // A column with nothing but missing values below is no evidence.
+    if (below === "text" || !kinds.includes(below)) continue;
+    if (top === "text") return true;
+    if (top === below) against = true;
+  }
+  return !against && first!.some((cell) => cellKind(cell) === "text");
+}
+
+/**
  * Turns rows of cells (from delimited text or a spreadsheet) into columns:
  * numbers, dates or text, named from a header row if there is one.
  */
@@ -173,7 +195,7 @@ export function columnsFromRows(
 ): DelimitedResult {
   if (rows.length === 0) return { names: [], columns: [], dates: [], rows: 0 };
   rows = [...rows];
-  const hasHeader = rows[0]!.some((cell) => ["text", "date"].includes(cellKind(cell)));
+  const hasHeader = isHeader(rows);
   const header = hasHeader ? rows.shift()! : [];
   // A loop, not Math.max(...): a file can have more rows than a call can take arguments.
   let width = header.length;

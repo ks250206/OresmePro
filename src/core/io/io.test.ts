@@ -115,6 +115,31 @@ describe("parseDelimited", () => {
     expect((result.columns[0] as Float64Array)[rows - 1]).toBe(rows - 1);
   });
 
+  it("takes the first row as a header only when the columns below say so", () => {
+    const dates = parseDelimited("2026-11-11T09:00,1\n2026-11-11T09:01,2\n", free);
+    expect([dates.names, dates.dates, dates.rows]).toEqual([
+      ["column0", "column1"],
+      [true, false],
+      2,
+    ]);
+    // Text above text says nothing; the number above numbers says it is data.
+    const labels = parseDelimited("A,1\nB,2\n", free);
+    expect([labels.names, labels.columns[0]]).toEqual([
+      ["column0", "column1"],
+      ["A", "B"],
+    ]);
+    // Text above numbers or dates is a header, even where another column disagrees.
+    const header = parseDelimited("name,when,2\nA,2026-11-11,1\nB,2026-11-12,3\n", free);
+    expect([header.names, header.rows]).toEqual([["name", "when", "wave_2"], 2]);
+    // All text, or nothing to judge by: a header, as before.
+    expect(parseDelimited("a,b\nc,d\n", free).names).toEqual(["a", "b"]);
+    expect(parseDelimited("a,b\n", free).names).toEqual(["a", "b"]);
+    // A missing value in the first row is not a header.
+    expect(parseDelimited("NaN,1\n2,3\n", free).rows).toBe(2);
+    // Numbers alone: data, as before.
+    expect(parseDelimited("1\n2\n", free).rows).toBe(2);
+  });
+
   it("keeps a column that mixes text and numbers as text, every cell as written", () => {
     const result = parseDelimited("name,value\nA,1\nB,2\n3,3\n4,4\n5,5\n", free);
     expect(result.names).toEqual(["name", "value"]);
