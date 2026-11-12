@@ -1,11 +1,15 @@
 # OresmePro
 
+**[アプリを開く](https://ks250206.github.io/OresmePro/)** ・ **[公式ドキュメント](https://ks250206.github.io/OresmePro/docs/)**([English](https://ks250206.github.io/OresmePro/docs/en/))・ [MIT License](LICENSE)
+
 OresmePro は、実験データの読み込み・表編集・グラフ作成・解析を 1 つのワークスペースで行う、
 ブラウザで動く科学データ解析環境です。WaveMetrics の Igor Pro の作業感
 (wave、グラフ、コマンドウィンドウ、「GUI 操作がすべてコマンドとして履歴に残る」こと)を手本にしつつ、
 スクリプト言語には Python を採用しています。
 
 [scispace_poc](https://github.com/ks250206/scispace_poc) での試作を踏まえて、一から作り直したものです。
+
+[![OresmePro のワークスペース。スペクトルに 3 本のピークをフィットしたグラフ、表、コマンドウィンドウの履歴](.github/readme/workspace.png)](https://ks250206.github.io/OresmePro/)
 
 ## 名前の由来
 
@@ -20,6 +24,11 @@ OresmePro は、実験データの読み込み・表編集・グラフ作成・�
 データを図にして初めて見えるものがある、という OresmePro の中心にある考えは、オレームのこの仕事に遡ります。
 
 ## 使ってみる
+
+ブラウザで **[アプリ](https://ks250206.github.io/OresmePro/)** を開くだけで使えます。インストールは要りません。
+Python もブラウザの中で動き、データはサーバーに送られません。使い方は **[公式ドキュメント](https://ks250206.github.io/OresmePro/docs/)** にまとめています。
+
+手元で動かすときは次のとおりです。
 
 ```sh
 pnpm install
@@ -44,6 +53,8 @@ g.legend()
 CSV / TSV などのテキストと **Excel のブック**(`.xlsx` / `.xlsm`)は、ウィンドウにドロップするか
 **File › Load Delimited Text…** / **Load Excel Workbook…** で読み込みます。読み込む前に **Load Data** ダイアログが開き、
 ファイルがどう読まれるかを先頭 100 行のプレビューで確認して、そのまま **Load** を押すか、判定を直してから読み込めます。
+
+![Load Data ダイアログ。表の前の 4 行を読み飛ばし、ヘッダーから名前と単位を分けたプレビュー](.github/readme/import.png)
 
 列が 1 列ずつ wave になります。指定しなかったものは自動で判定します。
 
@@ -361,6 +372,8 @@ wave を列として表示・編集します。行も列も仮想スクロール
 
 Igor のプロシージャウィンドウに当たる、実験に保存される Python ファイルです(**Windows › New Procedure**)。
 
+![プロシージャウィンドウ。未定義の名前に付いたリンターの警告と、右クリックのメニュー](.github/readme/editor.png)
+
 - 行番号・構文の色分け・括弧の対応表示・インデントのガイド・折りたたみ付きのエディタで、入力した内容はそのまま実験に保存されます。
   元に戻す(`Ctrl+Z`)はエディタ自身の履歴で、入力した文字を戻します。ドキュメントの Undo とは別です。
 - **Run**(`Ctrl+Enter` / `⌘Enter`)でファイル全体を対話環境で実行します。定義した関数はコマンドラインからそのまま使えます。
@@ -426,6 +439,8 @@ g.legend(anchor="RT", frame=True)
 ### ページレイアウト
 
 複数のグラフとテキストを 1 枚の用紙に並べて、図として書き出します(**Windows › New Page Layout**)。Igor のページレイアウトに当たります。
+
+![A4 横の用紙に 2 つのグラフとキャプションを並べたページレイアウト](.github/readme/layout.png)
 
 - ツールバーの **Add Graph…** でグラフを、**Add Text…** でテキスト(キャプションなど)を置きます。
   ドラッグで移動、四隅のハンドルでサイズ変更、矢印キーで 1 pt ずつ(`Shift` で 10 pt)、`Delete` で削除です。
@@ -760,10 +775,6 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 - グラフのスタイルは trace と軸とフォントの見た目だけを持ちます。画像プロット・等高線・凡例などの注釈の見た目は含みません。
 - 3〜4 次元の wave を一度に立体的に表示する機能(ボリューム表示など)はありません。1 面ずつの表示です。
 
-## ライセンス
-
-未定。
-
 ## 公式ドキュメントの開発
 
 [公式ドキュメント](https://ks250206.github.io/OresmePro/docs/) は `docs/` の Astro Starlight ワークスペースです。ルートの `.node-version` と `packageManager` に従い、API 生成とリンク検査に Python 3.14 を使います。
@@ -786,3 +797,19 @@ pnpm docs:preview  # ビルドしたサイトで Pagefind 検索を確認
 GitHub の **Settings → Pages → Build and deployment → Source** で **GitHub Actions** を選びます。CI はアプリとドキュメントのチェックを実行し、成功した `main` のビルドだけを `github-pages` 環境に公開します。公開先はアプリが `/OresmePro/`、ドキュメントが `/OresmePro/docs/` です。Pages を有効化してから **CI → Run workflow** で `main` を指定すると再公開できます。
 
 実際の URL 階層で確認する場合は `pnpm pages:build` を実行し、`.pages/` をローカル HTTP サーバーの `/OresmePro/` にマウントします。アプリ側の Service Worker がクロスオリジン分離を付けるため、静的ホストでの初回起動も確認できます。
+
+## スクリーンショットの更新
+
+この README の画像は `.github/readme/` にあり、ビルドしたアプリから撮り直せます。
+
+```sh
+pnpm build
+pnpm preview --port 4173 --strictPort &
+node scripts/readme-screenshots.mjs            # 全部。場面の名前(workspace など)を付けるとその 1 枚
+```
+
+## ライセンス
+
+[MIT License](LICENSE) です。
+
+アプリに同梱して配布する Pyodide、NumPy、SciPy、pandas、scikit-learn、lmfit、Ruff などは、それぞれのライセンスに従います。
