@@ -1,6 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ui, useUi, type MenuItem } from "../app/session";
 
+/**
+ * Menus leave the keyboard focus where it was, so keys go on acting on the
+ * window the menu command was for (Delete or the arrow keys on a page, say).
+ */
+export const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
+
 export function MenuList({ items, onDone }: { items: readonly MenuItem[]; onDone: () => void }) {
   return (
     <div
@@ -18,6 +24,7 @@ export function MenuList({ items, onDone }: { items: readonly MenuItem[]; onDone
             role="menuitem"
             disabled={item.disabled}
             className="flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60"
+            onMouseDown={keepFocus}
             onClick={() => {
               onDone();
               item.onSelect?.();
@@ -73,6 +80,7 @@ export function MenuBar({ menus }: { menus: readonly MenuDefinition[] }) {
             aria-haspopup="menu"
             aria-expanded={open === index}
             className={`rounded px-2 py-0.5 outline-none ${open === index ? "bg-accent text-white" : "hover:bg-chrome-2"}`}
+            onMouseDown={keepFocus}
             onPointerDown={() => setOpen(open === index ? null : index)}
             onPointerEnter={() => {
               if (open !== null) setOpen(index);
