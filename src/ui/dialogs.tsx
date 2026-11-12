@@ -25,6 +25,13 @@ import {
 import { browserLibrary, sameStyle } from "../app/styleLibrary";
 import { GRID_GAP, GRID_MARGIN, GRID_PRESETS, readingOrder } from "../core/doc/arrange";
 import { checkName, uniqueName, type Command } from "../core/doc/commands";
+import {
+  nameProblems,
+  parseShape,
+  planMakeWaves,
+  splitNames,
+  wavePath,
+} from "../core/doc/makeWaves";
 import { graphScript } from "../core/doc/recreate";
 import {
   ANCHORS,
@@ -335,6 +342,183 @@ function NewTableDialog() {
     >
       <div className="text-muted">Columns</div>
       <NameList label="Columns" names={order} selected={waves} onChange={setWaves} />
+    </Dialog>
+  );
+}
+
+const DIMENSIONS = ["Rows", "Columns", "Layers", "Chunks"] as const;
+
+/** Makes empty waves, several alike at once, as Igor's Make Waves dialog does. */
+function MakeWavesDialog({ folder: requested = "" }: { folder?: string }) {
+  const state = useDoc((current) => current);
+  const [fields, setFields] = useState(() => {
+    const folder = state.folders.includes(requested) ? requested : "";
+    return {
+      folder,
+      names: uniqueName("wave", (name) => wavePath(folder, name) in state.waves),
+      sizes: ["128", "", "", ""],
+      type: "float64" as WaveType,
+      x0: "0",
+      dx: "1",
+      xUnit: "",
+      unit: "",
+      overwrite: false,
+      edit: false,
+    };
+  });
+  const set = (change: Partial<typeof fields>) => setFields({ ...fields, ...change });
+  const names = splitNames(fields.names);
+  const nameIssues = nameProblems(state, names, fields.folder, fields.overwrite);
+  const shape = parseShape(fields.sizes);
+  const x0 = parseNumber(fields.x0);
+  const dx = parseNumber(fields.dx);
+  const problems = [
+    ...nameIssues.filter((problem): problem is string => problem !== null),
+    ...(typeof shape === "string" ? [shape] : []),
+    ...(x0 === null ? ["X start must be a number."] : []),
+    ...(dx === null || dx === 0 ? ["X step must be a number other than 0."] : []),
+  ];
+  const make = () => {
+    let plan: ReturnType<typeof planMakeWaves>;
+    try {
+      plan = planMakeWaves(doc.getState(), {
+        names,
+        folder: fields.folder,
+        shape: shape as readonly number[],
+        type: fields.type,
+        x0: x0!,
+        dx: dx!,
+        xUnit: fields.xUnit,
+        unit: fields.unit,
+        overwrite: fields.overwrite,
+        edit: fields.edit,
+      });
+    } catch (error) {
+      showError("The waves were not made", error);
+      return;
+    }
+    if (runGui(plan.commands, { echo: plan.echo }) !== undefined) close();
+  };
+  return (
+    <Dialog
+      title="Make Waves"
+      width={440}
+      onClose={close}
+      submitDisabled={names.length === 0 || problems.length > 0}
+      onSubmit={make}
+    >
+      <Field label="Names">
+        <TextInput
+          aria-label="Names"
+          aria-invalid={nameIssues.some((problem) => problem !== null)}
+          className="flex-1"
+          value={fields.names}
+          onChange={(event) => set({ names: event.target.value })}
+        />
+      </Field>
+      <div className="-mt-1 pl-[104px] text-[11px] text-muted">
+        Several at once: separate them with commas or spaces.
+      </div>
+      <Field label="Points" group>
+        {DIMENSIONS.map((label, index) => (
+          <label key={label} className="flex flex-col items-center gap-0.5">
+            <TextInput
+              aria-label={label}
+              aria-invalid={typeof shape === "string" && shape.startsWith(label)}
+              className="w-[60px] text-right"
+              placeholder={index === 0 ? "" : "0"}
+              value={fields.sizes[index]}
+              onChange={(event) =>
+                set({
+                  sizes: fields.sizes.map((size, at) => (at === index ? event.target.value : size)),
+                })
+              }
+            />
+            <span className="text-[10.5px] text-muted">{label}</span>
+          </label>
+        ))}
+      </Field>
+      <Field label="Type">
+        <Select
+          aria-label="Type"
+          value={fields.type}
+          onChange={(event) => set({ type: event.target.value as WaveType })}
+        >
+          {WAVE_TYPES.map((item) => (
+            <option key={item}>{item}</option>
+          ))}
+        </Select>
+        <span className="truncate text-muted">{TYPE_NOTES[fields.type]}</span>
+      </Field>
+      <Field label="X start, step">
+        <TextInput
+          aria-label="X start"
+          aria-invalid={x0 === null}
+          className="w-24"
+          value={fields.x0}
+          onChange={(event) => set({ x0: event.target.value })}
+        />
+        <TextInput
+          aria-label="X step"
+          aria-invalid={dx === null || dx === 0}
+          className="w-24"
+          value={fields.dx}
+          onChange={(event) => set({ dx: event.target.value })}
+        />
+      </Field>
+      <Field label="X unit">
+        <TextInput
+          aria-label="X unit"
+          className="w-20"
+          value={fields.xUnit}
+          onChange={(event) => set({ xUnit: event.target.value })}
+        />
+      </Field>
+      <Field label="Data unit">
+        <TextInput
+          aria-label="Data unit"
+          className="w-20"
+          value={fields.unit}
+          onChange={(event) => set({ unit: event.target.value })}
+        />
+      </Field>
+      <Field label="Data folder">
+        <Select
+          aria-label="Data folder"
+          value={fields.folder}
+          onChange={(event) => set({ folder: event.target.value })}
+        >
+          <option value="">root</option>
+          {state.folders.map((folder) => (
+            <option key={folder} value={folder}>
+              {folder}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex flex-col gap-1 pl-[104px]">
+        <Checkbox
+          label="Overwrite existing waves"
+          checked={fields.overwrite}
+          onChange={(event) => set({ overwrite: event.target.checked })}
+        />
+        <Checkbox
+          label="Edit in a table"
+          checked={fields.edit}
+          onChange={(event) => set({ edit: event.target.checked })}
+        />
+      </div>
+      {problems.length > 0 ? (
+        <ul
+          role="status"
+          aria-label="Problems"
+          className="m-0 list-none p-0 pl-[104px] text-danger"
+        >
+          {problems.map((problem, index) => (
+            <li key={index}>{problem}</li>
+          ))}
+        </ul>
+      ) : null}
     </Dialog>
   );
 }
@@ -2756,6 +2940,8 @@ function renderDialog(dialog: DialogRequest) {
       return <MatrixPlotDialog plot={dialog.plot} graph={dialog.graph} />;
     case "newTable":
       return <NewTableDialog />;
+    case "makeWaves":
+      return <MakeWavesDialog folder={dialog.folder} />;
     case "modifyTrace":
       return <ModifyTraceDialog graph={dialog.graph} trace={dialog.trace} />;
     case "modifyAxis":

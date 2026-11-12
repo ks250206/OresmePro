@@ -406,6 +406,10 @@ export function DataBrowser() {
     event.stopPropagation();
     const items: MenuItem[] = [
       {
+        label: "Make Waves…",
+        onSelect: () => ui.set({ dialog: { kind: "makeWaves", folder } }),
+      },
+      {
         label: "New Data Folder…",
         onSelect: () => ui.set({ dialog: { kind: "newFolder", parent: folder } }),
       },

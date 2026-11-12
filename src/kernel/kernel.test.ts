@@ -2,6 +2,7 @@ import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
+import { planMakeWaves, type MakeWavesRequest } from "../core/doc/makeWaves";
 import { tableEditCommands, type CellEdit } from "../core/doc/tableEdit";
 import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
@@ -266,6 +267,46 @@ describe("oresme Python API", () => {
         "Wave('labels', n=3, text) True ['a', 'z', 'new'] 3\n",
     );
     expect(doc.getState().waves.m!.shape).toEqual([2, 3]);
+  });
+
+  it("makes the same waves from the Make Waves echo as the dialog does", async () => {
+    expect(
+      await run(
+        'op.make("mwOld", [1.0, 2.0], x0=5, dx=0.5, x_unit="s", unit="V"); op.new_folder("mwf")',
+      ),
+    ).toBe(true);
+    const requests: Partial<MakeWavesRequest>[] = [
+      { names: ["mwA", "mwB"], shape: [50], type: "float32", x0: 1, dx: 0.01, xUnit: "s" },
+      { names: ["mwM"], folder: "mwf", shape: [3, 4, 2], type: "complex64", unit: "V" },
+      { names: ["mwDefault"], shape: [128] },
+      // Overwriting a wave with the default scaling: op.make would keep the old one unless told.
+      { names: ["mwOld"], shape: [4], overwrite: true },
+    ];
+    for (const change of requests) {
+      const gui = new Doc();
+      gui.load(doc.getState());
+      const plan = planMakeWaves(gui.getState(), {
+        names: [],
+        folder: "",
+        shape: [128],
+        type: "float64",
+        x0: 0,
+        dx: 1,
+        xUnit: "",
+        unit: "",
+        overwrite: false,
+        edit: false,
+        ...change,
+      });
+      for (const command of plan.commands) gui.dispatch(command);
+      expect(await run(plan.echo), `${plan.echo}\n${errors.join("\n")}`).toBe(true);
+      for (const name of change.names!) {
+        const path = change.folder ? `${change.folder}:${name}` : name;
+        const { rev: _made, ...expected } = gui.getState().waves[path]!;
+        const { rev: _replayed, ...replayed } = doc.getState().waves[path]!;
+        expect(replayed, plan.echo).toEqual(expected);
+      }
+    }
   });
 
   it("makes image and contour plots with free axes", async () => {

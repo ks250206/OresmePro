@@ -245,6 +245,74 @@ test.describe("data browser", () => {
   });
 });
 
+test.describe("making waves", () => {
+  test("Make Waves makes several scaled waves, then a matrix in a table", async ({ app, page }) => {
+    await app.menu("Data", "Make Waves…");
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    await expect(dialog.getByLabel("Names")).toHaveValue("wave0");
+    await dialog.getByLabel("Names").fill("v1, v2");
+    await dialog.getByLabel("Rows").fill("100");
+    await dialog.getByLabel("Type", { exact: true }).selectOption("float32");
+    await dialog.getByLabel("X start").fill("1");
+    await dialog.getByLabel("X step").fill("0.01");
+    await dialog.getByLabel("X unit").fill("s");
+    await dialog.getByLabel("Data unit").fill("V");
+    await app.doIt();
+    await expect(dialog).toBeHidden();
+    expect((await app.doc()).order).toEqual(["v1", "v2"]);
+    expect(await app.wave("v2")).toMatchObject({ shape: [100], length: 100, unit: "V" });
+    expect((await app.wave("v1"))!.data.every((value) => value === 0)).toBe(true);
+    expect((await app.lastEntry()).code).toBe(
+      'op.make("v1", n=100, dtype="float32", x0=1, dx=0.01, x_unit="s", unit="V")\n' +
+        'op.make("v2", n=100, dtype="float32", x0=1, dx=0.01, x_unit="s", unit="V")',
+    );
+
+    await app.menu("Data", "Make Waves…");
+    await dialog.getByLabel("Names").fill("img");
+    await dialog.getByLabel("Rows").fill("20");
+    await dialog.getByLabel("Columns").fill("30");
+    await dialog.getByLabel("Edit in a table").check();
+    await app.doIt();
+    expect((await app.wave("img"))!.shape).toEqual([20, 30]);
+    expect((await app.doc()).tables.Table0!.columns).toEqual(["img"]);
+    expect((await app.lastEntry()).code).toBe('op.make("img", n=(20, 30))\nop.edit("img")');
+    // The wave and its table were one step.
+    await page.keyboard.press("Control+z");
+    const doc = await app.doc();
+    expect(doc.order).toEqual(["v1", "v2"]);
+    expect(doc.tables).toEqual({});
+  });
+
+  test("a taken name is refused before anything is made", async ({ app, page }) => {
+    await app.run('op.make("taken", [1.0, 2.0])');
+    await app.menu("Data", "Make Waves…");
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    const problems = dialog.getByRole("status", { name: "Problems" });
+    await dialog.getByLabel("Names").fill("fresh 2x");
+    await expect(problems).toContainText('"2x" is not a valid wave name');
+    await dialog.getByLabel("Names").fill("fresh, taken");
+    await expect(problems).toHaveText(/A wave named taken already exists/);
+    await expect(dialog.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await dialog.getByLabel("Overwrite existing waves").check();
+    await expect(problems).toBeHidden();
+    await expect(dialog.getByRole("button", { name: "Do It" })).toBeEnabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    expect((await app.doc()).order).toEqual(["taken"]);
+    expect((await app.wave("taken"))!.data).toEqual([1, 2]);
+  });
+
+  test("the data browser makes waves in the folder clicked", async ({ app, page }) => {
+    await app.run('op.new_folder("run1")');
+    await page.getByRole("treeitem").filter({ hasText: "run1" }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Make Waves…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Make Waves" });
+    await expect(dialog.getByLabel("Data folder")).toHaveValue("run1");
+    await app.doIt();
+    expect((await app.doc()).order).toEqual(["run1:wave0"]);
+    expect((await app.lastEntry()).code).toBe('op.make("run1:wave0")');
+  });
+});
+
 test.describe("loading delimited text", () => {
   test("files dropped together get separate waves", async ({ app }) => {
     await app.drop([

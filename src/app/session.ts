@@ -18,6 +18,8 @@ import { browserLibrary, LIBRARY_KEY } from "./styleLibrary";
 export type DialogRequest =
   | { kind: "newGraph" }
   | { kind: "newTable" }
+  /** `folder`: the data folder to make them in, "" for root; left out, root. */
+  | { kind: "makeWaves"; folder?: string }
   | { kind: "appendTraces"; graph: string }
   | { kind: "matrixPlot"; plot: "image" | "contour"; graph?: string }
   | { kind: "modifyTrace"; graph: string; trace?: string }

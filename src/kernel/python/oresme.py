@@ -1522,8 +1522,10 @@ def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y
     """Create a wave (or replace an existing one) and return it.
 
     ``data`` may be numbers with up to 4 dimensions, or a list of strings for
-    a text wave. Without ``data`` the wave has ``n`` zeros. An existing wave
-    keeps its scaling and units unless new ones are given.
+    a text wave. Without ``data`` the wave has ``n`` zeros; ``n=(rows,
+    columns)``, with up to 4 sizes, makes a matrix of zeros. An existing wave
+    keeps its scaling and units unless new ones are given; with
+    ``overwrite=False`` making one is refused instead.
 
     The wave takes the type of the data when it is one a wave can have:
     float64 or float32, int8 to int32 and uint8 to uint32, complex128 or
@@ -1538,7 +1540,11 @@ def make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y
     for key, value in (("xUnit", x_unit), ("yUnit", y_unit), ("unit", unit), ("note", note)):
         if value is not None:
             command[key] = str(value)
-    values = np.zeros(int(n)) if data is None else data
+    if data is None:
+        shape = tuple(int(size) for size in n) if isinstance(n, (tuple, list)) else int(n)
+        values = np.zeros(shape)
+    else:
+        values = data
     return Wave(_dispatch(command, _content(command, values, dtype)))
 
 

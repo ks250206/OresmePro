@@ -158,6 +158,8 @@ function useMenus(): MenuDefinition[] {
     {
       title: "Data",
       items: [
+        { label: "Make Waves…", onSelect: open({ kind: "makeWaves" }) },
+        { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
         { label: "Load Igor Files…", onSelect: loadIgorFiles },

@@ -299,6 +299,34 @@ export function echoPython(
 }
 
 /**
+ * The `op.make` call that makes the same empty wave as a command does (the
+ * command's data is all zeros; makeWave carries data, so loads are not echoed
+ * through here). A keyword is left out where `op.make` gives the same without
+ * it: the default for a new wave, the old value for a wave that `previous`
+ * says is being overwritten, which keeps its scaling and units unless told.
+ */
+export function echoMake(
+  command: Extract<Command, { op: "makeWave" }>,
+  previous?: { x0: number; dx: number; xUnit: string; unit: string },
+): string {
+  const shape = command.shape ?? [command.data?.length ?? 0];
+  const unless = <T>(value: T | undefined, otherwise: T): T | undefined =>
+    value === undefined || Object.is(value, otherwise) ? undefined : value;
+  return `op.make(${joinArgs(
+    pyLiteral(command.name),
+    keywords({
+      // op.make makes 128 points when not told otherwise, as Igor's Make does.
+      n: shape.length > 1 ? new PyExpression(`(${shape.join(", ")})`) : unless(shape[0], 128),
+      dtype: unless(command.type, "float64"),
+      x0: unless(command.x0, previous?.x0 ?? 0),
+      dx: unless(command.dx, previous?.dx ?? 1),
+      xUnit: unless(command.xUnit, previous?.xUnit ?? ""),
+      unit: unless(command.unit, previous?.unit ?? ""),
+    }),
+  )})`;
+}
+
+/**
  * The Python call that rearranges items on a page as the layout window did:
  * one call for the whole arrangement, so the history reads as what was done
  * and not as the item changes it took.
