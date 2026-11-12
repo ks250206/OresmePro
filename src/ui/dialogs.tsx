@@ -9,7 +9,7 @@ import {
   pyName,
   runPython,
 } from "../app/actions";
-import { parseConstraints, parseHold } from "../app/fitOptions";
+import { parseConstraints, parseHold, parseSpans } from "../app/fitOptions";
 import {
   doc,
   graphSize,
@@ -56,6 +56,7 @@ import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import { ImportDialog } from "./ImportDialog";
+import { ResultsDialog } from "./ResultsDialog";
 
 const close = () => ui.set({ dialog: null });
 
@@ -2086,11 +2087,13 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const [weight, setWeight] = useState("");
   const [residuals, setResiduals] = useState(false);
   const [band, setBand] = useState(false);
+  const [leaveOut, setLeaveOut] = useState("");
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
   const { graph, hasCursors } = useGraphShowing(y);
   const formula = FIT_FUNCTIONS.find(([name]) => name === func)?.[1] ?? "";
   const held = parseHold(hold);
   const limits = parseConstraints(constraints);
+  const excluded = parseSpans(leaveOut);
   const args = [
     pyName(func),
     pyName(y),
@@ -2099,6 +2102,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     ...(limits ? [`bounds=${limits}`] : []),
     ...(weight === "" ? [] : [`sigma=${pyName(weight)}`]),
     ...(useCursors && hasCursors ? ["cursors=True"] : []),
+    ...(excluded ? [`exclude=${excluded}`] : []),
     ...(residuals ? ["residuals=True"] : []),
     ...(band ? ["band=0.95"] : []),
   ];
@@ -2106,7 +2110,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
     <Dialog
       title="Curve Fitting"
       onClose={close}
-      submitDisabled={y === "" || held === null || limits === null}
+      submitDisabled={y === "" || held === null || limits === null || excluded === null}
       onSubmit={() => {
         runPython(`op.fit(${args.join(", ")})`);
         close();
@@ -2193,6 +2197,16 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
           disabled={!hasCursors}
           checked={useCursors && hasCursors}
           onChange={(event) => setUseCursors(event.target.checked)}
+        />
+      </Field>
+      <Field label="Leave out">
+        <TextInput
+          aria-label="Leave out"
+          aria-invalid={excluded === null}
+          className="flex-1"
+          placeholder="spans of X not to fit: 5..7, 15"
+          value={leaveOut}
+          onChange={(event) => setLeaveOut(event.target.value)}
         />
       </Field>
       <Field label="Also make" group>
@@ -2797,6 +2811,8 @@ function renderDialog(dialog: DialogRequest) {
           rest={dialog.rest}
         />
       );
+    case "results":
+      return <ResultsDialog {...(dialog.result ? { focus: dialog.result } : {})} />;
     case "experiments":
       return <ExperimentsDialog />;
     case "about":

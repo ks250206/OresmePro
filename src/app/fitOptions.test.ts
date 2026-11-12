@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseConstraints, parseHold } from "./fitOptions";
+import { parseConstraints, parseHold, parseSpans } from "./fitOptions";
 
 describe("parseHold", () => {
   it("reads name=value pairs", () => {
@@ -26,5 +26,18 @@ describe("parseConstraints", () => {
   it("rejects anything else", () => {
     expect(parseConstraints("A = 0")).toBeNull();
     expect(parseConstraints("A > B")).toBeNull();
+  });
+});
+
+describe("parseSpans", () => {
+  it("reads spans of X to leave out", () => {
+    expect(parseSpans("")).toBe("");
+    expect(parseSpans("5..7")).toBe("[(5, 7)]");
+    expect(parseSpans("7 .. 5, 15, -2e-3 to 1.5 , 3:4")).toBe(
+      "[(5, 7), (15, 15), (-0.002, 1.5), (3, 4)]",
+    );
+    expect(parseSpans("5-7")).toBeNull();
+    expect(parseSpans("a..b")).toBeNull();
+    expect(parseSpans("1..2..3")).toBeNull();
   });
 });

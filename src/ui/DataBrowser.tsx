@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { downloadFile, newMatrixPlot } from "../app/actions";
+import { downloadFile, newMatrixPlot, runPython } from "../app/actions";
 import {
   files,
   requestCommandLine,
@@ -11,6 +11,7 @@ import {
   type MenuItem,
 } from "../app/session";
 import type { Command } from "../core/doc/commands";
+import { changedInputs } from "../core/doc/results";
 import { leafName, parentFolder, type Wave } from "../core/doc/types";
 import { renderMatrix } from "../core/plot/colorTables";
 import { extentOf, tracePixels } from "../core/plot/decimate";
@@ -199,6 +200,72 @@ function FileList() {
               <span className="font-mono text-[10.5px] text-muted">
                 {byteSize(file.bytes.byteLength)}
               </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/** The analyses kept in the experiment: each fit, to be looked at, compared and run again. */
+function ResultList() {
+  const results = useDoc((state) => state.results);
+  const state = useDoc((doc) => doc);
+  const list = Object.values(results).sort((a, b) => a.created - b.created);
+  if (list.length === 0) return null;
+  const show = (name?: string) =>
+    ui.set({ dialog: { kind: "results", ...(name ? { result: name } : {}) } });
+  return (
+    <section
+      aria-label="Results"
+      className="flex max-h-[30%] shrink-0 flex-col border-t border-line"
+    >
+      <div className="flex h-6 shrink-0 items-center border-b border-line px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        Results
+      </div>
+      <div role="list" className="min-h-0 overflow-y-auto bg-paper py-0.5">
+        {list.map((result) => {
+          const changed = changedInputs(state, result);
+          const menu = (event: React.MouseEvent) => {
+            event.preventDefault();
+            openContextMenu(event, [
+              { label: "Show…", onSelect: () => show(result.name) },
+              {
+                label: "Fit Again",
+                onSelect: () => runPython(`op.result(${JSON.stringify(result.name)}).rerun()`),
+              },
+              {
+                label: "Put the Result in the Command Line",
+                onSelect: () => requestCommandLine(`op.result(${JSON.stringify(result.name)})`),
+              },
+              { separator: true },
+              {
+                label: "Delete",
+                onSelect: () => void runGui({ op: "removeResults", names: [result.name] }),
+              },
+            ]);
+          };
+          return (
+            <div
+              key={result.name}
+              role="listitem"
+              title={`${result.label}${changed.length > 0 ? ` — data changed since: ${changed.join(", ")}` : ""} — double-click to show`}
+              className="flex cursor-default items-center gap-1.5 py-[1px] pl-2 pr-2 hover:bg-chrome"
+              onDoubleClick={() => show(result.name)}
+              onContextMenu={menu}
+            >
+              <span className="shrink-0 font-medium">{result.name}</span>
+              <span
+                className={`min-w-0 flex-1 truncate ${result.converged ? "text-muted" : "text-danger"}`}
+              >
+                {result.label}
+              </span>
+              {changed.length > 0 ? (
+                <span className="text-danger" aria-label="data changed">
+                  ●
+                </span>
+              ) : null}
             </div>
           );
         })}
@@ -484,6 +551,7 @@ export function DataBrowser() {
         ) : null}
       </div>
       {focused ? <WaveInfo wave={focused} /> : null}
+      <ResultList />
       <FileList />
     </aside>
   );

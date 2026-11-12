@@ -58,3 +58,24 @@ export function parseConstraints(text: string): string | null {
   );
   return entries.length > 0 ? `{${entries.join(", ")}}` : "";
 }
+
+/**
+ * Turns "5..7, 15, 20 to 22" into a Python list of (low, high) spans of X.
+ * A number alone is a span of that one value. Returns "" for none and null
+ * if the text cannot be read.
+ */
+export function parseSpans(text: string): string | null {
+  const items = text
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const spans: string[] = [];
+  for (const item of items) {
+    const match = new RegExp(`^(${NUMBER})(?:\\s*(?:\\.\\.|to|:)\\s*(${NUMBER}))?$`).exec(item);
+    if (!match) return null;
+    const low = Number(match[1]);
+    const high = match[2] === undefined ? low : Number(match[2]);
+    spans.push(`(${Math.min(low, high)}, ${Math.max(low, high)})`);
+  }
+  return spans.length > 0 ? `[${spans.join(", ")}]` : "";
+}

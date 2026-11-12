@@ -31,6 +31,87 @@ g = op.display(pk)`);
     expect((await app.wave("W_coef"))!.length).toBe(4);
   });
 
+  test("fits are kept as results that can be compared, fitted again and applied to other waves", async ({
+    app,
+    page,
+  }) => {
+    await app.run(`xr = np.arange(20.0)
+ra = op.make("ra", 1 + 2 * xr)
+rb = op.make("rb", 3 + 0.5 * xr)
+rc = op.make("rc", -1 + 4 * xr)
+bad = ra.data.copy(); bad[5:8] += 50; ra.data = bad`);
+    await app.menu("Analysis", "Curve Fitting…");
+    await page.getByLabel("Function").selectOption("line");
+    await page.getByLabel("Y data").selectOption("ra");
+    await page.getByLabel("Leave out").fill("5 to 7.5, x");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await page.getByLabel("Leave out").fill("5..7");
+    await app.doIt();
+    await app.idle();
+    const fit = await app.lastEntry();
+    expect(fit.code).toBe('op.fit("line", "ra", exclude=[(5, 7)])');
+    expect(fit.output).toMatch(/b += 2 ±/);
+
+    // The fit is listed in the data browser, and says when its data has changed.
+    const listed = page.getByRole("complementary", { name: "Data Browser" }).getByLabel("Results");
+    await expect(listed.getByRole("listitem")).toHaveText(["Fit0line(ra)"]);
+    await app.run("ra[0] = 5");
+    await expect(listed.getByLabel("data changed")).toBeVisible();
+
+    await app.menu("Analysis", "Results…");
+    const dialog = page.getByRole("dialog", { name: "Analysis Results" });
+    const rows = dialog.getByRole("region", { name: "Results" }).locator("tbody tr");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText("Fit0(data changed)line(ra)");
+    await expect(rows.nth(0)).toContainText("1 ± ");
+    await rows.nth(0).click();
+    const details = dialog.getByRole("region", { name: "Details" });
+    await expect(details).toContainText("The data has changed since: ra.");
+    await expect(details).toContainText('function="line", y="ra", exclude=[[5, 7]]');
+    // Fitted again, the new result stands beside the old one.
+    await dialog.getByRole("button", { name: "Fit Again" }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.result("Fit0").rerun()');
+    expect(Object.keys((await app.doc()).results)).toEqual(["Fit0", "Fit1"]);
+
+    // The same fit for the other waves, then all of them in a table.
+    await app.menu("Analysis", "Results…");
+    await rows.nth(1).click();
+    await dialog.getByRole("button", { name: "Apply to Waves…" }).click();
+    const waves = dialog.getByRole("listbox", { name: "Waves to fit" });
+    await waves.getByRole("option", { name: "rb", exact: true }).click();
+    await waves.getByRole("option", { name: "rc", exact: true }).click({ modifiers: ["Control"] });
+    await dialog.getByRole("button", { name: "Fit 2 Waves" }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.result("Fit1").apply(["rb", "rc"])');
+    const doc = await app.doc();
+    expect(Object.keys(doc.results)).toEqual(["Fit0", "Fit1", "Fit2", "Fit3"]);
+    expect(doc.results.Fit3).toMatchObject({ label: "line(rc)", converged: true });
+    expect(doc.results.Fit3!.coef.map((value) => Math.round(value! * 1e9) / 1e9)).toEqual([-1, 4]);
+    expect(doc.tables.Results!.columns.slice(0, 4)).toEqual([
+      "Results_result",
+      "Results_data",
+      "Results_a",
+      "Results_a_sd",
+    ]);
+    const slopes = (await app.wave("Results_b"))!.data;
+    expect(slopes.map((value) => Math.round(value * 1e9) / 1e9)).toEqual([0.5, 4]);
+
+    await app.menu("Analysis", "Results…");
+    await expect(rows).toHaveCount(4);
+    await dialog.getByLabel("Select Fit0").check();
+    await dialog.getByRole("button", { name: "Delete" }).click();
+    await expect(rows).toHaveCount(3);
+    expect((await app.lastEntry()).code).toBe('op.result("Fit0").remove()');
+    // Results are part of the experiment: they come back with it.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("group", { name: "Saving" })).toHaveText(/^Saved \d/);
+    await page.reload();
+    await expect
+      .poll(async () => Object.keys((await app.doc()).results))
+      .toEqual(["Fit1", "Fit2", "Fit3"]);
+  });
+
   test("the hold field must be readable before the fit can run", async ({ app, page }) => {
     await app.run('op.make("pk", [1, 2, 3, 2, 1])');
     await app.menu("Analysis", "Curve Fitting…");

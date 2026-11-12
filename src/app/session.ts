@@ -46,6 +46,7 @@ export type DialogRequest =
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
+  | { kind: "results"; result?: string }
   | { kind: "experiments" }
   | { kind: "about" };
 

@@ -219,15 +219,31 @@ wave を列として表示・編集します。行も列も仮想スクロール
   係数の**固定**(`y0=0`)、**制約**(`A > 0, 2 < x0 < 5`)、点ごとの標準偏差による**重み付け**を指定できます。
   結果は `fit_<wave名>`(当てはめた曲線。元データのグラフに追加されます)、`W_coef`(係数)、`W_sigma`(標準偏差)に入ります。
   **残差**(`res_<wave名>`。データの上に専用の軸を作って表示)と、当てはめた曲線の**信頼帯**(`fit_<wave名>_lo` / `_hi`。網掛けで表示)も出せます。
+  **当てはめに使う点**は、元の wave を書き換えずに選べます: X の範囲(`xrange=`)、除外する X の区間(`exclude=[(5, 7), (15, 15)]`。ダイアログでは「Leave out」に `5..7, 15`)、
+  点ごとのマスク(`mask=`。0 の点を使わない)。組み合わせて使えます。当てはめた曲線は除外した区間もまたいで描かれ、残差は除外した点についても出ます。
+  結果には係数の**共分散**と**相関**(`r.covariance`、`r.correlation`)、**止まった理由**(`r.reason`)が入り、ほぼ完全に相関している係数の組は結果の表示に出ます。
+- **解析結果の保存と比較**: フィット(`op.fit`、`op.fit_peaks`、`op.fit_global`)のたびに、条件と結果をひとまとまりにした「結果」が実験に保存されます(`Fit0`、`Peaks0`、`Global0`、…)。
+  保存されるのは、関数・対象の wave・使った点の選び方・初期値・固定・制約・重みと、係数・不確かさ・共分散・χ²・収束したかと止まった理由、作られた wave の名前です。
+  結果は、読んだ wave のその時点の内容の指紋を持っているので、**あとで元データが変わると「data changed」と表示されます**。
+  データブラウザの **Results** に一覧が出ます(右クリックで再実行・削除)。**Analysis › Results…** では、結果を行、係数を列にした表で試料や条件を見比べ、
+  **Fit Again**(同じ設定で、いまのデータに対して再実行。新しい結果として横に残ります)、**Apply to Waves…**(同じ設定を別の wave に適用)、**Make Table**(結果を wave の表にする)ができます。
+  Python では `op.results()`、`op.result("Fit0")`、`r.rerun()`、`r.apply([w2, w3])`、`op.results_table()` です。結果は実験ファイルと自動保存に含まれ、Undo で一緒に戻ります。
+  自作の関数によるフィットを再実行するときは、同じ名前の関数が定義されている必要があります。配列で渡した重みやマスクは保存されないので、再実行時に渡し直します(wave で渡せば保存されます)。
+- **一括フィット**(`op.fit_batch("exp", [w1, w2, w3])`): 複数の wave に同じ設定で順に当てはめ、結果表(`Results`)を作ります。
+- **同時フィット**(`op.fit_global("exp", [w1, w2, w3], shared=["tau"])`): 複数の wave に 1 つの関数を同時に当てはめ、指定した係数(時定数、ピーク位置など)を全部の wave で共通にします。
+  共通の係数は 1 つの値として、そのほかは wave ごとに求まります。固定(`hold=`)と制約(`bounds=`)はすべての wave に同じものが掛かります。
 - **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウス・ローレンツ・Voigt・擬 Voigt のいずれかの和とベースライン(定数・直線)を同時に当てはめます。
   各ピークの位置・高さ・半値全幅・面積(とそれぞれの標準偏差)を一覧で出し、`W_peaks` に入れます。合計の曲線と各ピークの曲線がグラフに追加されます。
+  **ピーク間の拘束**(スピン軌道分裂の 2 本組など)を掛けられます。ピークは開始位置の左から 1、2、… と数えます:
+  `same_width=True`(すべてのピークを 1 番目と同じ幅に)、`spacing={(1, 2): 1.2}`(2 番目を 1 番目の右 1.2 に固定)、`area_ratio={(1, 2): 0.5}`(2 番目の面積を 1 番目の半分に固定)。
+  拘束された量は当てはめの対象から外れ、相手のピークから決まります(不確かさも相手から引き継ぎます)。使う点の選び方(`xrange=`、`exclude=`、`mask=`)は Curve Fitting と同じです。
 - **Voigt と擬 Voigt**: Voigt はガウスとローレンツの畳み込みで、装置の分解能(ガウス)と寿命による広がり(ローレンツ)を分けて求めるのに使います。
   幅はガウス幅 `gwidth`(`gauss` の `width` と同じく exp(−(x/gwidth)²))とローレンツ幅 `lwidth`(`lor` 形状と同じく半値半幅)の 2 つで、どちらも当てはめます。
   `A`(マルチピークでは高さ)はピークの高さです。`lwidth` が 0 ならガウス、`gwidth` が 0 ならローレンツと一致します。
   値は Faddeeva 関数 w(z) の実部から計算します(Weideman の有理近似、40 項。誤差はピーク値の 1e-15 以下。SciPy は使いません)。
   マルチピークでは、全体の半値全幅(プロファイルから正確に求めます)と面積に加えて、ガウス成分とローレンツ成分の半値全幅(`gauss_fwhm`、`lorentz_fwhm`)を出し、`W_peaks` の 5・6 列目にも入れます。
   擬 Voigt は `eta`·ローレンツ + (1 − `eta`)·ガウスで、両方が同じ半値全幅を持ちます(`width` は半値半幅)。`eta` は 0〜1 に制限し、`W_peaks` の 5 列目に入れます。
-  `op.fit` では `eta` を 0〜1 に丸めて曲線を計算します。パラメータ自体も 0〜1 に保つには `bounds={"eta": (0, 1)}` を付けます(ダイアログは最初からこの制約を入れます)。
+  `op.fit` でも `eta` は指定しなくても 0〜1 に制限されます(`bounds=` で片側だけ指定した場合、もう片側はこの制限が残ります)。
 - **バックグラウンド**(Analysis › Background…): XPS などのスペクトルのピークの下のバックグラウンドを `<wave名>_bg` に作ります(「Subtracted spectrum」で差し引いた `<wave名>_sub` も)。
   範囲は X の値で指定するか、カーソル A–B 間で、範囲の外は NaN です。両端の高さは、それぞれ端の数点(`average=`、既定 5 点)の平均です。XY データには X wave を指定します。
   **Shirley** は、一方の端の高さから他方の端の高さまで、通り過ぎたピーク面積(バックグラウンドより上の部分)に比例して変わる曲線で、反復して求めます。
@@ -424,6 +440,14 @@ op.fit(lambda x, a, k: a * np.exp(k * x), w, guess=[1, 0.1])
 op.fit("exp", w, cursors=True)                 # カーソル A–B 間
 op.fit("gauss", w, hold={"y0": 0}, bounds={"A": (0, None)}, sigma="err")   # 固定・制約・重み
 r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band = (下, 上)
+op.fit("gauss", w, xrange=(2, 8), exclude=[(4.5, 5)], mask="good")   # 使う点: X の範囲、除外区間、マスク
+r.covariance; r.correlation; r.reason; r.name            # 共分散・相関・止まった理由・保存された結果の名前
+kept = op.result("Fit0"); op.results(); kept.changed     # 保存された結果。changed は、あとで変わった入力 wave
+kept.rerun(); kept.rerun(replace=True, hold={"y0": 0})   # 同じ設定で再実行(設定の一部を変えても)
+kept.apply([w2, w3]); op.fit_batch("exp", [w1, w2, w3])  # 別の wave に同じフィット。結果表 Results もできる
+op.results_table([r1, r2], name="Compare")               # 結果を横並びの表に(行が結果、列が係数)
+g = op.fit_global("exp", [w1, w2], shared=["tau"])       # 同時フィット: g["tau"]、g["A"](wave ごと)、g.coef
+op.fit_peaks(w, peaks=[284.6, 285.8], same_width=True, spacing={(1, 2): 1.2}, area_ratio={(1, 2): 0.5})
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
 peaks = op.fit_peaks(w, shape="voigt")                       # peaks[0]["gauss_fwhm"], ["lorentz_fwhm"]。"pseudo_voigt" は ["eta"]
 op.fit("voigt", w)                                           # y0, A, x0, gwidth, lwidth

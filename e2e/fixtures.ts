@@ -104,6 +104,7 @@ export class App {
           tables: state.tables,
           procedures: state.procedures,
           pages: state.pages,
+          results: state.results,
           windows: state.windows,
         }),
       ) as {
@@ -113,6 +114,7 @@ export class App {
         tables: typeof state.tables;
         procedures: typeof state.procedures;
         pages: typeof state.pages;
+        results: typeof state.results;
         windows: typeof state.windows;
       };
     });
