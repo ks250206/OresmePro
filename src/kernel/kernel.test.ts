@@ -1419,6 +1419,20 @@ describe("oresme Python API", () => {
     }
   });
 
+  it("differentiates a matrix along X, keeping its other scaling", async () => {
+    expect(
+      await run(
+        [
+          'dm = op.make("dif_m", np.outer(np.arange(4.0) ** 2, [1, 2, 3]), x0=0, dx=0.5, y0=10, dy=2, y_unit="K")',
+          "dd = op.differentiate(dm)",
+          "print(dd.shape, dd.data[:, 1].tolist(), dd.dx, dd.y0, dd.dy, dd.y_unit)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // d/dx of 2 i^2 with x = i / 2: one-sided at the ends, central inside.
+    expect(stdout).toBe("(4, 3) [4.0, 8.0, 16.0, 20.0] 0.5 10.0 2.0 K\n");
+  });
+
   it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
     expect(
       await run(

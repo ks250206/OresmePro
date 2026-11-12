@@ -1,3 +1,4 @@
+import { readNumber } from "../io/delimited";
 import { parseDate, UTC, type TimeZone } from "../plot/ticks";
 import type { Command } from "./commands";
 import { DATE_UNIT, type Wave } from "./types";
@@ -18,14 +19,13 @@ export interface TablePlane {
   chunk: number;
 }
 
-/** Reads a number as typed into a cell: empty and "nan" are NaN; null if it is not a number. */
-export function parseCell(text: string): number | null {
-  const trimmed = text.trim();
-  if (trimmed === "") return Number.NaN;
-  if (/^[+-]?nan$/i.test(trimmed)) return Number.NaN;
-  const value = Number(trimmed);
-  return Number.isNaN(value) ? null : value;
-}
+/**
+ * Reads a number as typed or pasted into a cell: null if it is not a number.
+ * An empty cell and the markers of a missing value that files and
+ * spreadsheets use ("NaN", "N/A", "#DIV/0!", "-") are NaN, and "inf" is
+ * infinity, as when a file is loaded: what a spreadsheet copies pastes.
+ */
+export const parseCell = (text: string): number | null => readNumber(text);
 
 /** Position in a wave's data of a table cell, on the plane being shown. */
 export function cellIndex(wave: Wave, row: number, j: number | null, plane: TablePlane): number {

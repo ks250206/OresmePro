@@ -9,6 +9,7 @@ import {
   tableEditCommands,
   type CellEdit,
   type TableColumn,
+  parseCell,
 } from "./tableEdit";
 
 const plane = { layer: 0, chunk: 0 };
@@ -276,5 +277,18 @@ describe("complex and integer waves in a table", () => {
     ]);
     expect(Array.from(doc.getState().waves.n!.data)).toEqual([3, 0]);
     expect(doc.getState().waves.n!.type).toBe("int32");
+  });
+});
+
+describe("parseCell", () => {
+  it("reads what the importer reads: numbers, infinities and markers of missing values", () => {
+    expect(parseCell("1.5e3")).toBe(1500);
+    expect(parseCell(" -inf ")).toBe(-Infinity);
+    expect(parseCell("Infinity")).toBe(Infinity);
+    for (const text of ["", "NaN", "-nan", "N/A", "#N/A", "#DIV/0!", "NA", "-", "null"]) {
+      expect(parseCell(text), text).toBeNaN();
+    }
+    // Text is not a number, and "Na" is sodium, not "not available".
+    for (const text of ["abc", "Na", "1,5", "1 2"]) expect(parseCell(text), text).toBeNull();
   });
 });

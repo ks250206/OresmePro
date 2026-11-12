@@ -1617,13 +1617,19 @@ def differentiate(wave_, name=None, *, x=None):
     """
     source, values = _numeric(wave_)
     if x is None:
+        # Along X: for a matrix, down each column (np.gradient over every
+        # dimension would give one array per dimension, not a wave).
+        others = (
+            {"y0": source.y0, "dy": source.dy, "y_unit": source.y_unit} if values.ndim > 1 else {}
+        )
         return _op.make(
             _sibling(source, "_DIF", name),
-            np.gradient(values, source.dx),
+            np.gradient(values, source.dx, axis=0),
             x0=source.x0,
             dx=source.dx,
             x_unit=source.x_unit,
             unit=_units(source.unit, source.x_unit, "/"),
+            **others,
         )
     if values.ndim != 1 or len(values) < 2:
         raise _op.OresmeError("Differentiating against X needs a 1-D wave of at least 2 points.")

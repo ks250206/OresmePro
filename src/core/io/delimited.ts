@@ -246,6 +246,17 @@ function toNumber(text: string, decimal: string): number {
   return COMMA_NUMBER.test(text) ? Number(text.replaceAll(".", "").replace(",", ".")) : Number.NaN;
 }
 
+/**
+ * The number a cell says, as a table takes it when typed or pasted: NaN for
+ * an empty cell or a marker of a missing value, null if it is not a number.
+ */
+export function readNumber(cell: string): number | null {
+  const text = cell.trim();
+  if (text === "" || isMissing(text)) return Number.NaN;
+  const value = toNumber(text, ".");
+  return Number.isNaN(value) ? null : value;
+}
+
 function cellKind(cell: string, decimal: string): CellKind {
   const text = cell.trim();
   if (text === "") return "empty";
