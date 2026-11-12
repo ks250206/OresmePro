@@ -421,6 +421,7 @@ test.describe("loading Igor files", () => {
 
   test("a dropped packed experiment loads its waves under their data folders, as one step", async ({
     app,
+    page,
   }) => {
     await app.drop([await igorFile("experiment-le.pxp", "run.pxp")]);
     await expect.poll(async () => (await app.doc()).order.length).toBe(21);
@@ -456,7 +457,8 @@ test.describe("loading Igor files", () => {
     );
     // Nothing of the file opens a window, and the whole load is one step to undo.
     expect(doc.windows).toEqual([]);
-    await app.menu("Edit", "Undo");
+    await page.getByRole("complementary", { name: "Data Browser" }).getByText("root").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(async () => (await app.doc()).order).toEqual([]);
     expect((await app.doc()).folders).toEqual([]);
   });
