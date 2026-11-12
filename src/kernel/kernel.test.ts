@@ -1240,4 +1240,65 @@ describe("oresme Python API", () => {
     // The finite values are 1, 4 and 2, at x = 10, 11 and 12.5.
     expect(stdout).toBe("1.0 10.0 4.0 11.0 6 3 2.3333333333333335 7.0\n");
   });
+
+  it("keeps graph styles, gives them to graphs, and gives new graphs the default one", async () => {
+    expect(
+      await run(
+        [
+          'sa = op.make("st_a", [1.0, 2.0, 3.0]); sb = op.make("st_b", [2.0, 1.0, 0.0])',
+          'src = op.display(sa, sb, name="StyleSource")',
+          'src.set(font_size=15); src.trace("st_a").set(line_size=3, color="red")',
+          'src.left.set(ticks="inside", mirror="on")',
+          'paper = src.save_style("stPaper")',
+          "data = paper.data",
+          'print(paper, data["graph"]["font_size"], data["traces"][0]["line_size"], data["axes"]["left"])',
+          'other = op.display(sb, sa, sb, name="StyleTarget", style=None)',
+          'other.apply_style("stPaper")',
+          "print(other.font_size, other.style, [t.line_size for t in other.traces], other.left.mirror)",
+          'op.set_style("stTalk", {"graph": {"font_size": 22}, "traces": [{"line_size": 4}]})',
+          'op.apply_style("stTalk", graphs=[other, "StyleSource"])',
+          'print(other.font_size, src.font_size, src.trace("st_a").color, src.trace("st_a").line_size)',
+          'op.set_default_style("stTalk")',
+          'made = op.display(sa, name="StyleNew")',
+          "print(made.font_size, made.style, op.default_style())",
+          'op.style("stTalk").rename("stPoster")',
+          'print(op.default_style(), made.style, [s.name for s in op.styles() if s.name.startswith("st")])',
+          "try:",
+          '    op.set_style("stBad", {"traces": [{"y_error": 1}]})',
+          "except op.OresmeError as error:",
+          '    print(str(error).split(".")[0])',
+          'op.style("stPoster").remove()',
+          "print(op.default_style(), made.style, made.font_size)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off'}",
+        "15 Style('stPaper') [3, 1, 3] on",
+        "22 22 #ff0000 4",
+        "22 Style('stTalk') Style('stTalk')",
+        "Style('stPoster') Style('stPoster') ['stPaper', 'stPoster']",
+        'Unknown trace style property "yError"',
+        "None None 22",
+        "",
+      ].join("\n"),
+    );
+    expect(doc.getState().graphs.StyleTarget!.traces.map((trace) => trace.color)).toEqual([
+      "#ff0000",
+      "#0000ff",
+      "#ff0000",
+    ]);
+
+    // What the GUI writes into the history does the same when it is run.
+    const { styles } = doc.getState();
+    const line = echoPython({ op: "setStyle", name: "stEcho", style: styles.stPaper });
+    expect(await run(`${line}\nop.set_style("stCopy", op.style("stPaper"))`)).toBe(true);
+    expect(doc.getState().styles.stEcho).toEqual(styles.stPaper);
+    expect(doc.getState().styles.stCopy).toEqual(styles.stPaper);
+    expect(
+      await run(echoPython({ op: "saveStyle", name: "stSized", graph: "StyleNew", size: true })!),
+    ).toBe(true);
+    expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
+  });
 });

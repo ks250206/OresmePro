@@ -72,6 +72,13 @@ __all__ = [
     "new_layout",
     "layout",
     "layouts",
+    "Style",
+    "style",
+    "styles",
+    "set_style",
+    "apply_style",
+    "set_default_style",
+    "default_style",
 ]
 
 
@@ -107,6 +114,19 @@ def _dispatch(command, data=None):
 
 def _camel(name):
     return re.sub(r"_([a-z])", lambda match: match.group(1).upper(), name)
+
+
+def _snake(name):
+    return re.sub(r"[A-Z]", lambda match: "_" + match.group(0).lower(), name)
+
+
+def _keys(value, spell):
+    """Data with every dict key respelled (and NumPy numbers made plain), at any depth."""
+    if isinstance(value, dict):
+        return {spell(str(key)): _keys(item, spell) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_keys(item, spell) for item in value]
+    return _plain(value)
 
 
 def _is_text(values):
@@ -1135,6 +1155,28 @@ class Graph(_Props):
     def annotation(self, name):
         return Annotation(self, name)
 
+    def save_style(self, name, size=False):
+        """Keep this graph's look as a style named ``name`` and return it.
+
+        The style holds the fonts, the look of the axes (ticks, mirror, grid)
+        and of the traces in order (color, line, markers), not the data; with
+        ``size=True`` also the size the graph is drawn at. A style of that
+        name is replaced.
+        """
+        _dispatch({"op": "saveStyle", "name": name, "graph": self._name, "size": bool(size)})
+        return Style(name)
+
+    def apply_style(self, style):
+        """Give this graph the look of a style (a name or a Style). Returns self."""
+        apply_style(style, graphs=[self])
+        return self
+
+    @property
+    def style(self):
+        """The Style last given to the graph, or None. Traces added later follow it."""
+        name = self._info()["style"]
+        return None if name is None else Style(name)
+
     def svg(self, width=None, height=None, cursors=False):
         """The graph as an SVG document; by default at its window's size."""
         return _call(
@@ -1583,11 +1625,17 @@ def kill(*waves_):
         _data_cache.pop(name, None)
 
 
-def display(*y, x=None, name=None):
+_DEFAULT = object()
+
+
+def display(*y, x=None, name=None, style=_DEFAULT):
     """Make a new graph of the given waves (or arrays) and return it.
 
     ``x`` plots them against an X wave instead of their own X scaling. A text
     wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
+    The graph is given the default style, if there is one (see
+    ``set_default_style``); ``style="paper"`` gives it another, and
+    ``style=None`` none.
     """
     command = {
         "op": "display",
@@ -1596,6 +1644,8 @@ def display(*y, x=None, name=None):
     }
     if name is not None:
         command["name"] = name
+    if style is not _DEFAULT:
+        command["style"] = style.name if isinstance(style, Style) else style
     return Graph(_dispatch(command))
 
 
@@ -1807,6 +1857,102 @@ def set_time_zone(zone):
 def kill_window(name):
     """Close a graph, table or procedure window."""
     _dispatch({"op": "killWindow", "name": name})
+
+
+class Style:
+    """A graph style: the look of a graph kept in the experiment under a name.
+
+    ``data`` is what it holds, as a plain dict with any of ``"graph"``
+    (``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
+    the drawn graph, in pixels), ``"axes"`` (by ``"left"``, ``"bottom"``,
+    ``"right"``, ``"top"`` and ``"other"`` for added axes: ``mirror``,
+    ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of trace looks
+    (``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
+    ``marker_size``, ``marker_fill``) that the traces of a graph take in
+    turn, starting again from the first when there are more traces. A style
+    changes only what it holds.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def data(self):
+        """What the style holds, as a dict (a copy: change it with ``op.set_style``)."""
+        return _keys(_call("styleInfo", {"name": self._name})[0], _snake)
+
+    def apply(self, graphs=None):
+        """Give graphs this look; every graph when ``graphs`` is None."""
+        apply_style(self, graphs)
+        return self
+
+    def rename(self, new_name):
+        _dispatch({"op": "renameStyle", "name": self._name, "newName": new_name})
+        self._name = new_name
+        return self
+
+    def remove(self):
+        """Delete the style. Graphs keep the look it gave them."""
+        _dispatch({"op": "removeStyle", "name": self._name})
+
+    def __repr__(self):
+        return f"Style({self._name!r})"
+
+
+def _style_name(style):
+    return style.name if isinstance(style, Style) else style
+
+
+def styles():
+    """Every style of the experiment."""
+    return [Style(name) for name in _call("listStyles")[0]["names"]]
+
+
+def style(name):
+    """The style with this name."""
+    if name not in _call("listStyles")[0]["names"]:
+        raise OresmeError(f"No style named {name!r}.")
+    return Style(name)
+
+
+def set_style(name, data):
+    """Define a style from a dict (see ``Style``) or copy another Style; returns it.
+
+    A style of that name is replaced. Unknown keys and bad values are refused.
+    """
+    if isinstance(data, Style):
+        data = data.data
+    _dispatch({"op": "setStyle", "name": name, "style": _keys(data, _camel)})
+    return Style(name)
+
+
+def apply_style(style, graphs=None):
+    """Give graphs the look of a style; every graph when ``graphs`` is None.
+
+    It is one step to undo, however many graphs it changes.
+    """
+    if graphs is None:
+        names = _call("listWindows", {"kind": "graph"})[0]
+    else:
+        if isinstance(graphs, (Graph, str)):
+            graphs = [graphs]
+        names = [item.name if isinstance(item, Graph) else item for item in graphs]
+    _dispatch({"op": "applyStyle", "style": _style_name(style), "graphs": names})
+
+
+def set_default_style(style):
+    """Give new graphs this style (a name or a Style); None to give them none."""
+    _dispatch({"op": "setDefaultStyle", "name": _style_name(style)})
+
+
+def default_style():
+    """The Style new graphs are given, or None."""
+    name = _call("listStyles")[0]["default"]
+    return None if name is None else Style(name)
 
 
 def _input(prompt=""):

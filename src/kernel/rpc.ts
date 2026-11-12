@@ -170,6 +170,13 @@ export function handleRpc(
       if (!graph) throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
       return { result: graph };
     }
+    case "listStyles":
+      return { result: { names: Object.keys(state.styles), default: state.defaultStyle } };
+    case "styleInfo": {
+      const style = typeof params.name === "string" ? state.styles[params.name] : undefined;
+      if (!style) throw new DocError(`No style named ${JSON.stringify(params.name)}.`);
+      return { result: style };
+    }
     case "tableInfo": {
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
