@@ -19,7 +19,9 @@ Waves can be kept in data folders: ``"run1:signal"`` is the wave ``signal`` in
 the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 """
 
+import hashlib
 import json
+import os
 import re
 import warnings
 
@@ -51,6 +53,8 @@ __all__ = [
     "folder",
     "folders",
     "edit",
+    "load_text",
+    "load_excel",
     "graph",
     "graphs",
     "table",
@@ -1623,6 +1627,109 @@ def edit(*waves_, name=None):
     if name is not None:
         command["name"] = name
     return Table(_dispatch(command))
+
+
+def _import(kind, source, name, preset, options):
+    """Read a file's bytes here and have the application turn them into waves."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        if name is None:
+            raise OresmeError("Give name=, a file name for the notes of the waves, with bytes.")
+        data, filename = bytes(source), name
+    else:
+        path = os.fspath(source)
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError as error:
+            raise OresmeError(
+                f"Could not read {path}: {error.strerror or error}. Files added with "
+                "File > Add Files for Python are in the working directory."
+            ) from None
+        filename = name or os.path.basename(path)
+    settings = {key: value for key, value in options.items() if value is not None}
+    if isinstance(settings.get("header"), bool):
+        settings["header"] = "yes" if settings["header"] else "no"
+    if isinstance(settings.get("sheets"), str):
+        settings["sheets"] = [settings["sheets"]]
+    for key in ("columns", "errors"):
+        if key in settings:
+            if not isinstance(settings[key], dict):
+                raise OresmeError(f"{key} must be a dict keyed by column number, counted from 0.")
+            settings[key] = {str(column): value for column, value in settings[key].items()}
+    reply = _call(
+        "importData",
+        {
+            "kind": kind,
+            "filename": filename,
+            "settings": settings,
+            "preset": preset,
+            "size": len(data),
+            "digest": hashlib.sha256(data).hexdigest(),
+        },
+        np.frombuffer(data + b"\0" * (-len(data) % 8), dtype=np.float64),
+    )[0]
+    for table in reply["tables"]:
+        unread = [
+            f"{wave_} ({count})" for wave_, count in zip(table["waves"], table["unreadable"]) if count
+        ]
+        if unread:
+            warnings.warn(
+                f"{filename}: cells that could not be read are NaN in {', '.join(unread)}.",
+                stacklevel=3,
+            )
+    return reply
+
+
+def load_text(source, *, preset=None, encoding=None, delimiter=None, decimal=None, comment=None,
+              skip=None, header=None, units=None, columns=None, x=None, errors=None,
+              graph=False, table=True, name=None):
+    """Load a file of delimited text (CSV, TSV, columns separated by spaces) as waves.
+
+    ``source`` is a file in the working directory (the files of the
+    experiment are there), any other path, or the file's bytes with
+    ``name=``. Each column becomes a wave, returned in a list. What is not
+    given is detected:
+
+    - ``encoding``: "utf-8", "shift_jis", "euc-jp", "utf-16le", "utf-16be", "windows-1252".
+    - ``delimiter``: "tab", "comma", "semicolon" or "space".
+    - ``decimal``: "," for numbers written like 1,5 (a point then groups thousands).
+    - ``comment``: lines starting with this are passed over; "#" unless given, "" for none.
+    - ``skip``: lines above the table to pass over.
+    - ``header``: True if the first row names the columns, False if it is data.
+    - ``units``: "auto" takes units from headers like "Voltage (V)" or "I [mA]",
+      "slash" from "Ewe/V", "row" from the row below the header, "none" leaves them.
+    - ``columns``: choices by column number, counted from 0:
+      ``{0: {"name": "t", "unit": "s"}, 3: {"type": "skip"}}``. A type is "number",
+      "date", "text" or "skip". Cells that do not fit a type chosen become NaN, with
+      a warning; a column left to be detected is text if any cell is not a number.
+    - ``graph=True`` plots the numeric columns, against column ``x`` if given, with
+      error bars from ``errors={value_column: uncertainty_column}``.
+    - ``table=False`` makes no table.
+    - ``preset``: the name of an import preset saved in the Load Data dialog; what is
+      given here goes before it.
+    """
+    reply = _import("text", source, name, preset, dict(
+        encoding=encoding, delimiter=delimiter, decimal=decimal, comment=comment, skip=skip,
+        header=header, units=units, columns=columns, x=x, errors=errors,
+        graph=bool(graph), table=bool(table),
+    ))
+    return [Wave(wave_) for wave_ in reply["tables"][0]["waves"]]
+
+
+def load_excel(source, *, sheets=None, preset=None, decimal=None, skip=None, header=None,
+               units=None, columns=None, x=None, errors=None, graph=False, table=True,
+               name=None):
+    """Load an Excel workbook (.xlsx, .xlsm) as waves: a dict of sheet name to its waves.
+
+    ``sheets`` names the sheets to read (one name or a list); all that have
+    cells otherwise. ``skip`` counts rows above the table. The other options
+    are those of ``load_text`` and apply to every sheet read.
+    """
+    reply = _import("excel", source, name, preset, dict(
+        sheets=sheets, decimal=decimal, skip=skip, header=header, units=units, columns=columns,
+        x=x, errors=errors, graph=bool(graph), table=bool(table),
+    ))
+    return {table["sheet"]: [Wave(wave_) for wave_ in table["waves"]] for table in reply["tables"]}
 
 
 def graphs():

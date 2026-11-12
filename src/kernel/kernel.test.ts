@@ -7,6 +7,7 @@ import { FileStore } from "../core/files/files";
 import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
+import excelWorkbook from "../core/io/testdata/excel.xlsx?inline";
 import { bootPython, type PythonKernel } from "./boot";
 import { answerRpc } from "./rpc";
 
@@ -66,6 +67,7 @@ beforeAll(async () => {
           },
           exportPage: (name, filename) => exported.push(`${name}:${filename}`),
           measureText: (text, size) => text.length * size * 0.55,
+          importPresets: () => [{ name: "bench", settings: { decimal: ",", skip: 1 } }],
         },
         method,
         paramsJson,
@@ -839,6 +841,70 @@ describe("oresme Python API", () => {
       await run("g1.kill(); print([i.name for i in page.items]); page.kill(); print(op.layouts())"),
     ).toBe(true);
     expect(stdout).toBe("['graph1']\n[]\n");
+  });
+
+  it("loads text files and workbooks as waves, as told", async () => {
+    expect(
+      await run(
+        [
+          'open("lt_run.csv", "w").write("Instrument X\\nlt_t (s),lt_U (V),lt_dU (V),lt_label\\n0,1.5,0.1,a\\n1,2.5,0.2,b\\n")',
+          'ws = op.load_text("lt_run.csv", graph=True, x=0, errors={1: 2})',
+          "print([w.name for w in ws], ws[1].unit, ws[1].data.tolist(), ws[1].note[:32])",
+          // The preset passes over one line and reads decimal commas; the call adds to it.
+          'ps = op.load_text(b"junk\\nlt_a;lt_b\\n1,5;2\\n2,5;x\\n", name="p.txt", preset="bench", table=False, columns={1: {"type": "number", "name": "lt_c"}})',
+          "print([w.name for w in ps], ps[0].data.tolist(), ps[1].data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "['lt_t', 'lt_U', 'lt_dU', 'lt_label'] V [1.5, 2.5] Loaded from lt_run.csv (SHA-256 ",
+      "['lt_a', 'lt_c'] [1.5, 2.5] [2.0, nan]",
+    ]);
+    expect(stderr).toMatch(/p\.txt: cells that could not be read are NaN in lt_c \(1\)/);
+    const state = doc.getState();
+    const graph = Object.values(state.graphs).find((item) => item.traces[0]?.y === "lt_U")!;
+    expect(graph.traces).toMatchObject([{ y: "lt_U", x: "lt_t", yError: "lt_dU" }]);
+    expect(Object.values(state.tables).some((table) => table.columns.includes("lt_label"))).toBe(
+      true,
+    );
+    expect(Object.values(state.tables).some((table) => table.columns.includes("lt_a"))).toBe(false);
+    // One input is one step to undo, whatever it loaded.
+    doc.undo();
+    expect(doc.getState().waves.lt_a).toBeUndefined();
+    expect(doc.getState().waves.lt_U).toBeUndefined();
+    doc.redo();
+    expect(doc.getState().waves.lt_U).toBeDefined();
+
+    const workbook = Uint8Array.from(
+      atob(excelWorkbook.slice(excelWorkbook.indexOf(",") + 1)),
+      (c) => c.charCodeAt(0),
+    );
+    files.put("lt_book.xlsx", workbook);
+    expect(
+      await run(
+        [
+          'book = op.load_excel("lt_book.xlsx", table=False)',
+          "first = list(book)[0]",
+          'one = op.load_excel("lt_book.xlsx", sheets=first, table=False, columns={0: {"type": "skip"}})',
+          "print(len(book) > 1, list(one) == [first], len(one[first]) == len(book[first]) - 1)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("True True True\n");
+    for (const [code, error] of [
+      ['op.load_text("lt_missing.csv")', /Could not read lt_missing\.csv/],
+      [
+        'op.load_text("lt_run.csv", preset="nope")',
+        /No import preset named "nope". Presets: bench/,
+      ],
+      ['op.load_text("lt_run.csv", delimiter="pipe")', /delimiter must be one of/],
+      ['op.load_text(b"1,2")', /Give name=/],
+      ['op.load_excel("lt_run.csv")', /not an Excel workbook/],
+      ['op.load_excel("lt_book.xlsx", sheets="Nope")', /no sheet named "Nope"/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
   });
 
   it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {

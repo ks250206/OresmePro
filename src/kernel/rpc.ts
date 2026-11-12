@@ -5,6 +5,7 @@ import type { Doc } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
 import { DocError, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
+import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import type { MeasureText } from "../core/plot/displayList";
 import { tracePosition, traceX } from "../core/plot/layout";
 
@@ -21,6 +22,14 @@ export interface RpcContext {
   exportPage(page: string, filename: string): void;
   /** Measures text as it is drawn, to know how much room text on a page takes. */
   measureText: MeasureText;
+  /** The import presets kept by the app, for `op.load_text(..., preset=...)`. */
+  importPresets(): readonly NamedImportSettings[];
+}
+
+/** A named set of import settings, as the app keeps them for the files of an instrument. */
+export interface NamedImportSettings {
+  name: string;
+  settings: ImportSettings;
 }
 
 export interface RpcReply {
@@ -226,6 +235,47 @@ export function handleRpc(
     case "putFile": {
       const bytes = wordsToBytes(data, Number(params.size));
       return { result: context.files.put(String(params.path), bytes) };
+    }
+    case "importData": {
+      const filename = String(params.filename);
+      let settings = checkSettings(params.settings ?? {});
+      if (typeof params.preset === "string") {
+        const preset = context.importPresets().find((item) => item.name === params.preset);
+        if (!preset) {
+          const names = context.importPresets().map((item) => item.name);
+          throw new DocError(
+            `No import preset named ${JSON.stringify(params.preset)}. Presets: ${names.join(", ") || "none"}.`,
+          );
+        }
+        // What the call says goes before the preset, column by column.
+        settings = {
+          ...preset.settings,
+          ...settings,
+          columns: { ...preset.settings.columns, ...settings.columns },
+        };
+      }
+      const digest = typeof params.digest === "string" ? params.digest : undefined;
+      const bytes = wordsToBytes(data, Number(params.size));
+      const kind = params.kind === "excel" ? "excel" : "text";
+      const plan = planImport(bytes, filename, settings, state, digest, kind);
+      if (plan.commands.length === 0) throw new DocError(`${filename} has no columns.`);
+      const made: string[] = [];
+      for (const command of plan.commands) {
+        const result = doc.dispatch(command, { group });
+        if (command.op !== "makeWave" && result) made.push(result);
+      }
+      return {
+        result: {
+          tables: plan.tables.map(({ sheet, result }) => ({
+            sheet,
+            waves: result.names,
+            unreadable: result.unreadable.map((rows) => rows.length),
+          })),
+          windows: made,
+          summary: plan.summary,
+          encoding: plan.encoding,
+        },
+      };
     }
     case "removeFile":
       return { result: context.files.remove(String(params.path)) };

@@ -8,6 +8,7 @@ import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
+import { PresetStore } from "./importPresets";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
 import { useSyncExternalStore } from "react";
@@ -77,6 +78,8 @@ export const doc = new Doc();
 export const history = new History();
 /** The experiment's files: what Python wrote, and what was added for it to read. */
 export const files = new FileStore();
+/** Ways of reading data files, kept in the browser from one experiment to the next. */
+export const importPresets = new PresetStore();
 export const ui = createStore<UiState>({
   dialog: null,
   alert: null,
@@ -198,6 +201,7 @@ export const kernel: KernelClient = new KernelClient({
   renderPageSvg,
   exportPage: (page, filename) => pageExportHandler(page, filename),
   measureText,
+  importPresets: () => importPresets.list(),
   indexURL: PYODIDE_URL,
 });
 

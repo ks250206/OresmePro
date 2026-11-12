@@ -27,6 +27,7 @@ export interface KernelOptions {
   renderPageSvg: RpcContext["renderPageSvg"];
   exportPage: RpcContext["exportPage"];
   measureText: RpcContext["measureText"];
+  importPresets: RpcContext["importPresets"];
   indexURL: string;
 }
 
