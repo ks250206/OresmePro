@@ -5,6 +5,7 @@ need only NumPy.
 """
 
 import inspect
+import math
 
 import numpy as np
 
@@ -339,40 +340,68 @@ class FitResult:
         return "\n".join(lines)
 
 
-def _normal_quantile(p):
-    """The value below which a standard normal variable falls with probability p (Acklam)."""
-    a = (-3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02,
-         1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00)
-    b = (-5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02,
-         6.680131188771972e01, -1.328068155288572e01)
-    c = (-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00,
-         -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00)
-    d = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00,
-         3.754408661907416e00)
-    if p < 0.02425:
-        q = np.sqrt(-2 * np.log(p))
-        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
-            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
-        )
-    if p > 1 - 0.02425:
-        return -_normal_quantile(1 - p)
-    q = p - 0.5
-    r = q * q
-    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (
-        ((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1
-    )
+def _incomplete_beta(a, b, x, y):
+    """The regularized incomplete beta function I_x(a, b), with y = 1 - x given separately.
+
+    By its continued fraction (modified Lentz). Taking 1 - x from the caller
+    keeps its precision when x is close to 1.
+    """
+    if x <= 0:
+        return 0.0
+    if y <= 0:
+        return 1.0
+    # The fraction converges quickly only on this side of the mean.
+    if x > (a + 1) / (a + b + 2):
+        return 1.0 - _incomplete_beta(b, a, y, x)
+    front = math.exp(
+        math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log(y)
+    ) / a
+    tiny = 1e-300
+    fraction, c, d = 1.0, 1.0, 0.0
+    for index in range(100000):
+        m = index // 2
+        if index == 0:
+            term = 1.0
+        elif index % 2 == 0:
+            term = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m))
+        else:
+            term = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))
+        d = 1.0 + term * d
+        d = 1.0 / (d if abs(d) > tiny else tiny)
+        c = 1.0 + term / c
+        c = c if abs(c) > tiny else tiny
+        fraction *= c * d
+        if abs(1.0 - c * d) < 1e-15:
+            break
+    return front * (fraction - 1.0)
 
 
 def _student_quantile(p, freedom):
-    """The same for Student's t with ``freedom`` degrees of freedom (Cornish-Fisher)."""
-    z = _normal_quantile(p)
+    """The value below which Student's t falls with probability p.
+
+    The upper tail P(T > t) = I_x(n/2, 1/2) / 2, with x = n/(n + t^2) for n
+    degrees of freedom, is inverted by bisection. Unlike an expansion in 1/n,
+    this stays accurate to near rounding down to n = 1.
+    """
+    if p < 0.5:
+        return -_student_quantile(1 - p, freedom)
     n = float(freedom)
-    return (
-        z
-        + (z**3 + z) / (4 * n)
-        + (5 * z**5 + 16 * z**3 + 3 * z) / (96 * n**2)
-        + (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / (384 * n**3)
-    )
+
+    def tail(t):
+        square = t * t
+        return 0.5 * _incomplete_beta(n / 2, 0.5, n / (n + square), square / (n + square))
+
+    target = 1.0 - p
+    low, high = 0.0, 1.0
+    while tail(high) > target:
+        low, high = high, 2 * high
+    while high - low > 1e-15 * high:
+        middle = (low + high) / 2
+        if tail(middle) > target:
+            low = middle
+        else:
+            high = middle
+    return (low + high) / 2
 
 
 def _stack_axis(graph, source, name):

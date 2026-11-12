@@ -1063,4 +1063,28 @@ describe("oresme Python API", () => {
       "[1.0, 0.0, 0.0, 3.0]",
     ]);
   });
+
+  it("widens the confidence band by Student's t for few degrees of freedom", async () => {
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as oa",
+          "print([round(oa._student_quantile(0.975, n), 4) for n in (1, 2, 3, 5, 10, 30)])",
+          "print([round(oa._student_quantile(0.995, n), 4) for n in (1, 2)], round(oa._student_quantile(0.95, 1), 4))",
+          // Three points leave one degree of freedom. The line is -1/6 + 1.5x with
+          // chi-square 1/6, so the standard error of the curve at x = 1 is sqrt(1/18).
+          'op.make("tband", [0.0, 1.0, 3.0]); op.make("tband_x", [0.0, 1.0, 2.0])',
+          'r = op.fit("line", "tband", x="tband_x", band=0.95, quiet=True)',
+          "lo, hi = r.band",
+          "print(round((hi.data[1] - lo.data[1]) / 2 / np.sqrt(1 / 18), 4))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // Table values of the t distribution.
+    expect(stdout.trim().split("\n")).toEqual([
+      "[12.7062, 4.3027, 3.1824, 2.5706, 2.2281, 2.0423]",
+      "[63.6567, 9.9248] 6.3138",
+      "12.7062",
+    ]);
+  });
 });
