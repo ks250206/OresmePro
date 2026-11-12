@@ -458,7 +458,7 @@ export function App() {
           </>
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col">
-          <Desktop />
+          <Desktop menus={menus} />
           {showCommand ? (
             <>
               <Splitter

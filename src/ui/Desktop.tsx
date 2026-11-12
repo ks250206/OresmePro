@@ -3,6 +3,7 @@ import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
 import type { WindowState } from "../core/doc/types";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
+import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
 import { ProcedureWindow } from "./ProcedureWindow";
 import { TableWindow } from "./TableWindow";
 
@@ -158,8 +159,18 @@ function windowTitle(window: WindowState, names: readonly string[]): string {
   return `${window.name}: ${shown}${unique.length > 4 ? ", \u2026" : ""}`;
 }
 
-/** The area where graph, table and procedure windows live. */
-export function Desktop() {
+/**
+ * Whether a right click lands on the desktop itself: windows have context
+ * menus of their own, and text and fields keep the browser's.
+ */
+const onBackground = (target: EventTarget): boolean =>
+  !(target as HTMLElement).closest("[data-window], .selectable, input, textarea");
+
+/**
+ * The area where graph, table and procedure windows live. Right-clicking it
+ * gives the menu bar's commands, as `menus`.
+ */
+export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
   const tables = useDoc((state) => state.tables);
@@ -168,7 +179,19 @@ export function Desktop() {
   // z-order is expressed with z-index instead.
   const ordered = [...windows].sort((a, b) => a.name.localeCompare(b.name));
   return (
-    <div className="relative min-h-0 flex-1 overflow-hidden bg-desktop" data-desktop>
+    <div
+      className="relative min-h-0 flex-1 overflow-hidden bg-desktop"
+      data-desktop
+      onMouseDown={(event) => {
+        // As with the menu bar, the keys go on acting where they did.
+        if (event.button === 2 && onBackground(event.target)) keepFocus(event);
+      }}
+      onContextMenu={(event) => {
+        if (!onBackground(event.target)) return;
+        event.preventDefault();
+        openContextMenu(event, menuBarItems(menus));
+      }}
+    >
       {windows.length === 0 ? (
         <div className="absolute inset-0 grid place-items-center text-muted">
           <div className="max-w-sm text-center leading-relaxed">

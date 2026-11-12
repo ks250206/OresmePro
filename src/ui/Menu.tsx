@@ -10,12 +10,61 @@ export const keepFocus = (event: { preventDefault: () => void }) => event.preven
 const itemClass =
   "flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60";
 
+/** How far a menu keeps from the edges of the window. */
+const EDGE = 4;
+
+interface Box {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * Where a submenu goes, relative to the item that opens it: to its right with
+ * its first item level with it, unless that would leave the window, in which
+ * case to its left, and moved up as far as it must to stay above the bottom.
+ */
+export function placeSubmenu(
+  item: Box,
+  size: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { left: number; top: number } {
+  let x = item.right;
+  if (x + size.width > viewport.width - EDGE) {
+    const before = item.left - size.width;
+    x = before >= EDGE ? before : Math.max(EDGE, viewport.width - EDGE - size.width);
+  }
+  // The list's top padding: its first item then lines up with this one.
+  const y = Math.max(EDGE, Math.min(item.top - 4, viewport.height - EDGE - size.height));
+  return { left: x - item.left, top: y - item.top };
+}
+
 /** An item that opens a menu of its own beside it, on hover or click. */
 function SubmenuItem({ item, onDone }: { item: MenuItem; onDone: () => void }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<{ left: number; top: number } | null>(null);
+  const anchor = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const show = open && !item.disabled;
+  // Measured before it is painted, so it never shows where it does not fit.
+  useLayoutEffect(() => {
+    if (!show || !anchor.current || !list.current) {
+      setPlace(null);
+      return;
+    }
+    const { width, height } = list.current.getBoundingClientRect();
+    setPlace(
+      placeSubmenu(
+        anchor.current.getBoundingClientRect(),
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+      ),
+    );
+  }, [show]);
   return (
     <div
+      ref={anchor}
       className="relative"
       onPointerEnter={() => setOpen(true)}
       onPointerLeave={() => setOpen(false)}
@@ -27,14 +76,21 @@ function SubmenuItem({ item, onDone }: { item: MenuItem; onDone: () => void }) {
         aria-expanded={show}
         disabled={item.disabled}
         className={`${itemClass} ${show ? "bg-accent text-white" : ""}`}
-        onClick={() => setOpen(!open)}
+        // Opens, never closes: the pointer has opened it already by the time it clicks.
+        onClick={() => setOpen(true)}
       >
         <span className="w-3" />
         <span className="-ml-3 flex-1">{item.label}</span>
-        <span className="opacity-60">▸</span>
+        <span aria-hidden className="opacity-60">
+          ▸
+        </span>
       </button>
       {show ? (
-        <div className="absolute left-full top-0 z-10 -mt-1">
+        <div
+          ref={list}
+          className="absolute z-10 w-max"
+          style={place ?? { left: "100%", top: 0, visibility: "hidden" }}
+        >
           <MenuList items={item.submenu ?? []} onDone={onDone} />
         </div>
       ) : null}
@@ -47,6 +103,7 @@ export function MenuList({ items, onDone }: { items: readonly MenuItem[]; onDone
     <div
       role="menu"
       className="min-w-44 rounded-md border border-line bg-paper py-1 shadow-xl"
+      onMouseDown={keepFocus}
       onContextMenu={(event) => event.preventDefault()}
     >
       {items.map((item, index) =>
@@ -81,6 +138,17 @@ export interface MenuDefinition {
   title: string;
   items: MenuItem[];
 }
+
+/**
+ * The menu bar as one menu, an item per menu opening its items beside it: the
+ * same items, so the two show the same states and cannot drift apart.
+ */
+export const menuBarItems = (menus: readonly MenuDefinition[]): MenuItem[] =>
+  menus.map((menu) => ({
+    label: menu.title,
+    submenu: menu.items,
+    disabled: menu.items.length === 0,
+  }));
 
 export function MenuBar({ menus }: { menus: readonly MenuDefinition[] }) {
   const [open, setOpen] = useState<number | null>(null);
