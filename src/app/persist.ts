@@ -74,8 +74,11 @@ export type SaveState =
 export interface Autosaver {
   /** Stops saving and lets go of the session's lock once a save in flight has ended. */
   stop: () => void;
-  /** Saves what is unsaved now instead of at the next interval or retry. */
-  saveNow: () => void;
+  /**
+   * Saves what is unsaved now instead of at the next interval or retry.
+   * Resolves when it has been written, or when writing it has failed.
+   */
+  saveNow: () => Promise<void>;
   /** Counts everything as unsaved: the document, the files and the history. */
   markAll: () => void;
 }
@@ -450,7 +453,8 @@ export function autosave(
     try {
       const dir = await directory();
       if (!dir) return;
-      options.onState?.({ kind: "saving" });
+      if (!announced) options.onState?.({ kind: "saving" });
+      announced = false;
       await lock.held;
       // A part is marked clean before it is written so that changes made
       // meanwhile mark it again, and marked again if writing it fails.
@@ -477,7 +481,8 @@ export function autosave(
         });
       }
       failures = 0;
-      options.onState?.({ kind: "saved", at: Date.now() });
+      // Changes made while this was written are still to be saved.
+      if (!announced) options.onState?.({ kind: "saved", at: Date.now() });
     } catch (error) {
       console.warn("Autosave failed:", error);
       failures += 1;
@@ -505,17 +510,24 @@ export function autosave(
     if (!stopped) timer ??= setTimeout(save, delay);
   }
 
+  /** Says that there is something unsaved, once per save: until it is written, it is not saved. */
+  let announced = false;
+  const changed = () => {
+    if (!announced) options.onState?.({ kind: "saving" });
+    announced = true;
+    schedule();
+  };
   const offDoc = doc.subscribe(() => {
     dirtyDoc = true;
-    schedule();
+    changed();
   });
   const offHistory = history.subscribe(() => {
     dirtyHistory = true;
-    schedule();
+    changed();
   });
   const offFiles = files.subscribe(() => {
     dirtyFiles = true;
-    schedule();
+    changed();
   });
   const flush = () => {
     if (document.visibilityState === "hidden" && timer) {
@@ -525,6 +537,15 @@ export function autosave(
   };
   const hasDocument = typeof document !== "undefined";
   if (hasDocument) document.addEventListener("visibilitychange", flush);
+  // A reload or a closing tab does not always hide the page first.
+  const hasWindow = typeof window !== "undefined" && typeof window.addEventListener === "function";
+  const leave = () => {
+    if (timer) {
+      clearTimeout(timer);
+      save();
+    }
+  };
+  if (hasWindow) window.addEventListener("pagehide", leave);
   return {
     stop: () => {
       stopped = true;
@@ -532,17 +553,24 @@ export function autosave(
       offHistory();
       offFiles();
       if (hasDocument) document.removeEventListener("visibilitychange", flush);
+      if (hasWindow) window.removeEventListener("pagehide", leave);
       if (timer) clearTimeout(timer);
       // Other tabs may collect this session's files once the lock is gone, so not before a save in flight ends.
       void (saving ?? Promise.resolve()).finally(lock.release);
     },
-    saveNow: () => {
-      if (timer) clearTimeout(timer);
-      save();
+    saveNow: async () => {
+      // A save in flight may have started before the last change: go round again after it.
+      for (let round = 0; round < 3; round += 1) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        if (!saving) save();
+        await saving;
+        if (failures > 0 || !(dirtyDoc || dirtyFiles || dirtyHistory)) break;
+      }
     },
     markAll: () => {
       dirtyDoc = dirtyFiles = dirtyHistory = true;
-      schedule();
+      changed();
     },
   };
 }

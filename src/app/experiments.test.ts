@@ -276,6 +276,35 @@ describe("experiments kept in the browser", () => {
     expect(waves((await open()).doc)).toEqual({ w: [1] });
   });
 
+  it("goes back to the state the tab opened, before and after its first save", async () => {
+    const a = await open();
+    expect(await a.session.hasBackup()).toBe(false);
+    make(a.doc, "kept", [1]);
+    await settle();
+    a.session.stop();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const b = await open();
+    expect(await b.session.hasBackup()).toBe(true);
+    // Nothing of this session is saved yet: what is saved is the state it opened.
+    make(b.doc, "mistake", [2]);
+    expect(b.session.getState().kind).toBe("saving");
+    expect(await b.session.revert()).toBe(true);
+    expect(waves(b.doc)).toEqual({ kept: [1] });
+    // After a save, the backup made at that save is the state it opened.
+    b.doc.dispatch({ op: "killWaves", names: ["kept"] });
+    make(b.doc, "worse", [3]);
+    await settle();
+    make(b.doc, "more", [4]);
+    await settle();
+    expect(await b.session.revert()).toBe(true);
+    expect(waves(b.doc)).toEqual({ kept: [1] });
+    await settle();
+    b.session.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(waves((await open()).doc)).toEqual({ kept: [1] });
+  });
+
   it("starts afresh over an unreadable experiment only when told to", async () => {
     root.directories.set("experiment", new MemoryDirectory());
     root.directories

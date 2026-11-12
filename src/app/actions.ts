@@ -9,18 +9,26 @@ import {
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoArrangement } from "../core/doc/echo";
-import { leafName, type DocState, type PageSpec, type StyleSpec } from "../core/doc/types";
+import {
+  emptyDoc,
+  leafName,
+  type DocState,
+  type PageSpec,
+  type StyleSpec,
+} from "../core/doc/types";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { drawPrims } from "../core/plot/canvas";
 import type { Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
+import { newExperimentId } from "./experiments";
 import { measureText } from "./measure";
 import { browserLibrary, readStyles, sameStyle, stylesText } from "./styleLibrary";
 import {
   activeWindow,
   doc,
+  experiment,
   exportLayout,
   files,
   history,
@@ -240,6 +248,47 @@ export async function importFile(
   }
 }
 
+/** Shows another of the browser's experiments in this tab, saving this one first. */
+export async function switchExperiment(id: string): Promise<void> {
+  await experiment.flush();
+  location.hash = `#e=${id}`;
+  location.reload();
+}
+
+/**
+ * Starts a new experiment. The one that was open stays as it is among the
+ * browser's experiments; where the browser keeps none, there is only the
+ * one, and it is cleared.
+ */
+export async function newExperiment(): Promise<void> {
+  if (experiment.getState().kind !== "off") {
+    await switchExperiment(newExperimentId());
+    return;
+  }
+  if (!window.confirm("Start a new experiment? All waves, graphs and tables will be removed."))
+    return;
+  doc.load(emptyDoc());
+  history.clear();
+  files.load([]);
+  kernel.restart();
+}
+
+/** Goes back to the experiment as it was when the session before the last save began. */
+export async function revertExperiment(): Promise<void> {
+  if (!(await experiment.hasBackup())) {
+    showError("Nothing to go back to", "No earlier state of this experiment has been kept yet.");
+    return;
+  }
+  const lost = experiment.getState().kind === "unread" ? "" : " What was done since is lost.";
+  if (!window.confirm(`Go back to the experiment as it was when it was last opened?${lost}`))
+    return;
+  if (await experiment.revert()) {
+    kernel.restart("Went back to the experiment as it was when it was last opened.");
+  } else {
+    showError("Could not go back", "The earlier state of the experiment could not be read either.");
+  }
+}
+
 /** Downloads the whole experiment as one .oresme file. */
 export function saveExperiment(): void {
   try {
@@ -248,7 +297,8 @@ export function saveExperiment(): void {
       history.getEntries(),
       files.list(),
     ) as Uint8Array<ArrayBuffer>;
-    download(new Blob([bytes], { type: "application/zip" }), "experiment.oresme");
+    const name = experiment.getInfo().name.replace(/[\\/:*?"<>|]+/g, "_");
+    download(new Blob([bytes], { type: "application/zip" }), `${name}.oresme`);
   } catch (error) {
     showError("Could not save the experiment", error);
   }

@@ -150,8 +150,9 @@ test.describe("the experiment's files", () => {
     expect((await app.run('import os; print(os.path.exists("notes.txt"))')).output).toBe("False\n");
 
     const saved = await app.download(() => page.keyboard.press("Control+s"));
-    page.once("dialog", (dialog) => void dialog.accept());
+    // A new experiment opens in the tab; the old one stays among the browser's experiments.
     await app.menu("File", "New Experiment");
+    await expect(page).toHaveTitle("Untitled — OresmePro");
     await expect.poll(() => app.files()).toEqual({});
     await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
     expect((await app.run("import os; print(os.listdir())")).output).toBe("[]\n");

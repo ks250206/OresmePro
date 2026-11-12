@@ -54,6 +54,7 @@ import {
 import { traceX } from "../core/plot/layout";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
+import { ExperimentsDialog } from "./ExperimentsDialog";
 import { ImportDialog } from "./ImportDialog";
 
 const close = () => ui.set({ dialog: null });
@@ -2796,6 +2797,8 @@ function renderDialog(dialog: DialogRequest) {
           rest={dialog.rest}
         />
       );
+    case "experiments":
+      return <ExperimentsDialog />;
     case "about":
       return <AboutDialog />;
   }

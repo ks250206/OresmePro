@@ -180,6 +180,8 @@ export class ExperimentSession {
   private writer = false;
   private release: (() => void) | null = null;
   private registeredAt = 0;
+  /** True once this session has replaced what was saved: from then on the backup is the way back. */
+  private replaced = false;
   private readonly parts: { doc: Doc; history: History; files: FileStore };
   private readonly env: ExperimentEnvironment;
 
@@ -284,6 +286,7 @@ export class ExperimentSession {
       onState: (state) => {
         if (!this.writer) return;
         if (state.kind === "saved") {
+          this.replaced = true;
           this.info = { ...this.info, savedAt: state.at };
           if (state.at - this.registeredAt >= REGISTRY_INTERVAL_MS) void this.register();
         }
@@ -319,7 +322,12 @@ export class ExperimentSession {
 
   /** Tries again now, after a save that failed. */
   retry(): void {
-    this.saver?.saveNow();
+    void this.saver?.saveNow();
+  }
+
+  /** Saves what is unsaved, before the page goes on to something else. */
+  async flush(): Promise<void> {
+    await this.saver?.saveNow();
   }
 
   /**
@@ -334,20 +342,31 @@ export class ExperimentSession {
     this.saver?.markAll();
   }
 
-  /** Whether there is a state from when the session before this one began. */
+  /**
+   * Which saved state is the one this tab opened: what is saved now, until
+   * this session has saved over it; from then on the backup made at that
+   * moment. An experiment that could not be read has only its backup.
+   */
+  private opened(): "current" | "backup" {
+    return this.replaced || this.state.kind === "unread" ? "backup" : "current";
+  }
+
+  /** Whether there is an earlier state to go back to. */
   async hasBackup(): Promise<boolean> {
-    return this.dir !== null && (await hasBackup(this.options()));
+    if (!this.dir) return false;
+    return this.opened() === "current" ? this.info.savedAt > 0 : hasBackup(this.options());
   }
 
   /**
-   * Goes back to the experiment as it was when the session before the last
-   * save began. Returns false, changing nothing that is saved, if that state
-   * cannot be read either.
+   * Goes back to the experiment as it was when this tab opened it (or, for
+   * one that could not be read, to the backup made by the session before).
+   * Returns false, changing nothing that is saved, if that state cannot be
+   * read.
    */
   async revert(): Promise<boolean> {
     const { doc, history, files } = this.parts;
     if (!this.dir) return false;
-    const report = await restore(doc, history, files, this.options(), "backup");
+    const report = await restore(doc, history, files, this.options(), this.opened());
     if (report.incomplete || !report.loaded) return false;
     if (this.state.kind === "unread" && this.writer) this.begin();
     this.saver?.markAll();

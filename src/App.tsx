@@ -8,17 +8,19 @@ import {
   loadDelimitedText,
   loadExcelWorkbook,
   loadFiles,
+  newExperiment,
   openExperiment,
   pageMenuItems,
+  revertExperiment,
   saveExperiment,
   selectedItems,
   selectItems,
 } from "./app/actions";
 import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
-import { autosave, restore } from "./app/persist";
 import {
   activeWindow,
   doc,
+  experiment,
   files,
   history,
   isMac,
@@ -27,13 +29,14 @@ import {
   PYODIDE_URL,
   requestCommandLine,
   runGui,
+  startExperiment,
   ui,
   useDoc,
+  useExperimentInfo,
   useKernelState,
   useUi,
   type MenuItem,
 } from "./app/session";
-import { emptyDoc } from "./core/doc/types";
 import { CommandWindow } from "./ui/CommandWindow";
 import { DataBrowser } from "./ui/DataBrowser";
 import { Desktop } from "./ui/Desktop";
@@ -76,15 +79,6 @@ function Splitter({
   );
 }
 
-function newExperiment() {
-  if (!window.confirm("Start a new experiment? All waves, graphs and tables will be removed."))
-    return;
-  doc.load(emptyDoc());
-  history.clear();
-  files.load([]);
-  kernel.restart();
-}
-
 function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
@@ -125,9 +119,11 @@ function useMenus(): MenuDefinition[] {
     {
       title: "File",
       items: [
-        { label: "New Experiment", onSelect: newExperiment },
+        { label: "New Experiment", onSelect: () => void newExperiment() },
+        { label: "Experiments…", onSelect: open({ kind: "experiments" }) },
         { label: "Open Experiment…", onSelect: openExperiment },
         { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
+        { label: "Go Back to Opening State…", onSelect: () => void revertExperiment() },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
@@ -359,15 +355,27 @@ export function App() {
   const commandHeight = useUi((state) => state.commandHeight);
   // Re-render the Edit menu's enabled state as the undo stack changes.
   useDoc((state) => state);
+  const experimentName = useExperimentInfo().name;
+  useEffect(() => {
+    document.title = `${experimentName} — OresmePro`;
+  }, [experimentName]);
 
   useEffect(() => {
-    let stopSaving: (() => void) | undefined;
     let cancelled = false;
     void ensureIsolated().then(async (proceed) => {
       if (!proceed || cancelled) return;
-      await restore(doc, history, files);
+      // The experiment lives as long as the page: it is not stopped with this effect.
+      await startExperiment();
       if (cancelled) return;
-      stopSaving = autosave(doc, history, files).stop;
+      const opened = experiment.getState();
+      if (opened.kind === "unread") {
+        ui.set({
+          alert: {
+            title: "The saved experiment could not be opened",
+            message: `${opened.error}\n\nWhat is saved has been left as it is and nothing is saved over it. Use the buttons in the status bar to go back to the last backup or to start afresh.`,
+          },
+        });
+      }
       kernel.start();
       openLaunchedFiles((launched) => void loadFiles(launched));
       // Once Python is up, everything a start needs has been loaded: keep it for offline use.
@@ -382,7 +390,6 @@ export function App() {
     window.addEventListener("keydown", onGlobalKey);
     return () => {
       cancelled = true;
-      stopSaving?.();
       kernel.dispose();
       window.removeEventListener("keydown", onGlobalKey);
     };
@@ -452,5 +459,5 @@ export function App() {
 }
 
 // Exposed for debugging from the browser console.
-const debug = { doc, history, kernel, files, activeWindow };
+const debug = { doc, history, kernel, files, activeWindow, experiment };
 Object.assign(globalThis, { oresme: debug });

@@ -334,8 +334,7 @@ describe("autosave shared by several tabs", () => {
         states.push(state.kind === "failed" ? `failed: ${state.error}` : state.kind),
     });
     make(doc, "a", [1]);
-    saver.saveNow();
-    await vi.advanceTimersByTimeAsync(0);
+    await saver.saveNow();
     expect(states).toEqual(["saving", "saved"]);
     expect(values((await reload()).doc, "a")).toEqual([1]);
 
@@ -344,12 +343,10 @@ describe("autosave shared by several tabs", () => {
       if (op === "write" && name === "experiment.json") throw new Error("disk full");
     };
     make(doc, "b", [2]);
-    saver.saveNow();
-    await vi.advanceTimersByTimeAsync(0);
+    await saver.saveNow();
     expect(states.slice(2)).toEqual(["saving", "failed: disk full"]);
     store.hook = () => {};
-    saver.saveNow();
-    await vi.advanceTimersByTimeAsync(0);
+    await saver.saveNow();
     expect(states.slice(4)).toEqual(["saving", "saved"]);
 
     // Told that everything is unsaved, it writes the indexes again though nothing changed.

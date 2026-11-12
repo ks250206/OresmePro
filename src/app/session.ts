@@ -8,6 +8,7 @@ import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
+import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
@@ -45,6 +46,7 @@ export type DialogRequest =
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
+  | { kind: "experiments" }
   | { kind: "about" };
 
 /** A file of data read into memory, waiting to be loaded through the Load Data dialog. */
@@ -92,6 +94,35 @@ export const doc = new Doc();
 export const history = new History();
 /** The experiment's files: what Python wrote, and what was added for it to read. */
 export const files = new FileStore();
+const LAST_EXPERIMENT = "oresme.experiment";
+
+/** The experiment this tab is for: the one named in the address, or the one opened last. */
+function experimentId(): string {
+  if (typeof location === "undefined") return DEFAULT_EXPERIMENT;
+  const named = /^#e=([a-z0-9]+)$/.exec(location.hash)?.[1];
+  if (isExperimentId(named)) return named;
+  try {
+    const last = localStorage.getItem(LAST_EXPERIMENT);
+    if (isExperimentId(last)) return last;
+  } catch {
+    // No storage for it: the first experiment.
+  }
+  return DEFAULT_EXPERIMENT;
+}
+
+/** Keeps the experiment in the browser, and decides whether this tab is the one saving it. */
+export const experiment = new ExperimentSession({ doc, history, files }, experimentId());
+
+/** Opens the experiment in this tab, to be opened again by a tab that names none. */
+export async function startExperiment(): Promise<void> {
+  try {
+    localStorage.setItem(LAST_EXPERIMENT, experiment.id);
+  } catch {
+    // It is only a convenience.
+  }
+  await experiment.start();
+}
+
 /** Ways of reading data files, kept in the browser from one experiment to the next. */
 export const importPresets = new PresetStore();
 export const ui = createStore<UiState>({
@@ -302,6 +333,14 @@ export function useDoc<T>(selector: (state: DocState) => T): T {
 
 export function useUi<T>(selector: (state: UiState) => T): T {
   return useStore(ui, selector);
+}
+
+export function useExperimentState() {
+  return useSyncExternalStore(experiment.subscribe, experiment.getState);
+}
+
+export function useExperimentInfo() {
+  return useSyncExternalStore(experiment.subscribe, experiment.getInfo);
 }
 
 export function useKernelState() {
