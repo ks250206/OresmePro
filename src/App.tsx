@@ -17,7 +17,12 @@ import {
   selectedItems,
   selectItems,
 } from "./app/actions";
-import { ensureIsolated, keepForOffline, openLaunchedFiles } from "./app/isolate";
+import {
+  ensureIsolated,
+  keepForOffline,
+  keepPackagesForOffline,
+  openLaunchedFiles,
+} from "./app/isolate";
 import {
   activeWindow,
   doc,
@@ -26,17 +31,19 @@ import {
   history,
   isMac,
   kernel,
+  type MenuItem,
   MOD,
+  note,
   PYODIDE_URL,
   requestCommandLine,
   runGui,
+  showError,
   startExperiment,
   ui,
   useDoc,
   useExperimentInfo,
   useKernelState,
   useUi,
-  type MenuItem,
 } from "./app/session";
 import { CommandWindow } from "./ui/CommandWindow";
 import { DataBrowser } from "./ui/DataBrowser";
@@ -284,6 +291,21 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => kernel.interruptExecution(),
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
+        { separator: true },
+        {
+          label: "Keep SciPy, pandas, scikit-learn and lmfit for Offline Use",
+          onSelect: () =>
+            void keepPackagesForOffline(PYODIDE_URL).then((names) =>
+              names
+                ? note(`${names.join(", ")} are kept in this browser and can be imported offline.`)
+                : showError(
+                    "The packages could not be kept",
+                    "They are kept by the installed app's service worker, which is not running here " +
+                      "(a development server, or a browser without one), or a download failed. " +
+                      "Importing a package while online also keeps it.",
+                  ),
+            ),
+        },
       ],
     },
     {

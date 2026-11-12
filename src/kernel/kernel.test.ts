@@ -36,7 +36,11 @@ async function run(code: string): Promise<boolean> {
 }
 
 beforeAll(async () => {
-  const pyodide = await loadPyodide({ packageCacheDir: "public/pyodide" });
+  // The lock file the app serves: it also knows the packages added from PyPI (lmfit).
+  const pyodide = await loadPyodide({
+    packageCacheDir: "public/pyodide",
+    lockFileURL: "public/pyodide/pyodide-lock.json",
+  });
   kernel = await bootPython(pyodide, {
     rpc: (method, paramsJson, data) =>
       answerRpc(
@@ -1498,6 +1502,107 @@ describe("oresme Python API", () => {
       "0.25 True",
     ]);
   });
+
+  it("installs SciPy, pandas, scikit-learn and lmfit when they are first imported", async () => {
+    expect(
+      await run(
+        [
+          "import sys",
+          "print(any(name in sys.modules for name in ('scipy', 'pandas', 'sklearn', 'lmfit')))",
+          "from scipy.optimize import curve_fit",
+          "from scipy import integrate as sp_integrate",
+          "pkx = np.linspace(0, 4, 50)",
+          'pkw = op.make("pkg_w", 2.5 * np.exp(-pkx / 0.7) + 0.3, x0=0, dx=pkx[1])',
+          // A wave goes where an array goes.
+          "popt, _ = curve_fit(lambda x, a, t, c: a * np.exp(-x / t) + c, pkw.x, pkw, p0=[1, 1, 0])",
+          "print(np.round(popt, 6).tolist(), round(float(sp_integrate.trapezoid(pkw, pkw.x)), 3))",
+          "from sklearn.linear_model import LinearRegression",
+          "lr = LinearRegression().fit(pkw.x.reshape(-1, 1), 3 * pkw.x + 1)",
+          "print(round(float(lr.coef_[0]), 6), round(float(lr.intercept_), 6))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual(["False", "[2.5, 0.7, 0.3] 2.946", "3.0 1.0"]);
+    expect(stderr).toBe("");
+  }, 120_000);
+
+  it("moves waves to pandas and back, with dates and text", async () => {
+    expect(
+      await run(
+        [
+          "import pandas as pd",
+          'op.make("pd_t", np.array(["2026-11-11T09:00", "2026-11-11T09:30", "NaT"], dtype="datetime64[s]"))',
+          'op.make("pd_v", [1.5, 2.5, 3.5]); op.make("pd_s", ["a", "b", "c"]); op.make("pd_short", [7.0])',
+          'df = op.to_dataframe("pd_t", "pd_v", "pd_s", "pd_short")',
+          "print(list(df.columns), [str(t) for t in df.dtypes], df.shape)",
+          "print(str(df.pd_t[1]), pd.isna(df.pd_t[2]), df.pd_s.tolist(), df.pd_short.isna().tolist())",
+          // And back: an index that means something, dates with a zone, missing values, a column to rename.
+          'frame = pd.DataFrame({"T (K)": [300.0, 310.0], "label": ["x", None], "n": pd.array([1, None], dtype="Int64"), "ok": [True, False], "pd_v": [9.0, 8.0]},',
+          '    index=pd.DatetimeIndex(["2026-01-01T09:00+09:00", "2026-01-02T09:00+09:00"], name="when"))',
+          'made = op.from_dataframe(frame, "pdx_", table=False)',
+          "print([w.name for w in made], made[0].unit, made[0].data[0] == 1767225600.0)",
+          "print(made[1].data.tolist(), made[2].data.tolist(), made[3].data.tolist(), made[4].dtype, made[4].data.tolist())",
+          'print([w.name for w in op.from_dataframe(frame[["pd_v"]], index=False, table=False)])',
+          't = op.edit("pd_v", "pd_s"); print(t.to_dataframe().to_dict("list"))',
+          'print(op.from_dataframe(pd.Series([1.0, 2.0], name="solo"), "pdx_", table=False)[0].name)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "['pd_t', 'pd_v', 'pd_s', 'pd_short'] ['datetime64[s]', 'float64', 'str', 'float64'] (3, 4)",
+      "2026-11-11 09:30:00 True ['a', 'b', 'c'] [False, True, True]",
+      "['pdx_when', 'pdx_T_K', 'pdx_label', 'pdx_n', 'pdx_ok', 'pdx_pd_v'] dat True",
+      "[300.0, 310.0] ['x', ''] [1.0, nan] uint8 [1, 0]",
+      "['pd_v_1']",
+      "{'pd_v': [1.5, 2.5, 3.5], 'pd_s': ['a', 'b', 'c']}",
+      "pdx_solo",
+    ]);
+  }, 120_000);
+
+  it("fits an lmfit model through op.fit, kept and drawn like any other fit", async () => {
+    expect(
+      await run(
+        [
+          "from lmfit.models import GaussianModel, LinearModel",
+          "lx = np.linspace(-5, 5, 201)",
+          'lw = op.make("lm_w", 0.5 + 0.1 * lx + 3 * np.exp(-((lx - 1.2) ** 2) / (2 * 0.8**2)) + np.random.default_rng(4).normal(0, 0.02, 201), x0=-5, dx=0.05)',
+          "lg = op.display(lw)",
+          "model = GaussianModel() + LinearModel()",
+          "p = model.make_params(amplitude=5, center=1, sigma=1, slope=0, intercept=0)",
+          "r = op.fit(model, lw, params=p, residuals=True, band=0.95, quiet=True)",
+          "print(r.names[:3], round(r['center'], 2), round(r['sigma'], 2), round(r['slope'], 2), r.converged, r.reason)",
+          // fwhm and height follow the others by expressions: lmfit holds them, op.fit reports them so.
+          "print('fwhm' in r.held, round(r['fwhm'] / r['sigma'], 4), r.lmfit.nfev > 0, r.covariance.shape, bool(r.sigma[r.names.index('center')] > 0))",
+          "print([t.name for t in lg.traces], r.band[0].name, r.residuals.name)",
+          "kept = r.result; print(kept.label, kept.settings['custom'], kept.held[:1], kept.reason)",
+          // Held and bounded through op.fit's own options, on chosen points.
+          "h = op.fit(model, lw, params=p, hold={'slope': 0.1}, bounds={'sigma': (None, 0.5)}, xrange=(-2, 4), quiet=True)",
+          "print('slope' in h.held, h['slope'], round(h['sigma'], 6), h.points)",
+          // A single model guesses for itself.
+          'g = op.fit(GaussianModel(), op.make("lm_g", np.exp(-((lx - 0.5) ** 2) / 2), x0=-5, dx=0.05), quiet=True); print(round(g["center"], 3), round(g["sigma"], 3))',
+          "print(round(kept.rerun(function=model, params=p, quiet=True)['center'], 2))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "('amplitude', 'center', 'sigma') 1.2 0.8 0.1 True Fit succeeded.",
+      "True 2.3548 True (7, 7) True",
+      "['lm_w', 'fit_lm_w_hi', 'fit_lm_w_lo', 'fit_lm_w', 'res_lm_w'] fit_lm_w_lo res_lm_w",
+      "lmfit (Model(gaussian) + Model(linear))(lm_w) True ('fwhm',) Fit succeeded.",
+      "True 0.1 0.5 121",
+      "0.5 1.0",
+      "1.2",
+    ]);
+    for (const [code, error] of [
+      ["op.fit(model, lw, guess=[1, 2])", /give starting values as params=/],
+      ["op.fit(model, lw, hold={'nope': 1})", /hold: no parameter named 'nope'/],
+      ['op.fit("gauss", lw, params=p)', /params= goes with an lmfit model/],
+      ["kept.rerun()", /which is not defined now/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  }, 120_000);
 
   it("lines up, spaces and sizes items, and puts graphs in a grid", async () => {
     expect(

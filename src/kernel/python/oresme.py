@@ -54,6 +54,8 @@ __all__ = [
     "folders",
     "edit",
     "load_text",
+    "to_dataframe",
+    "from_dataframe",
     "load_excel",
     "load_igor",
     "graph",
@@ -199,7 +201,10 @@ def _content(command, values, dtype=None):
         return None
     if isinstance(values, np.ndarray) and values.dtype.kind == "M":
         # Dates are stored as seconds since 1970-01-01 UTC, with the unit "dat".
+        missing = np.isnat(values)
         values = values.astype("datetime64[ms]").astype(np.float64) / 1000.0
+        # "Not a time" has no number of its own among the dates: it is a missing value.
+        values[missing] = np.nan
         command.setdefault("unit", "dat")
     array = _as_array(values)
     kind = _wave_type(array, dtype)
@@ -1481,6 +1486,10 @@ class Table(_Props):
     def columns(self):
         return [Wave(name) for name in _call("tableInfo", {"name": self._name})[0]["columns"]]
 
+    def to_dataframe(self):
+        """The table's columns as a pandas DataFrame (see ``op.to_dataframe``)."""
+        return to_dataframe(self)
+
     def append(self, *waves_):
         _dispatch(
             {
@@ -1820,6 +1829,84 @@ def load_igor(source, *, name=None):
             stacklevel=2,
         )
     return [Wave(wave_) for wave_ in reply["waves"]]
+
+
+def _column_name(text, taken, prefix=""):
+    """A legal wave name for a column title, not one of ``taken``."""
+    leaf = re.sub(r"[^0-9A-Za-z_]+", "_", str(text)).strip("_") or "column"
+    if not leaf[0].isalpha():
+        leaf = f"wave_{leaf}"
+    name = base = f"{prefix}{leaf}"
+    suffix = 0
+    while name in taken:
+        suffix += 1
+        name = f"{base}_{suffix}"
+    taken.add(name)
+    return name
+
+
+def to_dataframe(*waves_):
+    """The given waves as the columns of a pandas DataFrame.
+
+    Each wave is a column named after it (without its data folder). Date
+    waves become ``datetime64`` columns and text waves columns of strings. A
+    table can be given in place of waves: its columns are used. Waves of
+    different lengths are padded with NaN at the end.
+    """
+    import pandas as pd
+
+    columns = {}
+    for item in waves_:
+        for wave_ in item.columns if isinstance(item, Table) else [item]:
+            source = wave(_wave_name(wave_))
+            values = source.data
+            if getattr(values, "ndim", 1) != 1:
+                raise OresmeError(f"{source.name} is not 1-D: a DataFrame column holds one dimension.")
+            if source.unit == "dat":
+                values = pd.to_datetime(np.asarray(values, dtype=float), unit="s")
+            columns[source.name.rsplit(":", 1)[-1]] = pd.Series(values)
+    return pd.DataFrame(columns)
+
+
+def from_dataframe(frame, prefix="", *, index=None, table=True):
+    """Make a wave of each column of a pandas DataFrame (or Series); returns the waves.
+
+    Numbers become numeric waves, dates date waves (in UTC), and anything
+    else text waves. Names are the column titles made into legal wave names,
+    after ``prefix`` (which may name a data folder: ``"run1:"``); a name that
+    is taken gets ``_1``, ``_2``, .... The index becomes a wave too unless it
+    is the plain 0, 1, 2, ... (``index=False`` leaves it out, ``True`` forces
+    it). With ``table`` the new waves are shown in a table.
+    """
+    import pandas as pd
+
+    if isinstance(frame, pd.Series):
+        frame = frame.to_frame(frame.name if frame.name is not None else "values")
+    columns = []
+    plain = isinstance(frame.index, pd.RangeIndex) and frame.index.start == 0 and frame.index.step == 1
+    if index is True or (index is None and not plain):
+        columns.append((frame.index.name if frame.index.name is not None else "index", frame.index.to_series()))
+    columns += [(title, frame[title]) for title in frame.columns]
+    taken = set(_call("listWaves")[0])
+    made = []
+    for title, column in columns:
+        name = _column_name(title, taken, prefix)
+        if pd.api.types.is_datetime64_any_dtype(column.dtype):
+            if getattr(column.dt, "tz", None) is not None:
+                column = column.dt.tz_convert("UTC").dt.tz_localize(None)
+            values = column.to_numpy(dtype="datetime64[ns]")
+        elif pd.api.types.is_bool_dtype(column.dtype):
+            values = column.to_numpy(dtype=np.uint8)
+        elif pd.api.types.is_numeric_dtype(column.dtype):
+            # Missing values of pandas' nullable types become NaN.
+            kind = column.dtype.kind if isinstance(column.dtype, np.dtype) else "f"
+            values = column.to_numpy() if kind in "iufc" else column.to_numpy(dtype=float, na_value=np.nan)
+        else:
+            values = ["" if pd.isna(item) else str(item) for item in column.tolist()]
+        made.append(make(name, values))
+    if table and made:
+        edit(*made)
+    return made
 
 
 def graphs():

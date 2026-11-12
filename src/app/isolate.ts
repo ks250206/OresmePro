@@ -78,6 +78,37 @@ export async function keepForOffline(pyodideUrl: string): Promise<number> {
   }
 }
 
+/**
+ * Has the service worker keep the packages that Python otherwise fetches the
+ * first time they are imported (SciPy, pandas, scikit-learn, lmfit), so that
+ * they are there without a network. Resolves to the names of the packages
+ * kept, or null if there is no worker to keep them.
+ */
+export async function keepPackagesForOffline(pyodideUrl: string): Promise<string[] | null> {
+  if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return null;
+  try {
+    const worker = (await navigator.serviceWorker.ready).active;
+    if (!worker) return null;
+    const list = (await (await fetch(`${pyodideUrl}packages.json`)).json()) as {
+      names: string[];
+      files: string[];
+    };
+    const urls = list.files.map((file) => new URL(file, new URL(pyodideUrl, location.href)).href);
+    const kept = await new Promise<number>((resolve) => {
+      const done = (event: MessageEvent<{ type?: string; count?: number }>) => {
+        if (event.data?.type !== "kept") return;
+        navigator.serviceWorker.removeEventListener("message", done);
+        resolve(event.data.count ?? 0);
+      };
+      navigator.serviceWorker.addEventListener("message", done);
+      worker.postMessage({ type: "keep", urls });
+    });
+    return kept >= urls.length ? list.names : null;
+  } catch {
+    return null;
+  }
+}
+
 interface LaunchQueue {
   setConsumer(consumer: (params: { files?: { getFile(): Promise<File> }[] }) => void): void;
 }

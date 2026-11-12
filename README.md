@@ -381,7 +381,8 @@ OresmePro はインストールできる Web アプリ(PWA)です。
 
 - Chrome / Edge ではアドレスバーの「インストール」から、Safari では「Dock に追加」から、独立したウィンドウのアプリになります。
 - **オフラインでも動きます。** 一度開くと、アプリ本体と Python(Pyodide、NumPy、IPython)一式がブラウザに保存され、次からはネットワークなしで起動します。
-  SciPy など後から `import` するパッケージは、最初に使ったときに保存されます(初回だけネットワークが必要です)。
+  SciPy・pandas・scikit-learn・lmfit は、最初に `import` したときに保存されます。使う前にオフライン用に入れておくには
+  **Python › Keep SciPy, pandas, scikit-learn and lmfit for Offline Use** を選びます。
 - インストールすると、`.oresme` ファイルを OresmePro で開けるようになります(対応ブラウザのみ)。
 - データはブラウザの中(OPFS)に置かれます。別の PC やブラウザへは `.oresme` ファイルで持ち運びます。
 
@@ -510,7 +511,37 @@ print(g.script())                              # このグラフをもう一度�
 1 次元の wave は、複素数でも、末尾のすぐ先に書くと伸びます(`w[len(w)] = 1`、`z[len(z)] = 1 + 2j`)。`w.flat[a:b]` は、形によらず格納順で読み書きします。
 
 IPython の上で動いているので、`obj?`、`%timeit`、`%pwd` などのマジックや、最上位の `await` も使えます。
-SciPy や pandas など Pyodide に含まれるパッケージは、`import` した時点で自動的に取得されます。
+
+### 科学計算のパッケージ
+
+**SciPy、pandas、scikit-learn、lmfit** は、`import` するだけで使えます。最初に `import` したときに取り込まれ(数秒かかります。ステータスバーに「Loading scipy…」と出ます)、
+コマンドラインだけでなく、プロシージャや実験の `.py` ファイルの中の `import` でも同じです。これらはアプリと一緒に配信されるので、CDN に出られないネットワークでも使えます。
+Pyodide に含まれるそのほかのパッケージ(SymPy、statsmodels、Matplotlib など)は、`import` した時点で CDN(jsDelivr)から取得します。
+
+wave は NumPy の配列として渡せるので、そのまま使えます。
+
+```python
+from scipy.optimize import curve_fit
+popt, pcov = curve_fit(lambda x, a, tau: a * np.exp(-x / tau), w.x, w, p0=[1, 1])
+
+from sklearn.linear_model import LinearRegression
+lr = LinearRegression().fit(w.x.reshape(-1, 1), w)
+
+df = op.to_dataframe("time", "voltage", "label")      # wave → DataFrame。日付 wave は datetime64、テキスト wave は文字列の列
+df = op.table("Table0").to_dataframe()                # 表の列をそのまま
+waves = op.from_dataframe(df, "run1_")                # DataFrame → wave(列ごと)。意味のあるインデックスも wave になる
+
+from lmfit.models import GaussianModel, LinearModel
+model = GaussianModel() + LinearModel()
+r = op.fit(model, w, params=model.make_params(amplitude=5, center=1, sigma=1, slope=0, intercept=0))
+r.lmfit                                                # lmfit 自身の結果(ModelResult)。r.coef、r.sigma などはほかのフィットと同じ
+```
+
+- **lmfit のモデルを `op.fit` に渡せます。** 当てはめは lmfit が行い(式による拘束 `expr` もそのまま)、使う点の選び方(`xrange=`、`exclude=`、`mask=`、カーソル)、
+  重み(`sigma=`)、固定と制約(`hold=`、`bounds=`)、グラフへの曲線の追加、残差、信頼帯、結果の保存(`Fit0`、…)は、組み込みの関数と同じに働きます。
+  初期値は `params=`、省略するとモデル自身の推定(`model.guess`)です。保存された結果を再実行するときは、モデルを渡し直します(`kept.rerun(function=model, params=p)`)。
+- `op.from_dataframe` は、数値の列を数値 wave、日付の列を日付 wave(UTC)、それ以外をテキスト wave にします。列名は wave 名として使える形に直し、
+  すでにある名前には `_1` を付けます。pandas の欠損値は NaN(テキストでは空文字列)になります。
 
 ## 設計
 
@@ -586,7 +617,10 @@ Python(Pyodide)本体と、起動時に使う NumPy・IPython とその依存パ
 (本体は npm パッケージから、パッケージは初回だけダウンロードしてハッシュを検証。このディレクトリはリポジトリには入れません)。
 これにより、ビルドしたアプリは起動に外部への接続を必要としません。
 
-SciPy や pandas など起動時に使わないパッケージは同梱せず、`import` した時点で CDN(jsDelivr)から取得します。
+SciPy・pandas・scikit-learn・lmfit とその依存パッケージも同じ場所に置き、アプリと一緒に配信します(合わせて約 23 MB)。
+起動時には読み込まず、最初に `import` されたときにブラウザが取りに行きます。
+lmfit と、それが必要とする asteval・dill は Pyodide の配布物に含まれないので、PyPI の純 Python の wheel をバージョンとハッシュを固定して取得し、Pyodide のロックファイルに加えています。
+それ以外の Pyodide のパッケージは同梱せず、`import` した時点で CDN(jsDelivr)から取得します。
 Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できます。
 
 ### テスト

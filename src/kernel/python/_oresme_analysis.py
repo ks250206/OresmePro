@@ -490,6 +490,8 @@ class FitResult:
         self.covariance = covariance
         #: The name under which the fit is kept among the experiment's results, or None.
         self.name = name
+        #: lmfit's own result (a ModelResult), when the fit was of an lmfit model.
+        self.lmfit = None
 
     @property
     def correlation(self):
@@ -728,14 +730,81 @@ def _selection(x_values, y_values, target, *, range=None, xrange=None, cursors=F
 _UNREPEATABLE = "<array>"
 
 
+def _is_lmfit(function):
+    """Whether this is a model of the lmfit package (which is not imported to find out)."""
+    return type(function).__module__.split(".")[0] == "lmfit" and hasattr(function, "make_params")
+
+
+def _lmfit_fit(model_, x_fit, y_fit, weights, guess, hold, bounds, given):
+    """Fit an lmfit model; returns what op.fit needs to treat it like its own fits."""
+    if guess is not None:
+        raise _op.OresmeError(
+            "With an lmfit model, give starting values as params= (model.make_params(...))."
+        )
+    independent = model_.independent_vars[0] if model_.independent_vars else "x"
+    if given is not None:
+        parameters = given.copy()
+    else:
+        try:
+            parameters = model_.guess(y_fit, **{independent: x_fit})
+        except Exception:  # Composite and custom models have no guess of their own.
+            parameters = model_.make_params()
+
+    def parameter(key, what):
+        if key not in parameters:
+            raise _op.OresmeError(
+                f"{what}: no parameter named {key!r}. Parameters: {', '.join(parameters)}."
+            )
+        return parameters[key]
+
+    if isinstance(hold, dict):
+        for key, value in hold.items():
+            parameter(key, "hold").set(value=float(value), vary=False)
+    elif hold is not None:
+        for key in hold:
+            parameter(key, "hold").set(vary=False)
+    for key, (low, high) in (bounds or {}).items():
+        parameter(key, "bounds").set(
+            min=-np.inf if low is None else float(low), max=np.inf if high is None else float(high)
+        )
+    outcome = model_.fit(y_fit, parameters, weights=weights, **{independent: x_fit})
+    names = list(outcome.params)
+    values = np.array([outcome.params[key].value for key in names], dtype=float)
+    free = [names.index(key) for key in outcome.var_names]
+    held = [key for key in names if key not in outcome.var_names]
+    covariance = outcome.covar
+    if covariance is None:
+        covariance = np.full((len(free), len(free)), np.nan)
+
+    def evaluate(x_, *trial):
+        at = outcome.params.copy()
+        for key, value in zip(names, trial):
+            # A parameter given by an expression follows the others.
+            if at[key].expr is None:
+                at[key].set(value=float(value))
+        return np.asarray(model_.eval(at, **{independent: x_}), dtype=float)
+
+    return (evaluate, names, values, held, free, np.asarray(covariance, dtype=float),
+            float(outcome.chisqr), bool(outcome.success), str(outcome.message).strip(),
+            f"lmfit {model_.name}", outcome)
+
+
 def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None,
         xrange=None, exclude=None, mask=None, cursors=False, graph=None, name=None, quiet=False,
-        residuals=False, band=None, result=None, record=True):
+        residuals=False, band=None, result=None, record=True, params=None):
     """Fit a function to a wave by least squares.
 
     ``function`` is the name of a built-in function (see ``op.fit_functions()``),
     ``"polyN"`` for a polynomial with N terms, or your own
     ``f(x, p1, p2, ...)`` together with ``guess=[...]``.
+
+    It can also be a model of the lmfit package, such as
+    ``lmfit.models.GaussianModel() + lmfit.models.LinearModel()``. lmfit then
+    does the fitting (with its expressions and constraints), starting from
+    ``params=`` (``model.make_params(...)``) or else from the model's own
+    guess, and everything else works as for the built-in functions: the
+    choice of points, weights, the curve on the graph, residuals, the band,
+    and the result kept in the experiment. ``r.lmfit`` is lmfit's own result.
 
     ``hold`` keeps parameters fixed: ``hold={"y0": 0}`` at a value, or
     ``hold=["y0"]`` at its starting guess. ``bounds={"A": (0, None)}`` keeps a
@@ -804,44 +873,59 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
     # The curve and the residuals are drawn from the first point used to the last.
     first, last = (int(index) for index in np.flatnonzero(use)[[0, -1]])
     x_fit, y_fit = x_values[use], y_values[use]
-    model, names, start, label = _resolve(function, x_fit, y_fit, guess)
-    if len(start) != len(names):
-        raise _op.OresmeError(f"{label} has {len(names)} parameters; the guess has {len(start)}.")
+    lmfit_outcome = None
+    if _is_lmfit(function):
+        (model, names, full, held, free, free_covariance, chisq, converged, reason, label,
+         lmfit_outcome) = _lmfit_fit(function, x_fit, y_fit, weights, guess, hold, bounds, params)
+        best = full[free]
 
-    full = np.array(start, dtype=float)
-    held = []
-    if isinstance(hold, dict):
-        for key, value in hold.items():
-            full[_index_of(names, key, "hold")] = float(value)
-            held.append(key)
-    elif hold is not None:
-        held = [names[_index_of(names, key, "hold")] for key in hold]
-    free = [index for index, key in enumerate(names) if key not in held]
-    if not free:
-        raise _op.OresmeError("Every parameter is held; there is nothing to fit.")
-    if len(y_fit) <= len(free):
-        raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {len(free)} parameters.")
-    lower = np.full(len(names), -np.inf)
-    upper = np.full(len(names), np.inf)
-    for key, (low, high) in _limits(function, bounds).items():
-        at = _index_of(names, key, "bounds")
-        lower[at] = -np.inf if low is None else float(low)
-        upper[at] = np.inf if high is None else float(high)
-        if lower[at] >= upper[at]:
-            raise _op.OresmeError(f"bounds: the limits for {key!r} are empty.")
+        def reduced(x_, *values):
+            trial = full.copy()
+            trial[free] = values
+            return model(x_, *trial)
 
-    def reduced(x_, *values):
-        trial = full.copy()
-        trial[free] = values
-        return model(x_, *trial)
+    elif params is not None:
+        raise _op.OresmeError("params= goes with an lmfit model; for other functions use guess=.")
+    else:
+        model, names, start, label = _resolve(function, x_fit, y_fit, guess)
+        if len(start) != len(names):
+            raise _op.OresmeError(f"{label} has {len(names)} parameters; the guess has {len(start)}.")
 
-    design = None
-    if isinstance(function, str) and (function == "line" or function.startswith("poly")):
-        # a + b*x and K0 + K1*x + ... are linear in their parameters.
-        design = np.vander(x_fit, len(names), increasing=True)[:, free]
-    best, free_covariance, chisq, converged, reason = _least_squares(
-        reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
-    )
+        full = np.array(start, dtype=float)
+        held = []
+        if isinstance(hold, dict):
+            for key, value in hold.items():
+                full[_index_of(names, key, "hold")] = float(value)
+                held.append(key)
+        elif hold is not None:
+            held = [names[_index_of(names, key, "hold")] for key in hold]
+        free = [index for index, key in enumerate(names) if key not in held]
+        if not free:
+            raise _op.OresmeError("Every parameter is held; there is nothing to fit.")
+        if len(y_fit) <= len(free):
+            raise _op.OresmeError(f"{len(y_fit)} points are not enough to fit {len(free)} parameters.")
+        lower = np.full(len(names), -np.inf)
+        upper = np.full(len(names), np.inf)
+        for key, (low, high) in _limits(function, bounds).items():
+            at = _index_of(names, key, "bounds")
+            lower[at] = -np.inf if low is None else float(low)
+            upper[at] = np.inf if high is None else float(high)
+            if lower[at] >= upper[at]:
+                raise _op.OresmeError(f"bounds: the limits for {key!r} are empty.")
+
+        def reduced(x_, *values):
+            trial = full.copy()
+            trial[free] = values
+            return model(x_, *trial)
+
+        design = None
+        if isinstance(function, str) and (function == "line" or function.startswith("poly")):
+            # a + b*x and K0 + K1*x + ... are linear in their parameters.
+            design = np.vander(x_fit, len(names), increasing=True)[:, free]
+        best, free_covariance, chisq, converged, reason = _least_squares(
+            reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
+        )
+    # From here on `params` is the fitted coefficients, in the order of `names`.
     params = full.copy()
     params[free] = best
     covariance = np.zeros((len(names), len(names)))
@@ -936,7 +1020,8 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
                 "label": f"{label}({leaf})",
                 "settings": {
                     "function": label,
-                    "custom": callable(function),
+                    # An lmfit model, like a function of the user's, is not kept: only its name.
+                    "custom": callable(function) or lmfit_outcome is not None,
                     "y": y_wave.name,
                     "x": None if x_wave is None else x_wave.name,
                     "guess": None if guess is None else [float(value) for value in guess],
@@ -971,6 +1056,8 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
         residuals=residual_wave, band=band_waves, reason=reason, covariance=covariance,
         freedom=len(y_fit) - len(free), name=stored,
     )
+    #: lmfit's own result, when the fit was of an lmfit model.
+    outcome.lmfit = lmfit_outcome
     if not quiet:
         print(outcome)
     return outcome

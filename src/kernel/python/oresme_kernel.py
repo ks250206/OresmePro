@@ -7,6 +7,7 @@ An IPython shell whose input comes from the command line and whose output
 import asyncio
 import builtins
 import importlib
+import importlib.util
 import io
 import json
 import os
@@ -276,6 +277,80 @@ def interrupt():
         _interrupt_requested = True
 
 
+# Python file -> (its size and time of change, the modules it imports).
+_imports_seen = {}
+
+
+def _imports_of(code):
+    """The top-level modules a piece of code imports; nothing if it cannot be parsed."""
+    from pyodide.code import find_imports
+
+    try:
+        # Magics and shell escapes become Python first, so that an input with them still parses.
+        return find_imports(shell.transform_cell(code))
+    except Exception:
+        return []
+
+
+def _wanted_packages(code):
+    """Modules that the input, the procedures and the experiment's Python files
+    import and that are not installed yet.
+
+    A procedure runs inside the input that calls it, where nothing can be
+    waited for; so what the procedures and the files import is looked at
+    before the input runs, not when the import is reached.
+    """
+    names = set(_imports_of(code))
+    for folder, _, files in os.walk(WORKDIR):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(folder, name)
+            try:
+                info = os.stat(path)
+                key = (info.st_size, info.st_mtime_ns)
+                if _imports_seen.get(path, (None,))[0] != key:
+                    with open(path, encoding="utf-8", errors="replace") as handle:
+                        _imports_seen[path] = (key, _imports_of(handle.read()))
+                names.update(_imports_seen[path][1])
+            except OSError:
+                continue
+    missing = []
+    for name in sorted(names):
+        try:
+            if name not in sys.modules and importlib.util.find_spec(name) is None:
+                missing.append(name)
+        except (ImportError, ValueError):
+            missing.append(name)
+    return missing
+
+
+async def _load_packages(code):
+    """Fetch and install the packages of the distribution that are about to be imported.
+
+    `import scipy` just works: SciPy, pandas, scikit-learn, lmfit and the
+    rest of the Pyodide distribution are installed the first time something
+    imports them. Names that are no package of the distribution are left to
+    the import itself to report.
+    """
+    missing = _wanted_packages(code)
+    if not missing:
+        return
+    import pyodide_js
+
+    wanted = "\n".join(f"import {name}" for name in missing)
+    try:
+        _oresme_js.progress(f"Loading {', '.join(missing)}…")
+        await pyodide_js.loadPackagesFromImports(wanted)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # Offline, say: the import will say what is missing.
+        print(f"Could not load {', '.join(missing)}: {error}", file=sys.stderr)
+    finally:
+        _oresme_js.progress("")
+        importlib.invalidate_caches()
+
+
 async def execute(code):
     """Run one input. Returns True if it finished without an error."""
     global _current_task, _state, _interrupt_requested
@@ -285,6 +360,7 @@ async def execute(code):
         if _interrupt_requested:
             raise asyncio.CancelledError
         _sync(_pull)
+        await _load_packages(code)
         try:
             return await _execute(code)
         finally:

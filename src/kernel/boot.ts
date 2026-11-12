@@ -59,38 +59,22 @@ export async function bootPython(
     display: (bundleJson: string) => hooks.display(bundleJson),
     error: (name: string, message: string, traceback: string) =>
       hooks.error(name, message, traceback),
+    // What Python is busy with besides the user's code (loading a package); "" when done.
+    progress: (message: string) => onProgress(message),
   });
 
   onProgress("Starting Python…");
   pyodide.runPython(`import sys\nsys.path.insert(0, ${JSON.stringify(SITE)})`);
   const kernel = pyodide.pyimport("oresme_kernel");
-  // Before Python is running the code, there is no Python task to cancel:
-  // an interrupt that arrives while packages are loading is remembered here.
-  let loading = false;
-  let cancelled = false;
   return {
+    // Packages the code imports are installed by the Python side before it
+    // runs (see _load_packages in oresme_kernel.py), where an interrupt can
+    // cancel the wait like any other.
     execute: async (code) => {
-      loading = true;
-      cancelled = false;
-      // `import scipy` just works: packages from the Pyodide distribution are
-      // fetched the first time the code imports them.
-      try {
-        await pyodide.loadPackagesFromImports(code, { messageCallback: () => {} });
-      } catch {
-        // Not fatal: the import itself will report what is missing.
-      }
-      loading = false;
-      if (cancelled) {
-        hooks.error("KeyboardInterrupt", "", "KeyboardInterrupt");
-        return false;
-      }
       kernel.prepare();
       return Boolean(await kernel.execute(code));
     },
     complete: (code, cursor) => JSON.parse(kernel.complete(code, cursor)) as CompletionItem[],
-    interrupt: () => {
-      if (loading) cancelled = true;
-      else kernel.interrupt();
-    },
+    interrupt: () => kernel.interrupt(),
   };
 }

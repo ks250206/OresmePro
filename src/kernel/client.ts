@@ -247,6 +247,10 @@ export class KernelClient {
     switch (message.type) {
       case "progress":
         if (!this.ready) this.setState({ status: "starting", message: message.message });
+        // Once Python is up, it reports what an input is waiting for: a package being loaded.
+        else if (this.running.size > 0 && !this.state.interrupting) {
+          this.setState({ message: message.message || "Running…" });
+        }
         break;
       case "ready":
         this.ready = true;
