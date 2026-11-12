@@ -39,6 +39,7 @@ import {
 } from "../core/doc/types";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
+import { ImportDialog } from "./ImportDialog";
 
 const close = () => ui.set({ dialog: null });
 
@@ -2100,6 +2101,15 @@ function renderDialog(dialog: DialogRequest) {
       return <PageTextDialog layout={dialog.layout} item={dialog.item} />;
     case "arrangeLayout":
       return <ArrangeLayoutDialog layout={dialog.layout} items={dialog.items} />;
+    case "importData":
+      // Keyed by the file: the next file starts from its own preset, not this one's choices.
+      return (
+        <ImportDialog
+          key={`${dialog.file.name}:${dialog.rest.length}`}
+          file={dialog.file}
+          rest={dialog.rest}
+        />
+      );
     case "about":
       return <AboutDialog />;
   }

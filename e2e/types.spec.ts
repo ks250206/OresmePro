@@ -146,7 +146,11 @@ test.describe("Excel workbooks", () => {
   });
 
   test("a file that is not a workbook is refused with a reason", async ({ app, page }) => {
-    await app.drop([{ name: "old.xls", content: [0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3] }]);
-    await expect(page.getByRole("alert")).toContainText("have to be saved as .xlsx");
+    await app.drop([{ name: "old.xls", content: [0xd0, 0xcf, 0x11, 0xe0, 1, 2, 3] }], {
+      load: false,
+    });
+    const dialog = page.getByRole("dialog", { name: "Load Data: old.xls" });
+    await expect(dialog).toContainText("have to be saved as .xlsx");
+    await expect(dialog.getByRole("button", { name: "Load" })).toBeDisabled();
   });
 });

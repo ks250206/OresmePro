@@ -9,15 +9,13 @@ import {
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoArrangement } from "../core/doc/echo";
-import { DATE_UNIT, leafName, type DocState, type PageSpec } from "../core/doc/types";
-import { columnsFromRows, parseDelimited, type DelimitedResult } from "../core/io/delimited";
+import { leafName, type DocState, type PageSpec } from "../core/doc/types";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
-import { readXlsx } from "../core/io/xlsx";
+import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { drawPrims } from "../core/plot/canvas";
 import type { Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
-import { timeZone } from "../core/plot/ticks";
 import { measureText } from "./measure";
 import {
   activeWindow,
@@ -35,6 +33,7 @@ import {
   showError,
   ui,
   type MenuItem,
+  type PendingData,
   type UiState,
 } from "./session";
 
@@ -144,7 +143,11 @@ export function exportPage(name: string, filename: string): void {
 setPageExportHandler(exportPage);
 setExportHandler(exportGraph);
 
-function pickFile(accept: string, multiple: boolean, onFiles: (files: File[]) => void): void {
+export function pickFile(
+  accept: string,
+  multiple: boolean,
+  onFiles: (files: File[]) => void,
+): void {
   const input = document.createElement("input");
   input.type = "file";
   input.multiple = multiple;
@@ -153,99 +156,86 @@ function pickFile(accept: string, multiple: boolean, onFiles: (files: File[]) =>
   input.click();
 }
 
-/** Asks for delimited text files and loads their columns as waves. */
+export type { PendingData as PendingFile } from "./session";
+
+/** Asks for delimited text files and shows how each will be read. */
 export function loadDelimitedText(): void {
   pickFile(".csv,.tsv,.txt,.dat,text/plain,text/csv", true, (files) => void loadFiles(files));
 }
 
-/**
- * Loads several files one after another. In order, not at once: each file's
- * waves are named to avoid the ones already there, including those the file
- * before it just made.
- */
-export async function loadFiles(files: Iterable<File>): Promise<void> {
-  for (const file of files) await loadFile(file);
-}
-
-/** Loads a dropped or chosen file: an experiment, an Excel workbook, or delimited text. */
-export async function loadFile(file: File): Promise<void> {
-  if (/\.oresme$/i.test(file.name)) await openExperimentFile(file);
-  else if (/\.(xlsx|xlsm|xls)$/i.test(file.name)) await loadExcelFile(file);
-  else await loadTextFile(file);
-}
-
-/** The commands that make a wave of each column and a table showing them. */
-function columnCommands(result: DelimitedResult, source: string): Command[] {
-  const commands: Command[] = result.names.map((name, index) => {
-    const column = result.columns[index]!;
-    const loaded = {
-      op: "makeWave" as const,
-      name,
-      note: `Loaded from ${source}`,
-      ...(result.dates[index] ? { unit: DATE_UNIT } : {}),
-    };
-    return column instanceof Float64Array
-      ? { ...loaded, data: column }
-      : { ...loaded, text: column };
-  });
-  commands.push({ op: "edit", waves: result.names });
-  return commands;
-}
-
-async function loadTextFile(file: File): Promise<void> {
-  try {
-    const text = await file.text();
-    // Look at the waves only now: others may have been made while the file was read.
-    const { waves, timeZone: zone } = doc.getState();
-    const result = parseDelimited(text, (name) => name in waves, timeZone(zone));
-    if (result.names.length === 0) {
-      showError("Nothing to load", `${file.name} has no columns.`);
-      return;
-    }
-    if (runGui(columnCommands(result, file.name)) === undefined) return;
-    note(`Loaded ${result.names.join(", ")} (${result.rows} points each) from ${file.name}.`);
-  } catch (error) {
-    showError(`Could not load ${file.name}`, error);
-  }
-}
-
-/** Asks for Excel workbooks and loads the columns of their sheets as waves. */
+/** Asks for Excel workbooks and shows how each will be read. */
 export function loadExcelWorkbook(): void {
   pickFile(".xlsx,.xlsm", true, (picked) => void loadFiles(picked));
 }
 
-/** Loads every sheet of a workbook that has cells: a wave per column and a table per sheet. */
-async function loadExcelFile(file: File): Promise<void> {
+/**
+ * Takes in dropped or chosen files. An experiment is opened; files of data
+ * (delimited text, Excel workbooks) are shown in the Load Data dialog one
+ * after another, where the user sees how each is read before it is.
+ */
+export async function loadFiles(files: Iterable<File>): Promise<void> {
+  const data: PendingData[] = [];
+  for (const file of files) {
+    if (/\.oresme$/i.test(file.name)) {
+      await openExperimentFile(file);
+      continue;
+    }
+    try {
+      data.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    } catch (error) {
+      showError(`Could not read ${file.name}`, error);
+    }
+  }
+  if (data[0]) ui.set({ dialog: { kind: "importData", file: data[0], rest: data.slice(1) } });
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Loads a file of data as the settings say: a wave per column, with a table
+ * and a graph if asked for, as one undo step. With `keep`, the file itself
+ * is put with the experiment's files and the history gets the Python that
+ * loads it again; otherwise the history only notes what was loaded. Returns
+ * whether anything was loaded.
+ */
+export async function importFile(
+  file: PendingData,
+  settings: ImportSettings,
+  keep: boolean,
+): Promise<boolean> {
   try {
-    const sheets = readXlsx(new Uint8Array(await file.arrayBuffer()));
-    if (sheets.length === 0) {
-      showError("Nothing to load", `${file.name} has no cells.`);
-      return;
-    }
-    const { waves, timeZone: zone } = doc.getState();
-    // Columns of later sheets are named to avoid those of the sheets before.
-    const taken = new Set<string>();
-    const commands: Command[] = [];
-    const lines: string[] = [];
-    for (const sheet of sheets) {
-      const result = columnsFromRows(
-        sheet.rows,
-        (name) => name in waves || taken.has(name),
-        timeZone(zone),
-      );
-      if (result.names.length === 0) continue;
-      for (const name of result.names) taken.add(name);
-      commands.push(...columnCommands(result, `${file.name}, sheet ${sheet.name}`));
-      lines.push(`${sheet.name}: ${result.names.join(", ")} (${result.rows} points each)`);
-    }
-    if (commands.length === 0) {
+    const digest = await sha256(file.bytes);
+    // Planned only now: other waves may have been made while the file was hashed,
+    // and the new ones are named to avoid them.
+    const plan = planImport(file.bytes, file.name, settings, doc.getState(), digest);
+    if (plan.commands.length === 0) {
       showError("Nothing to load", `${file.name} has no columns.`);
-      return;
+      return false;
     }
-    if (runGui(commands) === undefined) return;
-    note(`Loaded from ${file.name}:\n${lines.join("\n")}`);
+    let echo: string | undefined;
+    if (keep) {
+      try {
+        files.put(file.name, file.bytes);
+        echo = importPython(file.name, settings);
+      } catch (error) {
+        note(
+          `${file.name} is not kept with the experiment: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (runGui(plan.commands, { echo }) === undefined) return false;
+    note(
+      plan.tables.length === 1 && plan.tables[0]!.sheet === null
+        ? `Loaded ${plan.summary[0]} from ${file.name}.`
+        : `Loaded from ${file.name}:\n${plan.summary.join("\n")}`,
+    );
+    return true;
   } catch (error) {
     showError(`Could not load ${file.name}`, error);
+    return false;
   }
 }
 

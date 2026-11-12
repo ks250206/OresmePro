@@ -2,18 +2,22 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   arrangeItems,
   graphsToArrange,
-  loadFile,
+  importFile,
   loadFiles,
   selectedItems,
   selectItems,
 } from "./actions";
-import { doc, history, ui } from "./session";
+import { doc, files, history, ui } from "./session";
 
-const csv = (name: string, value: number) => new File([`x,y\n1,${value}\n2,${value}\n`], name);
+const csv = (name: string, value: number) => ({
+  name,
+  bytes: new TextEncoder().encode(`x,y\n1,${value}\n2,${value}\n`),
+});
 
-describe("loading delimited text files", () => {
-  it("gives files loaded together distinct wave names instead of overwriting", async () => {
-    await loadFiles([csv("a.csv", 10), csv("b.csv", 20)]);
+describe("loading files of data", () => {
+  it("gives files loaded one after another distinct wave names instead of overwriting", async () => {
+    await importFile(csv("a.csv", 10), {}, false);
+    await importFile(csv("b.csv", 20), {}, false);
     const state = doc.getState();
     expect(state.waveOrder).toEqual(["x", "y", "x_1", "y_1"]);
     expect(Array.from(state.waves.y!.data)).toEqual([10, 10]);
@@ -21,7 +25,10 @@ describe("loading delimited text files", () => {
   });
 
   it("does the same when two loads are started at once", async () => {
-    await Promise.all([loadFile(csv("c.csv", 30)), loadFile(csv("d.csv", 40))]);
+    await Promise.all([
+      importFile(csv("c.csv", 30), {}, false),
+      importFile(csv("d.csv", 40), {}, false),
+    ]);
     const { waves, waveOrder } = doc.getState();
     expect(waveOrder).toHaveLength(8);
     expect(new Set(waveOrder).size).toBe(8);
@@ -29,6 +36,33 @@ describe("loading delimited text files", () => {
       .filter((name) => name.startsWith("y"))
       .map((name) => waves[name]!.data[0]);
     expect(loaded.toSorted((a, b) => a! - b!)).toEqual([10, 20, 30, 40]);
+  });
+
+  it("keeps the file with the experiment and writes the Python that loads it again", async () => {
+    const before = history.getEntries().length;
+    expect(await importFile(csv("kept.csv", 50), { table: false, header: "yes" }, true)).toBe(true);
+    expect(new TextDecoder().decode(files.get("kept.csv")!.bytes)).toBe("x,y\n1,50\n2,50\n");
+    const entries = history.getEntries().slice(before);
+    expect(entries.map((entry) => [entry.source, entry.code])).toEqual([
+      ["gui", 'op.load_text("kept.csv", header="yes", table=False)'],
+      ["system", "Loaded x_4, y_4 (2 points each) from kept.csv."],
+    ]);
+    expect(doc.getState().waves.y_4!.note).toMatch(
+      /^Loaded from kept\.csv \(SHA-256 [0-9a-f]{64}\)$/,
+    );
+    // One step to undo.
+    doc.undo();
+    expect(doc.getState().waves.y_4).toBeUndefined();
+  });
+
+  it("opens the Load Data dialog for files that are dropped, one after another", async () => {
+    await loadFiles([new File(["a\n1\n"], "one.csv"), new File(["b\n2\n"], "two.txt")]);
+    const dialog = ui.get().dialog;
+    expect(dialog).toMatchObject({ kind: "importData", file: { name: "one.csv" } });
+    expect(dialog?.kind === "importData" && dialog.rest.map((file) => file.name)).toEqual([
+      "two.txt",
+    ]);
+    ui.set({ dialog: null });
   });
 });
 

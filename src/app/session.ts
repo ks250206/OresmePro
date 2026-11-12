@@ -39,7 +39,14 @@ export type DialogRequest =
   | { kind: "pageText"; layout: string; item?: string }
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
+  | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
   | { kind: "about" };
+
+/** A file of data read into memory, waiting to be loaded through the Load Data dialog. */
+export interface PendingData {
+  name: string;
+  bytes: Uint8Array;
+}
 
 export interface MenuItem {
   label?: string;

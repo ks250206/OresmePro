@@ -164,8 +164,14 @@ export class App {
     await this.page.getByRole("button", { name: "Do It" }).click();
   }
 
-  /** Drops files onto the app, as from the desktop. */
-  async drop(files: { name: string; content: string | number[] }[]): Promise<void> {
+  /**
+   * Drops files onto the app, as from the desktop. Files of data come up in
+   * the Load Data dialog; unless `load` is false they are loaded as detected.
+   */
+  async drop(
+    files: { name: string; content: string | number[] }[],
+    { load = true }: { load?: boolean } = {},
+  ): Promise<void> {
     await this.page.evaluate((list) => {
       const data = new DataTransfer();
       for (const { name, content } of list) {
@@ -178,6 +184,13 @@ export class App {
           new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }),
         );
     }, files);
+    if (!load) return;
+    for (const { name } of files) {
+      if (name.endsWith(".oresme")) continue;
+      const dialog = this.page.getByRole("dialog", { name: `Load Data: ${name}` });
+      await dialog.getByRole("button", { name: /^Load/ }).click();
+      await dialog.waitFor({ state: "detached" });
+    }
   }
 
   /** Pastes text into the focused table. */

@@ -279,6 +279,101 @@ test.describe("loading delimited text", () => {
     expect(edited.data[1]! - edited.data[0]!).toBe(2700);
   });
 
+  test("the Load Data dialog shows how a file reads and takes corrections", async ({
+    app,
+    page,
+  }) => {
+    // Shift_JIS, two lines above the table, semicolons, decimal commas:
+    //   測定装置 X-1 / 2026-11-11 / 電圧 (V);電流 (mA);備考 / 1,5;2;a / 2,5;4,25;b / 3;高;c
+    const content = [
+      145, 170, 146, 232, 145, 149, 146, 117, 32, 88, 45, 49, 13, 10, 50, 48, 50, 54, 45, 49, 49,
+      45, 49, 49, 13, 10, 147, 100, 136, 179, 32, 40, 86, 41, 59, 147, 100, 151, 172, 32, 40, 109,
+      65, 41, 59, 148, 245, 141, 108, 13, 10, 49, 44, 53, 59, 50, 59, 97, 13, 10, 50, 44, 53, 59,
+      52, 44, 50, 53, 59, 98, 13, 10, 51, 59, 141, 130, 59, 99, 13, 10,
+    ];
+    await app.drop([{ name: "bench.txt", content }], { load: false });
+    const dialog = page.getByRole("dialog", { name: "Load Data: bench.txt" });
+    const reads = dialog.getByLabel("How the file reads");
+    // The encoding, the delimiter and the lines above the table are found.
+    await expect(reads).toHaveText(
+      "3 rows · 3 columns · separated by semicolon · shift_jis · 2 lines above the table (found) · with a header",
+    );
+    const preview = dialog.getByRole("region", { name: "Preview" });
+    await expect(preview.locator("thead tr").nth(1)).toHaveText("Header電圧 (V)電流 (mA)備考");
+    await expect(dialog.getByLabel("Name of column 1")).toHaveAttribute("placeholder", "電圧");
+    await expect(dialog.getByLabel("Unit of column 2")).toHaveAttribute("placeholder", "mA");
+    // With a decimal point "1,5" is text; told of the comma, the column is numbers.
+    await expect(dialog.getByLabel("Type of column 1")).toContainText("Auto (text)");
+    await dialog.getByLabel("Decimal mark").selectOption(",");
+    await expect(dialog.getByLabel("Type of column 1")).toContainText("Auto (number)");
+    // A column read as numbers shows the cell that is not one.
+    await dialog.getByLabel("Type of column 2").selectOption("number");
+    await expect(preview.locator("td[data-unreadable]")).toHaveText(["高"]);
+    await expect(dialog.getByRole("status")).toContainText("電流 (1)");
+    await dialog.getByLabel("Name of column 1").fill("U");
+    await dialog.getByLabel("Role of column 1").selectOption("x");
+    await dialog.getByLabel("Make a graph").check();
+    // Saved for the next file of this kind.
+    await dialog.getByRole("button", { name: "Save As…" }).click();
+    await dialog.getByLabel("Preset name").fill("Bench");
+    await expect(dialog.getByLabel("File names it is for")).toHaveValue("*.txt");
+    await dialog.getByRole("button", { name: "Save Preset" }).click();
+    await expect(dialog.getByRole("combobox", { name: "Preset" })).toHaveValue("Bench");
+    await dialog.getByRole("button", { name: "Load", exact: true }).click();
+
+    await expect.poll(async () => (await app.doc()).order).toEqual(["U", "電流", "備考"]);
+    expect((await app.wave("U"))!).toMatchObject({ data: [1.5, 2.5, 3], unit: "V" });
+    const current = (await app.wave("電流"))!;
+    expect([current.data[0], current.data[1], Number.isNaN(current.data[2]), current.unit]).toEqual(
+      [2, 4.25, true, "mA"],
+    );
+    expect((await app.wave("備考"))!.text).toEqual(["a", "b", "c"]);
+    const doc = await app.doc();
+    expect(doc.graphs.Graph0!.traces).toMatchObject([{ y: "電流", x: "U" }]);
+    expect(doc.tables.Table0!.columns).toEqual(["U", "電流", "備考"]);
+    // The file is kept, and the history has the call that loads it again.
+    expect(Object.keys(await app.files())).toEqual(["bench.txt"]);
+    const entries = await app.entries();
+    const echo = entries.at(-2)!.code;
+    expect(echo).toBe(
+      'op.load_text("bench.txt", decimal=",", columns={0: {"name": "U"}, 1: {"type": "number"}}, x=0, graph=True)',
+    );
+    expect(entries.at(-1)!.code).toContain("cells that could not be read: 電流 (1)");
+    await app.run(echo);
+    expect((await app.doc()).order).toEqual(["U", "電流", "備考", "U_1", "電流_1", "備考_1"]);
+    expect((await app.wave("U_1"))!.data).toEqual([1.5, 2.5, 3]);
+
+    // The next file with a name the preset is for comes up with the preset chosen.
+    await app.drop([{ name: "next.txt", content: "a;b\n7,5;1\n" }], { load: false });
+    const next = page.getByRole("dialog", { name: "Load Data: next.txt" });
+    await expect(next.getByRole("combobox", { name: "Preset" })).toHaveValue("Bench");
+    await expect(next.getByLabel("Decimal mark")).toHaveValue(",");
+    await expect(next.getByLabel("Name of column 1")).toHaveValue("U");
+    await next.getByRole("button", { name: "Load", exact: true }).click();
+    await expect.poll(async () => (await app.wave("U_2"))?.data).toEqual([7.5]);
+  });
+
+  test("several files are loaded the same way without asking again", async ({ app, page }) => {
+    await app.drop(
+      [
+        { name: "a.dat", content: "1 2\n3 4\n" },
+        { name: "b.dat", content: "5 6\n7 8\n" },
+        { name: "c.dat", content: "9 10\n" },
+      ],
+      { load: false },
+    );
+    const dialog = page.getByRole("dialog", { name: "Load Data: a.dat" });
+    await dialog.getByLabel("Name of column 1").fill("first");
+    await dialog.getByLabel("Type of column 2").selectOption("skip");
+    await dialog.getByLabel("Make a table").uncheck();
+    await dialog.getByLabel("Load the other 2 the same way, without asking").check();
+    await dialog.getByRole("button", { name: "Load", exact: true }).click();
+    await expect.poll(async () => (await app.doc()).order).toEqual(["first", "first_1", "first_2"]);
+    expect((await app.wave("first_2"))!.data).toEqual([9]);
+    expect(Object.keys((await app.doc()).tables)).toEqual([]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
   test("a file with 200,000 rows loads", async ({ app }) => {
     const rows = 200_000;
     const content = `v\n${Array.from({ length: rows }, (_, index) => index).join("\n")}\n`;
