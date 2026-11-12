@@ -29,6 +29,8 @@ __all__ = [
     "ifft",
     "histogram",
     "background",
+    "OnsetResult",
+    "onset",
 ]
 
 
@@ -1604,6 +1606,199 @@ def background(wave_, method="shirley", *, x=None, range=None, cursors=False, gr
     if not subtract:
         return made
     return made, _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
+
+
+def _with_error(value, error):
+    """A value written to the digits its uncertainty leaves meaningful: ``4.5123 ± 0.0023``."""
+    if not (np.isfinite(error) and error > 0 and np.isfinite(value)):
+        return f"{value:.6g}"
+    error_place = int(np.floor(np.log10(error)))
+    decimals = max(0, 1 - error_place)
+    if decimals <= 8:
+        return f"{value:.{decimals}f} ± {error:.2g}"
+    # An error this small is often rounding: fixed decimals would run on.
+    value_place = int(np.floor(np.log10(abs(value)))) if value else error_place
+    return f"{value:.{min(10, max(1, value_place - error_place + 2))}g} ± {error:.2g}"
+
+
+def _straight_line(x, y, what):
+    """The least-squares line through the points, about their mean X.
+
+    Returns (centre, value at the centre, its variance, slope, its
+    variance); the value and slope are uncorrelated about the centre. The
+    variances come from the scatter of the points about the line.
+    """
+    if len(x) < 3:
+        raise _op.OresmeError(f"The {what} range has {len(x)} points; a line with an uncertainty needs 3.")
+    centre = float(x.mean())
+    offsets = x - centre
+    spread = float(offsets @ offsets)
+    if spread == 0:
+        raise _op.OresmeError(f"The points of the {what} range all have the same X.")
+    level = float(y.mean())
+    slope = float(offsets @ (y - level)) / spread
+    residual = y - level - slope * offsets
+    scatter = float(residual @ residual) / (len(x) - 2)
+    return centre, level, scatter / len(x), slope, scatter / spread
+
+
+class OnsetResult:
+    """The outcome of ``op.onset``: where the edge line crosses the baseline, and both lines."""
+
+    def __init__(self, name, x, x_sigma, y, edge, baseline, x_unit="", waves=()):
+        self.name = name
+        #: Where the lines cross, and its standard deviation.
+        self.x = x
+        self.x_sigma = x_sigma
+        #: The value of both lines there.
+        self.y = y
+        #: The edge line: slope, intercept (at x = 0), their standard
+        #: deviations, and the points and X range it was fitted to.
+        self.edge = edge
+        #: The baseline: a line like the edge, or ``{"level": value}``.
+        self.baseline = baseline
+        self.x_unit = x_unit
+        #: The waves drawn on a graph: the two lines and the crossing.
+        self.waves = tuple(waves)
+
+    def __float__(self):
+        return float(self.x)
+
+    def __repr__(self):
+        return f"OnsetResult({self.name}, x={self.x:.6g})"
+
+    def __str__(self):
+        unit = f" {self.x_unit}" if self.x_unit else ""
+        lines = [f"Onset of {self.name}: x = {_with_error(self.x, self.x_sigma)}{unit} (y = {self.y:.6g})"]
+        for label, line in (("edge", self.edge), ("baseline", self.baseline)):
+            if "level" in line:
+                lines.append(f"  {label + ':':<10} level {line['level']:.6g}")
+                continue
+            lines.append(
+                f"  {label + ':':<10} slope = {_with_error(line['slope'], line['slope_sigma'])}, "
+                f"intercept = {_with_error(line['intercept'], line['intercept_sigma'])} "
+                f"({line['points']} points, x = {line['range'][0]:g} to {line['range'][1]:g})"
+            )
+        return "\n".join(lines)
+
+
+def onset(wave_, x=None, *, edge, baseline=None, graph=None, quiet=False):
+    """Where a rising or falling edge starts, by extrapolating it to the baseline.
+
+    For thresholds such as the secondary-electron cutoff or the HOMO and
+    LUMO onsets of UPS and LEIPS spectra. A straight line is fitted to the
+    points with X in ``edge=(x1, x2)``, and another to those in
+    ``baseline=(x3, x4)``; ``baseline`` may instead be a number, a constant
+    level, and is 0 if left out. The ranges are X values, not point numbers.
+    ``x`` is an X wave (or array) for XY data.
+
+    The uncertainty of the crossing propagates those of the two lines,
+    taken from the scatter of the points about each (each point independent,
+    with the same scatter throughout its range), to first order: it is the
+    spread of the two lines where they cross, divided by the difference of
+    their slopes. It holds while that is small next to the ranges, and says
+    nothing of how the ranges were chosen, which often matters more.
+
+    Nothing is drawn unless ``graph`` is given: a graph (or its name), or
+    True for the frontmost graph showing the wave. The two lines are then
+    added as ``<name>_edge`` and ``<name>_base``, each over its range and on
+    past the crossing, and the crossing as ``<name>_onset``, a marker with a
+    tag. Returns an ``OnsetResult``; ``r.x`` is the crossing.
+    """
+    source, values = _numeric(wave_)
+    if values.ndim != 1:
+        raise _op.OresmeError("An onset needs a 1-D wave.")
+    if x is None:
+        x_values, x_unit = np.asarray(source.x, dtype=float), source.x_unit
+    else:
+        x_values, x_unit = _x_data(x, len(values))
+    good = np.isfinite(x_values) & np.isfinite(values)
+
+    def fitted(limits, what):
+        low, high = sorted(float(value) for value in limits)
+        # Scaled X is computed, so 4.2 may come out as 4.2000000000000002.
+        slack = 1e-9 * _span(x_values[good])
+        inside = good & (x_values >= low - slack) & (x_values <= high + slack)
+        fit = _straight_line(x_values[inside], values[inside], what)
+        centre, level, level_var, slope, slope_var = fit
+        line = {
+            "slope": slope,
+            "intercept": level - slope * centre,
+            "slope_sigma": float(np.sqrt(slope_var)),
+            "intercept_sigma": float(np.sqrt(level_var + centre * centre * slope_var)),
+            "points": int(inside.sum()),
+            "range": (low, high),
+        }
+        return line, fit
+
+    edge_line, (c1, v1, var_v1, s1, var_s1) = fitted(edge, "edge")
+    if baseline is None or np.ndim(baseline) == 0:
+        level = 0.0 if baseline is None else float(baseline)
+        base_line, (c2, v2, var_v2, s2, var_s2) = {"level": level}, (0.0, level, 0.0, 0.0, 0.0)
+    else:
+        base_line, (c2, v2, var_v2, s2, var_s2) = fitted(baseline, "baseline")
+    if s1 == s2:
+        raise _op.OresmeError("The edge and the baseline are parallel; they do not cross.")
+    # Each line is fitted about its own centre, where its value and slope are uncorrelated.
+    crossing = (v2 - v1 + s1 * c1 - s2 * c2) / (s1 - s2)
+    height = v1 + s1 * (crossing - c1)
+    spread = var_v1 + (crossing - c1) ** 2 * var_s1 + var_v2 + (crossing - c2) ** 2 * var_s2
+    crossing_sigma = float(np.sqrt(spread)) / abs(s1 - s2)
+
+    waves_ = []
+    if graph is not None and graph is not False:
+        target = _showing(source, graph)
+        if target is None:
+            if graph is True:
+                raise _op.OresmeError("graph=True needs a graph that shows the wave.")
+            target = _op.graph(graph) if isinstance(graph, str) else graph
+        trace = next((t for t in target._info()["traces"] if t["y"] == source.name), None)
+        axes = {"axis": trace["vAxis"], "haxis": trace["hAxis"]} if trace else {}
+        reach = max(abs(crossing - end) for end in edge_line["range"])
+        scaling = {"x_unit": x_unit, "unit": source.unit}
+
+        def drawn(suffix, line, low, high):
+            """A line over low..high with a little to spare, as a wave with X scaling."""
+            margin = 0.05 * (high - low)
+            grid = np.linspace(low - margin, high + margin, 50)
+            if "level" in line:
+                values_ = np.full(grid.size, line["level"])
+            else:
+                values_ = line["intercept"] + line["slope"] * grid
+            return _op.make(f"{source.name}{suffix}", values_, x0=grid[0], dx=grid[1] - grid[0], **scaling)
+
+        waves_.append(drawn("_edge", edge_line, min(crossing, *edge_line["range"]),
+                            max(crossing, *edge_line["range"])))
+        if "level" in base_line:
+            # A level has no range of its own: it is drawn as far either side of the crossing as the edge.
+            waves_.append(drawn("_base", base_line, crossing - reach, crossing + reach))
+        else:
+            waves_.append(drawn("_base", base_line, min(crossing, *base_line["range"]),
+                                max(crossing, *base_line["range"])))
+        marker = _op.make(f"{source.name}_onset", [height], x0=crossing, dx=1, **scaling)
+        waves_.append(marker)
+        shown = {t["y"]: t["name"] for t in target._info()["traces"]}
+        for made, style in zip(waves_, ({"color": "#cc0000"}, {"color": "#cc0000", "line_style": "dash"},
+                                        {"mode": "markers", "marker": "circle", "color": "#cc0000"})):
+            if made.name not in shown:
+                shown[made.name] = target.append(made, **axes).name
+                target.trace(shown[made.name]).set(**style)
+        text = f"onset {_with_error(crossing, crossing_sigma)}" + (f" {x_unit}" if x_unit else "")
+        tag = next(
+            (a for a in target._info()["annotations"]
+             if a["kind"] == "tag" and a["trace"] == shown[marker.name]),
+            None,
+        )
+        if tag is None:
+            target.tag(shown[marker.name], 0, text)
+        else:
+            _op.Annotation(target, tag["name"]).text = text
+
+    result = OnsetResult(source.name, float(crossing), crossing_sigma, float(height), edge_line, base_line,
+                         x_unit, waves_)
+    if not quiet:
+        print(result)
+    return result
 
 
 # --- Interpolation -----------------------------------------------------------

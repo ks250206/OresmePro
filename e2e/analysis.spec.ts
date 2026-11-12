@@ -55,7 +55,7 @@ g = op.display(pk)`);
 op.make("time", [0.0, 1.0, 3.0, 6.0], unit="s")`);
     await app.menu("Analysis", "Integrate…");
     const dialog = page.getByRole("dialog", { name: "Integrate" });
-    await dialog.getByLabel("Wave").selectOption("current");
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("current");
     await dialog.getByLabel("X wave").selectOption("time");
     await app.doIt();
     await app.idle();
@@ -70,7 +70,7 @@ op.make("time", [0.0, 1.0, 3.0, 6.0], unit="s")`);
     await app.menu("Analysis", "Differentiate…");
     await page
       .getByRole("dialog", { name: "Differentiate" })
-      .getByLabel("Wave")
+      .getByLabel("Wave", { exact: true })
       .selectOption("time");
     await app.doIt();
     await app.idle();
@@ -151,7 +151,7 @@ g = op.display(vs)`);
 
     await app.menu("Analysis", "Multi-peak Fit…");
     const dialog = page.getByRole("dialog", { name: "Multi-peak Fit" });
-    await dialog.getByLabel("Wave").selectOption("vs");
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("vs");
     await dialog.getByLabel("Peak shape").selectOption("voigt");
     await app.doIt();
     await app.idle();
@@ -173,10 +173,10 @@ xps = op.make("xps", 1 + 2 / (1 + np.exp(-(bx - 290) / 0.5)) + bp, x0=270, dx=0.
 g = op.display(xps)`);
     await app.menu("Analysis", "Background…");
     const dialog = page.getByRole("dialog", { name: "Background" });
-    await dialog.getByLabel("Wave").selectOption("xps");
-    await dialog.getByLabel("From").fill("280");
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("xps");
+    await dialog.getByLabel("From", { exact: true }).fill("280");
     await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
-    await dialog.getByLabel("To").fill("300");
+    await dialog.getByLabel("To", { exact: true }).fill("300");
     await app.doIt();
     await app.idle();
     const entry = await app.lastEntry();
@@ -200,6 +200,47 @@ g = op.display(xps)`);
     await app.doIt();
     await app.idle();
     expect((await app.lastEntry()).code).toBe('op.background("xps", "linear", cursors=True)');
+  });
+
+  test("an onset is found from the menu, with ranges from the cursors", async ({ app, page }) => {
+    await app.run(`ox = np.arange(0, 8, 0.05)
+ups = op.make("ups", np.maximum(0.1 + 0.02 * (ox - 3), 2 * ox - 8), dx=0.05, x_unit="eV")
+g = op.display(ups)
+g.cursor("A", "ups", 120); g.cursor("B", "ups", 90)`);
+    await app.menu("Analysis", "Onset…");
+    const dialog = page.getByRole("dialog", { name: "Onset" });
+    await dialog.getByLabel("Wave", { exact: true }).selectOption("ups");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    // A–B fills the edge range with the cursors' X values, lower first.
+    await dialog.getByLabel("Edge from cursors").click();
+    await expect(dialog.getByLabel("Edge from", { exact: true })).toHaveValue("4.5");
+    await expect(dialog.getByLabel("Edge to", { exact: true })).toHaveValue("6");
+    await dialog.getByLabel("Over from", { exact: true }).fill("2");
+    await dialog.getByLabel("Over to", { exact: true }).fill("3.5");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.onset("ups", edge=(4.5, 6), baseline=(2, 3.5), graph=True)');
+    expect(entry.output).toMatch(/^Onset of ups: x = 4\.06060\d*( ± [\d.e-]+)? eV/);
+    expect((await app.doc()).graphs.Graph0!.traces.map((trace) => trace.name)).toEqual([
+      "ups",
+      "ups_edge",
+      "ups_base",
+      "ups_onset",
+    ]);
+    expect((await app.doc()).graphs.Graph0!.annotations[0]!.text).toMatch(/^onset 4\.06/);
+
+    // A constant level instead of a fitted baseline.
+    await app.menu("Analysis", "Onset…");
+    const again = page.getByRole("dialog", { name: "Onset" });
+    await again.getByLabel("Edge from", { exact: true }).fill("4.5");
+    await again.getByLabel("Edge to", { exact: true }).fill("6");
+    await again.getByLabel("Baseline").selectOption("level");
+    await again.getByLabel("Level").fill("0.1");
+    await again.getByLabel("Draw the lines on Graph0").uncheck();
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.onset("ups", edge=(4.5, 6), baseline=0.1)');
   });
 
   test("an image is filtered from the menu", async ({ app, page }) => {

@@ -909,6 +909,70 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("shirwide_cur 401 True\n");
   });
 
+  it("finds an onset where the edge line crosses the baseline", async () => {
+    expect(
+      await run(
+        [
+          // The edge is 2(x - 4) and the baseline 0.1 + 0.02(x - 3): they cross at x = 8.04 / 1.98.
+          "ox = np.arange(0, 8, 0.05); oclean = np.maximum(0.1 + 0.02 * (ox - 3), 2 * ox - 8)",
+          'ow = op.make("onsetpk", oclean, dx=0.05, x_unit="eV", unit="cps")',
+          "r = op.onset(ow, edge=(4.5, 6), baseline=(2, 3.5), quiet=True)",
+          "print(abs(r.x - 8.04 / 1.98) < 1e-12, r.x_sigma < 1e-12, round(r.y, 9), round(r.edge['slope'], 9), round(r.edge['intercept'], 9), r.edge['points'], round(r.baseline['slope'], 9), r.baseline['range'])",
+          // With noise the answer lies within the uncertainty, which is a fraction of the noise.
+          'nw = op.make("onsetnz", oclean + np.random.default_rng(7).normal(scale=0.05, size=ox.size), dx=0.05, x_unit="eV")',
+          "r = op.onset(nw, edge=(4.5, 6), baseline=(3.5, 2))",
+          "print(abs(r.x - 8.04 / 1.98) < 3 * r.x_sigma, 0.002 < r.x_sigma < 0.05, float(r) == r.x)",
+          // A falling edge (a secondary cutoff) down to a level of 0, the default.
+          'fw = op.make("onsetfall", np.maximum(0, 5 - 2.5 * (ox - 1)), dx=0.05)',
+          "r = op.onset(fw, edge=(1.5, 2.5), quiet=True)",
+          "print(round(r.x, 12), r.baseline, round(op.onset(fw, edge=(1.5, 2.5), baseline=0.5, quiet=True).x, 12))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("True True 0.121212121 2.0 -8.0 31 0.02 (2.0, 3.5)");
+    expect(lines[1]).toMatch(/^Onset of onsetnz: x = 4\.0\d+ ± 0\.0\d+ eV \(y = 0\.1\d*\)$/);
+    expect(lines[2]).toMatch(
+      /^ {2}edge: {6}slope = 2\.\d+ ± 0\.0\d+, intercept = -8\.\d+ ± 0\.\d+ \(31 points, x = 4\.5 to 6\)$/,
+    );
+    expect(lines[3]).toMatch(/^ {2}baseline: {2}slope = .* \(31 points, x = 2 to 3\.5\)$/);
+    expect(lines.slice(4)).toEqual(["True True True", "3.0 {'level': 0.0} 2.8"]);
+  });
+
+  it("draws the lines of an onset on the graph of XY data", async () => {
+    expect(
+      await run(
+        [
+          // Binding energy running down, unevenly spaced, as XY data.
+          "import _oresme_analysis as oa",
+          "orng = np.random.default_rng(3); be = np.sort(orng.uniform(0, 6, 200))[::-1]",
+          'op.make("onsetbe", be, unit="eV"); op.make("onsetxy", np.where(be < 2, 0.2, 0.2 + 3 * (be - 2)) + orng.normal(scale=0.01, size=200))',
+          'og = op.display("onsetxy", x="onsetbe", name="Onset")',
+          'r = op.onset("onsetxy", x="onsetbe", edge=(2.5, 4), baseline=(0.5, 1.8), graph=True, quiet=True)',
+          "print(abs(r.x - 2) < 3 * r.x_sigma, r.edge['points'] + r.baseline['points'], [w.name for w in r.waves], [t.name for t in og.traces])",
+          "print(og.annotations[0].text == f'onset {oa._with_error(r.x, r.x_sigma)} eV', og.trace('onsetxy_onset').mode, len(op.wave('onsetxy_edge')))",
+          "e = op.wave('onsetxy_edge'); print(round(e.x[0], 2), round(e.x[-1], 2), e.x_unit, op.wave('onsetxy_onset').x0 == r.x)",
+          // Again: the same waves and tag, updated rather than added.
+          'r = op.onset("onsetxy", x="onsetbe", edge=(2.5, 3.5), baseline=0.2, graph=og, quiet=True)',
+          "print(len(og.traces), len(og.annotations), og.annotations[0].text == f'onset {oa._with_error(r.x, r.x_sigma)} eV')",
+          // Uncertainties are written to the digits they leave meaningful.
+          "print(oa._with_error(4.51234, 0.00213), oa._with_error(1234.5, 25), oa._with_error(2.0, 1.7e-16), oa._with_error(3.0, 0.0))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "True 98 ['onsetxy_edge', 'onsetxy_base', 'onsetxy_onset'] ['onsetxy', 'onsetxy_edge', 'onsetxy_base', 'onsetxy_onset']",
+      "True markers 50",
+      "1.9 4.1 eV True",
+      "4 1 True",
+      "4.5123 ± 0.0021 1234 ± 25 2 ± 1.7e-16 3",
+    ]);
+    expect(await run('op.onset("onsetfall", edge=(1.5, 2.5), graph=True)')).toBe(false);
+    expect(errors[0]).toContain("graph=True needs a graph that shows the wave");
+    expect(await run('op.onset("onsetfall", edge=(1.5, 1.55))')).toBe(false);
+    expect(errors[0]).toContain("The edge range has 2 points; a line with an uncertainty needs 3.");
+  });
+
   it("interpolates, filters images and takes line profiles", async () => {
     expect(
       await run(

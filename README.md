@@ -236,6 +236,12 @@ wave を列として表示・編集します。行も列も仮想スクロール
   既定では、範囲の反対側の端でデータに一致するように `B` を合わせます(`scale=False` で `B` をそのまま使います)。使った `B` は wave のノートに書きます。
   電子がエネルギーを失う向きは、データが高い方の端に向かう向きとみなします(`energy="binding"` で X の増える向き、`"kinetic"` で減る向きと指定もできます)。
   **linear** は両端の平均の点を結ぶ直線です。
+- **オンセット**(Analysis › Onset…): UPS / LEIPS のしきい値(二次電子のカットオフ、HOMO・LUMO の立ち上がり)を、直線の外挿で求めます。
+  立ち上がり(`edge=`)の範囲の点に直線を当てはめ、ベースライン(`baseline=`)の範囲の点に当てはめた直線、または一定の値(省略すると 0)と交わる X を出します。範囲は X の値です。XY データには X wave を指定します。
+  交点の不確かさは、2 本の直線のばらつき(それぞれの範囲で点ごとに独立・同じ大きさの誤差を仮定し、残差から推定)を 1 次まで伝搬したもので、交点での 2 本の直線の不確かさを傾きの差で割ったものです。
+  範囲の選び方による違いは含みません(実際にはこちらが大きいことがよくあります)。結果は `r.x`、`r.x_sigma`、`r.edge`(傾き・切片とその標準偏差)、`r.baseline` です。
+  `graph=True` で、データを表示しているグラフに 2 本の直線(`<wave名>_edge`、`<wave名>_base`。それぞれの範囲から交点の先まで)と交点の印(`<wave名>_onset`、値のタグ付き)を加えます。
+  ダイアログでは、範囲の横の「A–B」でカーソル A・B の X の値を入れられます。
 - Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル、または複素数のまま)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
 - **X wave に対する微分・積分**: 電流を時間で積分して電荷にする、容量を電圧で微分して dQ/dV を出す、といった XY データの計算です(ダイアログの「X data」で X wave を選びます)。
   X の間隔は不揃いでもよく、微分は内側の点で不等間隔の 3 点公式(2 次精度)、両端で片側差分(X のスケーリングを使うときと同じ)です。
@@ -414,6 +420,7 @@ peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["h
 peaks = op.fit_peaks(w, shape="voigt")                       # peaks[0]["gauss_fwhm"], ["lorentz_fwhm"]。"pseudo_voigt" は ["eta"]
 op.fit("voigt", w)                                           # y0, A, x0, gwidth, lwidth
 bg, sub = op.background(w, "shirley", range=(280, 295), subtract=True)   # "tougaard"、"linear"。cursors=True、x= も
+r = op.onset(w, edge=(4.2, 4.8), baseline=(5, 6), graph=True)  # r.x, r.x_sigma。baseline=0.1 で一定の値
 op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
 op.integrate(current, x=time); op.differentiate(capacity, x=voltage)   # X wave に対して(結果は同じ X に対して描く)

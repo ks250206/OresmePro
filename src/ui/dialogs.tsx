@@ -51,6 +51,7 @@ import {
   type TraceStyle,
   type WaveType,
 } from "../core/doc/types";
+import { traceX } from "../core/plot/layout";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
 import { ImportDialog } from "./ImportDialog";
@@ -2555,6 +2556,181 @@ function BackgroundDialog({ wave: initial }: { wave?: string }) {
   );
 }
 
+/** The X values of cursors A and B on a graph, lower first; null unless both are set. */
+function useCursorXs(graph: GraphSpec | undefined): [number, number] | null {
+  const waves = useDoc((state) => state.waves);
+  if (!graph?.cursors.A || !graph.cursors.B) return null;
+  const xs = [graph.cursors.A, graph.cursors.B].map((cursor) => {
+    const trace = graph.traces.find((item) => item.name === cursor.trace);
+    const y = trace ? waves[trace.y] : undefined;
+    if (!trace || !y) return Number.NaN;
+    const x = trace.x === null ? null : (waves[trace.x] ?? null);
+    // Enough digits that the cursor's own point stays inside the range.
+    return Number(traceX(y, x?.text ? null : x, cursor.point).toPrecision(15));
+  });
+  return xs.every(Number.isFinite) ? [Math.min(xs[0]!, xs[1]!), Math.max(xs[0]!, xs[1]!)] : null;
+}
+
+/** Two X values for a range, with a button that takes them from the cursors. */
+function RangeField({
+  label,
+  range,
+  onChange,
+  cursors,
+  invalid,
+}: {
+  label: string;
+  range: [string, string];
+  onChange: (range: [string, string]) => void;
+  cursors: [number, number] | null;
+  invalid: boolean;
+}) {
+  return (
+    <Field label={label} group>
+      <TextInput
+        aria-label={`${label} from`}
+        aria-invalid={invalid}
+        className="w-20"
+        placeholder="from x"
+        value={range[0]}
+        onChange={(event) => onChange([event.target.value, range[1]])}
+      />
+      <TextInput
+        aria-label={`${label} to`}
+        aria-invalid={invalid}
+        className="w-20"
+        placeholder="to x"
+        value={range[1]}
+        onChange={(event) => onChange([range[0], event.target.value])}
+      />
+      <Button
+        aria-label={`${label} from cursors`}
+        disabled={!cursors}
+        title={cursors ? "Take the range from cursors A and B" : "Place cursors A and B first"}
+        onClick={() => cursors && onChange([String(cursors[0]), String(cursors[1])])}
+      >
+        A–B
+      </Button>
+    </Field>
+  );
+}
+
+/** Builds an `op.onset(...)` call: an edge extrapolated to a baseline. */
+function OnsetDialog({ wave: initial }: { wave?: string }) {
+  const waves = useNumericWaves(1);
+  const preselected = useUi((state) => state.selectedWaves);
+  const [wave, setWave] = useState(
+    initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
+  );
+  const [x, setX] = useState(CALCULATED);
+  const [edge, setEdge] = useState<[string, string]>(["", ""]);
+  const [kind, setKind] = useState("range");
+  const [base, setBase] = useState<[string, string]>(["", ""]);
+  const [level, setLevel] = useState("0");
+  const { graph } = useGraphShowing(wave);
+  const [draw, setDraw] = useState(true);
+  const cursors = useCursorXs(graph);
+  const edgeLow = pyNumber(edge[0]);
+  const edgeHigh = pyNumber(edge[1]);
+  const baseLow = pyNumber(base[0]);
+  const baseHigh = pyNumber(base[1]);
+  const levelValue = pyNumber(level);
+  const edgeBad = !edgeLow || !edgeHigh;
+  const baseBad = kind === "range" && (!baseLow || !baseHigh);
+  const levelBad = kind === "level" && !levelValue;
+  const baseline =
+    kind === "range"
+      ? [`baseline=(${baseLow}, ${baseHigh})`]
+      : kind === "level" && levelValue !== "0"
+        ? [`baseline=${levelValue}`]
+        : [];
+  const args = [
+    pyName(wave),
+    ...(x === CALCULATED ? [] : [`x=${pyName(x)}`]),
+    `edge=(${edgeLow}, ${edgeHigh})`,
+    ...baseline,
+    ...(draw && graph ? ["graph=True"] : []),
+  ];
+  return (
+    <Dialog
+      title="Onset"
+      width={440}
+      onClose={close}
+      submitDisabled={wave === "" || edgeBad || baseBad || levelBad}
+      onSubmit={() => {
+        runPython(`op.onset(${args.join(", ")})`);
+        close();
+      }}
+    >
+      <Field label="Wave">
+        <Select
+          aria-label="Wave"
+          value={wave}
+          onChange={(event) => setWave(event.target.value)}
+          className="flex-1"
+        >
+          {waves.map((name) => (
+            <option key={name}>{name}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="X data">
+        <XWaveSelect value={x} onChange={setX} />
+      </Field>
+      <RangeField
+        label="Edge"
+        range={edge}
+        onChange={setEdge}
+        cursors={cursors}
+        invalid={edgeBad && (edge[0] !== "" || edge[1] !== "")}
+      />
+      <Field label="Baseline">
+        <Select
+          aria-label="Baseline"
+          value={kind}
+          onChange={(event) => setKind(event.target.value)}
+        >
+          <option value="range">a line fitted over a range</option>
+          <option value="level">a constant level</option>
+        </Select>
+      </Field>
+      {kind === "range" ? (
+        <RangeField
+          label="Over"
+          range={base}
+          onChange={setBase}
+          cursors={cursors}
+          invalid={baseBad && (base[0] !== "" || base[1] !== "")}
+        />
+      ) : (
+        <Field label="Level">
+          <TextInput
+            aria-label="Level"
+            aria-invalid={levelBad}
+            className="w-20"
+            value={level}
+            onChange={(event) => setLevel(event.target.value)}
+          />
+        </Field>
+      )}
+      <div className="pl-[104px]">
+        <Checkbox
+          label={
+            graph ? `Draw the lines on ${graph.name}` : "Draw the lines (no graph shows the wave)"
+          }
+          disabled={!graph}
+          checked={draw && Boolean(graph)}
+          onChange={(event) => setDraw(event.target.checked)}
+        />
+      </div>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Fits a straight line to the edge and another to the baseline, and reports where they cross
+        with its uncertainty. Ranges are X values; A–B takes them from the cursors.
+      </div>
+    </Dialog>
+  );
+}
+
 function renderDialog(dialog: DialogRequest) {
   switch (dialog.kind) {
     case "newGraph":
@@ -2599,6 +2775,8 @@ function renderDialog(dialog: DialogRequest) {
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
     case "background":
       return <BackgroundDialog wave={dialog.wave} />;
+    case "onset":
+      return <OnsetDialog wave={dialog.wave} />;
     case "graphScript":
       return <GraphScriptDialog graph={dialog.graph} />;
     case "styles":

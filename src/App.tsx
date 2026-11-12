@@ -186,6 +186,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
         analysis("Multi-peak Fit…", "fit_peaks"),
         { label: "Background…", onSelect: open({ kind: "background" }) },
+        { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },
         analysis("Wave Stats…", "stats"),
         analysis("Differentiate…", "differentiate"),
