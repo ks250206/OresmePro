@@ -1,5 +1,6 @@
 import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
+import { appendPlan, newGraphPlan, nextGraphName } from "../app/newGraph";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
 import { planMakeWaves, type MakeWavesRequest } from "../core/doc/makeWaves";
@@ -664,6 +665,41 @@ describe("oresme Python API", () => {
     expect(made).not.toBe("Styled");
     const { graphs } = doc.getState();
     expect({ ...graphs[made], name: "" }).toEqual({ ...graphs.Styled, name: "" });
+  });
+
+  it("replays what the New Graph dialog writes for traces on several X waves and axes", async () => {
+    expect(
+      await run(
+        'op.make("ng_a", [1.0, 2.0, 3.0]); op.make("ng_b", [3.0, 1.0]); op.make("ng_x", [0.0, 5.0, 9.0])',
+      ),
+    ).toBe(true);
+    const traces = [
+      { y: "ng_a", x: "ng_x", vAxis: "left", hAxis: "bottom" },
+      { y: "ng_b", x: null, vAxis: "right", hAxis: "bottom" },
+      { y: "ng_a", x: null, vAxis: "right", hAxis: "top" },
+    ];
+    const plan = newGraphPlan(traces, null, nextGraphName(doc.getState()));
+    for (const command of plan.commands) doc.dispatch(command);
+    const display = plan.commands[0]!;
+    const made = display.op === "display" ? display.name! : "";
+    expect(await run(`${plan.echo}\nprint(g.name)`)).toBe(true);
+    const again = stdout.trim();
+    expect(again).not.toBe(made);
+    const { graphs } = doc.getState();
+    expect({ ...graphs[again], name: "" }).toEqual({ ...graphs[made], name: "" });
+
+    const appended = appendPlan(again, [
+      { y: "ng_b", x: null, vAxis: "left", hAxis: "bottom" },
+      { y: "ng_a", x: "ng_x", vAxis: "left", hAxis: "top" },
+    ]);
+    expect(await run(appended.echo)).toBe(true);
+    expect(doc.getState().graphs[again]!.traces.map((item) => item.name)).toEqual([
+      "ng_a",
+      "ng_b",
+      "ng_a#1",
+      "ng_b#1",
+      "ng_a#2",
+    ]);
   });
 
   it("styles traces and axes, tags points and moves annotations", async () => {

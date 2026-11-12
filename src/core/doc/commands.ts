@@ -455,7 +455,8 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-const windowTaken = (state: DocState) => (name: string) =>
+/** Whether a window (graph, table, procedure or page layout) already has this name. */
+export const windowTaken = (state: DocState) => (name: string) =>
   name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
 
 function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
