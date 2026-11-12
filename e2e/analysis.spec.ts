@@ -166,6 +166,42 @@ g = op.display(vs)`);
     expect(table.data[5]).toBeCloseTo(0.6, 3);
   });
 
+  test("a Shirley background is made and subtracted from the menu", async ({ app, page }) => {
+    await app.run(`bx = np.linspace(270, 310, 801)
+bp = 5 * np.exp(-((bx - 290) / 0.8) ** 2)
+xps = op.make("xps", 1 + 2 / (1 + np.exp(-(bx - 290) / 0.5)) + bp, x0=270, dx=0.05, x_unit="eV")
+g = op.display(xps)`);
+    await app.menu("Analysis", "Background…");
+    const dialog = page.getByRole("dialog", { name: "Background" });
+    await dialog.getByLabel("Wave").selectOption("xps");
+    await dialog.getByLabel("From").fill("280");
+    await expect(page.getByRole("button", { name: "Do It" })).toBeDisabled();
+    await dialog.getByLabel("To").fill("300");
+    await app.doIt();
+    await app.idle();
+    const entry = await app.lastEntry();
+    expect(entry.code).toBe('op.background("xps", "shirley", range=(280, 300), subtract=True)');
+    expect(entry.status).toBe("ok");
+    const bg = (await app.wave("xps_bg"))!;
+    expect(bg.length).toBe(801);
+    // NaN outside the range, which starts at point 200.
+    expect(bg.data[0]).toBeNaN();
+    expect((await app.doc()).order).toEqual(["xps", "xps_bg", "xps_sub"]);
+
+    // The range can come from the cursors instead.
+    await app.run('g.cursor("A", "xps", 300); g.cursor("B", "xps", 500)');
+    await app.menu("Analysis", "Background…");
+    await page
+      .getByRole("dialog", { name: "Background" })
+      .getByLabel("Method")
+      .selectOption("linear");
+    await page.getByLabel("Between cursors A and B of Graph0").check();
+    await page.getByLabel("Subtracted spectrum").uncheck();
+    await app.doIt();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.background("xps", "linear", cursors=True)');
+  });
+
   test("an image is filtered from the menu", async ({ app, page }) => {
     await app.run('img = op.make("img", np.random.default_rng(1).normal(size=(40, 30)))');
     await app.menu("Analysis", "Filter Image…");

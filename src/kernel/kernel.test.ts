@@ -829,6 +829,86 @@ describe("oresme Python API", () => {
     ]);
   });
 
+  it("makes Shirley, Tougaard and linear backgrounds", async () => {
+    expect(
+      await run(
+        [
+          // Peaks on a step that is their own Shirley background: it rises from 1 to 3 as their area is passed.
+          "bx = np.linspace(280, 300, 401)",
+          "bp = 5 * np.exp(-((bx - 290) / 0.8) ** 2) + 2 * np.exp(-((bx - 293) / 1.0) ** 2)",
+          "barea = np.concatenate(([0], np.cumsum((bp[1:] + bp[:-1]) / 2 * np.diff(bx))))",
+          "bstep = 1 + 2 * barea / barea[-1]",
+          'sb = op.background(op.make("shirbe", bstep + bp, x0=280, dx=0.05, x_unit="eV", unit="cps"), "shirley")',
+          "print(sb.name, float(np.max(np.abs(sb.data - bstep))) < 1e-6, bool(np.all(np.diff(sb.data) >= 0)), round(sb.data[0], 9), round(sb.data[-1], 9), sb.x0, sb.dx, sb.x_unit, sb.unit)",
+          // The same spectrum with binding energy running down, and in kinetic energy as XY data.
+          'down = op.background(op.make("shirdown", (bstep + bp)[::-1], x0=300, dx=-0.05), "shirley")',
+          'op.make("shirke", 1486.6 - bx[::-1])',
+          'ke = op.background(op.make("shirkey", (bstep + bp)[::-1]), "shirley", x="shirke")',
+          "print(float(np.max(np.abs(down.data[::-1] - bstep))) < 1e-6, float(np.max(np.abs(ke.data[::-1] - bstep))) < 1e-6)",
+          // Over a range of a longer spectrum: NaN outside it, and the subtracted spectrum is the peaks.
+          "lx = np.linspace(270, 310, 801); lp = np.interp(lx, bx, bp); ls = np.interp(lx, bx, bstep)",
+          'bg, sub = op.background(op.make("shirwide", ls + lp, x0=270, dx=0.05), "shirley", range=(300, 280), subtract=True)',
+          "inside = ~np.isnan(bg.data)",
+          "print(bg.name, sub.name, int(inside.sum()), float(lx[inside][0]), float(lx[inside][-1]), float(np.max(np.abs(sub.data[inside] - lp[inside]))) < 1e-6, bool(np.isnan(sub.data[0])))",
+          "print(bg.note)",
+          // Tougaard: a spectrum made from its primary peaks by the loss model, on a constant level of 50.
+          "tx = np.arange(601) * 0.1; tf = 1000 * np.exp(-((tx - 20) / 1.0) ** 2) + 600 * np.exp(-((tx - 25) / 1.5) ** 2)",
+          "tj = tf.copy()",
+          "for i in range(1, tx.size):",
+          "    lost = tx[i] - tx[: i + 1]; f = lost / (1643 + lost ** 2) ** 2 * tj[: i + 1]",
+          "    tj[i] = tf[i] + 2866 * np.sum((f[1:] + f[:-1]) / 2 * np.diff(tx[: i + 1]))",
+          'tw = op.make("tougbe", 50 + tj, x0=0, dx=0.1, x_unit="eV")',
+          'tb, ts = op.background(tw, "tougaard", scale=False, subtract=True)',
+          "print(float(np.max(np.abs(ts.data - tf))) < 1e-9, round(float(tb.data[-1] - 50), 3), round(float(tj[-1]), 3))",
+          // Scaled to meet the data at the far end, B comes out as the universal value; and in kinetic energy.
+          'tb = op.background(tw, "tougaard"); print(tb.note)',
+          'tk = op.background(op.make("tougke", (50 + tj)[::-1], x0=1486.6 - 60, dx=0.1), "tougaard", subtract=True)[1]',
+          "print(float(np.max(np.abs(tk.data[::-1] - tf))) < 1e-6, 'B = 2866 ' in tk.note)",
+          // Told the wrong way, the background would have to fall.
+          'print(op.background(tw, "tougaard", energy="binding").note == tb.note)',
+          // Linear: the line through the averaged ends, exact for a sloping baseline.
+          "lb = op.background(op.make('linbg', 2 + 0.1 * bx + bp, x0=280, dx=0.05), 'linear', average=10)",
+          "print(float(np.max(np.abs(lb.data - (2 + 0.1 * bx)))) < 1e-9)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "shirbe_bg True True 1.0 3.0 280.0 0.05 eV cps",
+      "True True",
+      "shirwide_bg shirwide_sub 401 280.0 300.0 True True",
+      "shirley background over x = 280 to 300, ends averaged over 5 points",
+      "True 54.266 54.266",
+      "tougaard background over x = 0 to 60, ends averaged over 5 points, B = 2866 eV^2, C = 1643 eV^2",
+      "True True",
+      "True",
+      "True",
+    ]);
+    for (const [code, error] of [
+      ['op.background("tougbe", "tougaard", energy="kinetic")', "check energy= or the range"],
+      ['op.background("shirbe", "shirley", average=300)', "too few to average 300"],
+      ['op.background("shirbe", "magic")', 'method must be "shirley", "tougaard" or "linear"'],
+      ['op.background("shirbe", range=(500, 600))', "No points have X between 500 and 600"],
+      [
+        'op.background(op.make("shirnan", [1.0, 2, np.nan, 4, 5, 6, 7, 8, 9, 10, 11, 12]), average=2)',
+        "NaN or infinite",
+      ],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toContain(error);
+    }
+    // Between the cursors of the graph showing the spectrum.
+    expect(
+      await run(
+        [
+          'cg = op.display("shirwide", name="BgCursors"); cg.cursor("A", "shirwide", 600); cg.cursor("B", "shirwide", 200)',
+          'cb = op.background("shirwide", cursors=True, name="shirwide_cur")',
+          "print(cb.name, int(np.sum(~np.isnan(cb.data))), bool(np.allclose(cb.data, bg.data, equal_nan=True)))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("shirwide_cur 401 True\n");
+  });
+
   it("interpolates, filters images and takes line profiles", async () => {
     expect(
       await run(

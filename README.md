@@ -228,6 +228,14 @@ wave を列として表示・編集します。行も列も仮想スクロール
   マルチピークでは、全体の半値全幅(プロファイルから正確に求めます)と面積に加えて、ガウス成分とローレンツ成分の半値全幅(`gauss_fwhm`、`lorentz_fwhm`)を出し、`W_peaks` の 5・6 列目にも入れます。
   擬 Voigt は `eta`·ローレンツ + (1 − `eta`)·ガウスで、両方が同じ半値全幅を持ちます(`width` は半値半幅)。`eta` は 0〜1 に制限し、`W_peaks` の 5 列目に入れます。
   `op.fit` では `eta` を 0〜1 に丸めて曲線を計算します。パラメータ自体も 0〜1 に保つには `bounds={"eta": (0, 1)}` を付けます(ダイアログは最初からこの制約を入れます)。
+- **バックグラウンド**(Analysis › Background…): XPS などのスペクトルのピークの下のバックグラウンドを `<wave名>_bg` に作ります(「Subtracted spectrum」で差し引いた `<wave名>_sub` も)。
+  範囲は X の値で指定するか、カーソル A–B 間で、範囲の外は NaN です。両端の高さは、それぞれ端の数点(`average=`、既定 5 点)の平均です。XY データには X wave を指定します。
+  **Shirley** は、一方の端の高さから他方の端の高さまで、通り過ぎたピーク面積(バックグラウンドより上の部分)に比例して変わる曲線で、反復して求めます。
+  データが高い方の端(XPS では結合エネルギーの高い側、非弾性散乱した電子がたまる側)に向かって上がります。どちらの端から数えても同じ曲線になるので、X が結合エネルギーか運動エネルギーか、増える向きか減る向きかは問いません。
+  **Tougaard** は、エネルギーを失っていない側の端の高さに、Tougaard の普遍断面積 `B·T/(C + T²)²`(`B = 2866`、`C = 1643` eV²。X は eV)でその側の各点から失われてきた電子を足したものです。
+  既定では、範囲の反対側の端でデータに一致するように `B` を合わせます(`scale=False` で `B` をそのまま使います)。使った `B` は wave のノートに書きます。
+  電子がエネルギーを失う向きは、データが高い方の端に向かう向きとみなします(`energy="binding"` で X の増える向き、`"kinetic"` で減る向きと指定もできます)。
+  **linear** は両端の平均の点を結ぶ直線です。
 - Wave Stats、微分、積分、平滑化、FFT(振幅スペクトル、または複素数のまま)、ヒストグラム、**補間**(線形・3 次スプライン。XY データを等間隔の wave にするのにも使えます)。
 - **X wave に対する微分・積分**: 電流を時間で積分して電荷にする、容量を電圧で微分して dQ/dV を出す、といった XY データの計算です(ダイアログの「X data」で X wave を選びます)。
   X の間隔は不揃いでもよく、微分は内側の点で不等間隔の 3 点公式(2 次精度)、両端で片側差分(X のスケーリングを使うときと同じ)です。
@@ -405,6 +413,7 @@ r = op.fit("line", w, residuals=True, band=0.95)        # r.residuals、r.band =
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
 peaks = op.fit_peaks(w, shape="voigt")                       # peaks[0]["gauss_fwhm"], ["lorentz_fwhm"]。"pseudo_voigt" は ["eta"]
 op.fit("voigt", w)                                           # y0, A, x0, gwidth, lwidth
+bg, sub = op.background(w, "shirley", range=(280, 295), subtract=True)   # "tougaard"、"linear"。cursors=True、x= も
 op.find_peaks(w, smooth=5)                                   # 探すだけ。min_prominence= などで調整
 op.stats(w); op.differentiate(w); op.integrate(w); op.smooth(w, 5); op.fft(w); op.histogram(w, bins=50)
 op.integrate(current, x=time); op.differentiate(capacity, x=voltage)   # X wave に対して(結果は同じ X に対して描く)

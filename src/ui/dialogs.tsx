@@ -2055,11 +2055,23 @@ const FIT_FUNCTIONS: [string, string][] = [
 /** Constraints a function starts with in the dialog: the range in which its parameters mean anything. */
 const FIT_CONSTRAINTS: Record<string, string> = { pseudo_voigt: "0 <= eta <= 1" };
 
+/**
+ * The frontmost graph showing a wave, which is the one Python looks at for
+ * its cursors, and whether both cursors are on it.
+ */
+function useGraphShowing(wave: string): { graph: GraphSpec | undefined; hasCursors: boolean } {
+  const graphs = useDoc((state) => state.graphs);
+  const windows = useDoc((state) => state.windows);
+  const graph = [...windows]
+    .reverse()
+    .map((window) => graphs[window.name])
+    .find((candidate) => candidate?.traces.some((trace) => trace.y === wave));
+  return { graph, hasCursors: Boolean(graph?.cursors.A && graph.cursors.B) };
+}
+
 /** Builds an `op.fit(...)` call; the fit itself runs in Python and reports in the history. */
 function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const waves = useNumericWaves(1);
-  const graphs = useDoc((state) => state.graphs);
-  const windows = useDoc((state) => state.windows);
   const preselected = useUi((state) => state.selectedWaves);
   const [func, setFunc] = useState("gauss");
   const [y, setY] = useState(
@@ -2073,11 +2085,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   const [residuals, setResiduals] = useState(false);
   const [band, setBand] = useState(false);
   // The fit looks at the frontmost graph showing the wave; offer its cursors if both are set.
-  const graph = [...windows]
-    .reverse()
-    .map((window) => graphs[window.name])
-    .find((candidate) => candidate?.traces.some((trace) => trace.y === y));
-  const hasCursors = Boolean(graph?.cursors.A && graph.cursors.B);
+  const { graph, hasCursors } = useGraphShowing(y);
   const formula = FIT_FUNCTIONS.find(([name]) => name === func)?.[1] ?? "";
   const held = parseHold(hold);
   const limits = parseConstraints(constraints);
@@ -2409,6 +2417,144 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
   );
 }
 
+/** Python's literal for a number typed into a field, or null if it is not one. */
+const pyNumber = (text: string): string | null => {
+  const value = parseNumber(text);
+  return value === null ? null : String(value);
+};
+
+/** Builds an `op.background(...)` call for a spectrum. */
+function BackgroundDialog({ wave: initial }: { wave?: string }) {
+  const waves = useNumericWaves(1);
+  const preselected = useUi((state) => state.selectedWaves);
+  const [wave, setWave] = useState(
+    initial ?? preselected.find((name) => waves.includes(name)) ?? waves[0] ?? "",
+  );
+  const [x, setX] = useState(CALCULATED);
+  const [method, setMethod] = useState("shirley");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [useCursors, setUseCursors] = useState(false);
+  const [average, setAverage] = useState("5");
+  const [subtract, setSubtract] = useState(true);
+  const { graph, hasCursors } = useGraphShowing(wave);
+  const between = useCursors && hasCursors;
+  const low = pyNumber(from);
+  const high = pyNumber(to);
+  // Both ends of the range, or neither for the whole wave.
+  const rangeBad = !between && (from.trim() !== "" || to.trim() !== "") && (!low || !high);
+  const count = Number(average);
+  const averageBad = !(Number.isInteger(count) && count >= 1);
+  const args = [
+    pyName(wave),
+    JSON.stringify(method),
+    ...(x === CALCULATED ? [] : [`x=${pyName(x)}`]),
+    ...(between ? ["cursors=True"] : low && high ? [`range=(${low}, ${high})`] : []),
+    ...(count === 5 ? [] : [`average=${count}`]),
+    ...(subtract ? ["subtract=True"] : []),
+  ];
+  return (
+    <Dialog
+      title="Background"
+      width={420}
+      onClose={close}
+      submitDisabled={wave === "" || rangeBad || averageBad}
+      onSubmit={() => {
+        runPython(`op.background(${args.join(", ")})`);
+        close();
+      }}
+    >
+      <Field label="Wave">
+        <Select
+          aria-label="Wave"
+          value={wave}
+          onChange={(event) => setWave(event.target.value)}
+          className="flex-1"
+        >
+          {waves.map((name) => (
+            <option key={name}>{name}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="X data">
+        <XWaveSelect value={x} onChange={setX} />
+      </Field>
+      <Field label="Method">
+        <Select
+          aria-label="Method"
+          value={method}
+          onChange={(event) => setMethod(event.target.value)}
+        >
+          <option>shirley</option>
+          <option>tougaard</option>
+          <option>linear</option>
+        </Select>
+      </Field>
+      <Field label="Range" group>
+        <TextInput
+          aria-label="From"
+          aria-invalid={rangeBad}
+          className="w-20"
+          placeholder="from x"
+          disabled={between}
+          value={from}
+          onChange={(event) => setFrom(event.target.value)}
+        />
+        <TextInput
+          aria-label="To"
+          aria-invalid={rangeBad}
+          className="w-20"
+          placeholder="to x"
+          disabled={between}
+          value={to}
+          onChange={(event) => setTo(event.target.value)}
+        />
+        <span className="text-muted">empty: the whole wave</span>
+      </Field>
+      <div className="pl-[104px]">
+        <Checkbox
+          label={
+            hasCursors
+              ? `Between cursors A and B of ${graph!.name}`
+              : "Between cursors (place A and B on the graph first)"
+          }
+          disabled={!hasCursors}
+          checked={between}
+          onChange={(event) => setUseCursors(event.target.checked)}
+        />
+      </div>
+      <Field label="Average">
+        <TextInput
+          aria-label="Average"
+          aria-invalid={averageBad}
+          className="w-20"
+          value={average}
+          onChange={(event) => setAverage(event.target.value)}
+        />
+        <span className="text-muted">points at each end, for its level</span>
+      </Field>
+      <Field label="Also make" group>
+        <Checkbox
+          label="Subtracted spectrum"
+          checked={subtract}
+          onChange={(event) => setSubtract(event.target.checked)}
+        />
+      </Field>
+      <div className="pl-[104px] text-[11px] leading-relaxed text-muted">
+        Makes <code>{leafName(wave) || "wave"}_bg</code>
+        {subtract ? (
+          <>
+            {" "}
+            and <code>{leafName(wave) || "wave"}_sub</code>
+          </>
+        ) : null}
+        , NaN outside the range. Tougaard needs X in eV and scales its strength to meet the data at
+        the far end.
+      </div>
+    </Dialog>
+  );
+}
+
 function renderDialog(dialog: DialogRequest) {
   switch (dialog.kind) {
     case "newGraph":
@@ -2451,6 +2597,8 @@ function renderDialog(dialog: DialogRequest) {
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
       return <AnalysisDialog operation={dialog.operation} wave={dialog.wave} />;
+    case "background":
+      return <BackgroundDialog wave={dialog.wave} />;
     case "graphScript":
       return <GraphScriptDialog graph={dialog.graph} />;
     case "styles":

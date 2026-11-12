@@ -28,6 +28,7 @@ __all__ = [
     "fft",
     "ifft",
     "histogram",
+    "background",
 ]
 
 
@@ -1420,6 +1421,189 @@ def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", rang
     if not quiet:
         print(result)
     return result
+
+
+# --- Spectra -------------------------------------------------------------------
+
+
+def _showing(y_wave, graph):
+    """The graph given, or the frontmost graph with a trace of the wave; None if there is none."""
+    for candidate in [graph] if graph not in (None, True) else reversed(_op.graphs()):
+        candidate = _op.graph(candidate) if isinstance(candidate, str) else candidate
+        if any(trace["y"] == y_wave.name for trace in candidate._info()["traces"]):
+            return candidate
+    return None
+
+
+def _points_between(x_values, low, high):
+    """The first and last point with X within low..high (inclusive, either way round)."""
+    low, high = sorted((float(low), float(high)))
+    finite = x_values[np.isfinite(x_values)]
+    # Scaled X is computed, so 280 may come out as 280.00000000001.
+    slack = 1e-9 * (float(np.ptp(finite)) if finite.size else 0.0)
+    inside = np.flatnonzero((x_values >= low - slack) & (x_values <= high + slack))
+    if inside.size == 0:
+        raise _op.OresmeError(f"No points have X between {low:g} and {high:g}.")
+    return int(inside[0]), int(inside[-1])
+
+
+def _segment(wave_, x, range, cursors, graph, what):
+    """The wave, its X values, and the first and last point of the part to work on."""
+    source, values = _numeric(wave_)
+    if values.ndim != 1:
+        raise _op.OresmeError(f"{what} needs a 1-D wave.")
+    x_values = np.asarray(source.x, dtype=float) if x is None else _x_data(x, len(values))[0]
+    first, last = 0, len(values) - 1
+    if cursors:
+        target = _showing(source, graph)
+        if target is None:
+            raise _op.OresmeError("cursors=True needs a graph that shows the wave.")
+        marks = target._info()["cursors"]
+        if "A" not in marks or "B" not in marks:
+            raise _op.OresmeError("Put cursors A and B on the graph first.")
+        first, last = sorted((marks["A"]["point"], marks["B"]["point"]))
+    elif range is not None:
+        first, last = _points_between(x_values, *range)
+    return source, values, x_values, first, last
+
+
+def _shirley(x, y, low, high, tolerance, iterations):
+    """The Shirley background from level ``low`` at the first point to ``high`` at the last.
+
+    At each point the background has gone the fraction of the way from one
+    level to the other that the peak area above the background, counted from
+    the first point, has reached. That is a fixed point, found by iterating.
+    """
+    steps = np.abs(np.diff(x))
+    background = np.full(len(y), float(low))
+    target = tolerance * max(abs(high - low), np.finfo(float).eps * float(np.max(np.abs(y))))
+    for _ in np.arange(iterations):
+        peak = y - background
+        area = np.concatenate(([0.0], np.cumsum((peak[1:] + peak[:-1]) / 2 * steps)))
+        if not (np.isfinite(area[-1]) and area[-1] != 0):
+            raise _op.OresmeError("There is no peak above the background to build a Shirley background on.")
+        following = low + (high - low) * area / area[-1]
+        change = float(np.max(np.abs(following - background)))
+        background = following
+        if change <= target:
+            return background
+    raise _op.OresmeError(f"The Shirley background did not settle in {iterations} iterations.")
+
+
+def _tougaard_integral(x, y, losses_up, C):
+    """For each point, the integral of T/(C + T^2)^2 * y over the points it loses energy from.
+
+    T is the energy lost. Electrons appear at a point after losing energy on
+    the way from the points on its no-loss side, which are those of lower X
+    if ``losses_up`` (X in binding energy) and of higher X otherwise.
+    """
+    order = np.argsort(x if losses_up else -x, kind="stable")
+    xs, ys = x[order], y[order]
+    integral = np.zeros(len(xs))
+    # One point at a time keeps the memory to the length of the spectrum.
+    for index in np.arange(1, len(xs)):
+        lost = np.abs(xs[index] - xs[: index + 1])
+        integrand = lost / (C + lost**2) ** 2 * ys[: index + 1]
+        integral[index] = np.sum((integrand[1:] + integrand[:-1]) / 2 * np.abs(np.diff(xs[: index + 1])))
+    result = np.empty(len(xs))
+    result[order] = integral
+    return result
+
+
+def background(wave_, method="shirley", *, x=None, range=None, cursors=False, graph=None,
+               average=5, subtract=False, energy=None, B=2866.0, C=1643.0, scale=True,
+               tolerance=1e-6, name=None):
+    """The background under the peaks of a spectrum, as a new wave ``<name>_bg``.
+
+    ``method`` is ``"shirley"``, ``"tougaard"`` or ``"linear"``. The
+    background is made over ``range=(x1, x2)``, the points with X from x1 to
+    x2 (X values, not point numbers), or between cursors A and B with
+    ``cursors=True``, or else over the whole wave. Its two end levels are the
+    means of ``average`` points at each end of that range. Outside the range
+    the result is NaN. It has the scaling of the data; ``x`` is an X wave (or
+    array) for XY data, which must run one way across the range.
+
+    ``"linear"`` is the straight line through the two averaged ends.
+
+    ``"shirley"`` changes from the level at one end to the level at the other
+    in proportion to the peak area (data above the background) passed on the
+    way, which it finds by iterating until it moves by less than
+    ``tolerance`` times the step between the levels. It rises toward the end
+    where the data is higher: in XPS, the high binding energy (low kinetic
+    energy) side, where inelastically scattered electrons accumulate. Since
+    this rule gives the same background counted from either end, it does not
+    matter which way X runs.
+
+    ``"tougaard"`` adds, to the level at the end where electrons have lost no
+    energy, the electrons lost from every point on that side:
+    ``B * integral of T/(C + T^2)^2 * (data - level)`` over the energy loss T,
+    with Tougaard's universal cross-section, ``B = 2866`` and ``C = 1643``
+    eV^2. X must be in eV. With ``scale=True`` (the usual practice) B is then
+    scaled so that the background meets the data at the far end, averaged
+    over the same points as the level there. ``energy`` says which way
+    electrons lose energy: ``"binding"`` (toward higher X) or ``"kinetic"``
+    (toward lower X); by default, toward the end where the data is higher.
+    The B used is written in the note of the background wave.
+
+    ``subtract=True`` also makes ``<name>_sub``, the data minus the
+    background, and returns (background, subtracted).
+    """
+    if method not in ("shirley", "tougaard", "linear"):
+        raise _op.OresmeError('method must be "shirley", "tougaard" or "linear".')
+    if energy not in (None, "binding", "kinetic"):
+        raise _op.OresmeError('energy must be "binding" or "kinetic" (or None to tell from the data).')
+    source, values, x_values, first, last = _segment(wave_, x, range, cursors, graph, "A background")
+    xs, ys = x_values[first : last + 1], values[first : last + 1]
+    count = int(average)
+    if count < 1:
+        raise _op.OresmeError("average must be at least 1 point.")
+    if len(ys) < 2 * count + 1:
+        raise _op.OresmeError(
+            f"The range has {len(ys)} points: too few to average {count} at each end and leave a peak between."
+        )
+    if not (np.all(np.isfinite(xs)) and np.all(np.isfinite(ys))):
+        raise _op.OresmeError("The range has NaN or infinite values; choose a range without them.")
+    steps = np.diff(xs)
+    if not (np.all(steps > 0) or np.all(steps < 0)):
+        raise _op.OresmeError("X must increase or decrease steadily across the range.")
+    start, end = float(ys[:count].mean()), float(ys[-count:].mean())
+    note = f"{method} background over x = {xs[0]:g} to {xs[-1]:g}, ends averaged over {count} points"
+
+    if method == "linear":
+        left, right = float(xs[:count].mean()), float(xs[-count:].mean())
+        curve = start + (end - start) * (xs - left) / (right - left)
+    elif method == "shirley":
+        curve = _shirley(xs, ys, start, end, float(tolerance), 200)
+    else:
+        # Electrons lose energy toward the end where the data is higher, unless told.
+        rising = xs[-1] > xs[0]
+        losses_up = (end >= start) == rising if energy is None else energy == "binding"
+        # Whether the range runs from the side electrons come from to the side they lose energy toward.
+        onward = rising == losses_up
+        # The level on the side electrons come from is the background of other peaks there.
+        level, far = (start, end) if onward else (end, start)
+        loss = _tougaard_integral(xs, ys - level, losses_up, float(C))
+        strength = float(B)
+        if scale:
+            tail = loss[-count:] if onward else loss[:count]
+            if not tail.mean() > 0:
+                raise _op.OresmeError("There is no peak to scale the Tougaard background to.")
+            strength = (far - level) / float(tail.mean())
+            if strength < 0:
+                raise _op.OresmeError(
+                    "The data is lower at the end electrons lose energy toward than at the other; "
+                    "check energy= or the range."
+                )
+        curve = level + strength * loss
+        note += f", B = {strength:.6g} eV^2, C = {float(C):g} eV^2"
+
+    whole = np.full(len(values), np.nan)
+    whole[first : last + 1] = curve
+    scaling = {"x0": source.x0, "dx": source.dx, "x_unit": source.x_unit, "unit": source.unit}
+    made = _op.make(_sibling(source, "_bg", name), whole, note=note, **scaling)
+    if not subtract:
+        return made
+    return made, _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
 
 
 # --- Interpolation -----------------------------------------------------------

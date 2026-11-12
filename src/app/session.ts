@@ -35,6 +35,7 @@ export type DialogRequest =
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
+  | { kind: "background"; wave?: string }
   | { kind: "graphScript"; graph: string }
   /** The styles of the experiment and the library; `graph` is the one to save or apply to. */
   | { kind: "styles"; graph?: string }
