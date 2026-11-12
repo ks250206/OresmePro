@@ -742,6 +742,112 @@ describe("layoutGraph", () => {
     expect(bars[1]!.x + bars[1]!.w / 2).toBeCloseTo(scale.toPixel(10), 3);
   });
 
+  describe("bars and sticks that reach beyond the axis range", () => {
+    function barDoc(data: number[], mode: "bars" | "sticks", left: Record<string, unknown>) {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "v", data: Float64Array.from(data) });
+      doc.dispatch({ op: "display", y: ["v"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "v", props: { mode } });
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis: "left", props: left });
+      return lay(doc);
+    }
+    /** Each bar as [top, bottom] in pixels, rounded, in point order. */
+    const spans = (layout: ReturnType<typeof lay>) =>
+      find(layout.prims, "rect")
+        .filter((rect) => rect.fill === "#ff0000")
+        .map((rect) => [Math.round(rect.y), Math.round(rect.y + rect.h)]);
+    const stickSpans = (layout: ReturnType<typeof lay>) => {
+      const stick = find(layout.prims, "segments").find((prim) => prim.stroke === "#ff0000")!;
+      const points = Array.from(stick.points);
+      const out: number[][] = [];
+      for (let index = 0; index < points.length; index += 4) {
+        const [a, b] = [points[index + 1]!, points[index + 3]!];
+        out.push([Math.round(Math.min(a, b)), Math.round(Math.max(a, b))]);
+      }
+      return out;
+    };
+    const top = (layout: ReturnType<typeof lay>) => layout.plot.y;
+    const bottom = (layout: ReturnType<typeof lay>) => layout.plot.y + layout.plot.h;
+    const at = (layout: ReturnType<typeof lay>, value: number) =>
+      Math.round(layout.axes.left!.scale.toPixel(value));
+
+    it("cuts a bar off at the edge of the plot instead of dropping it", () => {
+      let layout = barDoc([2, 10], "bars", { min: 0, max: 5 });
+      expect(spans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 10], "sticks", { min: 0, max: 5 });
+      expect(stickSpans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("cuts off negative bars below the range, and fills from the edge when zero is out of view", () => {
+      let layout = barDoc([-2, -10], "bars", { min: -5, max: 0 });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, -2)],
+        [top(layout), bottom(layout)],
+      ]);
+      // Zero is below the range: every bar stands on the bottom edge.
+      layout = barDoc([4, 10], "bars", { min: 3, max: 5 });
+      expect(spans(layout)).toEqual([
+        [at(layout, 4), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([4, 10], "sticks", { min: 3, max: 5 });
+      expect(stickSpans(layout)).toEqual([
+        [at(layout, 4), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("cuts bars off on reversed and log axes", () => {
+      // Reversed: zero is at the top and bars hang down to the bottom edge.
+      let layout = barDoc([2, 10], "bars", { min: 0, max: 5, reverse: true });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 1000], "bars", { min: 1, max: 100, log: true });
+      expect(spans(layout)).toEqual([
+        [at(layout, 2), bottom(layout)],
+        [top(layout), bottom(layout)],
+      ]);
+      // On a reversed log axis the smallest value, where bars start, is at the top.
+      layout = barDoc([2, 1000], "bars", { min: 1, max: 100, log: true, reverse: true });
+      expect(spans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+      layout = barDoc([2, 1000], "sticks", { min: 1, max: 100, log: true, reverse: true });
+      expect(stickSpans(layout)).toEqual([
+        [top(layout), at(layout, 2)],
+        [top(layout), bottom(layout)],
+      ]);
+    });
+
+    it("draws the part of a bar that is in view when its middle is not", () => {
+      const doc = new Doc();
+      doc.dispatch({ op: "makeWave", name: "v", data: Float64Array.of(1, 2, 3) });
+      doc.dispatch({ op: "display", y: ["v"] });
+      doc.dispatch({ op: "modifyTrace", graph: "Graph0", trace: "v", props: { mode: "bars" } });
+      // The first bar spans X -0.4 to 0.4; its middle is well left of the axis.
+      doc.dispatch({
+        op: "modifyAxis",
+        graph: "Graph0",
+        axis: "bottom",
+        props: { min: 0.3, max: 2.5 },
+      });
+      const layout = lay(doc);
+      const bars = find(layout.prims, "rect").filter((rect) => rect.fill === "#ff0000");
+      expect(bars).toHaveLength(3);
+      const { scale } = layout.axes.bottom!;
+      expect(bars[0]!.x + bars[0]!.w).toBeCloseTo(scale.toPixel(0.4), 3);
+    });
+  });
+
   it("moves annotations by their offsets and keeps them inside the graph", () => {
     const doc = pairDoc();
     doc.dispatch({ op: "addAnnotation", graph: "Graph0", kind: "legend" });

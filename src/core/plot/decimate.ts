@@ -401,3 +401,42 @@ export function markerPixels(
   }
   return buffer.take();
 }
+
+/**
+ * Pixel positions of the points of a bar or stick trace. Unlike a marker, a
+ * point beyond the Y range still has a bar running into view, so it is kept
+ * with its Y held at the nearer end of the range; and a point outside in X is
+ * kept while its bar, reaching `reach` pixels to either side, can be seen.
+ */
+export function stemPixels(
+  y: Wave,
+  x: Wave | null,
+  xs: Scale,
+  ys: Scale,
+  reach: number,
+  indices?: number[],
+): Float32Array {
+  const { first, last } = visibleRange(y, x, xs.min, xs.max);
+  const buffer = new PointBuffer();
+  const xData = x?.data;
+  const left = Math.min(xs.p0, xs.p1) - reach;
+  const right = Math.max(xs.p0, xs.p1) + reach;
+  const top = Math.min(ys.p0, ys.p1);
+  const bottom = Math.max(ys.p0, ys.p1);
+  let previousX = Number.NaN;
+  let previousY = Number.NaN;
+  for (let index = first; index <= last; index += 1) {
+    const px = xs.toPixel(xData ? xData[index]! : y.x0 + index * y.dx);
+    const raw = ys.toPixel(y.data[index]!);
+    if (!Number.isFinite(px) || !Number.isFinite(raw) || px < left || px > right) continue;
+    const py = raw < top ? top : raw > bottom ? bottom : raw;
+    const rx = Math.round(px * 2);
+    const ry = Math.round(py * 2);
+    if (rx === previousX && ry === previousY) continue;
+    previousX = rx;
+    previousY = ry;
+    buffer.push(px, py);
+    indices?.push(index);
+  }
+  return buffer.take();
+}

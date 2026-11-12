@@ -20,6 +20,7 @@ import { chainSegments, contourLevels, contourSegments } from "./contour";
 import {
   extentOf,
   markerPixels,
+  stemPixels,
   tracePixels,
   visibleRange,
   xExtentOf,
@@ -1203,11 +1204,16 @@ export function layoutGraph(
     xs: shiftScale(info.get(spec.hAxis)!.scale, spec.xOffset),
     ys: shiftScale(info.get(spec.vAxis)!.scale, spec.yOffset),
   });
-  /** Where a trace's zero is drawn: at zero if that is on the axis, else at the nearer end. */
+  /**
+   * Where a trace's zero is drawn: at zero if that is on the axis, else at the
+   * nearer end. A log axis has no zero; there it is the end with the smallest
+   * value, which is at the top when the axis is reversed.
+   */
   const baseline = (ys: Scale): number => {
-    const zero = ys.log ? Number.NaN : ys.toPixel(0);
     const low = Math.max(ys.p0, ys.p1);
     const high = Math.min(ys.p0, ys.p1);
+    if (ys.log) return ys.min <= ys.max ? ys.p0 : ys.p1;
+    const zero = ys.toPixel(0);
     return Number.isFinite(zero) ? Math.min(low, Math.max(high, zero)) : low;
   };
   const pixelRuns = new Map<TraceSpec, Float32Array[]>();
@@ -1429,18 +1435,30 @@ export function layoutGraph(
       const indices: number[] = [];
       const points = markerPixels(y, x, xs, ys, clip, indices);
       item.markers = points;
+      // Bars share each slot: together they fill 80% of the distance between points.
+      let barWidth = 0;
+      let shift = 0;
+      if (spec.mode === "bars") {
+        const slot = barSlots.get(spec)!;
+        const count = slot.of();
+        const pitch = barPitch(y, x, info.get(spec.hAxis)!.scale);
+        barWidth = Math.max(1, (pitch * 0.8) / count);
+        shift = (slot.index - (count - 1) / 2) * barWidth;
+      }
+      // Bars and sticks off the ends of the Y range are cut off at the edge, not left out.
+      const stemIndices: number[] = [];
+      const stems =
+        spec.mode === "bars" || spec.mode === "sticks"
+          ? stemPixels(y, x, xs, ys, Math.abs(shift) + barWidth / 2 + spec.lineSize, stemIndices)
+          : null;
+      const shown = stems ?? points;
+      const shownIndices = stems ? stemIndices : indices;
       // One group in the trace's color, or one per color when a wave gives them.
       const groups: [string, ArrayLike<number>][] = binOf
-        ? byColor(points, indices, 2).map(([bin, group]) => [binColor(bin), group])
-        : [[spec.color, points]];
+        ? byColor(shown, shownIndices, 2).map(([bin, group]) => [binColor(bin), group])
+        : [[spec.color, shown]];
       for (const [color, group] of groups) {
         if (spec.mode === "bars") {
-          // Bars share each slot: together they fill 80% of the distance between points.
-          const slot = barSlots.get(spec)!;
-          const count = slot.of();
-          const pitch = barPitch(y, x, info.get(spec.hAxis)!.scale);
-          const barWidth = Math.max(1, (pitch * 0.8) / count);
-          const shift = (slot.index - (count - 1) / 2) * barWidth;
           const base = baseline(ys);
           for (let index = 0; index < group.length; index += 2) {
             const top = group[index + 1]!;
