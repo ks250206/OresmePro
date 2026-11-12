@@ -11,7 +11,8 @@ import { KernelClient } from "../kernel/client";
 import { PresetStore } from "./importPresets";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { browserLibrary, LIBRARY_KEY } from "./styleLibrary";
 
 export type DialogRequest =
   | { kind: "newGraph" }
@@ -35,6 +36,8 @@ export type DialogRequest =
   | { kind: "curveFit"; wave?: string }
   | { kind: "analysis"; operation: string; wave?: string }
   | { kind: "graphScript"; graph: string }
+  /** The styles of the experiment and the library; `graph` is the one to save or apply to. */
+  | { kind: "styles"; graph?: string }
   | { kind: "timeZone" }
   | { kind: "pageText"; layout: string; item?: string }
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
@@ -55,6 +58,8 @@ export interface MenuItem {
   checked?: boolean;
   separator?: boolean;
   onSelect?: () => void;
+  /** Items of a menu that opens beside this one. */
+  submenu?: MenuItem[];
 }
 
 export interface UiState {
@@ -303,6 +308,19 @@ export function useKernelState() {
 
 export function useFiles() {
   return useSyncExternalStore(files.subscribe, files.list);
+}
+
+/** The styles in the browser's library, following changes made in other tabs too. */
+export function useLibraryStyles() {
+  const library = browserLibrary();
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === LIBRARY_KEY) library.changed();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [library]);
+  return useSyncExternalStore(library.subscribe, library.list);
 }
 
 export function useHistoryEntries() {

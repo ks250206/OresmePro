@@ -9,7 +9,7 @@ import {
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoArrangement } from "../core/doc/echo";
-import { leafName, type DocState, type PageSpec } from "../core/doc/types";
+import { leafName, type DocState, type PageSpec, type StyleSpec } from "../core/doc/types";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { drawPrims } from "../core/plot/canvas";
@@ -17,6 +17,7 @@ import type { Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { measureText } from "./measure";
+import { browserLibrary, readStyles, sameStyle, stylesText } from "./styleLibrary";
 import {
   activeWindow,
   doc,
@@ -468,6 +469,63 @@ export function newMatrixPlot(
       ? { op: "appendImage", graph: name, wave, props }
       : { op: "appendContour", graph: name, wave, props },
   ]);
+}
+
+/** Saves styles to a JSON file the user downloads; one file holds them all. */
+export function exportStyles(styles: readonly (readonly [string, StyleSpec])[]): void {
+  if (styles.length === 0) return;
+  const filename = styles.length === 1 ? `${styles[0]![0]}.json` : "styles.json";
+  download(new Blob([stylesText(styles)], { type: "application/json" }), filename);
+}
+
+/** Asks for styles files and adds what they hold to the browser's library. */
+export function importStyles(): void {
+  pickFile(".json,application/json", true, (picked) => {
+    void (async () => {
+      for (const file of picked) {
+        try {
+          const read = readStyles(await file.text());
+          const { added, present } = browserLibrary().add(read.styles);
+          const parts = [
+            added.length > 0 ? `added ${added.join(", ")}` : "",
+            present.length > 0 ? `already had ${present.join(", ")}` : "",
+          ].filter(Boolean);
+          note(`Style library: ${parts.join("; ") || "nothing to add"} from ${file.name}.`);
+          if (read.skipped.length > 0) {
+            showError(`Some styles in ${file.name} were left out`, read.skipped.join("\n"));
+          }
+        } catch (error) {
+          showError(`Could not import ${file.name}`, error);
+        }
+      }
+    })();
+  });
+}
+
+/**
+ * The commands that copy a style of the library into the experiment, unless
+ * it holds that very style already. The copy comes first so that the
+ * history, which records it as op.set_style, can be run in any experiment.
+ * Null when the user would rather keep the experiment's own style of that name.
+ */
+export function libraryStyleCommands(name: string): Command[] | null {
+  const style = browserLibrary().list()[name];
+  if (!style) return [];
+  const own = doc.getState().styles[name];
+  if (own && sameStyle(own, style)) return [];
+  if (
+    own &&
+    !window.confirm(`The experiment has its own style ${name}. Replace it with the library's?`)
+  ) {
+    return null;
+  }
+  return [{ op: "setStyle", name, style }];
+}
+
+/** Gives graphs a style of the library, copying it into the experiment first. */
+export function applyLibraryStyle(name: string, graphs: readonly string[]): void {
+  const copy = libraryStyleCommands(name);
+  if (copy) runGui([...copy, { op: "applyStyle", style: name, graphs }]);
 }
 
 /** Runs Python on behalf of a menu or dialog; it shows in the history like typed input. */

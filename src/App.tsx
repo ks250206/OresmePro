@@ -233,6 +233,11 @@ function useMenus(): MenuDefinition[] {
           disabled: !spec || spec.images.length === 0,
         },
         { separator: true },
+        // Styles can be managed with no graph open: the library, the default.
+        {
+          label: "Styles…",
+          onSelect: () => ui.set({ dialog: { kind: "styles", graph: graph ?? undefined } }),
+        },
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },

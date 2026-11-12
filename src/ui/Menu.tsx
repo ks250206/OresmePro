@@ -7,6 +7,41 @@ import { ui, useUi, type MenuItem } from "../app/session";
  */
 export const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
 
+const itemClass =
+  "flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60";
+
+/** An item that opens a menu of its own beside it, on hover or click. */
+function SubmenuItem({ item, onDone }: { item: MenuItem; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const show = open && !item.disabled;
+  return (
+    <div
+      className="relative"
+      onPointerEnter={() => setOpen(true)}
+      onPointerLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={show}
+        disabled={item.disabled}
+        className={`${itemClass} ${show ? "bg-accent text-white" : ""}`}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="w-3" />
+        <span className="-ml-3 flex-1">{item.label}</span>
+        <span className="opacity-60">▸</span>
+      </button>
+      {show ? (
+        <div className="absolute left-full top-0 z-10 -mt-1">
+          <MenuList items={item.submenu ?? []} onDone={onDone} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function MenuList({ items, onDone }: { items: readonly MenuItem[]; onDone: () => void }) {
   return (
     <div
@@ -17,13 +52,15 @@ export function MenuList({ items, onDone }: { items: readonly MenuItem[]; onDone
       {items.map((item, index) =>
         item.separator ? (
           <div key={index} className="my-1 border-t border-line-soft" />
+        ) : item.submenu ? (
+          <SubmenuItem key={index} item={item} onDone={onDone} />
         ) : (
           <button
             key={index}
             type="button"
             role="menuitem"
             disabled={item.disabled}
-            className="flex w-full items-center gap-4 px-3 py-[3px] text-left outline-none enabled:hover:bg-accent enabled:hover:text-white disabled:text-muted/60"
+            className={itemClass}
             onMouseDown={keepFocus}
             onClick={() => {
               onDone();
