@@ -63,6 +63,7 @@ import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import { Button, Checkbox, Dialog, Field, NameList, Select, TextInput } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import { ImportDialog } from "./ImportDialog";
+import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
 
 const close = () => ui.set({ dialog: null });
@@ -204,37 +205,6 @@ function PlaneFields({
         </Field>
       ) : null}
     </>
-  );
-}
-
-function NewGraphDialog({ append }: { append?: string }) {
-  const order = useNumericWaves(1);
-  const graph = useDoc((state) => (append ? state.graphs[append] : undefined));
-  const preselected = useUi((state) => state.selectedWaves);
-  const [y, setY] = useState<string[]>(() => preselected.filter((name) => order.includes(name)));
-  const [x, setX] = useState(CALCULATED);
-  const [axes, setAxes] = useState({ vAxis: "left", hAxis: "bottom" });
-  const xWave = x === CALCULATED ? null : x;
-  return (
-    <Dialog
-      title={append ? `Append Traces to ${append}` : "New Graph"}
-      onClose={close}
-      submitDisabled={y.length === 0}
-      onSubmit={() =>
-        submit(
-          append
-            ? { op: "appendTraces", graph: append, y, x: xWave, ...axes }
-            : { op: "display", y, x: xWave },
-        )
-      }
-    >
-      <div className="text-muted">Y waves</div>
-      <NameList label="Y waves" names={order} selected={y} onChange={setY} />
-      <Field label="X wave">
-        <XWaveSelect value={x} onChange={setX} categories />
-      </Field>
-      {graph ? <AxisSelects graph={graph} {...axes} onChange={setAxes} /> : null}
-    </Dialog>
   );
 }
 
