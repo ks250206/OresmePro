@@ -40,6 +40,14 @@ apply(waves, **changes)
 
 Fit other waves with the same settings; see ``Result.apply``.
 
+### `FitResult.template`
+
+```python
+template(name, description='')
+```
+
+Keep this fit as an analysis template; see ``Result.template``.
+
 ### `FitResult.__getitem__`
 
 ```python
@@ -59,6 +67,14 @@ The outcome of ``op.fit_peaks``: one row per peak, and the waves it made.
 - `result` (read-only) · The fit as it is kept in the experiment: ``.rerun()``, ``.apply(waves)``, ``.remove()``.
 
 **インスタンス属性** · `baseline`, `chisq`, `columns`, `components`, `converged`, `name`, `peaks`, `points`, `reason`, `shape`, `wave`
+
+### `PeakFitResult.template`
+
+```python
+template(name, description='')
+```
+
+Keep this fit as an analysis template; see ``Result.template``.
 
 ### `PeakFitResult.__len__`
 
@@ -140,6 +156,14 @@ put side by side in a table (see ``op.results_table``).
 
 **明示的な例外** · `OresmeError`
 
+### `Result.template`
+
+```python
+template(name, description='')
+```
+
+Keep this analysis as a template, to do to other samples; see ``op.make_template``.
+
 ### `Result.rename`
 
 ```python
@@ -186,6 +210,28 @@ all of them if left out. Makes text waves ``<name>_result`` and
 parameter, ``<name>_<parameter>`` and (with ``sigma``)
 ``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
 table, which is returned. A parameter a result does not have is NaN.
+
+**明示的な例外** · `OresmeError`
+
+## `make_template`
+
+```python
+op.make_template(name, results_, description='')
+```
+
+Keep analyses as a template: their steps and settings, with the waves taken out.
+
+``results_`` is a list of results (names, or what the fits returned), in
+the order they were done; each becomes a step that calls its action
+(``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+A wave an analysis read becomes an input of the template, named after
+the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
+made becomes a reference to that step's output instead, so that results
+done one after the other become a template of several steps. Steps are
+quiet. Settings the action cannot take (``hold=``, ``bounds=``,
+``exclude=``, data given as an array) are left out with a warning. A
+fit of several waves at once (``op.fit_global``) has no action and
+cannot be in a template. Returns the template (see ``op.Template``).
 
 **明示的な例外** · `OresmeError`
 
@@ -558,7 +604,8 @@ electrons lose energy: ``"binding"`` (toward higher X) or ``"kinetic"``
 The B used is written in the note of the background wave.
 
 ``subtract=True`` also makes ``<name>_sub``, the data minus the
-background, and returns (background, subtracted).
+background, and returns (background, subtracted), a named tuple whose
+fields are also ``.background`` and ``.subtracted``.
 
 **明示的な例外** · `OresmeError`
 

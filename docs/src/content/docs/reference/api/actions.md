@@ -49,7 +49,9 @@ the function's own default. The types are:
 - ``"number"``, ``"integer"``: with ``min`` and ``max`` if wanted (inclusive);
 - ``"numbers"``: a list of numbers, with ``min``, ``max`` and ``length`` if wanted;
 - ``"string"``, ``"boolean"``;
-- ``"choice"``: one of ``choices``, a list of strings or numbers.
+- ``"choice"``: one of ``choices``, a list of strings or numbers;
+- ``"samples"``: a list of dicts, each giving the name of a wave for
+  each input of a template (see ``Template.run``).
 
 An argument that is left out is not passed, so the function's default
 applies. None (null) is never a value: leave the argument out instead.

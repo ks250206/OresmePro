@@ -11,8 +11,9 @@ import {
   type MenuItem,
 } from "../app/session";
 import type { Command } from "../core/doc/commands";
+import { formulaStatus, type FormulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
-import { leafName, parentFolder, type Wave } from "../core/doc/types";
+import { leafName, parentFolder, type DocState, type Wave } from "../core/doc/types";
 import { renderMatrix } from "../core/plot/colorTables";
 import { extentOf, tracePixels } from "../core/plot/decimate";
 import { planeOf } from "../core/plot/layout";
@@ -84,10 +85,38 @@ function Preview({ wave }: { wave: Wave }) {
   );
 }
 
+const STATUS_TEXT: Record<FormulaStatus, string> = {
+  ok: "formula",
+  stale: "formula out of date",
+  error: "formula failed",
+  missing: "formula input missing",
+};
+
+/**
+ * The mark of a wave with a formula: plain when its values are those of the
+ * formula, red when they are not (out of date, failed, an input missing),
+ * with the formula and how it stands in its tooltip.
+ */
+function FormulaMark({ state, wave, active }: { state: DocState; wave: Wave; active: boolean }) {
+  const formula = wave.formula!;
+  const { status, message } = formulaStatus(state, wave.name, formula);
+  const color = active ? "text-white" : status === "ok" ? "text-muted" : "text-danger";
+  return (
+    <span
+      role="img"
+      aria-label={STATUS_TEXT[status]}
+      title={`${leafName(wave.name)} = ${formula.expr} (${formula.auto ? "automatic" : "manual"})\n${message}`}
+      className={`shrink-0 font-serif text-[11px] italic ${color}`}
+    >
+      {status === "ok" ? "f" : status === "stale" ? "f*" : "f!"}
+    </span>
+  );
+}
+
 const sizeLabel = (wave: Wave): string =>
   wave.shape.map((size) => size.toLocaleString("en-US")).join("×");
 
-function WaveInfo({ wave }: { wave: Wave }) {
+function WaveInfo({ state, wave }: { state: DocState; wave: Wave }) {
   const extent = extentOf(wave.data);
   const unit = (value: string) => (value ? ` ${value}` : "");
   const rows: [string, string][] = [[wave.text ? "Text points" : "Points", sizeLabel(wave)]];
@@ -119,6 +148,23 @@ function WaveInfo({ wave }: { wave: Wave }) {
           </div>
         ))}
       </dl>
+      {wave.formula ? (
+        <div className="text-[11px]">
+          <div className="selectable truncate font-mono" title={wave.formula.expr}>
+            = {wave.formula.expr}
+          </div>
+          <div
+            className={
+              formulaStatus(state, wave.name, wave.formula).status === "ok"
+                ? "text-muted"
+                : "text-danger"
+            }
+          >
+            {wave.formula.auto ? "Automatic. " : "Manual. "}
+            {formulaStatus(state, wave.name, wave.formula).message}
+          </div>
+        </div>
+      ) : null}
       {wave.note ? (
         <div className="selectable truncate text-[11px] text-muted" title={wave.note}>
           {wave.note}
@@ -279,6 +325,8 @@ export function DataBrowser() {
   const order = useDoc((state) => state.waveOrder);
   const waves = useDoc((state) => state.waves);
   const folders = useDoc((state) => state.folders);
+  // Whether a formula is up to date depends on other waves too.
+  const state = useDoc((current) => current);
   const collapsed = useUi((state) => state.collapsedFolders);
   const selected = useUi((state) => state.selectedWaves).filter((name) => name in waves);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -370,6 +418,26 @@ export function DataBrowser() {
     if (single && allCurves) {
       items.push({ label: "Curve Fitting…", onSelect: open({ kind: "curveFit", wave: name }) });
     }
+    const withFormulas = targets.filter((target) => waves[target]!.formula);
+    items.push(
+      { separator: true },
+      {
+        label: "Set Wave Values…",
+        disabled: !single || !allCurves || Boolean(kinds[0]!.imag),
+        onSelect: open({ kind: "setWaveValues", wave: name }),
+      },
+      {
+        label: "Recalculate",
+        disabled: withFormulas.length === 0,
+        onSelect: () => runGui({ op: "recalculate", names: withFormulas }),
+      },
+      {
+        label: "Remove Formula",
+        disabled: withFormulas.length === 0,
+        onSelect: () =>
+          runGui(withFormulas.map((target) => ({ op: "setFormula", name: target, expr: null }))),
+      },
+    );
     items.push(
       { separator: true },
       {
@@ -516,6 +584,9 @@ export function DataBrowser() {
                   >
                     <WaveIcon wave={wave} active={active} />
                     <span className="min-w-0 flex-1 truncate">{leafName(name)}</span>
+                    {wave.formula ? (
+                      <FormulaMark state={state} wave={wave} active={active} />
+                    ) : null}
                     <span
                       className={`font-mono text-[10.5px] ${active ? "text-white/80" : "text-muted"}`}
                     >
@@ -554,7 +625,7 @@ export function DataBrowser() {
           </div>
         ) : null}
       </div>
-      {focused ? <WaveInfo wave={focused} /> : null}
+      {focused ? <WaveInfo state={state} wave={focused} /> : null}
       <ResultList />
       <FileList />
     </aside>

@@ -588,6 +588,7 @@ export function GraphWindow({ name }: { name: string }) {
       { label: "Modify Graph…", onSelect: open({ kind: "modifyGraph", graph: name }) },
       { label: "Apply Style", submenu: styleItems() },
       { label: "Styles…", onSelect: open({ kind: "styles", graph: name }) },
+      { label: "Save as Template…", onSelect: open({ kind: "saveGraphTemplate", graph: name }) },
       { separator: true },
       { label: "Append Traces…", onSelect: open({ kind: "appendTraces", graph: name }) },
       {

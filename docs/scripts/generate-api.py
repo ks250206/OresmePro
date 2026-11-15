@@ -15,12 +15,16 @@ REPOSITORY = "https://github.com/ks250206/OresmePro/blob/main/src/kernel/python"
 
 # __all__ defines the public module surface. Each export must have one home.
 SECTIONS = {
-    "wave": ("Wave API", "Wave make wave waves exists kill WAVE_TYPES"),
+    "wave": (
+        "Wave API",
+        "Wave make wave waves exists kill set_formula recalculate WAVE_TYPES",
+    ),
     "graph": (
         "Graph API",
         (
             "Graph Annotation Style display graph graphs style styles set_style "
-            "apply_style set_default_style default_style"
+            "apply_style set_default_style default_style "
+            "GraphTemplate graph_template graph_templates set_graph_template"
         ),
     ),
     "trace": ("Trace API", "Trace"),
@@ -31,6 +35,8 @@ SECTIONS = {
     "folder": ("Folder API", "Folder new_folder folder folders"),
     "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
     "actions": ("Actions API", "action actions invoke"),
+    "panel": ("Panel API", "Panel Control panel panels new_panel set_panel control"),
+    "templates": ("Templates API", "Template template templates set_template Run run runs"),
     "global": (
         "Global Functions",
         (

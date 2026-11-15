@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
+import { checkGraphTemplate } from "../core/doc/commands";
 import type { StyleSpec } from "../core/doc/types";
 import {
+  GRAPH_TEMPLATES,
   LIBRARY_KEY,
   StyleLibrary,
+  TEMPLATE_LIBRARY_KEY,
+  TemplateLibrary,
   freeName,
+  libraryText,
+  readLibrary,
   readStyles,
   stylesText,
   type StyleStorage,
@@ -141,5 +147,37 @@ describe("the style library", () => {
     const taken = new Set(["paper", "paper_1"]);
     expect(freeName("talk", (name) => taken.has(name))).toBe("talk");
     expect(freeName("paper", (name) => taken.has(name))).toBe("paper_2");
+  });
+});
+
+describe("the graph template library", () => {
+  const iv = checkGraphTemplate({
+    slots: [{ name: "y", role: "y", unit: "A" }],
+    traces: [{ y: "y" }],
+  });
+
+  it("keeps templates under a key of its own, apart from the styles", () => {
+    const storage = memory();
+    const library = new TemplateLibrary(storage);
+    library.put("IV", iv);
+    expect(library.list().IV).toEqual(iv);
+    expect(storage.items.has(TEMPLATE_LIBRARY_KEY)).toBe(true);
+    expect(storage.items.has(LIBRARY_KEY)).toBe(false);
+    expect(Object.keys(new StyleLibrary(storage).list())).toEqual([]);
+    expect(() => library.rename("none", "x")).toThrow(
+      "The library has no graph template named none.",
+    );
+  });
+
+  it("reads templates files, skipping templates that refer to what they do not have", () => {
+    expect(() => readLibrary(GRAPH_TEMPLATES, "{}")).toThrow(
+      "This is not a graph templates file: it has no graph templates.",
+    );
+    const text = libraryText(GRAPH_TEMPLATES, [["IV", iv]]);
+    const bad = text.replace('"y": "y"', '"y": "q"');
+    expect(readLibrary(GRAPH_TEMPLATES, text).items).toEqual([["IV", iv]]);
+    const read = readLibrary(GRAPH_TEMPLATES, bad);
+    expect(read.items).toEqual([]);
+    expect(read.skipped[0]).toMatch(/^IV: A trace's y must be one of the template's slots/);
   });
 });

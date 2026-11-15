@@ -1,4 +1,4 @@
-import { applyCommand, isTransient, type Command } from "./commands";
+import { applyCommand, isTransient, settleFormulas, type Command } from "./commands";
 import { dictFrom, filterDict, type Dict } from "./dict";
 import { DocError, emptyDoc, type DocState, type WindowState } from "./types";
 
@@ -45,17 +45,40 @@ function withDicts(state: DocState): DocState {
   const waves = asDict(state.waves);
   const procedures = asDict(state.procedures);
   const pages = asDict(state.pages);
+  const panels = asDict(state.panels);
   const styles = asDict(state.styles);
+  const graphTemplates = asDict(state.graphTemplates);
   const results = asDict(state.results);
+  const templates = asDict(state.templates);
+  const runs = asDict(state.runs);
   const same =
     graphs === state.graphs &&
     tables === state.tables &&
     waves === state.waves &&
     procedures === state.procedures &&
     pages === state.pages &&
+    panels === state.panels &&
     styles === state.styles &&
-    results === state.results;
-  return same ? state : { ...state, waves, graphs, tables, procedures, pages, styles, results };
+    graphTemplates === state.graphTemplates &&
+    results === state.results &&
+    templates === state.templates &&
+    runs === state.runs;
+  return same
+    ? state
+    : {
+        ...state,
+        waves,
+        graphs,
+        tables,
+        procedures,
+        pages,
+        panels,
+        styles,
+        graphTemplates,
+        results,
+        templates,
+        runs,
+      };
 }
 
 const UNDO_LIMIT = 100;
@@ -93,7 +116,13 @@ class Working implements DocWriter {
   dispatch(command: Command): string | null {
     const applied = applyCommand(this.state, command);
     if (applied.state !== this.state) {
-      this.state = withDicts(applied.state);
+      // Formulas that depend on what the command changed are computed again
+      // here, so that they belong to the same step: they undo with it, go into
+      // a transaction or an op.atomic() block with it, and are computed again
+      // when a block's commands are replayed. Waves untouched, nothing to do.
+      const settled =
+        applied.state.waves === this.state.waves ? applied.state : settleFormulas(applied.state);
+      this.state = withDicts(settled);
       if (!isTransient(command)) this.durable = true;
     }
     return applied.result;
@@ -169,10 +198,22 @@ export class Stage implements DocWriter {
    * Notes that a wave was read: the commit fails if it changes in the
    * document meanwhile. A wave the stage made or changed itself is its own.
    */
-  read(name: string): void {
+  read(name: string, seen: Set<string> = new Set()): void {
+    if (seen.has(name)) return;
+    seen.add(name);
     const wave = this.working.state.waves[name];
-    if (!wave || this.base.waves[name] !== wave || this.reads.has(name)) return;
-    this.reads.set(name, wave.rev);
+    if (!wave) return;
+    if (this.base.waves[name] === wave) {
+      if (!this.reads.has(name)) this.reads.set(name, wave.rev);
+      return;
+    }
+    // A wave the stage made or changed is its own, but a formula's values
+    // come from its inputs: what was read from it is out of date when one of
+    // those changes in the document, though replaying would compute the
+    // formula again. So its inputs count as read, down to the document's.
+    if (wave.formula) {
+      for (const input of Object.keys(wave.formula.inputs)) this.read(input, seen);
+    }
   }
 
   /** Remembers this point, for {@link rollback}: the start of a block within the block. */

@@ -3,8 +3,18 @@ import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc, DocWriter, Stage } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
+import { formulaOrder, formulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
-import { DocError, type DocState, type Wave } from "../core/doc/types";
+import { changedSampleInputs } from "../core/doc/analysisTemplates";
+import { templateWarnings } from "../core/doc/graphTemplates";
+import { resolveButton } from "../core/doc/panels";
+import {
+  DocError,
+  type DocState,
+  type GraphTemplate,
+  type PanelSpec,
+  type Wave,
+} from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import { planIgorImport } from "../core/io/igorImport";
@@ -39,7 +49,23 @@ export interface RpcReply {
   data?: Float64Array;
 }
 
-const waveInfo = (wave: Wave) => ({
+/** A wave's formula as Python reads it, with how it stands; null for a wave without one. */
+function formulaInfo(state: DocState, wave: Wave) {
+  const { formula } = wave;
+  if (!formula) return null;
+  const { status, message } = formulaStatus(state, wave.name, formula);
+  return {
+    name: wave.name,
+    expr: formula.expr,
+    auto: formula.auto,
+    status,
+    message,
+    inputs: Object.keys(formula.inputs),
+    zeroDivisions: formula.zeroDivisions,
+  };
+}
+
+const waveInfo = (state: DocState, wave: Wave) => ({
   name: wave.name,
   kind: wave.text ? "text" : "numeric",
   type: wave.type,
@@ -53,6 +79,7 @@ const waveInfo = (wave: Wave) => ({
   unit: wave.unit,
   note: wave.note,
   rev: wave.rev,
+  formula: formulaInfo(state, wave),
 });
 
 /** A wave's numbers as they are sent to Python: float64, real parts then imaginary parts. */
@@ -64,6 +91,19 @@ function transportData(wave: Wave): Float64Array {
   both.set(wave.data);
   both.set(wave.imag, wave.data.length);
   return both;
+}
+
+function requireTemplate(state: DocState, name: unknown): GraphTemplate {
+  const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
+  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  return template;
+}
+
+function requirePanel(state: DocState, name: unknown): PanelSpec {
+  const panel =
+    typeof name === "string" && Object.hasOwn(state.panels, name) ? state.panels[name] : undefined;
+  if (!panel) throw new DocError(`No panel named ${JSON.stringify(name)}.`);
+  return panel;
 }
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
@@ -153,6 +193,12 @@ export function handleRpc(
         // Stamped here: the document's commands do not read the clock.
         command.result = { created: Date.now(), ...command.result };
       }
+      if (command.op === "addRun" && typeof command.run === "object" && command.run) {
+        command.run = { created: Date.now(), ...command.run };
+      }
+      if (command.op === "updateRunSample" && command.attempted === true) {
+        command.finished ??= Date.now();
+      }
       return { result: write((writer) => writer.dispatch(command as unknown as Command)) };
     }
     case "beginAtomic": {
@@ -181,17 +227,21 @@ export function handleRpc(
       return { result: null };
     }
     case "waveInfo":
-      return { result: waveInfo(readWave(params.name)) };
+      return { result: waveInfo(state, readWave(params.name)) };
     case "waveData": {
       const wave = readWave(params.name);
-      if (wave.text) return { result: { ...waveInfo(wave), text: wave.text } };
+      if (wave.text) return { result: { ...waveInfo(state, wave), text: wave.text } };
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
-        ? { result: waveInfo(wave) }
-        : { result: waveInfo(wave), data: transportData(wave) };
+        ? { result: waveInfo(state, wave) }
+        : { result: waveInfo(state, wave), data: transportData(wave) };
     }
     case "listWaves":
       return { result: state.waveOrder };
+    case "formulas":
+      return {
+        result: formulaOrder(state).map((name) => formulaInfo(state, state.waves[name]!)),
+      };
     case "timeZone":
       return { result: state.timeZone };
     case "listFolders":
@@ -249,6 +299,14 @@ export function handleRpc(
       if (!style) throw new DocError(`No style named ${JSON.stringify(params.name)}.`);
       return { result: style };
     }
+    case "listGraphTemplates":
+      return { result: Object.keys(state.graphTemplates) };
+    case "graphTemplateInfo":
+      return { result: requireTemplate(state, params.name) };
+    case "graphTemplateWarnings": {
+      const samples = Array.isArray(params.samples) ? (params.samples as unknown[]) : [];
+      return { result: templateWarnings(state, requireTemplate(state, params.name), samples) };
+    }
     case "tableInfo": {
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;
       if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
@@ -285,6 +343,18 @@ export function handleRpc(
         for (const command of commands) writer.dispatch(command);
       });
       return { result: { leftOut } };
+    }
+    case "panelInfo":
+      return { result: requirePanel(state, params.name) };
+    case "panelCall": {
+      // A press of a button from Python: the call as a click would make it.
+      const { call, problems } = resolveButton(
+        requirePanel(state, params.panel),
+        String(params.button),
+        { waveExists: (name) => name in state.waves },
+      );
+      if (!call) throw new DocError(problems.join(" "));
+      return { result: call };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
@@ -333,6 +403,32 @@ export function handleRpc(
           : undefined;
       if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
       return { result: { ...result, changed: changedInputs(state, result) } };
+    }
+    case "listTemplates":
+      return { result: Object.keys(state.templates) };
+    case "templateInfo": {
+      const template = typeof params.name === "string" ? state.templates[params.name] : undefined;
+      if (!template) throw new DocError(`No template named ${JSON.stringify(params.name)}.`);
+      return { result: template };
+    }
+    case "listRuns":
+      return {
+        result: Object.values(state.runs)
+          .sort((a, b) => a.created - b.created)
+          .map((run) => run.name),
+      };
+    case "runInfo": {
+      const run = typeof params.name === "string" ? state.runs[params.name] : undefined;
+      if (!run) throw new DocError(`No run named ${JSON.stringify(params.name)}.`);
+      return {
+        result: {
+          ...run,
+          samples: run.samples.map((sample) => ({
+            ...sample,
+            changed: changedSampleInputs(state, sample),
+          })),
+        },
+      };
     }
     case "importData": {
       const filename = String(params.filename);

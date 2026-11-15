@@ -13,6 +13,7 @@ import {
   emptyDoc,
   leafName,
   type DocState,
+  type GraphTemplate,
   type PageSpec,
   type StyleSpec,
 } from "../core/doc/types";
@@ -25,7 +26,17 @@ import { toSvg } from "../core/plot/svg";
 import { toPdf, type RasterText } from "../core/plot/pdf";
 import { newExperimentId } from "./experiments";
 import { measureText } from "./measure";
-import { browserLibrary, readStyles, sameStyle, stylesText } from "./styleLibrary";
+import {
+  browserLibrary,
+  GRAPH_TEMPLATES,
+  libraryText,
+  readLibrary,
+  sameEntry,
+  sameStyle,
+  stylesText,
+  templateLibrary,
+  type Library,
+} from "./styleLibrary";
 import {
   activeWindow,
   doc,
@@ -47,7 +58,8 @@ import {
   type UiState,
 } from "./session";
 
-function download(blob: Blob, filename: string): void {
+/** Hands the user a file to save. */
+export function download(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -564,21 +576,23 @@ export function exportStyles(styles: readonly (readonly [string, StyleSpec])[]):
   download(new Blob([stylesText(styles)], { type: "application/json" }), filename);
 }
 
-/** Asks for styles files and adds what they hold to the browser's library. */
-export function importStyles(): void {
+/** Asks for files of a library's kind and adds what they hold to the library. */
+function importInto<T>(library: Library<T>): void {
+  const { what, plural } = library.kind;
   pickFile(".json,application/json", true, (picked) => {
     void (async () => {
       for (const file of picked) {
         try {
-          const read = readStyles(await file.text());
-          const { added, present } = browserLibrary().add(read.styles);
+          const read = readLibrary(library.kind, await file.text());
+          const { added, present } = library.add(read.items);
           const parts = [
             added.length > 0 ? `added ${added.join(", ")}` : "",
             present.length > 0 ? `already had ${present.join(", ")}` : "",
           ].filter(Boolean);
-          note(`Style library: ${parts.join("; ") || "nothing to add"} from ${file.name}.`);
+          const title = `${what[0]!.toUpperCase()}${what.slice(1)}`;
+          note(`${title} library: ${parts.join("; ") || "nothing to add"} from ${file.name}.`);
           if (read.skipped.length > 0) {
-            showError(`Some styles in ${file.name} were left out`, read.skipped.join("\n"));
+            showError(`Some ${plural} in ${file.name} were left out`, read.skipped.join("\n"));
           }
         } catch (error) {
           showError(`Could not import ${file.name}`, error);
@@ -586,6 +600,41 @@ export function importStyles(): void {
       }
     })();
   });
+}
+
+/** Asks for styles files and adds what they hold to the browser's library. */
+export const importStyles = (): void => importInto(browserLibrary());
+
+/** Saves graph templates to a JSON file the user downloads; one file holds them all. */
+export function exportTemplates(templates: readonly (readonly [string, GraphTemplate])[]): void {
+  if (templates.length === 0) return;
+  const filename = templates.length === 1 ? `${templates[0]![0]}.json` : "graph-templates.json";
+  const text = libraryText(GRAPH_TEMPLATES, templates);
+  download(new Blob([text], { type: "application/json" }), filename);
+}
+
+/** Asks for graph template files and adds what they hold to the browser's library. */
+export const importTemplates = (): void => importInto(templateLibrary());
+
+/**
+ * The command that copies a template of the library into the experiment,
+ * unless it holds that very template already; as for styles (see
+ * libraryStyleCommands), the copy is what the history records first.
+ */
+export function libraryTemplateCommands(name: string): Command[] | null {
+  const template = templateLibrary().list()[name];
+  if (!template) return [];
+  const own = doc.getState().graphTemplates[name];
+  if (own && sameEntry(own, template)) return [];
+  if (
+    own &&
+    !window.confirm(
+      `The experiment has its own graph template ${name}. Replace it with the library's?`,
+    )
+  ) {
+    return null;
+  }
+  return [{ op: "setGraphTemplate", name, template }];
 }
 
 /**

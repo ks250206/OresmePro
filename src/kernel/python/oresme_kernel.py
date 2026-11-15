@@ -6,6 +6,7 @@ An IPython shell whose input comes from the command line and whose output
 
 import asyncio
 import builtins
+import contextlib
 import importlib
 import importlib.util
 import io
@@ -433,7 +434,7 @@ async def run_action():
             raise asyncio.CancelledError
         _sync(_pull)
         try:
-            with oresme.atomic():
+            with oresme.atomic() if found.atomic else contextlib.nullcontext():
                 value = found.function(**passed)
             return json.dumps({"result": oresme._result_json(value)}, allow_nan=False)
         finally:

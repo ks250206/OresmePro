@@ -340,6 +340,11 @@ export function TableWindow({ name }: { name: string }) {
         onSelect: () => runGui({ op: "display", y: [wave] }),
       },
       {
+        label: "Set Wave Values…",
+        disabled: !plain || Boolean(waves[wave]?.imag),
+        onSelect: () => ui.set({ dialog: { kind: "setWaveValues", wave } }),
+      },
+      {
         label: "Change Wave Scaling…",
         disabled: Boolean(waves[wave]?.text),
         onSelect: () => ui.set({ dialog: { kind: "waveScaling", wave } }),
