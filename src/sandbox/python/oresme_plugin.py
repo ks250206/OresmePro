@@ -233,4 +233,6 @@ def _run(name, inputs, params_json):
     if unknown:
         raise PluginError(f"An action returns only 'waves' and 'values', not {sorted(unknown)}.")
     waves = {str(role): _output(str(role), value) for role, value in (outcome.get("waves") or {}).items()}
-    return {"waves": waves, "values": _plain(outcome.get("values") or {})}
+    # As JSON text: converted to JavaScript, None would become undefined, not null.
+    values = json.dumps(_plain(outcome.get("values") or {}), allow_nan=False)
+    return {"waves": waves, "values": values}
