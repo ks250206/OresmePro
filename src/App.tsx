@@ -8,6 +8,7 @@ import {
   loadDelimitedText,
   loadExcelWorkbook,
   loadIgorFiles,
+  loadParquetHdf5Files,
   loadFiles,
   newExperiment,
   openExperiment,
@@ -144,6 +145,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
         { label: "Load Igor Files…", onSelect: loadIgorFiles },
+        { label: "Load Parquet or HDF5 Files…", onSelect: loadParquetHdf5Files },
         { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
@@ -190,6 +192,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
         { label: "Load Igor Files…", onSelect: loadIgorFiles },
+        { label: "Load Parquet or HDF5 Files…", onSelect: loadParquetHdf5Files },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
         { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },
@@ -332,7 +335,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Restart Python", onSelect: () => kernel.restart() },
         { separator: true },
         {
-          label: "Keep SciPy, pandas, scikit-learn and lmfit for Offline Use",
+          label: "Keep Optional Packages for Offline Use",
           onSelect: () =>
             void keepPackagesForOffline(PYODIDE_URL).then((names) =>
               names

@@ -104,6 +104,71 @@ procedures, variables and history are not loaded, nor a wave whose values
 Igor did not save (it computes them from a formula); such waves are named
 in a warning.
 
+## `load_parquet`
+
+```python
+op.load_parquet(source, columns=None, *, table=True, name=None)
+```
+
+Load a Parquet file as waves, one per column; returns them in a list.
+
+``source`` is a file in the working directory (the files of the
+experiment are there), any other path, or the file's bytes with
+``name=``. ``columns`` names the columns to read (one name or a list);
+all of them otherwise. Each column becomes a wave named after it (made
+legal, with ``_1`` if the name is taken):
+
+- integers, floating-point numbers and decimals are numeric waves of
+  their type (64-bit integers and decimals become float64, float16
+  becomes float32); booleans are uint8 waves of 0 and 1.
+- timestamps and dates are date waves: seconds since 1970-01-01 UTC, unit
+  ``dat``. Times of day and durations are seconds, unit ``s``.
+- strings, and categories (dictionary columns), are text waves.
+- nulls are NaN (empty strings in text); a column of integers or
+  booleans with nulls is float64 to hold them.
+
+Each wave's note says which file it came from (with its SHA-256), the
+column's Parquet type, how many nulls became NaN and how many 64-bit
+integers beyond 2^53 were rounded, and the column's metadata. Columns of
+other kinds (lists, structs, binary) are not loaded; a warning names
+them. ``table=False`` makes no table. pyarrow is fetched the first time
+this runs.
+
+**明示的な例外** · `OresmeError`
+
+## `load_hdf5`
+
+```python
+op.load_hdf5(source, datasets=None, *, name=None)
+```
+
+Load the datasets of an HDF5 file (.h5, .hdf5) as waves; returns them in a list.
+
+``source`` is a file in the working directory, any other path, or the
+file's bytes with ``name=``. ``datasets`` names the datasets to read, or
+groups to read every dataset in (one path or a list, like
+``"/run1/signal"``); all of the file's otherwise. Each group becomes a
+data folder (``/run1/signal`` is the wave ``run1:signal``); names are made
+legal and a name that is taken gets ``_1``, as ``op.load_igor`` does.
+
+A dataset keeps its shape (up to 4 dimensions; ``w[i, j]`` is the
+dataset's ``[i, j]``) and its type: integers, floating-point and complex
+numbers as waves of that type (64-bit integers become float64, float16
+float32), booleans as uint8, NumPy dates stored by h5py as date waves
+(unit ``dat``), strings as text waves (of 1 dimension, in row-major
+order). The fields of a compound dataset become waves named
+``<dataset>_<field>``. A string attribute ``units`` (or ``unit``) is the
+wave's unit.
+
+Each wave's note says which file it came from (with its SHA-256), the
+dataset's path, type and shape, how many 64-bit integers beyond 2^53
+were rounded, and the attributes of the dataset and of the groups above
+it. Datasets that waves cannot hold (more than 4 dimensions, references,
+empty datasets) are not loaded; a warning names them. h5py is fetched
+the first time this runs.
+
+**明示的な例外** · `OresmeError`
+
 ## `kill_window`
 
 ```python

@@ -85,9 +85,9 @@ export async function keepForOffline(
 
 /**
  * Has the service worker keep the packages that Python otherwise fetches the
- * first time they are imported (SciPy, pandas, scikit-learn, lmfit), so that
- * they are there without a network. Resolves to the names of the packages
- * kept, or null if there is no worker to keep them.
+ * first time they are imported or used (SciPy, pandas, scikit-learn, lmfit,
+ * pyarrow, h5py), so that they are there without a network. Resolves to the
+ * names of the packages kept, or null if there is no worker to keep them.
  */
 export async function keepPackagesForOffline(pyodideUrl: string): Promise<string[] | null> {
   if (!("serviceWorker" in navigator) || !import.meta.env.PROD) return null;

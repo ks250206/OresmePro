@@ -7,6 +7,7 @@ import { Doc } from "../doc/doc";
 import { History } from "../history/history";
 import { unzipExperiment, zipExperiment } from "./experiment";
 import { decodeNpy, encodeNpy } from "./npy";
+import { pythonLoader } from "./pythonFormats";
 import excelWorkbook from "./testdata/excel.xlsx?inline";
 import openpyxlWorkbook from "./testdata/openpyxl.xlsx?inline";
 import { readXlsx } from "./xlsx";
@@ -451,6 +452,15 @@ describe("Excel workbooks", () => {
   it("says what is wrong with a file that is not a workbook", () => {
     expect(() => readXlsx(new Uint8Array([1, 2, 3, 4]))).toThrow(/not an Excel workbook/);
     expect(() => readXlsx(zipSync({ "hello.txt": new Uint8Array(1) }))).toThrow(/\.xlsx/);
+  });
+});
+
+describe("files that Python reads", () => {
+  it("loads Parquet and HDF5 files with the Python that the history records", () => {
+    expect(pythonLoader("run 1.parquet")).toBe('op.load_parquet("run 1.parquet")');
+    expect(pythonLoader("scan.H5")).toBe('op.load_hdf5("scan.H5")');
+    expect(pythonLoader("scan.hdf5")).toBe('op.load_hdf5("scan.hdf5")');
+    expect(pythonLoader("table.csv")).toBeNull();
   });
 });
 

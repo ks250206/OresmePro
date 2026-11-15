@@ -6,8 +6,10 @@
 //
 // - NumPy and IPython, which Python starts with, and
 // - SciPy, pandas, scikit-learn and lmfit, which are loaded the first time
-//   code imports them. They are served by the app itself so that they work
-//   wherever the app does (a network that blocks the CDN, a pinned copy).
+//   code imports them, and pyarrow and h5py, which op.load_parquet and
+//   op.load_hdf5 load the first time they are called. They are served by the
+//   app itself so that they work wherever the app does (a network that blocks
+//   the CDN, a pinned copy) and so that the tests need no network.
 //
 // lmfit and two packages it needs are not part of the Pyodide distribution.
 // They are pure Python, so their wheels from PyPI work as they are; they are
@@ -24,8 +26,8 @@ import { fileURLToPath } from "node:url";
 
 /** Loaded when Python starts: kept by the service worker from the first visit. */
 const STARTUP = ["numpy", "ipython"];
-/** Loaded on first import; "lmfit" brings SciPy with it. */
-const ON_DEMAND = ["scipy", "pandas", "scikit-learn", "lmfit"];
+/** Loaded on first import (or first use, for pyarrow and h5py); "lmfit" brings SciPy with it. */
+const ON_DEMAND = ["scipy", "pandas", "scikit-learn", "lmfit", "pyarrow", "h5py"];
 /** Pure Python wheels from PyPI that the Pyodide distribution does not have. */
 const FROM_PYPI = [
   {

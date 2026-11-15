@@ -20,6 +20,7 @@ import {
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { isIgorFile, planIgorImport } from "../core/io/igorImport";
+import { PYTHON_FORMATS, pythonLoader } from "../core/io/pythonFormats";
 import { drawPrims } from "../core/plot/canvas";
 import { cssFont, type FontStyle, type Prim } from "../core/plot/displayList";
 import { toSvg } from "../core/plot/svg";
@@ -196,12 +197,17 @@ export function loadIgorFiles(): void {
   pickFile(".ibw,.pxp,.pxt", true, (picked) => void loadFiles(picked));
 }
 
+/** Asks for Parquet and HDF5 files, and loads them with Python. */
+export function loadParquetHdf5Files(): void {
+  pickFile(PYTHON_FORMATS, true, (picked) => void loadFiles(picked));
+}
+
 /**
  * Takes in dropped or chosen files. An experiment is opened; Igor files are
  * loaded at once (they say exactly what they hold, so there is nothing to
- * choose); other files of data (delimited text, Excel workbooks) are shown in
- * the Load Data dialog one after another, where the user sees how each is
- * read before it is.
+ * choose), and so are Parquet and HDF5 files, by Python; other files of data
+ * (delimited text, Excel workbooks) are shown in the Load Data dialog one
+ * after another, where the user sees how each is read before it is.
  */
 export async function loadFiles(files: Iterable<File>): Promise<void> {
   const data: PendingData[] = [];
@@ -213,6 +219,7 @@ export async function loadFiles(files: Iterable<File>): Promise<void> {
     try {
       const pending = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
       if (isIgorFile(file.name)) await importIgorFile(pending);
+      else if (pythonLoader(file.name)) loadWithPython(pending);
       else data.push(pending);
     } catch (error) {
       showError(`Could not read ${file.name}`, error);
@@ -294,6 +301,24 @@ export async function importIgorFile(file: PendingData): Promise<boolean> {
     showError(`Could not load ${file.name}`, error);
     return false;
   }
+}
+
+/**
+ * Loads a Parquet or HDF5 file with Python, which has the packages that read
+ * them: the file is put with the experiment's files (where Python finds it,
+ * and which keeps where the waves came from), and the line that loads it runs
+ * as if typed, so the history has it and it undoes as one step.
+ */
+export function loadWithPython(file: PendingData): void {
+  const code = pythonLoader(file.name);
+  if (!code) return;
+  try {
+    files.put(file.name, file.bytes);
+  } catch (error) {
+    showError(`Could not load ${file.name}`, error);
+    return;
+  }
+  runPython(code);
 }
 
 /** Shows another of the browser's experiments in this tab, saving this one first. */
