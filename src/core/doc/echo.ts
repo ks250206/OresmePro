@@ -79,6 +79,60 @@ const axisKeywords = (command: { vAxis?: string; hAxis?: string }) => ({
 });
 
 /**
+ * The arguments of `make` for graphs made from a template: a wave for each
+ * slot, or a list of them, one for each graph. A slot that has the same wave
+ * in every graph is written once; Python repeats it for each graph, which it
+ * counts from the lists, so at least one argument stays a list.
+ */
+function makeArguments(command: Extract<Command, { op: "makeGraphs" }>): string {
+  const { samples, names } = command;
+  const many = samples.length > 1;
+  const slots = [...new Set(samples.flatMap((sample) => Object.keys(sample)))];
+  const columns = slots
+    .map((slot) => [slot, samples.map((sample) => sample[slot] ?? null)] as const)
+    // A slot left empty everywhere is left out, as Python leaves it.
+    .filter(([, values]) => values.some((value) => value !== null));
+  const same = (values: readonly unknown[]) => values.every((value) => value === values[0]);
+  const listed = !many || names !== undefined || columns.some(([, values]) => !same(values));
+  const args = columns.map(([slot, values]) => {
+    const value = !many || (listed && same(values)) ? values[0] : values;
+    return `${slot}=${pyLiteral(value)}`;
+  });
+  if (names !== undefined) args.push(`name=${pyLiteral(many ? [...names] : names[0])}`);
+  return args.join(", ");
+}
+
+/** A panel's data with references to its controls written as `op.control(name)`. */
+function withControlCalls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withControlCalls);
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value);
+  if (entries.length === 1 && entries[0]![0] === "$control" && typeof entries[0]![1] === "string") {
+    return new PyExpression(`op.control(${pyLiteral(entries[0]![1])})`);
+  }
+  return Object.fromEntries(entries.map(([key, item]) => [key, withControlCalls(item)]));
+}
+
+/** The call of a panel's method that adds a control of a kind, as `op.panel` takes it. */
+function addControlCall(command: Extract<Command, { op: "addControl" }>): string {
+  const { label, options, ...rest } = command.props ?? {};
+  const props = withControlCalls(rest) as Record<string, unknown>;
+  const name = pyLiteral(command.name);
+  const panel = `op.panel(${pyLiteral(command.panel)})`;
+  // The words a heading, a paragraph and a button show come second; a choice's options do.
+  const words = command.kind === "heading" || command.kind === "text" || command.kind === "button";
+  const positional = words
+    ? label === undefined
+      ? ""
+      : pyLiteral(label)
+    : command.kind === "choice"
+      ? pyLiteral(options ?? [])
+      : "";
+  const named = words ? props : { label, ...props };
+  return `${panel}.${command.kind}(${joinArgs(name, positional, keywords(named))})`;
+}
+
+/**
  * The Python statement that has the same effect as a command, for writing GUI
  * actions into the command history. Returns null for commands that cannot be
  * replayed from text (bulk data) or that are only view state.
@@ -89,6 +143,9 @@ export function echoPython(
 ): string | null {
   switch (command.op) {
     case "addResult":
+    // A run is recorded by the Python that does it (t.run, run.retry), never by the GUI.
+    case "addRun":
+    case "updateRunSample":
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
@@ -100,6 +157,15 @@ export function echoPython(
       return command.names.map((name) => `op.result(${pyLiteral(name)}).remove()`).join("\n");
     case "renameResult":
       return `op.result(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "setTemplate":
+      // The keys of a template are Python's already, and its arguments are named as the actions name them.
+      return `op.set_template(${pyLiteral(command.name)}, ${pyLiteral(command.template)})`;
+    case "removeTemplate":
+      return `op.template(${pyLiteral(command.name)}).remove()`;
+    case "renameTemplate":
+      return `op.template(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "removeRuns":
+      return command.names.map((name) => `op.run(${pyLiteral(name)}).remove()`).join("\n");
     case "newLayout":
       return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
     case "modifyLayout":
@@ -117,6 +183,24 @@ export function echoPython(
       return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).remove()`;
     case "setTimeZone":
       return `op.set_time_zone(${pyLiteral(command.zone)})`;
+    case "newPanel":
+      return `op.new_panel(${keywords({ name: command.name, title: command.title })})`;
+    case "setPanel":
+      return `op.set_panel(${pyLiteral(command.name)}, ${pyLiteral(withControlCalls(command.panel))})`;
+    case "modifyPanel":
+      return `op.panel(${pyLiteral(command.panel)}).set(${keywords(command.props)})`;
+    case "addControl":
+      return addControlCall(command);
+    case "modifyControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).set(${keywords(
+        withControlCalls(command.props) as Record<string, unknown>,
+      )})`;
+    case "removeControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).remove()`;
+    case "moveControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).move(${command.to})`;
+    case "setControlValue":
+      return `op.panel(${pyLiteral(command.panel)})[${pyLiteral(command.control)}] = ${pyLiteral(command.value)}`;
     case "newProcedure":
       return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
     case "modifyTable":
@@ -184,6 +268,18 @@ export function echoPython(
       return `op.wave(${pyLiteral(command.name)}).duplicate(${pyLiteral(command.newName)})`;
     case "killWaves":
       return `op.kill(${names(command.names)})`;
+    case "setFormula":
+      return command.expr === null
+        ? `op.wave(${pyLiteral(command.name)}).formula = None`
+        : `op.set_formula(${joinArgs(
+            pyLiteral(command.name),
+            pyLiteral(command.expr),
+            command.auto === false ? "auto=False" : "",
+          )})`;
+    case "recalculate":
+      return command.names === undefined
+        ? "op.recalculate()"
+        : `op.recalculate(${pyLiteral([...command.names])})`;
     case "newFolder":
       return `op.new_folder(${pyLiteral(command.path)})`;
     case "renameFolder":
@@ -293,6 +389,19 @@ export function echoPython(
         : `op.apply_style(${pyLiteral(command.style)}, graphs=${pyLiteral([...command.graphs])})`;
     case "setDefaultStyle":
       return `op.set_default_style(${pyLiteral(command.name)})`;
+    case "saveGraphTemplate":
+      return `op.graph(${pyLiteral(command.graph)}).save_template(${joinArgs(
+        pyLiteral(command.name),
+        command.fixed && command.fixed.length > 0 ? `fixed=${pyLiteral([...command.fixed])}` : "",
+      )})`;
+    case "setGraphTemplate":
+      return `op.set_graph_template(${pyLiteral(command.name)}, ${pyLiteral(snakeKeys(command.template))})`;
+    case "removeGraphTemplate":
+      return `op.graph_template(${pyLiteral(command.name)}).remove()`;
+    case "renameGraphTemplate":
+      return `op.graph_template(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "makeGraphs":
+      return `op.graph_template(${pyLiteral(command.template)}).make(${makeArguments(command)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
   }

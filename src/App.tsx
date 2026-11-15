@@ -24,6 +24,7 @@ import {
   keepPackagesForOffline,
   openLaunchedFiles,
 } from "./app/isolate";
+import { importPanels, newPanel } from "./app/panels";
 import { ruffFiles } from "./editor/loadRuff";
 import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
@@ -37,6 +38,7 @@ import {
   type MenuItem,
   MOD,
   note,
+  pluginStore,
   PYODIDE_URL,
   requestCommandLine,
   runGui,
@@ -48,6 +50,7 @@ import {
   useKernelState,
   useUi,
 } from "./app/session";
+import { Sandbox } from "./sandbox/host";
 import { CommandWindow } from "./ui/CommandWindow";
 import { DataBrowser } from "./ui/DataBrowser";
 import { Desktop } from "./ui/Desktop";
@@ -94,6 +97,9 @@ function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
   const pages = useDoc((state) => state.pages);
+  const hasFormulas = useDoc((state) =>
+    Object.values(state.waves).some((wave) => wave.formula !== undefined),
+  );
   const pageSelection = useUi((state) => state.pageSelection);
   const top = windows.at(-1);
   const graph = top?.kind === "graph" ? top.name : null;
@@ -170,6 +176,18 @@ function useMenus(): MenuDefinition[] {
       title: "Data",
       items: [
         { label: "Make Waves…", onSelect: open({ kind: "makeWaves" }) },
+        {
+          label: "Set Wave Values…",
+          onSelect: open({
+            kind: "setWaveValues",
+            ...(selected.length === 1 ? { wave: selected[0]! } : {}),
+          }),
+        },
+        {
+          label: "Recalculate Formulas",
+          disabled: !hasFormulas,
+          onSelect: () => runGui({ op: "recalculate" }),
+        },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
@@ -206,6 +224,8 @@ function useMenus(): MenuDefinition[] {
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
         analysis("Multi-peak Fit…", "fit_peaks"),
         { label: "Results…", onSelect: open({ kind: "results" }) },
+        { label: "Templates…", onSelect: open({ kind: "templates" }) },
+        { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
         { label: "Background…", onSelect: open({ kind: "background" }) },
         { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },
@@ -261,6 +281,12 @@ function useMenus(): MenuDefinition[] {
           label: "Styles…",
           onSelect: () => ui.set({ dialog: { kind: "styles", graph: graph ?? undefined } }),
         },
+        graphDialog("Save as Template…", (name) => ({ kind: "saveGraphTemplate", graph: name })),
+        // Like styles, templates can be used with no graph open.
+        {
+          label: "Make Graphs from Template…",
+          onSelect: () => ui.set({ dialog: { kind: "graphTemplates" } }),
+        },
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },
@@ -274,6 +300,8 @@ function useMenus(): MenuDefinition[] {
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
         { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
         { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
+        { label: "New Panel", onSelect: newPanel },
+        { label: "Import Panel…", onSelect: importPanels },
         { separator: true },
         {
           label: "Data Browser",
@@ -500,6 +528,18 @@ export function App() {
   );
 }
 
-// Exposed for debugging from the browser console.
-const debug = { doc, history, kernel, files, activeWindow, experiment };
+// Exposed for debugging from the browser console (and for the sandbox's end-to-end tests).
+const sandbox = {
+  create: (packages: string[] = []) => Sandbox.create({ pyodideURL: PYODIDE_URL, packages }),
+};
+const debug = {
+  doc,
+  history,
+  kernel,
+  files,
+  activeWindow,
+  experiment,
+  sandbox,
+  plugins: pluginStore,
+};
 Object.assign(globalThis, { oresme: debug });

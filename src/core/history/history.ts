@@ -66,7 +66,7 @@ export class History {
 
   update(
     id: number,
-    change: Partial<Pick<HistoryEntry, "status" | "durationMs" | "startedAt">>,
+    change: Partial<Pick<HistoryEntry, "status" | "durationMs" | "startedAt" | "code">>,
   ): void {
     this.replace(id, (entry) => ({ ...entry, ...change }));
   }

@@ -291,6 +291,36 @@ Igor と同じく、データの単位は **wave**(名前・スケーリング�
   ライブラリのスタイルを適用すると、まず実験にコピーされ、履歴には `op.set_style(...)` として残るので、履歴はどの実験でも再実行できます。
 - **Export…** / **Import…** で JSON ファイルに書き出し・読み込みできます(1 ファイルに複数入ります)。名前が重なるものは `paper_1` のように別名で取り込みます。
 
+### グラフテンプレート
+
+1 つの試料で作った図と同じ構成の図を、別の試料のデータで作ります。スタイル(見た目だけ)と再作成スクリプト(同じデータで同じグラフ)の中間にあたるものです。
+
+- グラフの右クリック › **Save as Template…**(または **Graph › Save as Template…**)で、グラフをテンプレートとして保存します。
+  グラフが描いている wave は**スロット**に置き換わり、trace・軸・見た目・注釈・図の大きさはそのまま残ります。
+  スロットの名前は wave の使い道から付きます: `y`、`x`、誤差棒の `yerr` と `xerr`、色の wave の `color`、画像と等高線の `z`。
+  trace が複数あるときは trace の番号が付きます(`y1`、`x1` は 1 本目の trace のもの)。複数の trace が同じ X wave を使っていれば、スロットも 1 つです。
+- 軸の範囲は、軸ごとに**固定**するか**自動**にするかを保存するときに選びます。固定できるのは範囲を設定してある軸で、固定しなかった軸は新しいデータに合わせます。
+- 注釈と軸ラベルの文字では、`{y.name}` と `{y.unit}` がスロット `y` に入れた wave の名前と単位になります。
+  保存するとき、元のグラフの wave の名前が文字の中にあれば、どのスロットのことか紛れない限り、この参照に置き換えます。
+  括弧の中の単位(`Current (A)` の `(A)`)も、その単位のスロットが 1 つだけなら `({y.unit})` になります。
+  凡例の `\s(trace)` は `\s({trace1})` になります。別の試料で作った図に古い試料名や単位が残りません。
+- **Graph › Make Graphs from Template…** で、テンプレートを選び、行ごとにスロットの wave を選びます。**1 行が 1 枚のグラフ**です。
+  **Add Row** の行は直前の行の写しから始まるので、全部の試料で共通の X wave は 1 度選べば済みます。
+  描く wave(`y` と `z`)は必須、X・誤差棒・色のスロットは空にしてもよく、そのときはその部分なしで描きます(X が空なら wave 自身の X スケーリングに対して描きます)。
+- 何枚作っても 1 回のコマンドで、Undo 1 回で消えます。1 枚でも作れなければ 1 枚も作らず、どの行のどこが悪いか(スロットがない、X と Y の点数が違う、など)をダイアログが作る前に示します。
+- wave の単位がテンプレートを作ったときと違えば**警告**します(作るのは止めません)。比べるのは値の単位と、グラフが使っていた X(と Y)のスケーリングの単位です。
+- テンプレートは実験に保存されます。スタイルと同じく、ブラウザの**ライブラリ**(**To Library** / **To Experiment**)と JSON ファイル(**Export…** / **Import…**)にも置けます。
+  ライブラリのテンプレートから作ると、まず実験にコピーされ、履歴には `op.set_graph_template(...)` が先に残ります。
+- テンプレートは wave の名前を持たないので、wave の名前を変えても消しても影響を受けません。作ったグラフもテンプレートとはつながっていません。
+
+```python
+t = op.graph_template(g, "IV", fixed="bottom")       # g をテンプレート IV として保存(下の軸の範囲は固定)
+t.slots                                               # ['y', 'x']
+t.make(y="s2_I", x="s2_V")                            # 1 枚
+t.make(y=["s1_I", "s2_I", "s3_I"], x=["s1_V", "s2_V", "s3_V"])   # 試料ごとに 1 枚ずつ(リストの 1 項目が 1 枚)
+t.make(y=["s1_I", "s2_I"], x="V")                     # 共通の wave は 1 つ書けばよい
+```
+
 ### コマンドウィンドウ
 
 Igor と同じ「上に履歴、下にコマンドライン」の構成です。
@@ -331,6 +361,28 @@ wave を列として表示・編集します。行も列も仮想スクロール
 - 2 次元以上の wave は列ごとに展開して表示し、3〜4 次元では表示するレイヤーを表の上部で選びます。
 - テキスト wave は文字列のまま、日付は日付として編集できます。
 
+### 式(Set Wave Values)
+
+wave に式を持たせ、ほかの wave から値を計算します(Igor の Set Wave Values と、`R := V / I` の従属関係の式にあたります)。
+**Data › Set Wave Values…** か、表の列見出し・Data Browser の右クリックから開きます。
+
+- 計算する wave(新しい名前なら作ります)と式を入れると、先頭の数点の値がその場で表示されます。式の誤りは位置を示して表示されます。
+- **自動**: 式に使った wave が変わるたびに計算し直します。依存する式だけを依存の順に計算し、元の変更と同じ Undo の段に入ります(Python の `op.atomic()` の中でも同じです)。
+- **手動**: 入力が変わると古くなったことを表示し、**Recalculate**(Data Browser の右クリック、または **Data › Recalculate Formulas**)で計算し直します。
+- Data Browser では式のある wave に _f_ の印が付き、古い(_f\*_)・失敗した・入力がない(_f!_)ときは赤く表示されます。ツールチップと下の情報欄に式と状態が出ます。
+- 式は本体が解釈する専用の言語で、Python でも JavaScript でもありません。属性の参照・添字・import・一覧にない関数の呼び出しは、構文として書けません。
+  - 数値、wave の名前(データフォルダは `run1:V`)、`p`(点の番号)、`x`(X の値)、`pi`、`e`、`nan`、`inf`。
+    これらと同じ名前の wave は `'x'` のように引用符で囲みます。`? :` の `:` の前に空白がないと、`b:c` はフォルダの中の wave と読まれます。
+  - `+ - * / ^`(`^` はべき乗で右から結合、`-2^2` は -4)、比較 `< <= > >= == !=`、`&& || !`、`条件 ? a : b`。
+  - 関数: `abs`、`sqrt`、`exp`、`ln`、`log`(Igor と同じく常用対数)、`log10`、`sin`、`cos`、`tan`、`asin`、`acos`、`atan`、`atan2`、`sinh`、`cosh`、`tanh`、`floor`、`ceil`、`round`(0.5 は 0 から遠い方へ)、`min`、`max`、`pow`、`hypot`、`sign`、`isnan`。
+- 点ごとに計算します。式の中の wave は数値の 1 次元の wave で、点数と X のスケーリングが同じでなければなりません(補間はしません)。結果は float64 で、点数と X のスケーリングは式の中の wave と同じになります。
+  既存の wave に書き込むときは、その X のスケーリングも同じである必要があります(点数は入力に合わせて変わります)。数値は全点に同じ値として使います。
+- 0 での割り算は NaN にして件数を表示します。NaN は `isnan` 以外のすべての演算をそのまま通ります(比較や `? :` の条件も NaN になります)。`isnan(V) ? 0 : V` で置き換えられます。
+- 循環(自分自身や、自分から計算される wave を使う式)は設定するときに拒否します。設定したあとで計算に失敗したとき(入力の点数が変わったなど)は、前の値を残して「エラー」と表示します。入力を削除すると「入力がない」と表示し、同じ名前の wave ができれば計算し直します。
+- 入力の名前を変えたりフォルダへ移したりすると、式の中の名前も書き換わります(書き換わるのは名前だけで、ほかの部分は入力したままです)。
+- 自動の式を持つ wave に直接書き込んだ値は、すぐに式の値で置き換わります(手動なら古いと表示されます)。値を手で変えるときは、先に式を外します(右クリックの **Remove Formula**、Python では `w.formula = None`。値は残ります)。Duplicate で作った複製は式を持ちません。
+- 式と状態は `.oresme` と自動保存に入り、開き直すと同じ式と値に戻ります。操作は `op.set_formula(...)` などとして履歴に記録されます。
+
 ### 解析
 
 **Analysis** メニューから実行できます。どれも Python の関数を呼び出すだけなので、実行したコマンドと結果は履歴に残ります。
@@ -352,6 +404,28 @@ wave を列として表示・編集します。行も列も仮想スクロール
   Python では `op.results()`、`op.result("Fit0")`、`r.rerun()`、`r.apply([w2, w3])`、`op.results_table()` です。結果は実験ファイルと自動保存に含まれ、Undo で一緒に戻ります。
   自作の関数によるフィットを再実行するときは、同じ名前の関数が定義されている必要があります。配列で渡した重みやマスクは保存されないので、再実行時に渡し直します(wave で渡せば保存されます)。
 - **一括フィット**(`op.fit_batch("exp", [w1, w2, w3])`): 複数の wave に同じ設定で順に当てはめ、結果表(`Results`)を作ります。
+- **解析テンプレートと一括実行**(Analysis › Templates…): 1 つの試料で決めた手順に名前を付けて残し、多くの試料に順に適用します。
+  - テンプレートは、名前・説明・**入力**(試料ごとに wave を入れる口)・**段**の列です。各段は登録された Action(`core.fit` など)とその引数で、
+    引数には固定値、入力(`{"$input": "spectrum"}`)、前の段の出力(`{"$step": "bg", "output": "subtracted"}`)だけを書けます。式や、それ以外の参照は書けません。
+    知らない入力や、自分より後の段を指す参照は、保存するときに拒否します(段は前の段しか指せないので、循環は起きません)。
+    Action があるか、引数の型が合うかは、実行する前に Python が調べ、合わなければ何も実行しません。
+  - **Analysis › Results…** で結果を選んで **Make Template…** を押すと(Python では `r.template("Peak")`、`op.make_template("Chain", [r1, r2])`)、
+    結果の設定から段を作ります。結果が読んだ wave は入力に、前の結果が作った wave(残差など)は前の段の出力への参照になるので、
+    続けて行った解析を選べば複数段のテンプレートになります。Action が受け取れない設定(`hold=`、`bounds=`、`exclude=`、配列で渡したデータ)は警告して外します。
+  - **Analysis › Templates…** で、試料ごとの行に入力の wave を選んで **Run** を押します。Data Browser で選んだ wave(**Add Selected Waves**)や、
+    フォルダの wave(**Add from Folder**。入力が複数なら、入力と同じ名前の wave を持つフォルダごとに 1 行。解析が作った wave は除きます)から行をまとめて作れます。
+  - 試料ごとに全段を 1 つの `op.atomic()` の中で行います。失敗した試料は何も残さず、成功した試料はその場で実験に入り、実行記録も更新されるので、GUI で進み具合が見えます。
+    失敗したときは、ほかの試料を続けるか(`on_error="continue"`)、止めるか(`"stop"`。残りは未実行のまま)を選べます。
+    Python を中断すると(Ctrl+C、Stop)、終わった試料は残り、実行中と未実行の試料は cancelled になります。
+  - **出力は既存の wave を上書きしません。** 試料を始める前からある名前で wave を作ろうとすると、`fit_s1_1`(`_2`、…)のように別の名前で作ります。
+    同じテンプレートをもう一度実行しても、前の結果はそのまま残ります。ただし、最新のフィットを入れる `W_coef`・`W_sigma`・`W_peaks` はいつもどおり書き換えます。
+  - **実行記録(Run)**: `Run0`、`Run1`、… の名前で実験に保存されます。使ったテンプレートの**写し**、失敗時の方針、試料ごとの入力と、使ったときの入力の指紋、
+    状態(succeeded・failed・cancelled・pending)、エラー、作った結果と wave、実行した回数を持ちます。テンプレートをあとで変えても消しても、過去の Run は変わりません。
+    wave や結果の名前を変えると、Run の中の名前も追従します。
+  - **Retry Failed**(`run.retry()`): 失敗・中断・未実行の試料だけを、Run が持つテンプレートの写しで同じ Run の中でやり直します。成功した試料はそのままです。
+  - **Make Table**(`run.table()`): 試料ごとの行に、入力・状態・エラー・結果の名前と、成功した試料の係数(と標準偏差)・χ² を並べた表を作ります。失敗した試料の数値は NaN です。
+  - GUI からの実行・やり直し・表は、Action(`core.run_template`、`core.retry_run`、`core.run_table`)を `kernel.invoke` で呼び、履歴には
+    `op.template("Peak").run([...])`、`op.run("Run0").retry()`、`op.run("Run0").table()` として残ります。テンプレートの名前の変更・削除も Python として残ります。
 - **同時フィット**(`op.fit_global("exp", [w1, w2, w3], shared=["tau"])`): 複数の wave に 1 つの関数を同時に当てはめ、指定した係数(時定数、ピーク位置など)を全部の wave で共通にします。
   共通の係数は 1 つの値として、そのほかは wave ごとに求まります。固定(`hold=`)と制約(`bounds=`)はすべての wave に同じものが掛かります。
 - **マルチピークフィット**(Analysis › Multi-peak Fit…): ピークを自動で探し(または位置を指定し)、ガウス・ローレンツ・Voigt・擬 Voigt のいずれかの和とベースライン(定数・直線)を同時に当てはめます。
@@ -389,6 +463,17 @@ wave を列として表示・編集します。行も列も仮想スクロール
   結果は元の wave と同じ点数の、X のスケーリングを持たない wave なので、同じ X wave に対して描きます。
   単位は、両方わかっていれば微分が `Y/X`、積分が `Y·X` です(X のスケーリングを使うときも同じ。日付の X は秒として扱います)。
 - 画像: **フィルタ**(ガウス・平均・メディアン・シャープ化)、任意の直線に沿った**ラインプロファイル**。
+
+### プラグインの見本: 電気化学
+
+[`examples/plugins/electrochem`](examples/plugins/electrochem/) は、隔離された環境(サンドボックス)の Python で動くプラグインの見本です。CV の酸化・還元ピーク(`cv_peaks`: Epa、Epc、ΔEp、E1/2、ipa/ipc)、Tafel 勾配と交換電流密度(`tafel`)、インピーダンスの等価回路フィット(`eis_fit`: R(RC)、R(RQ)、Randles。Nyquist 図用のフィット曲線と、係数・不確かさ・χ²)と、Nyquist 図のグラフテンプレートが入っています。数値計算は合成データで検算してあります。
+
+**Analysis › Plugins…** から入れます。
+
+- **Install from GitHub…** に `https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem` を入れる(その時点のコミットに固定されます)
+- **Install from Folder…** でこのリポジトリの `examples/plugins/electrochem` フォルダを選ぶ
+
+入れたあとはダイアログで action を選んで実行するか、Python から `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})` のように呼びます。結果は Analysis › Results に残り、プラグインを削除しても wave と結果は残ります(再実行だけが、必要なプラグインを示して止まります)。各 action の入力・モデル・符号の約束・限界は [examples/plugins/electrochem/README.md](examples/plugins/electrochem/README.md) にあります。
 
 ### プロシージャウィンドウ
 
@@ -499,6 +584,46 @@ page.arrange(2, 2, margin=36, gap=12)                # 全グラフを読む順�
 page.arrange(1, 2, items=["graph1", "graph0"])       # items を渡すとその順に。入りきらないグラフは警告して残す
 ```
 
+### パネル
+
+ボタンと入力欄で解析を動かすウィンドウです(**Windows › New Panel**)。Igor のコントロールパネル(`NewPanel`、`Button`、`PopupMenu`、`SetVariable`)に当たります。
+研究室で決まった解析を、Python を書かない人にも使ってもらうためのものです。
+
+- 部品は、見出し(Heading)・説明文(Text)・数値(Number)・文字(Text Field)・チェック(Checkbox)・選択(Choice)・wave の選択(Wave Picker)・ボタン(Button)です。
+  部品は上から順に 1 行に 1 つ並び、**On the line before** を付けた部品は前の部品と同じ行に並びます。
+- パネルはグラフや表と同じく実験の中のウィンドウで、部品と**値**は実験に保存されます。値の変更はコマンドなので、Undo でき、履歴には `op.panel("quick_fit")["model"] = "lor"` のように残ります。
+  数値や文字を打ち込んだときは、その欄の 1 回の編集が 1 回の Undo・履歴の 1 行です。
+- wave の選択は wave の名前を持ちます。wave の名前を変えると追従し、wave を削除すると名前が残って **missing** と表示されます。次元の数と名前(`*_I` のようなパターンも可)で一覧を絞れます。
+- **ボタンが呼ぶのは登録された Action だけ**です([解析を名前で呼ぶ](#解析を名前で呼ぶopaction))。コードの文字列は持ちません。
+  引数は、決まった値(文字・数・真偽と、それらのリストや辞書)か、パネルの部品の値(`{"$control": "model"}`、Python では `op.control("model")`)です。部品の値はリストや辞書の中にも置けます(テンプレートの入力など)。
+  押したときに部品の値を読んで引数を作り、Action の引数の型で確かめてから呼びます。足りないもの・合わないものはボタンの下に出ます(「Choose a wave for Spectrum.」など)。
+- 呼び出しの実行中は、そのパネルのボタンは押せません。連打しても 1 回しか動きません。実行中に値を変えても、動いている呼び出しには影響しません(引数は押したときに決まっています)。
+  失敗したときはエラーがボタンの下に出て、値はそのまま残ります。履歴には呼び出しが同じ意味の Python(`op.fit("gauss", op.wave("sig"))` など)として残ります。
+- **作り方**: タイトルバーの **Edit**(または右クリック › **Edit Panel**)で編集モードになります。**Add ▾** で部品を足し、クリックで選んだ部品の設定を右のフォームで変えます。
+  ↑ ↓(`Alt`+矢印キー)で並べ替え、**Delete** で削除です。ボタンは **Action** を一覧から選ぶと、その引数が並びます。引数ごとに、省く(Leave out)・決まった値(Fixed value)・部品の値(Control)を選びます。
+  **New control** は、引数に合った部品(wave なら wave の選択、選択肢ならその選択肢のメニュー、数ならその範囲の数値)を作って結び付けます。
+- **データのみ / コードを含む**: ボタンが `core.`(本体)と `plugin.`(隔離して動くプラグイン)の Action だけを呼ぶパネルは「データのみ」です。
+  プロシージャで登録した Action(`lab.normalize` など)を呼ぶボタンがあると「コードを含む」で、押すとこの実験の Python が動きます。編集モードのツールバーに表示されます。
+  自分の Python をボタンで動かしたいときは、プロシージャで関数を `@op.action` で登録し、ボタンでその Action を選びます。
+- **Export…** で JSON ファイル(`<名前>.panel.json`)に書き出し、**Windows › Import Panel…** で読み込みます。コードを含むパネルを読み込むと、そのことが履歴に出ます。
+
+```python
+p = op.panel("quick_fit", title="Quick Fit")         # なければ作る(ウィンドウも)
+p.wave("target", label="Spectrum", dims=1)           # filter="*_I" で名前を絞る
+p.choice("model", ["gauss", "lor"], label="Model")   # p.select も同じ
+with p.row():                                        # 同じ行に並べる(inline=True と同じ)
+    p.number("n", "Points", value=5, min=1)
+    p.checkbox("quiet", "Quiet", value=True)
+p.button("run", "Fit", action="core.fit",
+         args={"function": op.control("model"), "y": op.control("target"), "quiet": op.control("quiet")})
+p["model"] = "lor"; p["target"]                      # 値の読み書き(wave の選択は名前)
+r = p.press("run")                                   # 押したのと同じ(Action の戻り値が返る)
+p.controls; p.control("model").set(label="Shape", name="shape"); p.control("run").move(0)
+p.data; op.set_panel("copy", p.data); op.panels(); p.kill()
+```
+
+- 部品を足すメソッドは、同じ名前・同じ種類の部品がすでにあれば、設定だけを変えて値は残します。パネルを組み立てるプロシージャを何度実行しても、使っている人の値は消えません。
+
 ### Python のファイル
 
 Python の作業ディレクトリ(`/experiment`)は実験の一部です。
@@ -507,6 +632,23 @@ Python の作業ディレクトリ(`/experiment`)は実験の一部です。
   ダブルクリックでダウンロード、右クリックで削除できます。
 - **File › Add Files for Python…** で追加したファイルは、Python から名前だけで開けます(`open("raw.bin", "rb")`)。
 - 1 ファイル 64 MB までです。それより大きいファイルは Python からは使えますが、実験には保存されません。
+
+### プラグイン
+
+**Analysis › Plugins…** から、解析・パネル・テンプレート・スタイルをまとめたプラグインを入れます。中央の配布サービスはなく、GitHub のリポジトリ(`https://github.com/<owner>/<repo>`、`…/tree/<ブランチ>/<フォルダ>`)か、フォルダ・zip から入れます。
+
+- **入れる前に中身を見せます。** 名前・版・導入元・コミット・Action の一覧・使う Python パッケージ・ファイル数を表示し、**Install** を押すまでプラグインのコードは何も実行しません。
+- **コミットに固定します。** ブランチやタグはその時点のコミットに解決し、すべてのファイルをそのコミットから取得します。各ファイルの SHA-256 を記録し、ブラウザに保存したファイルを読み出すたびに照合します(書き換えられていれば実行しません)。
+- **コードは隔離して動かします。** プラグインの Python は、オリジンを持たない iframe の中の Worker で、専用の Pyodide が動かします。このブラウザの実験(OPFS)・IndexedDB・キャッシュには届かず、ネットワークも使えません。
+  プラグインに渡るのは、Action に選んだ wave の値・スケーリング・単位だけで、返ってきた wave と数値をアプリが検査してから実験に入れます。この仕組みが成り立たないブラウザでは、コードを含むプラグインは動きません(アプリの Python で代わりに動かすことはしません)。
+- **使う**: ダイアログでプラグインを選ぶと Action のフォームが出ます。Python からは `op.invoke("plugin.<名前>.<Action>", {...})` です(`op.atomic()` の中でも使えます)。
+  結果の wave は最初の入力 wave の隣に `<入力名>_<役割>` で作られ、既存の wave は上書きしません。プラグインが返した結果は **Analysis › Results…** に、作ったプラグイン・版・導入元・コミットと一緒に残ります。
+- **止める・更新する・外す**: **Turn Off**(Action が使えなくなり、サンドボックスも止まる)、**Update…**(同じブランチの今のコミットを取得し、違いを見せてから入れ替える)、**Remove…**。
+  外しても、作った wave・グラフ・結果は実験に残ります。結果を再実行しようとすると、必要なプラグインを示して止まります。実験を開いただけでプラグインを取得・起動することはありません。
+- **作る**: フォルダに `oresme-plugin.json`(名前・版・全ファイルの一覧・Action とその引数)と Python のファイルを置き、Action ごとに `@action("名前")` で関数を登録します。
+  見本として、電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット)を `examples/plugins/electrochem/` に置いています。詳しくは公式ドキュメントの「プラグイン」を参照してください。
+
+プロシージャやコマンドラインの Python はプラグインと違い、アプリの Python で動きます(このブラウザの実験を読めて、通信もできます)。作者を知らないコードは、プロシージャではなくプラグインとして入れてください。
 
 ### デスクトップアプリとして使う
 
@@ -550,6 +692,10 @@ z = op.make("z", np.exp(1j * np.linspace(0, 6, 100)))    # 複素数。z.data.re
 np.sqrt(w), w + 1, np.mean(w)    # NumPy の関数や演算はそのまま使える
 w.set_scale(x0=0, dx=0.5, unit="s"); w.unit = "V"; w.note = "..."
 w.rename("volts"); w.duplicate("copy"); op.kill("copy")
+r = op.set_formula("R", "V / I")  # 式で値を決める。入力が変わると計算し直す(auto=False で手動)
+r.formula; r.formula_info        # 式の文字列と、状態("ok"・"stale"・"error"・"missing")
+r.formula = "V / I * 1e3"; r.formula = None              # 式を変える・外す(値は残る)
+op.recalculate()                 # 手動の式や失敗した式を計算し直す
 
 m = op.make("map", np.zeros((64, 48)), dx=0.1, dy=0.1)   # 2 次元。m[i, j] の i が X
 labels = op.make("labels", ["a", "b", "c"])              # テキスト wave
@@ -602,6 +748,11 @@ op.set_style("talk", {"graph": {"font_size": 18}, "traces": [{"line_size": 2}, {
 op.set_default_style("paper")                  # 新しいグラフの既定。None で解除。op.display(w, style=None) でその 1 枚だけ外す
 op.styles(); paper.data; paper.rename("journal"); paper.remove()
 
+iv = op.graph_template(g, "IV", fixed=["bottom"])   # グラフテンプレート。g.save_template("IV") も同じ
+op.graph_template("IV").make(y=["s1_I", "s2_I"], x="V")   # 試料ごとに 1 枚。単位が違えば警告
+op.graph_templates(); iv.slots; iv.data; iv.rename("IV2"); iv.remove()
+op.set_graph_template("IV3", iv)                      # dict(iv.data の形)からも作れる
+
 # 解析
 r = op.fit("gauss", w)                         # r.coef, r.sigma, r["x0"], r.wave
 op.fit(lambda x, a, k: a * np.exp(k * x), w, guess=[1, 0.1])
@@ -614,6 +765,10 @@ kept = op.result("Fit0"); op.results(); kept.changed     # 保存された結果
 kept.rerun(); kept.rerun(replace=True, hold={"y0": 0})   # 同じ設定で再実行(設定の一部を変えても)
 kept.apply([w2, w3]); op.fit_batch("exp", [w1, w2, w3])  # 別の wave に同じフィット。結果表 Results もできる
 op.results_table([r1, r2], name="Compare")               # 結果を横並びの表に(行が結果、列が係数)
+t = kept.template("Peak")                                # 結果から解析テンプレートを作る。op.make_template("Chain", [r1, r2]) は複数段
+run = t.run(["s1", "s2", "s3"], on_error="continue")     # 試料ごとに 1 つの op.atomic()。run.counts、run.samples
+run.retry(); run.table()                                 # 失敗した試料だけやり直す。状態とエラーも入った表
+op.templates(); op.template("Peak").steps; op.runs(); op.run("Run0").copy
 g = op.fit_global("exp", [w1, w2], shared=["tau"])       # 同時フィット: g["tau"]、g["A"](wave ごと)、g.coef
 op.fit_peaks(w, peaks=[284.6, 285.8], same_width=True, spacing={(1, 2): 1.2}, area_ratio={(1, 2): 0.5})
 peaks = op.fit_peaks(w, shape="gauss", baseline="linear")   # peaks[0]["x"], ["height"], ["width"], ["area"]
@@ -640,11 +795,81 @@ p.code; p.auto_run = False; op.procedure("Fits"); op.procedures()
 print(g.script())                              # このグラフをもう一度描く Python
 ```
 
+### まとめて反映する(`op.atomic`)
+
+`with op.atomic():` の中の変更は、ブロックが例外なく終わったときにまとめて実験に入ります。途中で例外が起きると何も残りません。
+
+```python
+with op.atomic():
+    corrected = op.make("corrected", raw.data - background.data)
+    op.display(corrected)          # ブロックが終わるまで、GUI には corrected もグラフも出ない
+```
+
+- ブロックの中の Python には自分の変更が見えます。実験(GUI)には、ブロックが終わるまで何も見えません。終わると 1 回の Undo で戻せる 1 つの変更として入ります。
+- wave と結果を作る解析(`op.fit`、`op.fit_peaks`、`op.background` など)は、それぞれがこのブロックの中で動くので、途中で失敗しても作りかけの wave は残りません。
+- ブロックの実行中も GUI は待たずに使えます。GUI での変更がブロックの変更とぶつからなければ(ウィンドウの移動、ほかの wave の編集)、そのまま両方が残ります。
+  ブロックが読んだ wave が途中で変わっていた場合は、古いデータから計算した結果なので何も残さず、`OresmeError` を出します。
+- 入れ子にできます。内側のブロックで例外が起きると、内側の変更だけが取り消されます。`@op.atomic()` を関数に付けると、呼び出しのたびにブロックになります。
+- ブロックの中ではグラフやページレイアウトを描いたり保存したりできません(まだ実験に入っていないため)。
+
+### 解析を名前で呼ぶ(`op.action`)
+
+解析は、名前(`core.fit` など)と引数の型を付けて **Action** として登録されています。パネル・テンプレート・プラグインは、Python のコードを組み立てるのではなく、名前と JSON の値だけを渡して解析を呼びます。
+
+```python
+op.actions()                                            # 登録された Action の一覧(id、version、title、params)
+r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})   # op.fit("gauss", op.wave("signal")) と同じ
+
+@op.action("lab.normalize", title="Normalize", params={
+    "wave": {"type": "wave", "title": "Wave"},
+    "to": {"type": "number", "default": 1.0, "min": 0},
+})
+def normalize(wave, to=1.0):
+    return op.make(f"{wave.name}_norm", wave.data / np.nanmax(wave.data) * to)
+```
+
+- **引数の型**は `wave`(wave の名前。関数には `op.Wave` で渡る)、`waves`(wave の名前のリスト)、`number`・`integer`(`min`・`max` を付けられる)、`numbers`(数のリスト。`min`・`max`・`length`)、`string`、`boolean`、`choice`(`choices` のどれか)、
+  `samples`(解析テンプレートの試料: 入力ごとに wave の名前を書いた辞書のリスト)です。
+  ほかに `title`、`description`、`optional`、`default`(付けると省略可。関数の既定値と同じでなければ登録を拒否)を書けます。省略した引数は関数に渡さないので、関数の既定値が使われます。`null`(None)は値として受け付けません。
+- **呼ぶ前に検査します。** 知らない Action、知らない版、余分な引数、足りない引数、型の違う引数、選択肢にない値、範囲外の数、存在しない wave は、何もせずに `OresmeError` で拒否します。
+  通った呼び出しは `op.atomic()` の中で動くので、関数の途中で失敗しても何も残りません。引数からコードの文字列を作って実行することはしません。
+- **名前の予約**: `core.` は本体の解析、`plugin.` はプラグインのものです。プロシージャでは、それ以外の名前(`lab.normalize` など。小文字の点区切り)を登録できます。同じ名前と版を登録し直すと置き換わります(プロシージャを実行し直したとき)。
+  新しい `version` は古い版と並べて登録でき、版を指定しない呼び出しは最も新しい版を呼びます。
+- 登録してある解析は `core.fit`、`core.fit_peaks`、`core.background`、`core.onset`、`core.stats`、`core.differentiate`、`core.integrate`、`core.smooth`、`core.interpolate`、`core.fft`、`core.histogram` です。
+  解析テンプレートの実行も `core.run_template`、`core.retry_run`、`core.run_table` として登録してあります。`core.run_template` と `core.retry_run` は全体を 1 つの `op.atomic()` に入れず、試料ごとに反映します。
+  JSON で渡せる引数だけを公開しています(自分の関数、`hold=` や `bounds=` のような辞書、配列は Python から)。
+- メインスレッドからは `kernel.invoke("core.fit", {function: "gauss", y: "signal"})` で呼びます。実行中のコードのあとに順番に動き、履歴には同じ意味の Python(`op.fit("gauss", op.wave("signal"))`)として、出力と一緒に残ります。
+  結果は JSON で返ります。数・文字列・リスト・辞書はそのまま(NaN は `null`)、wave は `{"wave": 名前}`、グラフは `{"graph": 名前}`、フィットの結果は保存された結果の名前(`result`)・係数(`coef`)・`chisq` などです。
+  一覧は `kernel.getActions()` と `kernel.subscribeActions()` で得られます(Python の起動時と、登録が変わるたびに届きます)。型と、送る前に引数を確かめる `validateArgs` は `src/core/actions.ts` にあります。
+
 `w.data` はコピーなので、`w.data[0] = 1` は wave を変更しません(読み取り専用なのでエラーになります)。
 変更するときは `w[0] = 1` か `w.data = ...` を使います。
 1 次元の wave は、複素数でも、末尾のすぐ先に書くと伸びます(`w[len(w)] = 1`、`z[len(z)] = 1 + 2j`)。`w.flat[a:b]` は、形によらず格納順で読み書きします。
 
 IPython の上で動いているので、`obj?`、`%timeit`、`%pwd` などのマジックや、最上位の `await` も使えます。
+
+### 解析テンプレート(`op.set_template`)
+
+テンプレートは辞書でも書けます。`op.background(..., subtract=True)` は名前付きのタプル(`background`、`subtracted`)を返すので、後の段はその名前で受け取れます。
+
+```python
+t = op.set_template("XPS", {
+    "description": "Shirley background, then two peaks",
+    "inputs": [{"name": "spectrum", "title": "Spectrum"}],
+    "steps": [
+        {"id": "bg", "action": "core.background",
+         "args": {"wave": {"$input": "spectrum"}, "subtract": True, "range": [280, 295]}},
+        {"id": "fit", "action": "core.fit_peaks",
+         "args": {"y": {"$step": "bg", "output": "subtracted"}, "count": 2, "quiet": True}},
+    ],
+})
+run = t.run({"spectrum": ["s1", "s2", "s3"]}, on_error="stop", name="XPS_batch")
+```
+
+- 段の出力は、Action の戻り値を JSON にしたもの(`op.invoke` と同じ)のキーです: 辞書のキー(フィットの `wave`、`residuals`、…)、名前付きタプルのフィールド、
+  wave なら `wave`、リストなら `0`、`1`、…、それ以外の値は `value`。結果を保存する段は、その結果が作った wave の役割(`fit`、`residuals`、`peak1`、…)も出力にします。wave は名前として渡ります。
+- `id` を省いた段は `step1`、`step2`、…、`version` を省いた段はいま登録されている最も新しい版になります。
+- `t.run` の試料は、辞書のリスト(`[{"spectrum": "s1"}, …]`)、入力が 1 つならその wave のリスト、入力ごとのリストの辞書(1 つの wave はすべての試料に共通)で渡せます。
 
 ### 科学計算のパッケージ
 
@@ -694,11 +919,29 @@ r.lmfit                                                # lmfit 自身の結果(M
 - **すべての変更は 1 つの関数を通ります。** GUI も Python も `applyCommand(state, command)` に同じコマンドを渡します。
   コマンドは不変の状態を返す純粋関数で、Undo は以前の状態に戻すだけです(変更のない wave は共有されます)。
   Python の 1 回の実行は 1 つの Undo 単位になります。
+- **複数のコマンドは、まとめて入るか、何も入らないかです。** `doc.transact()` は作業用の状態にコマンドを順に適用し、最後に 1 回だけ差し替えます。GUI の操作はこれを使うので、途中のコマンドが失敗しても前のコマンドは残りません。
+  Python の `op.atomic()` は、複数の呼び出しにまたがる同じ仕組み(`Stage`)です。ブロックの変更は実験と別に置かれ、終わったときに、その間の GUI の変更の上に適用し直されます。
+  wave の `rev` は全 wave を通して一意で再利用されないので、ブロックが読んだ wave の `rev` が変わっていなければ、中身も変わっていません。
+- **GUI から解析を呼ぶ入口は Action です。** Python の関数に名前と引数の型を付けて登録し(`@op.action`)、メインスレッドは `{type: "invoke", action, version, argsJson}` をワーカーに送ります。
+  Python が登録表を引いて引数を検査し、`op.atomic()` の中で関数を呼んで、結果を JSON で返します。コードの文字列は組み立てません。
+  TypeScript 側に別の API を作らないので、解析の定義は Python の関数だけです。登録表は Python の起動時と、変わるたびにメインスレッドへ送られます。
+- **パネルはデータです。** ボタンが持つのは Action の id と引数(決まった値か `{"$control": 名前}`)だけで、押されると TypeScript が部品の値から引数を作り(`resolveButton`)、登録表で確かめて `invoke` します。
+  どの Action を呼ぶかでパネルの信頼の段階が決まります(`panelTrust`: `core.` と `plugin.` だけなら「データのみ」、それ以外は利用者のプロシージャの Python なので「コードを含む」)。
+  実行中かどうかは文書ではなく画面の状態(`src/app/panels.ts`)に置き、Undo や保存の対象にしません。
+- **解析テンプレートは、Action を順に呼ぶデータです。** テンプレートと実行記録は Doc の `templates` と `runs` にあり、コマンドで変わります。
+  実行するのは Action の登録表がある Python(`core.run_template`)で、試料ごとに `op.atomic()` で反映し、そのたびに記録も同じブロックで更新します。
+- **自動の式は、どの状態でも最新です。** 作業用の状態にコマンドを適用するたびに(`Working.dispatch`)、入力が変わった自動の式を依存の順に計算し直します。
+  式は前回計算したときの入力と自分自身の `rev` を覚えていて、どれかが違えば古いと分かります。そのため計算し直しは元の変更と同じ Undo の段・トランザクション・`op.atomic()` に入り、ブロックを適用し直すときにも計算し直されます。
+  式の言語は `src/core/doc/formula.ts` の手書きの構文解析器が読み、DOM に依存しません。
 - **Python からの呼び出しは同期です。** `w.data` のような式は次の行に進む前に答えが必要ですが、
   Python を実行中のワーカーはメッセージを受け取れません。そこでワーカーは要求を送ったあと `SharedArrayBuffer` 上で
   `Atomics.wait` で待ち、メインスレッドがそこに答えを書き込んで起こします。
 - **グラフは描画命令のリストを経由します。** `layoutGraph()` がグラフ定義とサイズから線・文字などの命令のリストを作る純粋関数で、
   Canvas 2D・SVG・PDF の 3 つのバックエンドがそれを描きます。画面と書き出しが一致し、レイアウトは DOM なしでテストできます。
+
+- **プラグインのコードは別のオリジンで動きます。** `sandbox="allow-scripts"` の iframe(`allow-same-origin` なし)の中で、`data:` URL から起動した Worker が専用の Pyodide を動かします。
+  iframe の CSP は取得をすべて禁止し、Pyodide とパッケージはアプリが読み込んでバイト列で渡します。Worker は起動時に、オリジンが不透明で、CSP が効き、保存領域に届かないことを確かめてから動きます。
+  アプリとは専用の `MessagePort` だけでつながり、届いたものはすべて `src/core/sandbox/validate.ts` で検査してから実験に入れます。
 
 `SharedArrayBuffer` にはクロスオリジン分離(COOP / COEP ヘッダー)が必要です。開発サーバーとプレビューサーバーはヘッダーを付けます。
 ヘッダーを設定できない静的ホスティングでは、同梱の Service Worker(`sw.js`)が代わりに付けるので、
@@ -706,17 +949,21 @@ r.lmfit                                                # lmfit 自身の結果(M
 
 ### ディレクトリ
 
-| 場所                | 内容                                                                                                                                     |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/core/doc/`     | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                                                                         |
-| `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算                                                          |
-| `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                                                              |
-| `src/core/io/`      | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、Python で読む形式(Parquet・HDF5)の振り分け、実験ファイル(`.oresme`) |
-| `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                                                                  |
-| `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                                                                         |
-| `src/app/`          | アプリの状態、自動保存、書き出し、スタイルのライブラリ                                                                                   |
-| `src/editor/`       | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行                                                      |
-| `src/ui/`           | React コンポーネント                                                                                                                     |
+| 場所                  | 内容                                                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/core/doc/`       | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                                                                         |
+| `src/core/plot/`      | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算                                                          |
+| `src/core/history/`   | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                                                              |
+| `src/core/io/`        | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、Python で読む形式(Parquet・HDF5)の振り分け、実験ファイル(`.oresme`) |
+| `src/core/files/`     | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                                                                  |
+| `src/core/actions.ts` | Action の一覧と引数の型、送る前の引数の検査                                                                                              |
+| `src/core/plugins/`   | プラグインの manifest、パッケージの検査と lock、実行結果の反映                                                                           |
+| `src/core/sandbox/`   | サンドボックスとのメッセージと、その検査                                                                                                 |
+| `src/kernel/`         | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                                                                         |
+| `src/sandbox/`        | プラグインのサンドボックス(iframe と Worker、プラグイン用の Python のモジュール)                                                         |
+| `src/app/`            | アプリの状態、自動保存、書き出し、スタイルとグラフテンプレートのライブラリ、`plugins/`(プラグインの導入・保存・実行)                     |
+| `src/editor/`         | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行                                                      |
+| `src/ui/`             | React コンポーネント                                                                                                                     |
 
 `src/core/` は DOM にも React にも依存しません。
 
@@ -775,6 +1022,8 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 ## 制限
 
 - Windows / macOS / Linux 用のネイティブのパッケージ(Tauri や Electron)はありません。デスクトップでは PWA としてインストールして使います。
+- プラグインのサンドボックスは Chromium と WebKit(Safari)で、通信と保存領域が遮断されることを試験しています。Firefox の試験は CI(Linux)で行います。
+  プラグインは、実行中にアプリの文書を読み書きできません(入力の wave を受け取り、新しい wave と数値を返すだけです)。private repository からの導入、プラグイン同士の依存はありません。
 - Undo は 100 手前まで、かつ過去の手順だけが抱えている wave データが 512 MB を超えない範囲までです(大きな wave を何度も書き換えると、古い手順から忘れます)。
 - 64 ビット整数の wave はありません(`float64` になります。2⁵³ までの整数は正確に入ります)。
 - Excel は `.xlsx` / `.xlsm` の読み込みだけです。書き出しと、古い `.xls` は対応していません。
@@ -799,6 +1048,7 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 - 文字の書式のコードのうち、Igor の `\f` の白抜き・影(8・16)と、凡例の記号以外の `\k`・`\L` などの線や記号のコードには対応していません。
 - グラフのスタイルは trace と軸とフォントの見た目だけを持ちます。画像プロット・等高線・凡例などの注釈の見た目は含みません。
 - 3〜4 次元の wave を一度に立体的に表示する機能(ボリューム表示など)はありません。1 面ずつの表示です。
+- 式(Set Wave Values)が扱うのは数値の 1 次元の実数の wave だけです。2 次元以上・複素数・テキストの wave は使えません。X の違う wave を補間して計算することもしません。
 
 ## 公式ドキュメントの開発
 

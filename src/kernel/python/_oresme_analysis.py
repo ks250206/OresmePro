@@ -4,8 +4,10 @@ These are part of the ``oresme`` module (``op.fit``, ``op.stats``, ...). They
 need only NumPy.
 """
 
+import collections
 import inspect
 import math
+import warnings
 
 import numpy as np
 
@@ -18,6 +20,7 @@ __all__ = [
     "result",
     "results",
     "results_table",
+    "make_template",
     "fit",
     "fit_batch",
     "fit_global",
@@ -513,8 +516,29 @@ class FitResult:
         """Fit other waves with the same settings; see ``Result.apply``."""
         return self.result.apply(waves, **changes)
 
+    def template(self, name, description=""):
+        """Keep this fit as an analysis template; see ``Result.template``."""
+        return self.result.template(name, description)
+
     def __getitem__(self, name):
         return float(self.coef[self.names.index(name)])
+
+    def _json(self):
+        # What an action call returns to the application (see op.invoke).
+        return {
+            "result": self.name,
+            "function": self.function,
+            "coef": dict(zip(self.names, self.coef)),
+            "sigma": dict(zip(self.names, self.sigma)),
+            "held": self.held,
+            "chisq": self.chisq,
+            "points": self.points,
+            "converged": self.converged,
+            "reason": self.reason,
+            "wave": self.wave,
+            "residuals": self.residuals,
+            "band": self.band,
+        }
 
     def __repr__(self):
         return f"FitResult({self.function}, chisq={self.chisq:.6g})"
@@ -789,6 +813,7 @@ def _lmfit_fit(model_, x_fit, y_fit, weights, guess, hold, bounds, given):
             f"lmfit {model_.name}", outcome)
 
 
+@_op.atomic()
 def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None,
         xrange=None, exclude=None, mask=None, cursors=False, graph=None, name=None, quiet=False,
         residuals=False, band=None, result=None, record=True, params=None):
@@ -1203,6 +1228,24 @@ class Result:
         outcome is kept as a new result, so that both can be compared, unless
         ``replace=True``.
         """
+        if self.kind == "plugin":
+            # A plugin's action, run again in its sandbox with the same waves and values.
+            info = self._info()
+            settings = info["settings"]
+            source = info.get("source") or {}
+            arguments = {**settings.get("inputs", {}), **settings.get("params", {}), **changes}
+            try:
+                return _op._invoke_plugin(source.get("action") or settings["action"], arguments)
+            except _op.OresmeError as error:
+                if "No installed plugin" not in str(error) or not source.get("plugin"):
+                    raise
+                # Say which plugin is needed, and where it came from, to install it again.
+                commit = f" at {source['commit'][:12]}" if source.get("commit") else ""
+                raise _op.OresmeError(
+                    f"{error} This result was made by the plugin {source['plugin']} "
+                    f"{source.get('version', '')} from {source.get('origin', '?')}{commit}: "
+                    "install it (Analysis > Plugins...) to run it again."
+                ) from None
         call, settings = self._call(**changes)
         if replace:
             settings["result"] = self._name
@@ -1217,6 +1260,8 @@ class Result:
         """
         if self.kind == "global":
             raise _op.OresmeError("A fit of several waves at once cannot be applied wave by wave.")
+        if self.kind == "plugin":
+            raise _op.OresmeError("Run a plugin's action on other waves with op.invoke.")
         outcomes = []
         for wave_ in [waves] if isinstance(waves, (str, _op.Wave)) else list(waves):
             call, settings = self._call(**changes)
@@ -1229,6 +1274,10 @@ class Result:
             results_table(outcomes)
         return outcomes
 
+    def template(self, name, description=""):
+        """Keep this analysis as a template, to do to other samples; see ``op.make_template``."""
+        return make_template(name, [self], description)
+
     def rename(self, name):
         self._name = _op._dispatch({"op": "renameResult", "name": self._name, "newName": name})
         return self
@@ -1236,6 +1285,9 @@ class Result:
     def remove(self):
         """Forget the result. The waves it made stay."""
         _op._dispatch({"op": "removeResults", "names": [self._name]})
+
+    def _json(self):
+        return {"result": self._name}
 
     def __repr__(self):
         return f"Result({self._name!r})"
@@ -1362,6 +1414,115 @@ def fit_batch(function, waves, *, table=True, quiet=True, **options):
     return outcomes
 
 
+#: The action that does each kind of kept analysis again.
+_RESULT_ACTIONS = {"fit": "core.fit", "peaks": "core.fit_peaks"}
+#: Settings that say what to call what is made, or how to keep it: a template chooses those anew.
+_NOT_TEMPLATED = ("name", "result", "record", "graph", "custom")
+
+
+def _says_something(value):
+    """Whether a setting left out of a template would have changed the analysis."""
+    return value not in (None, False, "", [], {}, ())
+
+
+def make_template(name, results_, description=""):
+    """Keep analyses as a template: their steps and settings, with the waves taken out.
+
+    ``results_`` is a list of results (names, or what the fits returned), in
+    the order they were done; each becomes a step that calls its action
+    (``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+    A wave an analysis read becomes an input of the template, named after
+    the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
+    made becomes a reference to that step's output instead, so that results
+    done one after the other become a template of several steps. Steps are
+    quiet. Settings the action cannot take (``hold=``, ``bounds=``,
+    ``exclude=``, data given as an array) are left out with a warning. A
+    fit of several waves at once (``op.fit_global``) has no action and
+    cannot be in a template. Returns the template (see ``op.Template``).
+    """
+    items = [results_] if isinstance(results_, (str, Result, FitResult, PeakFitResult)) else results_
+    names = [_result_name(item) for item in items]
+    if not names:
+        raise _op.OresmeError("Give the results to make the template from.")
+    inputs = []
+    steps = []
+    slot_of = {}  # wave read -> input slot
+    made_by = {}  # wave made -> (step id, output)
+    for result_name in names:
+        info = _op._call("resultInfo", {"name": result_name})[0]
+        action_id = _RESULT_ACTIONS.get(info["kind"])
+        if action_id is None:
+            raise _op.OresmeError(
+                f"{result_name} fitted several waves at once, which a template cannot do: "
+                "fit them in a procedure of your own, registered as an action."
+            )
+        settings = info["settings"]
+        if settings.get("custom"):
+            raise _op.OresmeError(
+                f"{result_name} used your function {settings.get('function')!r}: a template "
+                "calls actions, so register the fit as an action of your own."
+            )
+        found = _op._find_action(action_id, None)
+        step_id = action_id.split(".", 1)[1]
+        taken_ids = {step["id"] for step in steps}
+        number = 2
+        while step_id in taken_ids:
+            step_id = f"{action_id.split('.', 1)[1]}{number}"
+            number += 1
+
+        def wave_arg(wave_name, key, spec):
+            if wave_name in made_by:
+                step, output = made_by[wave_name]
+                return {"$step": step, "output": output}
+            if wave_name not in slot_of:
+                slot = key
+                used = {item["name"] for item in inputs}
+                count = 2
+                while slot in used:
+                    slot = f"{key}{count}"
+                    count += 1
+                slot_of[wave_name] = slot
+                inputs.append({"name": slot, "title": spec.get("title", key), "kind": "wave"})
+            return {"$input": slot_of[wave_name]}
+
+        args = {}
+        left_out = []
+        for key, value in settings.items():
+            if key in _NOT_TEMPLATED or value is None:
+                continue
+            spec = found.params.get(key)
+            if spec is None or value == _UNREPEATABLE:
+                if _says_something(value):
+                    left_out.append(key)
+                continue
+            if "default" in spec and spec["default"] == value:
+                continue
+            if spec["type"] == "wave":
+                if not isinstance(value, str):
+                    left_out.append(key)
+                    continue
+                args[key] = wave_arg(value, key, spec)
+            elif spec["type"] == "waves":
+                args[key] = [wave_arg(item, key, spec) for item in value]
+            else:
+                try:
+                    args[key] = _op._check_value(spec, value, key, resolve_names=False)
+                except _op.OresmeError:
+                    left_out.append(key)
+        if "quiet" in found.params:
+            args["quiet"] = True
+        if left_out:
+            warnings.warn(
+                f"{result_name}: {', '.join(left_out)} left out of the template: "
+                f"{action_id} does not take {'it' if len(left_out) == 1 else 'them'}.",
+                stacklevel=2,
+            )
+        steps.append({"id": step_id, "action": found.id, "version": found.version, "args": args})
+        for role, wave_name in info["outputs"].items():
+            made_by.setdefault(wave_name, (step_id, role))
+    return _op.set_template(name, {"description": description, "inputs": inputs, "steps": steps})
+
+
 class GlobalFitResult:
     """The outcome of ``op.fit_global``: one row of coefficients per wave.
 
@@ -1399,6 +1560,22 @@ class GlobalFitResult:
         column = self.coef[:, self.names.index(name)]
         return float(column[0]) if name in self.shared else column.copy()
 
+    def _json(self):
+        return {
+            "result": self.name,
+            "function": self.function,
+            "names": self.names,
+            "shared": self.shared,
+            "data": self.data,
+            "coef": self.coef,
+            "sigma": self.sigma,
+            "chisq": self.chisq,
+            "points": self.points,
+            "converged": self.converged,
+            "reason": self.reason,
+            "waves": self.waves,
+        }
+
     def __repr__(self):
         return f"GlobalFitResult({self.function}, {len(self.data)} waves, chisq={self.chisq:.6g})"
 
@@ -1430,6 +1607,7 @@ class GlobalFitResult:
         return "\n".join(lines)
 
 
+@_op.atomic()
 def fit_global(function, ys, xs=None, *, shared=(), guess=None, hold=None, bounds=None,
                quiet=False, result=None, record=True):
     """Fit one function to several waves at once, with some parameters common to all.
@@ -1637,6 +1815,7 @@ def _sibling(source, suffix, name):
     return name or f"{source.name}{suffix}"
 
 
+@_op.atomic()
 def stats(wave_, quiet=False):
     """Summary statistics of a wave, printed and returned as a dict."""
     source, values = _numeric(wave_)
@@ -1702,6 +1881,7 @@ def _units(y_unit, x_unit, joint):
     return f"({y_unit})·{x_unit}" if "/" in y_unit else f"{y_unit}·{x_unit}"
 
 
+@_op.atomic()
 def differentiate(wave_, name=None, *, x=None):
     """The derivative with respect to X, as a new wave ``<name>_DIF``.
 
@@ -1759,6 +1939,7 @@ def differentiate(wave_, name=None, *, x=None):
     )
 
 
+@_op.atomic()
 def integrate(wave_, name=None, *, x=None):
     """The running integral over X (trapezoidal), as a new wave ``<name>_INT``.
 
@@ -1800,6 +1981,7 @@ def integrate(wave_, name=None, *, x=None):
     )
 
 
+@_op.atomic()
 def smooth(wave_, n=5, name=None):
     """A moving average over ``n`` points (odd), as a new wave ``<name>_smth``."""
     source, values = _numeric(wave_)
@@ -1815,6 +1997,7 @@ def smooth(wave_, n=5, name=None):
     )
 
 
+@_op.atomic()
 def fft(wave_, name=None, output="magnitude"):
     """The spectrum of a wave, as a new wave ``<name>_FFT`` scaled in frequency.
 
@@ -1853,6 +2036,7 @@ def fft(wave_, name=None, output="magnitude"):
     )
 
 
+@_op.atomic()
 def ifft(wave_, name=None, n=None):
     """The signal whose spectrum a complex wave holds, as ``<name>_IFFT``.
 
@@ -1882,6 +2066,7 @@ def ifft(wave_, name=None, n=None):
     )
 
 
+@_op.atomic()
 def histogram(wave_, bins=50, name=None):
     """Counts of the values in ``bins`` equal bins, as a new wave ``<name>_Hist``."""
     source, values = _numeric(wave_)
@@ -1979,6 +2164,7 @@ def _spread(function, values, covariance):
     return float(np.sqrt(abs(slopes @ covariance @ slopes)))
 
 
+@_op.atomic()
 def find_peaks(wave_, x=None, *, min_height=None, min_prominence=None, smooth=0, negative=False):
     """Find the peaks of a 1-D wave. Returns a list of dicts, tallest first.
 
@@ -2099,11 +2285,29 @@ class PeakFitResult:
             raise _op.OresmeError("This fit was not recorded (record=False).")
         return Result(self.name)
 
+    def template(self, name, description=""):
+        """Keep this fit as an analysis template; see ``Result.template``."""
+        return self.result.template(name, description)
+
     def __len__(self):
         return len(self.peaks)
 
     def __getitem__(self, index):
         return self.peaks[index]
+
+    def _json(self):
+        return {
+            "result": self.name,
+            "shape": self.shape,
+            "peaks": self.peaks,
+            "baseline": self.baseline,
+            "chisq": self.chisq,
+            "points": self.points,
+            "converged": self.converged,
+            "reason": self.reason,
+            "wave": self.wave,
+            "components": self.components,
+        }
 
     def __repr__(self):
         return f"PeakFitResult({len(self.peaks)} {self.shape} peaks, chisq={self.chisq:.6g})"
@@ -2143,6 +2347,7 @@ def _triples(ties, what):
         ) from None
 
 
+@_op.atomic()
 def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", range=None,
               xrange=None, exclude=None, mask=None, cursors=False, graph=None, components=True,
               same_width=False, spacing=None, area_ratio=None, quiet=False, result=None,
@@ -2573,6 +2778,7 @@ def _tougaard_integral(x, y, losses_up, C):
     return result
 
 
+@_op.atomic()
 def background(wave_, method="shirley", *, x=None, range=None, cursors=False, graph=None,
                average=5, subtract=False, energy=None, B=2866.0, C=1643.0, scale=True,
                tolerance=1e-6, name=None):
@@ -2609,7 +2815,8 @@ def background(wave_, method="shirley", *, x=None, range=None, cursors=False, gr
     The B used is written in the note of the background wave.
 
     ``subtract=True`` also makes ``<name>_sub``, the data minus the
-    background, and returns (background, subtracted).
+    background, and returns (background, subtracted), a named tuple whose
+    fields are also ``.background`` and ``.subtracted``.
     """
     if method not in ("shirley", "tougaard", "linear"):
         raise _op.OresmeError('method must be "shirley", "tougaard" or "linear".')
@@ -2666,7 +2873,12 @@ def background(wave_, method="shirley", *, x=None, range=None, cursors=False, gr
     made = _op.make(_sibling(source, "_bg", name), whole, note=note, **scaling)
     if not subtract:
         return made
-    return made, _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
+    subtracted = _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
+    return Background(made, subtracted)
+
+
+#: What ``op.background`` returns with ``subtract=True``: unpacks as (background, subtracted).
+Background = collections.namedtuple("Background", ["background", "subtracted"])
 
 
 def _with_error(value, error):
@@ -2725,6 +2937,17 @@ class OnsetResult:
     def __float__(self):
         return float(self.x)
 
+    def _json(self):
+        return {
+            "x": self.x,
+            "x_sigma": self.x_sigma,
+            "y": self.y,
+            "edge": self.edge,
+            "baseline": self.baseline,
+            "x_unit": self.x_unit,
+            "waves": self.waves,
+        }
+
     def __repr__(self):
         return f"OnsetResult({self.name}, x={self.x:.6g})"
 
@@ -2743,6 +2966,7 @@ class OnsetResult:
         return "\n".join(lines)
 
 
+@_op.atomic()
 def onset(wave_, x=None, *, edge, baseline=None, graph=None, quiet=False):
     """Where a rising or falling edge starts, by extrapolating it to the baseline.
 
@@ -2893,6 +3117,7 @@ def _spline(x, y, at):
     )
 
 
+@_op.atomic()
 def interpolate(wave_, x=None, *, n=None, at=None, kind="linear", name=None):
     """Values between the points of a wave, as a new wave ``<name>_interp``.
 
@@ -2969,6 +3194,7 @@ def _like(source, name, values):
     )
 
 
+@_op.atomic()
 def filter_image(wave_, kind="gauss", size=3, name=None):
     """Smooth or sharpen a 2-D wave; the result is ``<name>_filt``.
 
@@ -3013,6 +3239,7 @@ def filter_image(wave_, kind="gauss", size=3, name=None):
     return _like(source, _sibling(source, "_filt", name), result)
 
 
+@_op.atomic()
 def line_profile(wave_, start, end, n=None, name=None):
     """The values of a 2-D wave along a straight line, as ``<name>_prof``.
 
@@ -3052,3 +3279,207 @@ def line_profile(wave_, start, end, n=None, name=None):
         x_unit=source.x_unit if source.x_unit == source.y_unit else "",
         unit=source.unit,
     )
+
+
+# --- Actions -----------------------------------------------------------------
+#
+# The analyses that panels, templates and plugins can call by name (see
+# op.action). Only arguments that plain values (JSON) can give are described:
+# functions of the user's, dicts such as hold= and bounds=, and arrays where a
+# wave can be named instead are left to Python.
+
+
+def _wave_param(title, description=None, optional=False):
+    spec = {"type": "wave", "title": title}
+    if description:
+        spec["description"] = description
+    if optional:
+        spec["optional"] = True
+    return spec
+
+
+def _span_param(title, description):
+    return {"type": "numbers", "length": 2, "title": title, "description": description, "optional": True}
+
+
+_WAVE = {"wave": {**_wave_param("Wave"), "arg": "wave_"}}
+_NAME = {"name": {"type": "string", "title": "Output name", "optional": True,
+                  "description": "The name of the wave made; by default from the wave's name."}}
+_X_WAVE = {"x": _wave_param("X wave", "Use these X values instead of the wave's X scaling.", True)}
+_GRAPH = {"graph": {"type": "string", "title": "Graph", "optional": True,
+                    "description": "The graph to use; by default the frontmost one showing the wave."}}
+_QUIET = {"quiet": {"type": "boolean", "title": "Quiet", "default": False,
+                    "description": "Print nothing."}}
+_POINTS = {
+    "range": {**_span_param("Point range", "Use the points from a to b, inclusive (point numbers)."),
+              "min": 0},
+    "xrange": _span_param("X range", "Use the points with X between x1 and x2."),
+    "mask": _wave_param("Mask wave", "Leave out the points where this wave is zero.", True),
+    "cursors": {"type": "boolean", "title": "Between cursors", "default": False,
+                "description": "Use the points between cursors A and B of the graph."},
+}
+_RECORD = {
+    "result": {"type": "string", "title": "Result name", "optional": True,
+               "description": "Keep the result under this name, replacing one of that name."},
+    "record": {"type": "boolean", "title": "Keep the result", "default": True},
+}
+
+with _op._registering("core"):
+    _op.action(
+        "core.fit", title="Curve Fit", description="Fit a function to a wave by least squares.",
+        params={
+            "function": {"type": "choice", "title": "Function",
+                         "choices": [*_FUNCTIONS, *(f"poly{terms}" for terms in range(2, 10))]},
+            "y": _wave_param("Y wave"),
+            **_X_WAVE,
+            "guess": {"type": "numbers", "title": "Initial guess", "optional": True,
+                      "description": "One starting value per parameter."},
+            "sigma": _wave_param("Weighting wave", "The standard deviation of each point.", True),
+            **_POINTS,
+            **_GRAPH,
+            "name": {"type": "string", "title": "Fit wave name", "optional": True,
+                     "description": "The name of the fitted curve; fit_<name> by default."},
+            **_QUIET,
+            "residuals": {"type": "boolean", "title": "Residuals", "default": False},
+            "band": {"type": "number", "title": "Confidence band", "min": 0, "max": 1, "optional": True,
+                     "description": "The level of the confidence band of the curve, such as 0.95."},
+            **_RECORD,
+        },
+    )(fit)
+
+    _op.action(
+        "core.fit_peaks", title="Multi-peak Fit",
+        description="Fit several peaks at once: a sum of peaks of one shape on a baseline.",
+        params={
+            "y": _wave_param("Y wave"),
+            **_X_WAVE,
+            "peaks": {"type": "numbers", "title": "Peak positions", "optional": True,
+                      "description": "Where the peaks start, in X; by default they are found."},
+            "count": {"type": "integer", "title": "Number of peaks", "min": 1, "optional": True,
+                      "arg": "peaks", "description": "Take this many of the tallest peaks found."},
+            "shape": {"type": "choice", "title": "Shape", "choices": list(_SHAPES), "default": "gauss"},
+            "baseline": {"type": "choice", "title": "Baseline", "choices": ["constant", "linear"],
+                         "default": "constant"},
+            **_POINTS,
+            **_GRAPH,
+            "components": {"type": "boolean", "title": "Peak waves", "default": True,
+                           "description": "Make a wave for each peak on the baseline."},
+            "same_width": {"type": "boolean", "title": "Same width", "default": False},
+            "min_height": {"type": "number", "title": "Minimum height", "optional": True},
+            "min_prominence": {"type": "number", "title": "Minimum prominence", "min": 0,
+                               "optional": True},
+            "smooth": {"type": "integer", "title": "Smoothing (points)", "min": 0, "default": 0},
+            "negative": {"type": "boolean", "title": "Dips", "default": False,
+                         "description": "Find dips instead of peaks."},
+            **_QUIET,
+            **_RECORD,
+        },
+    )(fit_peaks)
+
+    _op.action(
+        "core.background", title="Background",
+        description="The background under the peaks of a spectrum (Shirley, Tougaard or linear).",
+        params={
+            **_WAVE,
+            "method": {"type": "choice", "title": "Method", "choices": ["shirley", "tougaard", "linear"],
+                       "default": "shirley"},
+            **_X_WAVE,
+            "range": _span_param("X range", "Make the background over the points with X from x1 to x2."),
+            "cursors": _POINTS["cursors"],
+            **_GRAPH,
+            "average": {"type": "integer", "title": "Points averaged at each end", "min": 1,
+                        "default": 5},
+            "subtract": {"type": "boolean", "title": "Subtract", "default": False,
+                         "description": "Also make <name>_sub, the data minus the background."},
+            "energy": {"type": "choice", "title": "Energy loss", "choices": ["binding", "kinetic"],
+                       "optional": True,
+                       "description": "Which way electrons lose energy (Tougaard); by default from the data."},
+            "B": {"type": "number", "title": "B (eV²)", "default": 2866.0},
+            "C": {"type": "number", "title": "C (eV²)", "min": 0, "default": 1643.0},
+            "scale": {"type": "boolean", "title": "Scale B to the data", "default": True},
+            "tolerance": {"type": "number", "title": "Tolerance", "min": 0, "default": 1e-6},
+            **_NAME,
+        },
+    )(background)
+
+    _op.action(
+        "core.onset", title="Onset",
+        description="Where a rising or falling edge starts, by extrapolating it to the baseline.",
+        params={
+            **_WAVE,
+            **_X_WAVE,
+            "edge": {"type": "numbers", "length": 2, "title": "Edge range",
+                     "description": "Fit the edge to the points with X between x1 and x2."},
+            "baseline": _span_param("Baseline range", "Fit the baseline to the points with X between x3 and x4."),
+            "level": {"type": "number", "title": "Baseline level", "optional": True, "arg": "baseline",
+                      "description": "A constant baseline instead of a fitted one; 0 if neither is given."},
+            "graph": {"type": "string", "title": "Graph", "optional": True,
+                      "description": "Draw the lines and the crossing on this graph."},
+            "show": {"type": "boolean", "title": "Draw", "optional": True, "arg": "graph",
+                     "description": "Draw on the frontmost graph showing the wave."},
+            **_QUIET,
+        },
+    )(onset)
+
+    _op.action(
+        "core.stats", title="Wave Stats", description="Summary statistics of a wave.",
+        params={**_WAVE, **_QUIET},
+    )(stats)
+
+    _op.action(
+        "core.differentiate", title="Differentiate",
+        description="The derivative with respect to X, as a new wave <name>_DIF.",
+        params={**_WAVE, **_NAME, **_X_WAVE},
+    )(differentiate)
+
+    _op.action(
+        "core.integrate", title="Integrate",
+        description="The running integral over X (trapezoidal), as a new wave <name>_INT.",
+        params={**_WAVE, **_NAME, **_X_WAVE},
+    )(integrate)
+
+    _op.action(
+        "core.smooth", title="Smooth", description="A moving average, as a new wave <name>_smth.",
+        params={
+            **_WAVE,
+            "n": {"type": "integer", "title": "Points", "min": 1, "default": 5,
+                  "description": "The width of the average, made odd."},
+            **_NAME,
+        },
+    )(smooth)
+
+    _op.action(
+        "core.interpolate", title="Interpolate",
+        description="Values between the points of a wave, as a new wave <name>_interp.",
+        params={
+            **_WAVE,
+            **_X_WAVE,
+            "n": {"type": "integer", "title": "Points", "min": 2, "optional": True,
+                  "description": "Evenly spaced points over the same X range."},
+            "at": _wave_param("At X values", "One point at each of these X values.", True),
+            "kind": {"type": "choice", "title": "Kind", "choices": ["linear", "cubic"],
+                     "default": "linear"},
+            **_NAME,
+        },
+    )(interpolate)
+
+    _op.action(
+        "core.fft", title="FFT",
+        description="The spectrum of a 1-D wave, as a new wave <name>_FFT scaled in frequency.",
+        params={
+            **_WAVE,
+            **_NAME,
+            "output": {"type": "choice", "title": "Output", "choices": ["magnitude", "complex"],
+                       "default": "magnitude"},
+        },
+    )(fft)
+
+    _op.action(
+        "core.histogram", title="Histogram",
+        description="Counts of the values in equal bins, as a new wave <name>_Hist.",
+        params={
+            **_WAVE,
+            "bins": {"type": "integer", "title": "Bins", "min": 1, "default": 50},
+            **_NAME,
+        },
+    )(histogram)

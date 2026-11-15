@@ -1,7 +1,15 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand, checkName, checkStyle } from "../doc/commands";
+import { applyCommand, checkGraphTemplate, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
+import { formulaCurrent, parseFormula } from "../doc/formula";
+import { checkPanel } from "../doc/panels";
 import { checkResult, type AnalysisResult } from "../doc/results";
+import {
+  checkAnalysisTemplate,
+  checkRun,
+  type AnalysisTemplate,
+  type TemplateRun,
+} from "../doc/analysisTemplates";
 import {
   AXIS_SIDES,
   CURSOR_NAMES,
@@ -14,7 +22,9 @@ import {
   type DocState,
   type GraphSpec,
   type PageSpec,
+  type PanelSpec,
   type ProcedureSpec,
+  type GraphTemplate,
   type StyleSpec,
   type TableSpec,
   type TraceSpec,
@@ -44,6 +54,21 @@ export interface SavedWave {
   yUnit?: string;
   unit: string;
   note: string;
+  /** Left out for a wave without a formula. */
+  formula?: SavedFormula;
+}
+
+/**
+ * A wave's formula as saved. Revisions are not (a loaded document has new
+ * ones), so whether the values were out of date is kept instead.
+ */
+export interface SavedFormula {
+  expr: string;
+  auto: boolean;
+  /** True when the values were not those the inputs give (a manual formula not recalculated). */
+  stale?: boolean;
+  error?: string;
+  zeroDivisions?: number;
 }
 
 export interface SavedExperiment {
@@ -54,9 +79,13 @@ export interface SavedExperiment {
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
+  panels?: Record<string, PanelSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
+  graphTemplates?: Record<string, GraphTemplate>;
   results?: Record<string, AnalysisResult>;
+  templates?: Record<string, AnalysisTemplate>;
+  runs?: Record<string, TemplateRun>;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -77,18 +106,30 @@ export function describeExperiment(
       const wave = state.waves[name]!;
       const { x0, dx, xUnit, y0, dy, yUnit, unit, note } = wave;
       const scaling = { x0, dx, xUnit, y0, dy, yUnit, unit, note };
-      return wave.text
+      const saved: SavedWave = wave.text
         ? { name, file: null, text: wave.text, ...scaling }
         : { name, file: fileFor(wave), ...scaling };
+      const { formula } = wave;
+      if (formula) {
+        saved.formula = { expr: formula.expr, auto: formula.auto };
+        if (!formulaCurrent(state, name, formula)) saved.formula.stale = true;
+        if (formula.error !== null) saved.formula.error = formula.error;
+        if (formula.zeroDivisions > 0) saved.formula.zeroDivisions = formula.zeroDivisions;
+      }
+      return saved;
     }),
     folders: [...state.folders],
     graphs: dictFrom(state.graphs),
     tables: dictFrom(state.tables),
     procedures: dictFrom(state.procedures),
     pages: dictFrom(state.pages),
+    panels: dictFrom(state.panels),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
+    graphTemplates: dictFrom(state.graphTemplates),
     results: dictFrom(state.results),
+    templates: dictFrom(state.templates),
+    runs: dictFrom(state.runs),
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
@@ -145,6 +186,43 @@ function upgradeGraph(
   };
 }
 
+/**
+ * Gives the waves of a document being rebuilt the formulas they were saved
+ * with, up to date as they were then: as of the revisions the waves have
+ * now, or, for values that were out of date, of none. A formula that cannot
+ * be read (from a later version, say) is left behind; the values stay.
+ */
+function withFormulas(state: DocState, saved: readonly SavedWave[]): DocState {
+  const waves = dictFrom(state.waves);
+  for (const item of saved) {
+    const wave = waves[item.name];
+    const formula = item.formula;
+    if (!wave || !formula || typeof formula.expr !== "string") continue;
+    let inputs: readonly string[];
+    try {
+      inputs = parseFormula(formula.expr).inputs;
+    } catch {
+      continue;
+    }
+    // Revisions start at 1, so -1 matches no wave: the values stay out of date.
+    const stale = formula.stale === true;
+    waves[item.name] = {
+      ...wave,
+      formula: {
+        expr: formula.expr,
+        auto: formula.auto !== false,
+        inputs: dict(
+          inputs.map((input) => [input, stale ? -1 : (state.waves[input]?.rev ?? null)]),
+        ),
+        rev: stale ? -1 : wave.rev,
+        error: typeof formula.error === "string" ? formula.error : null,
+        zeroDivisions: typeof formula.zeroDivisions === "number" ? formula.zeroDivisions : 0,
+      },
+    };
+  }
+  return { ...state, waves };
+}
+
 /** Rebuilds a document from its saved description and the files it refers to. */
 export function buildState(
   saved: SavedExperiment,
@@ -173,6 +251,7 @@ export function buildState(
     // Waves are rebuilt through makeWave so the document assigns their revisions.
     state = applyCommand(state, { op: "makeWave", name, ...decodeNpy(bytes), ...scaling }).state;
   }
+  state = withFormulas(state, saved.waves);
   // Names are checked as the commands that make these would check them. The
   // records are rebuilt without a prototype (see ../doc/dict), whatever JSON gave.
   const styles = dict<StyleSpec>();
@@ -190,6 +269,16 @@ export function buildState(
     typeof saved.defaultStyle === "string" && saved.defaultStyle in styles
       ? saved.defaultStyle
       : null;
+  const graphTemplates = dict<GraphTemplate>();
+  for (const [name, template] of Object.entries(saved.graphTemplates ?? {})) {
+    checkName(name, "graph template");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      graphTemplates[name] = checkGraphTemplate(template);
+    } catch {
+      continue;
+    }
+  }
   const graphs = dict<GraphSpec>();
   for (const [name, graph] of Object.entries(saved.graphs)) {
     graphs[checkName(name, "graph")] = upgradeGraph(name, graph, styles);
@@ -219,12 +308,23 @@ export function buildState(
     const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
     pages[name] = { ...page, name, items };
   }
+  const panels = dict<PanelSpec>();
+  for (const [name, panel] of Object.entries(saved.panels ?? {})) {
+    checkName(name, "panel");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      panels[name] = { name, ...checkPanel({ title: panel.title, controls: panel.controls }) };
+    } catch {
+      continue;
+    }
+  }
   const windows = saved.windows.filter(
     (window) =>
       window.name in graphs ||
       window.name in tables ||
       window.name in procedures ||
-      window.name in pages,
+      window.name in pages ||
+      window.name in panels,
   );
   const results = dict<AnalysisResult>();
   for (const [name, result] of Object.entries(saved.results ?? {})) {
@@ -236,6 +336,24 @@ export function buildState(
       continue;
     }
   }
+  const templates = dict<AnalysisTemplate>();
+  for (const [name, template] of Object.entries(saved.templates ?? {})) {
+    checkName(name, "template");
+    try {
+      templates[name] = checkAnalysisTemplate(template);
+    } catch {
+      continue;
+    }
+  }
+  const runs = dict<TemplateRun>();
+  for (const [name, run] of Object.entries(saved.runs ?? {})) {
+    checkName(name, "run");
+    try {
+      runs[name] = checkRun(run, name);
+    } catch {
+      continue;
+    }
+  }
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
   return {
     ...state,
@@ -243,9 +361,13 @@ export function buildState(
     tables,
     procedures,
     pages,
+    panels,
     styles,
     defaultStyle,
+    graphTemplates,
     results,
+    templates,
+    runs,
     timeZone,
     windows,
   };

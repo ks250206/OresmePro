@@ -19,10 +19,14 @@ Waves can be kept in data folders: ``"run1:signal"`` is the wave ``signal`` in
 the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 """
 
+import contextlib
 import hashlib
 import importlib
+import inspect
 import io
 import json
+import math
+import numbers
 import os
 import re
 import warnings
@@ -33,6 +37,10 @@ import _oresme_js
 
 __all__ = [
     "OresmeError",
+    "atomic",
+    "action",
+    "actions",
+    "invoke",
     "Wave",
     "Graph",
     "Trace",
@@ -48,6 +56,8 @@ __all__ = [
     "waves",
     "exists",
     "kill",
+    "set_formula",
+    "recalculate",
     "display",
     "image",
     "contour",
@@ -86,6 +96,24 @@ __all__ = [
     "apply_style",
     "set_default_style",
     "default_style",
+    "GraphTemplate",
+    "graph_template",
+    "graph_templates",
+    "set_graph_template",
+    "Template",
+    "template",
+    "templates",
+    "set_template",
+    "Run",
+    "run",
+    "runs",
+    "Panel",
+    "Control",
+    "panel",
+    "panels",
+    "new_panel",
+    "set_panel",
+    "control",
 ]
 
 
@@ -116,7 +144,82 @@ def _call(method, params=None, data=None):
 
 
 def _dispatch(command, data=None):
+    if _fresh is not None and command.get("op") == "makeWave":
+        command = _fresh_name(command)
     return _call("dispatch", command, data)[0]
+
+
+# While a template does a sample (see Template.run): the waves there were
+# before the sample began, and the new names given to waves made under one of
+# those names. None at other times.
+_fresh = None
+
+#: Waves every fit writes anew by design, holding the latest fit: never renamed.
+_SCRATCH_WAVES = frozenset(("W_coef", "W_sigma", "W_peaks"))
+
+
+def _fresh_name(command):
+    """A command making a wave, renamed if it would replace a wave from before the sample.
+
+    A template's steps name the waves they make after their inputs
+    (``fit_<wave>``), and a wave of that name may be there already, from an
+    earlier run say. It is kept: the new wave is made as ``<name>_1``
+    (``_2``, ...) instead, and a step that makes the same name again in the
+    same sample writes to that new wave.
+    """
+    name = command["name"]
+    key = name[5:] if isinstance(name, str) and name.startswith("root:") else name
+    if key in _fresh["renamed"]:
+        return {**command, "name": _fresh["renamed"][key]}
+    if key not in _fresh["taken"] or key in _SCRATCH_WAVES:
+        return command
+    taken = set(_call("listWaves")[0])
+    number = 1
+    while f"{key}_{number}" in taken:
+        number += 1
+    _fresh["renamed"][key] = f"{key}_{number}"
+    return {**command, "name": f"{key}_{number}"}
+
+
+class atomic(contextlib.ContextDecorator):
+    """Make the changes of a block go into the experiment together, or not at all.
+
+    ::
+
+        with op.atomic():
+            corrected = op.make("corrected", raw.data - background.data)
+            op.display(corrected)
+
+    Inside the block Python sees its own changes, but the experiment (and so
+    the GUI) sees none of them until the block ends. If the block raises,
+    nothing it did is kept; if it ends normally, all of it goes in as one undo
+    step. The analyses that make waves and results (``op.fit``,
+    ``op.fit_peaks``, ``op.background``, ...) each run in a block of their
+    own, so one that fails half way leaves nothing behind.
+
+    The experiment may change while the block runs, since the GUI does not
+    wait for Python. Such changes do not stop the block when they do not meet
+    its own (a window moved, another wave edited). But if a wave the block
+    read has changed meanwhile, nothing is kept and ``OresmeError`` is raised:
+    what was computed from it is out of date.
+
+    Blocks may be nested; an inner block that raises takes back only its own
+    changes. Graphs and page layouts cannot be drawn or saved inside a block.
+    ``@op.atomic()`` on a function makes each call of it a block.
+    """
+
+    def __enter__(self):
+        _call("beginAtomic")
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        if kind is None:
+            _call("commitAtomic")
+        else:
+            # The block's own exception is the one to report.
+            with contextlib.suppress(OresmeError):
+                _call("abortAtomic")
+        return False
 
 
 def _camel(name):
@@ -488,6 +591,42 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         _dispatch(command)
         return self
 
+    @property
+    def formula(self):
+        """The formula the values are computed from, as text; None if there is none.
+
+        Assigning one computes it now and keeps it up to date as its waves
+        change: ``r.formula = "V / I"`` (see ``op.set_formula`` for the
+        language, and for a formula computed only when asked). Assigning
+        None removes the formula and keeps the values.
+        """
+        info = self._info()["formula"]
+        return None if info is None else info["expr"]
+
+    @formula.setter
+    def formula(self, expr):
+        if expr is None:
+            _dispatch({"op": "setFormula", "name": self._name, "expr": None})
+        else:
+            set_formula(self, expr)
+
+    @property
+    def formula_info(self):
+        """How the formula stands, as a dict; None if there is none.
+
+        ``expr`` and ``auto`` are as set; ``inputs`` names the waves it
+        reads; ``status`` is ``"ok"``, ``"stale"`` (a manual formula whose
+        inputs changed since it was computed), ``"error"`` (the last
+        computation failed and the values are from before it) or
+        ``"missing"`` (one of its waves does not exist), with ``message``
+        saying more; ``zero_divisions`` counts the points that were divided
+        by zero and so are NaN.
+        """
+        info = self._info()["formula"]
+        if info is None:
+            return None
+        return {_snake(key): value for key, value in info.items() if key != "name"}
+
     def rename(self, new_name):
         """Rename the wave. A name with a folder ("run1:signal") moves it there."""
         new_name = _dispatch({"op": "renameWave", "name": self._name, "newName": new_name})
@@ -612,6 +751,8 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         if info["xUnit"]:
             scale += f" {info['xUnit']}"
         unit = f", unit={info['unit']!r}" if info["unit"] else ""
+        if info["formula"]:
+            unit += f", formula={info['formula']['expr']!r}"
         if len(info["shape"]) > 1:
             return f"Wave({self._name!r}, shape={tuple(info['shape'])}{scale}{unit})"
         return f"Wave({self._name!r}, n={info['shape'][0]}{scale}{unit})"
@@ -1188,6 +1329,30 @@ class Graph(_Props):
         _dispatch({"op": "saveStyle", "name": name, "graph": self._name, "size": bool(size)})
         return Style(name)
 
+    def save_template(self, name, fixed=()):
+        """Keep this graph as a graph template named ``name`` and return it.
+
+        Each wave the graph plots becomes a slot of the template (see
+        ``GraphTemplate``); the traces, axes, look, text and size are kept.
+        An axis keeps its range only if it is named in ``fixed`` (a name or
+        a list of names; ``True`` for every axis): the others follow the
+        data of each graph made from the template. A template of that name
+        is replaced.
+        """
+        if fixed is True:
+            fixed = list(self._info()["axes"])
+        elif isinstance(fixed, str):
+            fixed = [fixed]
+        _dispatch(
+            {
+                "op": "saveGraphTemplate",
+                "name": name,
+                "graph": self._name,
+                "fixed": [str(axis) for axis in fixed or ()],
+            }
+        )
+        return GraphTemplate(name)
+
     def apply_style(self, style):
         """Give this graph the look of a style (a name or a Style). Returns self."""
         apply_style(style, graphs=[self])
@@ -1655,6 +1820,77 @@ def kill(*waves_):
     _dispatch({"op": "killWaves", "names": names})
     for name in names:
         _data_cache.pop(name, None)
+
+
+def set_formula(wave, expr, *, auto=True):
+    """Compute a wave's values from other waves with a formula, and return it.
+
+    ::
+
+        op.set_formula("R", "V / I")
+        op.set_formula("ratio", "run1:A / run2:A", auto=False)
+
+    The wave is made if it does not exist, with the length and X scaling of
+    the waves in the formula. The values are computed now, as float64, and
+    with ``auto=True`` again whenever one of those waves changes, in the
+    same undo step as the change; with ``auto=False`` only by
+    ``op.recalculate()``, the wave being marked out of date meanwhile.
+    Values written into the wave itself are replaced by the formula's (or
+    mark it out of date); ``w.formula = None`` removes the formula first.
+
+    The formula is not Python. It works point by point on 1-D numeric waves
+    with the same number of points and the same X scaling (nothing is
+    interpolated), and knows only:
+
+    - numbers, wave names (``run1:V`` in a data folder; ``'x'`` in quotes
+      for a wave named like one of the words below), ``p`` (the point
+      number), ``x`` (its X value), ``pi``, ``e``, ``nan``, ``inf``
+    - ``+ - * / ^`` (``^`` is a power, ``-2^2`` is -4), comparisons
+      ``< <= > >= == !=``, ``&& || !`` and ``test ? a : b``
+    - ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh
+      cosh tanh floor ceil round min max pow hypot sign isnan``; ``log`` is
+      the common logarithm, as in Igor
+
+    Division by zero gives NaN; a warning says how many points it took.
+    NaN goes through everything but ``isnan``: ``isnan(V) ? 0 : V``. A
+    formula that cannot be computed, or that would make a wave depend on
+    itself, raises ``OresmeError`` saying where, and changes nothing. When
+    an automatic recomputation fails later (an input deleted or of another
+    length), the values stay as they were and ``w.formula_info`` says why.
+    """
+    command = {"op": "setFormula", "name": _wave_name(wave), "expr": str(expr)}
+    if not auto:
+        command["auto"] = False
+    result = Wave(_dispatch(command))
+    count = result.formula_info["zero_divisions"]
+    if count:
+        warnings.warn(
+            f"{count} point{'s were' if count != 1 else ' was'} divided by zero and "
+            f"{'are' if count != 1 else 'is'} NaN.",
+            stacklevel=2,
+        )
+    return result
+
+
+def recalculate(waves=None):
+    """Compute formulas again: those of the given waves, or all.
+
+    Only formulas that are out of date (manual ones whose waves changed) or
+    whose last computation failed are computed, inputs before the waves
+    computed from them. A warning names those that still fail.
+    """
+    command = {"op": "recalculate"}
+    if waves is not None:
+        if isinstance(waves, (Wave, str)):
+            waves = [waves]
+        command["names"] = [_wave_name(item) for item in waves]
+    _dispatch(command)
+    asked = None if waves is None else set(command["names"])
+    for info in _call("formulas")[0]:
+        if asked is not None and info["name"] not in asked:
+            continue
+        if info["status"] in ("error", "missing"):
+            warnings.warn(f"{info['name']}: {info['message']}", stacklevel=2)
 
 
 _DEFAULT = object()
@@ -2559,6 +2795,1781 @@ def default_style():
     """The Style new graphs are given, or None."""
     name = _call("listStyles")[0]["default"]
     return None if name is None else Style(name)
+
+
+# --- Actions ---------------------------------------------------------------
+#
+# An action is a function registered under a name, with a description of its
+# arguments. Panels, templates and plugins call analyses this way: they send
+# the name and plain values (JSON), which are checked here against the
+# description before the function is called. No Python is written from what
+# they send and run.
+
+#: The kinds of value a parameter of an action takes.
+_PARAM_TYPES = ("wave", "waves", "number", "integer", "string", "boolean", "choice", "numbers",
+                "samples")
+_PARAM_KEYS = frozenset(
+    ("type", "title", "description", "optional", "default", "choices", "min", "max", "length", "arg")
+)
+_ACTION_ID = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
+#: Namespaces of action ids that only the application registers in.
+_RESERVED_NAMESPACES = ("core", "plugin")
+
+# id -> {version: _Action}
+_actions = {}
+# Goes up on every registration, so that the kernel can tell the GUI the list changed.
+_actions_revision = 0
+# The reserved namespace the application is registering in at the moment.
+_registering_in = None
+
+
+@contextlib.contextmanager
+def _registering(namespace):
+    """Let the code in the block register actions in a reserved namespace (``core``, ``plugin``).
+
+    The reservation keeps procedures from taking the application's names by
+    accident. It is no security boundary: procedures are trusted code.
+    """
+    global _registering_in
+    before = _registering_in
+    _registering_in = namespace
+    try:
+        yield
+    finally:
+        _registering_in = before
+
+
+class _Action:
+    def __init__(self, id, version, title, description, params, function, atomic=True):
+        self.id = id
+        self.version = version
+        self.title = title
+        self.description = description
+        # name -> description, as checked (with "arg" where it is passed under another name).
+        self.params = params
+        self.function = function
+        # Whether a call runs in one op.atomic() block. Running a template does
+        # not: each sample goes in by itself, so the GUI sees the run go on.
+        self.atomic = atomic
+
+    def spec(self):
+        return {
+            "id": self.id,
+            "version": self.version,
+            "title": self.title,
+            "description": self.description,
+            "params": {
+                name: {key: value for key, value in spec.items() if key != "arg"}
+                for name, spec in self.params.items()
+            },
+        }
+
+
+def _is_number(value):
+    return isinstance(value, numbers.Real) and not isinstance(value, (bool, np.bool_))
+
+
+def _is_integer(value):
+    return _is_number(value) and (isinstance(value, numbers.Integral) or float(value).is_integer())
+
+
+def _check_value(spec, value, where, resolve_names=True):
+    """The value of one argument as plain JSON, or OresmeError saying what is wrong with it."""
+    kind = spec["type"]
+    if value is None:
+        raise OresmeError(f"{where} cannot be None (null): leave it out instead.")
+
+    def number(item, what):
+        if not _is_number(item):
+            raise OresmeError(f"{what} must be a number, not {item!r}.")
+        if not math.isfinite(float(item)):
+            raise OresmeError(f"{what} must be a finite number, not {item!r}.")
+        if kind == "integer" and not _is_integer(item):
+            raise OresmeError(f"{what} must be a whole number, not {item!r}.")
+        plain = int(item) if kind == "integer" else float(item)
+        if "min" in spec and plain < spec["min"]:
+            raise OresmeError(f"{what} must be at least {spec['min']:g}, not {plain:g}.")
+        if "max" in spec and plain > spec["max"]:
+            raise OresmeError(f"{what} must be at most {spec['max']:g}, not {plain:g}.")
+        return plain
+
+    def wave_name(item, what):
+        if isinstance(item, Wave):
+            return item.name
+        if not isinstance(item, str) or not item:
+            raise OresmeError(f"{what} must be the name of a wave, not {item!r}.")
+        return _wave_name(item) if resolve_names else item
+
+    def items():
+        if not isinstance(value, (list, tuple)):
+            raise OresmeError(f"{where} must be a list, not {value!r}.")
+        if "length" in spec and len(value) != spec["length"]:
+            raise OresmeError(f"{where} must have {spec['length']} items, not {len(value)}.")
+        return list(value)
+
+    if kind == "wave":
+        return wave_name(value, where)
+    if kind == "waves":
+        return [wave_name(item, f"{where}[{index}]") for index, item in enumerate(items())]
+    if kind in ("number", "integer"):
+        return number(value, where)
+    if kind == "numbers":
+        return [number(item, f"{where}[{index}]") for index, item in enumerate(items())]
+    if kind == "string":
+        if not isinstance(value, str):
+            raise OresmeError(f"{where} must be a string, not {value!r}.")
+        return value
+    if kind == "boolean":
+        if not isinstance(value, (bool, np.bool_)):
+            raise OresmeError(f"{where} must be True or False, not {value!r}.")
+        return bool(value)
+    if kind == "samples":
+        # The waves are looked up sample by sample, when each is done.
+        rows = []
+        for index, row in enumerate(items()):
+            if not isinstance(row, dict) or not row:
+                raise OresmeError(f"{where}[{index}] must give a wave for each input, as a dict.")
+            rows.append({
+                str(slot): wave_name(item, f"{where}[{index}][{slot!r}]")
+                for slot, item in row.items()
+            })
+        return rows
+    # A choice: a string matches a string, a number a number.
+    if isinstance(value, str) or _is_number(value):
+        for choice in spec["choices"]:
+            if isinstance(choice, str) == isinstance(value, str) and choice == value:
+                return choice
+    listed = ", ".join(_py_literal(choice) for choice in spec["choices"])
+    raise OresmeError(f"{where} must be one of {listed}, not {value!r}.")
+
+
+def _check_spec(action_id, name, spec):
+    """A parameter's description, checked, with ``optional`` filled in."""
+    where = f"{action_id}: parameter {name!r}"
+    if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+        raise OresmeError(f"{action_id}: {name!r} is not a parameter name (letters, digits and _).")
+    if not isinstance(spec, dict):
+        raise OresmeError(f"{where} must be described by a dict, such as {{'type': 'wave'}}.")
+    unknown = sorted(set(spec) - _PARAM_KEYS)
+    if unknown:
+        raise OresmeError(f"{where}: unknown key {unknown[0]!r}. Keys: {', '.join(sorted(_PARAM_KEYS))}.")
+    kind = spec.get("type")
+    if kind not in _PARAM_TYPES:
+        raise OresmeError(f"{where}: type must be one of {', '.join(_PARAM_TYPES)}, not {kind!r}.")
+    checked = {"type": kind}
+    for key in ("title", "description", "arg"):
+        if key in spec:
+            if not isinstance(spec[key], str) or not spec[key]:
+                raise OresmeError(f"{where}: {key} must be a string.")
+            checked[key] = spec[key]
+    if "arg" in checked and not checked["arg"].isidentifier():
+        raise OresmeError(f"{where}: arg must be the name of a parameter of the function.")
+    if "choices" in spec or kind == "choice":
+        choices = spec.get("choices")
+        if kind != "choice":
+            raise OresmeError(f"{where}: only a choice has choices.")
+        if (
+            not isinstance(choices, (list, tuple))
+            or not choices
+            or not all(isinstance(item, str) or _is_number(item) for item in choices)
+            or len(set(choices)) != len(choices)
+        ):
+            raise OresmeError(f"{where}: choices must be a list of different strings or numbers.")
+        checked["choices"] = [_plain(item) for item in choices]
+    for key in ("min", "max"):
+        if key in spec:
+            if kind not in ("number", "integer", "numbers"):
+                raise OresmeError(f"{where}: only numbers have {key}.")
+            if not _is_number(spec[key]) or not math.isfinite(spec[key]):
+                raise OresmeError(f"{where}: {key} must be a finite number.")
+            checked[key] = _plain(spec[key])
+    if "min" in checked and "max" in checked and checked["min"] > checked["max"]:
+        raise OresmeError(f"{where}: min is above max.")
+    if "length" in spec:
+        if kind not in ("waves", "numbers"):
+            raise OresmeError(f"{where}: only lists (waves, numbers) have a length.")
+        if not _is_integer(spec["length"]) or spec["length"] < 0:
+            raise OresmeError(f"{where}: length must be a whole number.")
+        checked["length"] = int(spec["length"])
+    optional = spec.get("optional", False)
+    if not isinstance(optional, bool):
+        raise OresmeError(f"{where}: optional must be True or False.")
+    if "default" in spec:
+        checked["default"] = _check_value(checked, spec["default"], f"{where}: default", False)
+        optional = True
+    checked["optional"] = optional
+    return checked
+
+
+def _check_signature(action_id, function, params):
+    """Every argument must reach the function, and every parameter it needs must be described."""
+    signature = inspect.signature(function)
+    takes_any = any(item.kind is item.VAR_KEYWORD for item in signature.parameters.values())
+    targets = {}
+    for name, spec in params.items():
+        targets.setdefault(spec.get("arg", name), []).append(name)
+    for arg, names in targets.items():
+        item = signature.parameters.get(arg)
+        if (item is None and not takes_any) or (
+            item is not None and item.kind not in (item.POSITIONAL_OR_KEYWORD, item.KEYWORD_ONLY)
+        ):
+            raise OresmeError(f"{action_id}: the function has no keyword parameter {arg!r}.")
+        if len(names) > 1 and any(not params[name]["optional"] for name in names):
+            raise OresmeError(
+                f"{action_id}: {', '.join(names)} are all passed as {arg!r}, so each must be optional."
+            )
+        if item is None or item.default is item.empty:
+            continue
+        for name in names:
+            if "default" in params[name] and params[name]["default"] != _plain(item.default):
+                raise OresmeError(
+                    f"{action_id}: the default of {name!r} is {params[name]['default']!r}, "
+                    f"but the function's is {item.default!r}."
+                )
+    for arg, item in signature.parameters.items():
+        if item.kind in (item.VAR_POSITIONAL, item.VAR_KEYWORD) or item.default is not item.empty:
+            continue
+        names = targets.get(arg, [])
+        if not names or params[names[0]]["optional"]:
+            raise OresmeError(f"{action_id}: the function needs {arg!r}; describe it as a required parameter.")
+
+
+def action(id, *, version=1, title, params, description=None):
+    """Register a function as an action: called by name, with arguments of known types.
+
+    ::
+
+        @op.action("lab.normalize", title="Normalize", params={
+            "wave": {"type": "wave", "title": "Wave"},
+            "to": {"type": "number", "default": 1.0, "min": 0},
+        })
+        def normalize(wave, to=1.0):
+            return op.make(f"{wave.name}_norm", wave.data / np.nanmax(wave.data) * to)
+
+    Panels, templates and plugins call actions with plain values (JSON)
+    instead of Python code; from Python, ``op.invoke("lab.normalize",
+    {"wave": "signal"})`` does the same. The arguments are checked against
+    ``params`` before the function is called, and the call runs in an
+    ``op.atomic()`` block, so a call that fails changes nothing.
+
+    ``id`` is a lowercase dotted name such as ``"lab.normalize"``. Ids that
+    start with ``core.`` are the application's own analyses, and ``plugin.``
+    is kept for plugins: a procedure cannot register those. Registering the
+    same id and version again replaces it, as running a procedure again
+    does. A new ``version`` of an action can be registered beside the old
+    one: a caller that names a version gets it, others get the highest.
+
+    ``params`` maps each argument's name to a dict that describes it: its
+    ``type``, and optionally a ``title``, a ``description``,
+    ``optional=True``, and a ``default``, which makes it optional and must be
+    the function's own default. The types are:
+
+    - ``"wave"``: the name of an existing wave, passed as an ``op.Wave``;
+    - ``"waves"``: a list of names of waves, passed as a list of ``op.Wave``;
+    - ``"number"``, ``"integer"``: with ``min`` and ``max`` if wanted (inclusive);
+    - ``"numbers"``: a list of numbers, with ``min``, ``max`` and ``length`` if wanted;
+    - ``"string"``, ``"boolean"``;
+    - ``"choice"``: one of ``choices``, a list of strings or numbers;
+    - ``"samples"``: a list of dicts, each giving the name of a wave for
+      each input of a template (see ``Template.run``).
+
+    An argument that is left out is not passed, so the function's default
+    applies. None (null) is never a value: leave the argument out instead.
+    ``arg`` passes an argument as the parameter of that name. Two optional
+    arguments may be passed as the same parameter (a number of peaks or
+    their positions, say); at most one of them can then be given.
+
+    Returns the function unchanged.
+    """
+
+    def register(function):
+        _register_action(id, version, title, params, description, function)
+        return function
+
+    return register
+
+
+def _register_action(id, version, title, params, description, function, atomic=True):
+    global _actions_revision
+    if not isinstance(id, str) or not _ACTION_ID.fullmatch(id):
+        raise OresmeError(
+            f"{id!r} is not an action id: use lowercase dotted names such as 'lab.normalize'."
+        )
+    namespace = id.split(".", 1)[0]
+    if namespace in _RESERVED_NAMESPACES and _registering_in != namespace:
+        owner = "plugins" if namespace == "plugin" else "the application"
+        raise OresmeError(f"Action ids starting with {namespace}. are kept for {owner}.")
+    if not _is_integer(version) or version < 1:
+        raise OresmeError(f"{id}: version must be a whole number from 1, not {version!r}.")
+    if not isinstance(title, str) or not title:
+        raise OresmeError(f"{id}: title must be a string.")
+    if description is not None and not isinstance(description, str):
+        raise OresmeError(f"{id}: description must be a string or None.")
+    if not isinstance(params, dict):
+        raise OresmeError(f"{id}: params must be a dict of name: description.")
+    if not callable(function):
+        raise OresmeError(f"{id}: only a function can be registered as an action.")
+    checked = {name: _check_spec(id, name, spec) for name, spec in params.items()}
+    _check_signature(id, function, checked)
+    _actions.setdefault(id, {})[int(version)] = _Action(
+        id, int(version), title, description, checked, function, atomic
+    )
+    _actions_revision += 1
+
+
+def actions():
+    """The registered actions, as plain dicts: id, version, title, description and params.
+
+    Every version of each action is listed, ordered by id and then version.
+    ``params`` maps each argument's name to its description (see ``op.action``),
+    with ``optional`` always given.
+    """
+    own = [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+    # The plugins' actions run in their own sandboxes; the application knows them.
+    return own + _call("pluginActions")[0]
+
+
+def _plugin_arg(value):
+    """An argument of a plugin's action as the application takes it: waves by name."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, (list, tuple)):
+        return [_plugin_arg(item) for item in value]
+    return _plain(value)
+
+
+def _invoke_plugin(id, args):
+    """Runs a plugin's action: in the application, which hands it to the plugin's sandbox.
+
+    The waves it makes go where this code's other changes go: into the open
+    ``op.atomic()`` block, if there is one. Returns what the application
+    reports: the names of the waves made, the values and the result kept.
+    """
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise OresmeError(f"The arguments of {id} are a dict of name: value, not {args!r}.")
+    outcome = _call("invokePlugin", {"action": id, "args": {str(key): _plugin_arg(value) for key, value in args.items()}})[0]
+    if outcome.get("log"):
+        print(outcome["log"], end="" if outcome["log"].endswith("\n") else "\n")
+    return {key: outcome[key] for key in ("waves", "values", "result")}
+
+
+def _plugin_action(id):
+    """A plugin's action as one of Python's, for checking a call and making it.
+
+    The plugin runs in its own sandbox; the application knows its actions
+    and runs them (see ``_invoke_plugin``). Its waves go into the open
+    ``op.atomic()`` block like everything else this code changes.
+    """
+    for spec in _call("pluginActions")[0]:
+        if spec["id"] == id:
+            params = {
+                name: {**param, "optional": bool(param.get("optional"))}
+                for name, param in spec["params"].items()
+            }
+            return _Action(
+                id, spec["version"], spec["title"], spec.get("description"), params,
+                lambda **passed: _invoke_plugin(id, passed),
+            )
+    raise OresmeError(f"No installed plugin has the action {id}, or it is turned off.")
+
+
+def _find_action(id, version):
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        found = _plugin_action(id)
+        if version is not None and version != found.version:
+            raise OresmeError(f"{id} has no version {version!r} (it has {found.version}).")
+        return found
+    if not isinstance(id, str) or id not in _actions:
+        raise OresmeError(f"No action named {id!r}.")
+    versions = _actions[id]
+    if version is None:
+        return versions[max(versions)]
+    if not _is_integer(version) or int(version) not in versions:
+        known = ", ".join(str(number) for number in sorted(versions))
+        raise OresmeError(f"{id} has no version {version!r} (it has {known}).")
+    return versions[int(version)]
+
+
+def _prepare_action(id, args, version=None):
+    """Check a call of an action without making it.
+
+    Returns the action, the arguments as plain JSON and the keyword arguments
+    to call its function with. Nothing in the experiment changes: waves are
+    only looked up.
+    """
+    found = _find_action(id, version)
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise OresmeError(f"The arguments of {found.id} are a dict of name: value, not {args!r}.")
+    for name in args:
+        if name not in found.params:
+            taken = ", ".join(found.params) or "nothing"
+            raise OresmeError(f"{found.id} takes no argument {name!r}. It takes: {taken}.")
+    missing = [name for name, spec in found.params.items() if not spec["optional"] and name not in args]
+    if missing:
+        raise OresmeError(f"{found.id} needs {', '.join(repr(name) for name in missing)}.")
+    given = {
+        name: _check_value(found.params[name], value, f"{found.id}: {name}")
+        for name, value in args.items()
+    }
+    passed = {}
+    for name, value in given.items():
+        arg = found.params[name].get("arg", name)
+        if arg in passed:
+            other = next(item for item in given if found.params[item].get("arg", item) == arg)
+            raise OresmeError(f"{found.id}: give {other!r} or {name!r}, not both.")
+        passed[arg] = value
+    # Only now, with every argument right, are the waves looked up.
+    for name, value in given.items():
+        kind = found.params[name]["type"]
+        if kind not in ("wave", "waves"):
+            continue
+        try:
+            resolved = wave(value) if kind == "wave" else [wave(item) for item in value]
+        except OresmeError as error:
+            raise OresmeError(f"{found.id}: {name}: {error}") from None
+        passed[found.params[name].get("arg", name)] = resolved
+    return found, given, passed
+
+
+def invoke(id, args=None, *, version=None):
+    """Call an action by its id with a dict of plain values, as the application does.
+
+    ::
+
+        r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})
+
+    The arguments are checked against the action's parameters first (see
+    ``op.action``); a call that is refused raises ``OresmeError`` and does
+    nothing. Waves may be given by name or as ``op.Wave``. ``version`` picks
+    a version of the action, the highest by default. The call runs in an
+    ``op.atomic()`` block and returns what the function returns.
+    """
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        return _invoke_plugin(id, args)
+    found, _, passed = _prepare_action(id, args, version)
+    with atomic() if found.atomic else contextlib.nullcontext():
+        return found.function(**passed)
+
+
+def _py_literal(value):
+    """Python source for a plain (JSON) value."""
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, str):
+        # A JSON string is a Python string literal too.
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_py_literal(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_py_literal(key)}: {_py_literal(item)}" for key, item in value.items()) + "}"
+    raise TypeError(f"Not a plain value: {value!r}")
+
+
+def _action_code(found, given):
+    """The Python that does what a call of an action with these checked arguments does.
+
+    An action of this module is written as a call of its function, with the
+    arguments in order as far as they go and the rest by keyword, as a person
+    would write it: ``op.fit("gauss", op.wave("signal"), quiet=True)``. Any
+    other action is written as a call of ``op.invoke``.
+    """
+    function = found.function
+    # An action whose call reads better another way says how to write it.
+    if callable(getattr(function, "_oresme_code", None)):
+        return function._oresme_code(given)
+    name = getattr(function, "__name__", "")
+    if name not in __all__ or globals().get(name) is not function:
+        return f"op.invoke({_py_literal(found.id)}, {_py_literal(given)}, version={found.version})"
+
+    def source(key, value):
+        kind = found.params[key]["type"]
+        if kind == "wave":
+            return f"op.wave({_py_literal(value)})"
+        if kind == "waves":
+            return "[" + ", ".join(f"op.wave({_py_literal(item)})" for item in value) + "]"
+        return _py_literal(value)
+
+    by_arg = {found.params[key].get("arg", key): source(key, value) for key, value in given.items()}
+    parts = []
+    in_order = True
+    for arg, item in inspect.signature(function).parameters.items():
+        if arg not in by_arg:
+            in_order = False
+            continue
+        if in_order and item.kind is item.POSITIONAL_OR_KEYWORD:
+            parts.append(by_arg.pop(arg))
+        else:
+            in_order = False
+            parts.append(f"{arg}={by_arg.pop(arg)}")
+    # What the function takes through **kwargs, in the order given.
+    parts.extend(f"{arg}={value}" for arg, value in by_arg.items())
+    return f"op.{name}({', '.join(parts)})"
+
+
+def _result_json(value):
+    """What an action returned, as plain JSON for the application.
+
+    Numbers, strings, lists and dicts stay as they are (NaN and infinities
+    become None) and NumPy arrays become lists. A wave becomes ``{"wave":
+    name}``, a graph ``{"graph": name}``, a table ``{"table": name}`` and a
+    page layout ``{"layout": name}``. The results of analyses say what they
+    hold through a ``_json()`` method of their own, and a named tuple becomes
+    a dict of its fields. Anything else becomes ``{"repr": text}``.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if isinstance(value, Wave):
+        return {"wave": value.name}
+    for kind, key in ((Graph, "graph"), (Table, "table"), (Layout, "layout")):
+        if isinstance(value, kind):
+            return {key: value.name}
+    if callable(getattr(value, "_json", None)):
+        return _result_json(value._json())
+    if isinstance(value, tuple) and callable(getattr(value, "_asdict", None)):
+        # A named tuple: its fields by name, so a template's step can take one.
+        return _result_json(dict(value._asdict()))
+    if isinstance(value, np.ndarray):
+        return _result_json(value.tolist())
+    if isinstance(value, dict):
+        return {str(key): _result_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_result_json(item) for item in value]
+    return {"repr": repr(value)}
+
+
+class GraphTemplate:
+    """A graph template: a graph kept with its waves taken out, to make the
+    same graph of other data.
+
+    Where the graph had a wave, the template has a slot, named after what
+    the wave was for: ``"y"`` and ``"x"``, ``"yerr"`` and ``"xerr"`` for
+    error bars, ``"color"`` for a color wave and ``"z"`` for an image or
+    contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
+    ``slots`` lists them. Make a graph by giving a wave for each slot::
+
+        t = op.graph_template(op.graph("Graph0"), "IV")
+        t.make(y="s2_I", x="s2_V")
+
+    Text in annotations and axis labels can name what fills a slot:
+    ``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
+    slot ``y``. Where the graph's text named one of its waves, or a unit
+    in parentheses (``"Current (A)"``), the template has such a reference
+    instead, so a graph of another sample shows that sample's name and unit.
+
+    ``data`` is what the template holds, as a dict: ``"style"`` (the look
+    and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``
+    and the units of the wave it was made from), ``"traces"``, ``"images"``,
+    ``"contours"``, ``"axes"`` and ``"annotations"`` as in a graph, with
+    slot names where the graph has wave names. ``op.set_graph_template``
+    defines one from such a dict.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _info(self):
+        return _call("graphTemplateInfo", {"name": self._name})[0]
+
+    @property
+    def data(self):
+        """What the template holds, as a dict (a copy: change it with ``op.set_graph_template``)."""
+        return _keys(self._info(), _snake)
+
+    @property
+    def slots(self):
+        """The names of the slots, in the order of the graph."""
+        return [slot["name"] for slot in self._info()["slots"]]
+
+    def make(self, /, name=None, **slots):
+        """Make a graph of the waves given for the slots, and return it.
+
+        Give a wave (a Wave or a name) for each slot:
+        ``t.make(y=current, x=voltage)``. A slot of X, error bars or a color
+        wave may be left out; the graph then goes without it. Lists make
+        several graphs, one for each item, and return a list of them:
+        ``t.make(y=[a, b, c], x=voltage)`` makes three graphs, all against
+        ``voltage``. ``name`` names the graph (a list, the
+        graphs); left out, names are chosen.
+
+        Where a wave's unit differs from that of the wave the template was
+        made from, a warning says so, and the graph is made all the same.
+        All the graphs are made or, if one cannot be, none; and they are one
+        step to undo.
+        """
+        listed = [value for value in [*slots.values(), name] if isinstance(value, (list, tuple))]
+        many = bool(listed)
+        if many:
+            counts = {len(value) for value in listed}
+            if len(counts) != 1:
+                raise OresmeError(
+                    "Lists given for the slots must all have one item for each graph."
+                )
+            count = counts.pop()
+            columns = {
+                slot: list(value) if isinstance(value, (list, tuple)) else [value] * count
+                for slot, value in slots.items()
+            }
+            samples = [
+                {
+                    slot: _slot_wave(column[index])
+                    for slot, column in columns.items()
+                    if column[index] is not None
+                }
+                for index in range(count)
+            ]
+            names = None if name is None else [str(item) for item in name]
+        else:
+            samples = [
+                {slot: _slot_wave(value) for slot, value in slots.items() if value is not None}
+            ]
+            names = None if name is None else [str(name)]
+        found = _call("graphTemplateWarnings", {"name": self._name, "samples": samples})[0]
+        before = set(_call("listWindows", {"kind": "graph"})[0])
+        command = {"op": "makeGraphs", "template": self._name, "samples": samples}
+        if names is not None:
+            command["names"] = names
+        _dispatch(command)
+        for message in found:
+            warnings.warn(message, stacklevel=2)
+        made = [
+            Graph(item) for item in _call("listWindows", {"kind": "graph"})[0] if item not in before
+        ]
+        return made if many else made[0]
+
+    def rename(self, new_name):
+        """Give the template another name. Returns self."""
+        _dispatch({"op": "renameGraphTemplate", "name": self._name, "newName": new_name})
+        self._name = new_name
+        return self
+
+    def remove(self):
+        """Delete the template. Graphs made from it stay as they are."""
+        _dispatch({"op": "removeGraphTemplate", "name": self._name})
+
+    def __repr__(self):
+        return f"GraphTemplate({self._name!r})"
+
+
+def _slot_wave(obj):
+    """The name of the wave given for a slot: a Wave or a name."""
+    if isinstance(obj, Wave):
+        return obj.name
+    if isinstance(obj, str):
+        return obj[5:] if obj.startswith("root:") else obj
+    raise TypeError(
+        f"A slot takes a wave or a wave name, not {type(obj).__name__}. "
+        "Make a wave of the data first."
+    )
+
+
+def graph_templates():
+    """Every graph template of the experiment."""
+    return [GraphTemplate(name) for name in _call("listGraphTemplates")[0]]
+
+
+def graph_template(source, name=None, fixed=()):
+    """A graph template: the one named ``source``, or one made from a graph.
+
+    ``op.graph_template("IV")`` is the template named IV.
+    ``op.graph_template(g, "IV")`` keeps the graph ``g`` (a Graph or a
+    graph name) as a template named IV and returns it; see
+    ``Graph.save_template`` for ``fixed``.
+    """
+    if name is None:
+        if isinstance(source, GraphTemplate):
+            return source
+        if source not in _call("listGraphTemplates")[0]:
+            raise OresmeError(f"No graph template named {source!r}.")
+        return GraphTemplate(source)
+    graph_ = source if isinstance(source, Graph) else graph(source)
+    return graph_.save_template(name, fixed=fixed)
+
+
+def set_graph_template(name, data):
+    """Define a graph template from a dict (see ``GraphTemplate``) or copy another; returns it.
+
+    A template of that name is replaced. What the dict leaves out is as in a
+    new graph; unknown keys, bad values and references to slots or axes the
+    template does not have are refused.
+    """
+    if isinstance(data, GraphTemplate):
+        data = data.data
+    _dispatch({"op": "setGraphTemplate", "name": name, "template": _keys(data, _camel)})
+    return GraphTemplate(name)
+
+
+# --- Analysis templates and runs ---------------------------------------------
+#
+# A template is a list of steps, each an action and its arguments, kept in the
+# experiment under a name; running it on samples does the steps to one sample
+# after another, each sample in a block of its own, and keeps a record of how
+# each went (a run). The runner is here, beside the actions, so that the GUI
+# and panels start a run like any other action (core.run_template).
+
+_STEP_KEYS = ("id", "action", "version", "args")
+# Actions that run templates: a step cannot be one, or a template could run itself.
+_RUNNERS = ("core.run_template", "core.retry_run")
+
+
+class Template:
+    """An analysis template: steps of actions to do to one sample after another.
+
+    ``data`` is what it holds, as a dict: ``"description"``, ``"inputs"``
+    (the slots a wave is given for in each sample: ``name``, ``title`` and
+    ``kind``, which is ``"wave"``) and ``"steps"``, in order. A step has an
+    ``id``, the ``action`` it calls with its ``version``, and ``args`` by
+    parameter name. An argument is a fixed value, the wave given for a slot
+    (``{"$input": "spectrum"}``), or something an earlier step returned
+    (``{"$step": "bg", "output": "subtracted"}``)::
+
+        t = op.set_template("XPS", {
+            "inputs": ["spectrum"],
+            "steps": [
+                {"id": "bg", "action": "core.background",
+                 "args": {"wave": {"$input": "spectrum"}, "subtract": True}},
+                {"id": "fit", "action": "core.fit_peaks",
+                 "args": {"y": {"$step": "bg", "output": "subtracted"}, "quiet": True}},
+            ],
+        })
+        run = t.run(["s1", "s2", "s3"])
+
+    What a step returns is what its action returns, as ``op.invoke`` gives it
+    to the application: the keys of a dict (a fit's ``"wave"``,
+    ``"residuals"``, ...), the fields of a named tuple (``op.background`` with
+    ``subtract=True``: ``"background"`` and ``"subtracted"``), ``"wave"`` for
+    a wave, ``"0"``, ``"1"``, ... for a list, and ``"value"`` for anything
+    else (a number, say). A step that keeps an
+    analysis result also gives the waves the result made, by role (``"fit"``,
+    ``"residuals"``, ``"peak1"``, ...). A wave stands for its name.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _info(self):
+        return _call("templateInfo", {"name": self._name})[0]
+
+    @property
+    def data(self):
+        """What the template holds, as a dict (a copy: change it with ``op.set_template``)."""
+        return self._info()
+
+    @property
+    def description(self):
+        return self._info()["description"]
+
+    @property
+    def inputs(self):
+        """The names of the slots, the waves each sample is given for."""
+        return [slot["name"] for slot in self._info()["inputs"]]
+
+    @property
+    def steps(self):
+        """The steps, in order, as dicts: id, action, version and args."""
+        return self._info()["steps"]
+
+    def run(self, inputs, on_error="continue", *, name=None, quiet=False):
+        """Do the steps to each sample, and return the record of it all (a ``Run``).
+
+        ``inputs`` gives the waves of each sample: a list with a dict for
+        each sample, ``[{"spectrum": "s1"}, {"spectrum": "s2"}]``; for a
+        template of one input, a list of waves, ``["s1", "s2"]``; or a dict
+        of lists by input, ``{"spectrum": ["s1", "s2"], "energy": "E"}``,
+        where a single wave goes with every sample.
+
+        The steps of each sample run in one ``op.atomic()`` block: a sample
+        that fails leaves nothing, and one that succeeds goes into the
+        experiment at once, recorded in the run as it finishes. With
+        ``on_error="continue"`` the other samples go on; with ``"stop"``
+        the run stops at the first sample that fails, and the rest stay
+        pending. Interrupting Python stops it too: the samples done stay, the
+        one being done and those not begun are marked cancelled.
+        ``run.retry()`` does again only the samples that did not succeed.
+
+        A wave a step makes under the name of a wave that was there before
+        the sample began is made under a new name instead, ``<name>_1``
+        (``_2``, ...): a run does not replace waves. ``W_coef``,
+        ``W_sigma`` and ``W_peaks``, which hold the latest fit, are written
+        as usual.
+
+        The template is checked against the actions before anything is done:
+        an action that is not registered, an argument it does not take or a
+        fixed value of the wrong type refuses the whole run. ``name`` names
+        the run (Run0, Run1, ... by default). With ``quiet`` it prints
+        nothing; otherwise a line for each sample that did not succeed and
+        a count at the end.
+        """
+        return _run_template(self._name, _sample_rows(self.inputs, inputs), on_error,
+                             name=name, quiet=quiet)
+
+    def rename(self, new_name):
+        """Give the template another name. Returns self. Runs keep the name it had."""
+        _dispatch({"op": "renameTemplate", "name": self._name, "newName": new_name})
+        self._name = new_name
+        return self
+
+    def remove(self):
+        """Delete the template. Runs made from it keep their copy of it."""
+        _dispatch({"op": "removeTemplate", "name": self._name})
+
+    def __repr__(self):
+        return f"Template({self._name!r})"
+
+
+def _sample_rows(slots, inputs):
+    """The waves of each sample, as a dict by slot, from the ways ``Template.run`` takes them."""
+    if isinstance(inputs, dict):
+        listed = [value for value in inputs.values() if isinstance(value, (list, tuple))]
+        counts = {len(value) for value in listed}
+        if len(counts) > 1:
+            raise OresmeError("The lists given for the inputs must all have one wave for each sample.")
+        count = counts.pop() if counts else 1
+        rows = [
+            {slot: value[index] if isinstance(value, (list, tuple)) else value
+             for slot, value in inputs.items()}
+            for index in range(count)
+        ]
+    elif isinstance(inputs, (list, tuple)):
+        rows = []
+        for item in inputs:
+            if isinstance(item, dict):
+                rows.append(item)
+            elif len(slots) == 1:
+                rows.append({slots[0]: item})
+            else:
+                raise OresmeError(
+                    f"The template has the inputs {', '.join(slots)}: give a dict of "
+                    "a wave for each, for each sample."
+                )
+    else:
+        raise OresmeError("Give the samples as a list, or as a dict of lists by input.")
+    if not rows:
+        raise OresmeError("There are no samples to run the template on.")
+    return [{str(slot): _slot_wave(value) for slot, value in row.items()} for row in rows]
+
+
+def templates():
+    """Every analysis template of the experiment."""
+    return [Template(name) for name in _call("listTemplates")[0]]
+
+
+def template(name):
+    """The analysis template with this name."""
+    if isinstance(name, Template):
+        return name
+    if name not in _call("listTemplates")[0]:
+        raise OresmeError(f"No template named {name!r}.")
+    return Template(name)
+
+
+def set_template(name, data):
+    """Define an analysis template from a dict (see ``Template``) or copy another; returns it.
+
+    A template of that name is replaced. Inputs may be given by name alone
+    (``"inputs": ["spectrum"]``). A step without an ``id`` is named
+    ``step1``, ``step2``, ... by its place; one without a ``version`` gets
+    the highest version of its action registered now. Names, the shape of
+    each argument, and references to slots that do not exist or to steps
+    that are not earlier are refused here; whether the actions take the
+    arguments is checked when the template is run.
+    """
+    if isinstance(data, Template):
+        data = data.data
+    if not isinstance(data, dict):
+        raise OresmeError("A template is a dict of description, inputs and steps.")
+    data = dict(data)
+    steps = data.get("steps")
+    if isinstance(steps, (list, tuple)):
+        filled = []
+        for number, step in enumerate(steps, 1):
+            if not isinstance(step, dict):
+                filled.append(step)
+                continue
+            step = dict(step)
+            step.setdefault("id", f"step{number}")
+            if "version" not in step:
+                action_id = step.get("action")
+                if action_id not in _actions:
+                    raise OresmeError(
+                        f"Step {step['id']}: no action named {action_id!r} is registered, "
+                        "so give the version it is for."
+                    )
+                step["version"] = max(_actions[action_id])
+            if isinstance(step.get("args"), dict):
+                step["args"] = {key: _template_value(value) for key, value in step["args"].items()}
+            filled.append(step)
+        data["steps"] = filled
+    _dispatch({"op": "setTemplate", "name": name, "template": data})
+    return Template(name)
+
+
+def _template_value(value):
+    """An argument of a step as plain JSON: waves by name, NumPy numbers as numbers."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, (list, tuple)):
+        return [_template_value(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+class Run:
+    """The record of a template run on samples: kept in the experiment under a name.
+
+    ``copy`` is the template as it was when the run was made, which a retry
+    uses whatever the template says now. ``samples`` lists each sample:
+    ``inputs`` (a wave by slot), ``fingerprints`` (of each input as it was
+    when the sample was last done), ``state`` (``"pending"``,
+    ``"succeeded"``, ``"failed"`` or ``"cancelled"``), ``error``,
+    ``results`` (the analysis results its steps kept), ``waves`` (those they
+    made), ``attempts``, ``finished`` (milliseconds since the epoch) and
+    ``changed`` (inputs that are no longer what they were then).
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _info(self):
+        return _call("runInfo", {"name": self._name})[0]
+
+    @property
+    def data(self):
+        """The whole record, as a dict (a copy)."""
+        info = self._info()
+        return {
+            "name": info["name"], "template": info["template"], "copy": info["copy"],
+            "on_error": info["onError"], "created": info["created"], "samples": self.samples,
+        }
+
+    @property
+    def template(self):
+        """The name of the template the run was made from."""
+        return self._info()["template"]
+
+    @property
+    def copy(self):
+        """The template as it was when the run was made, as a dict."""
+        return self._info()["copy"]
+
+    @property
+    def on_error(self):
+        return self._info()["onError"]
+
+    @property
+    def samples(self):
+        # Only the keys of the record are respelled: those of inputs are the template's slots.
+        return [{_snake(key): value for key, value in sample.items()}
+                for sample in self._info()["samples"]]
+
+    @property
+    def states(self):
+        """The state of each sample, in order."""
+        return [sample["state"] for sample in self._info()["samples"]]
+
+    @property
+    def counts(self):
+        """How many samples are in each state."""
+        counts = {"succeeded": 0, "failed": 0, "cancelled": 0, "pending": 0}
+        for state in self.states:
+            counts[state] += 1
+        return counts
+
+    def retry(self, on_error=None, *, quiet=False):
+        """Do again the samples that did not succeed, with the run's own copy of the template.
+
+        Only failed, cancelled and pending samples are done; those that
+        succeeded stay as they are. The outcome goes into this run, sample by
+        sample (``attempts`` counts the times each was done). ``on_error`` is
+        the run's own unless given. Returns self.
+        """
+        return _retry_run(self._name, on_error, quiet=quiet)
+
+    def table(self, name=None, sigma=True):
+        """Put the samples side by side in a table, failed ones too, and return it.
+
+        A row for each sample: ``<name>_sample`` (its number), the input
+        waves (``<name>_<input>``), ``<name>_state``, ``<name>_error`` and
+        ``<name>_result`` (the results kept), then a column for each
+        parameter of the results (``<name>_<parameter>``, with ``_sd`` for
+        the standard deviation if ``sigma``) and ``<name>_chisq``. A sample
+        that did not succeed has NaN for numbers. Where a sample kept more
+        than one result with a parameter of the same name, the last step's
+        is shown. An input or parameter whose column would have the name of
+        another (an input called ``state``, say) gets ``_2``, ``_3``, ...
+        ``name`` is the run's name by default.
+        """
+        return _run_table(self._name, name, sigma)
+
+    def remove(self):
+        """Forget the run. The waves and results its samples made stay."""
+        _dispatch({"op": "removeRuns", "names": [self._name]})
+
+    def _json(self):
+        return {"run": self._name, **self.counts}
+
+    def __repr__(self):
+        counts = self.counts
+        done = ", ".join(f"{count} {state}" for state, count in counts.items() if count)
+        return f"Run({self._name!r}: {done})"
+
+
+def runs():
+    """Every run of the experiment, oldest first."""
+    return [Run(name) for name in _call("listRuns")[0]]
+
+
+def run(name=None):
+    """A run by name; with no name, the latest."""
+    names = _call("listRuns")[0]
+    if isinstance(name, Run):
+        return name
+    if name is None:
+        if not names:
+            raise OresmeError("There are no runs yet.")
+        return Run(names[-1])
+    if name not in names:
+        raise OresmeError(f"No run named {name!r}.")
+    return Run(name)
+
+
+def _plan_template(label, copy):
+    """The steps of a template with their actions, checked as far as can be before a sample.
+
+    Every step's action must be registered at its version and take its
+    arguments; fixed values must be of the right type and inputs may go
+    only where a wave does. What earlier steps return is checked when it is
+    known, sample by sample.
+    """
+    plan = []
+    for step in copy["steps"]:
+        where = f"{label}, step {step['id']}"
+        if step["action"] in _RUNNERS:
+            raise OresmeError(f"{where}: a template cannot run templates.")
+        try:
+            found = _find_action(step["action"], step["version"])
+        except OresmeError as error:
+            raise OresmeError(f"{where}: {error}") from None
+        args = step["args"]
+        for key in args:
+            if key not in found.params:
+                taken = ", ".join(found.params) or "nothing"
+                raise OresmeError(f"{where}: {found.id} takes no argument {key!r}. It takes: {taken}.")
+        missing = [key for key, spec in found.params.items() if not spec["optional"] and key not in args]
+        if missing:
+            raise OresmeError(f"{where}: {found.id} needs {', '.join(repr(key) for key in missing)}.")
+        for key, value in args.items():
+            spec = found.params[key]
+            items = value if isinstance(value, list) else [value]
+            references = [item for item in items if isinstance(item, dict)]
+            if not references:
+                _check_value(spec, value, f"{where}: {key}", resolve_names=False)
+                continue
+            for item in references:
+                if "$input" in item and spec["type"] not in ("wave", "waves"):
+                    raise OresmeError(
+                        f"{where}: the input {item['$input']!r} is a wave, which {key} "
+                        f"({spec['type']}) does not take."
+                    )
+            if isinstance(value, list) and spec["type"] not in ("waves", "numbers"):
+                raise OresmeError(f"{where}: {key} ({spec['type']}) does not take a list.")
+        plan.append((step, found))
+    return plan
+
+
+def _step_outputs(value):
+    """What a step returned, by the keys a later step's ``{"$step": ..., "output": ...}`` names."""
+
+    def plain(item):
+        # A wave stands for its name, which is what an action takes.
+        if isinstance(item, dict) and set(item) == {"wave"}:
+            return item["wave"]
+        if isinstance(item, list):
+            return [plain(each) for each in item]
+        return item
+
+    outputs = {}
+    if isinstance(value, dict):
+        outputs = {key: plain(item) for key, item in value.items()}
+    elif isinstance(value, list):
+        outputs = {str(index): plain(item) for index, item in enumerate(value)}
+    elif value is not None:
+        outputs = {"value": value}
+    if isinstance(value, dict) and isinstance(value.get("result"), str):
+        with contextlib.suppress(OresmeError):
+            info = _call("resultInfo", {"name": value["result"]})[0]
+            for role, wave_ in info["outputs"].items():
+                outputs.setdefault(role, wave_)
+    return outputs
+
+
+def _resolve(value, inputs, outputs, where):
+    """An argument of a step with its references replaced by what they stand for."""
+    if isinstance(value, list):
+        return [_resolve(item, inputs, outputs, where) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if "$input" in value:
+        return inputs[value["$input"]]
+    step, key = value["$step"], value["output"]
+    returned = outputs[step]
+    if key not in returned:
+        known = ", ".join(returned) or "nothing"
+        raise OresmeError(f"{where}: step {step} returned no {key!r} (it returned {known}).")
+    if returned[key] is None:
+        raise OresmeError(f"{where}: step {step} returned nothing for {key!r}.")
+    return returned[key]
+
+
+def _do_sample(run_name, index, plan, inputs):
+    """Do the steps to one sample in one block, and record that it succeeded."""
+    global _fresh
+    before_waves = set(_call("listWaves")[0])
+    before_results = set(_call("listResults")[0])
+    outer = _fresh
+    _fresh = {"taken": before_waves, "renamed": {}}
+    try:
+        with atomic():
+            outputs = {}
+            for step, found in plan:
+                where = f"step {step['id']}"
+                args = {
+                    key: _resolve(value, inputs, outputs, where)
+                    for key, value in step["args"].items()
+                }
+                try:
+                    _, _, passed = _prepare_action(found.id, args, found.version)
+                except OresmeError as error:
+                    raise OresmeError(f"{where}: {error}") from None
+                outputs[step["id"]] = _step_outputs(_result_json(found.function(**passed)))
+            made = [name for name in _call("listWaves")[0] if name not in before_waves]
+            kept = [name for name in _call("listResults")[0] if name not in before_results]
+            # In the same block as the outputs: the record and what it records go in together.
+            _dispatch({
+                "op": "updateRunSample", "run": run_name, "index": index, "state": "succeeded",
+                "results": kept, "waves": made, "attempted": True,
+            })
+    finally:
+        _fresh = outer
+
+
+def _error_text(error):
+    if isinstance(error, OresmeError):
+        return str(error)
+    return f"{type(error).__name__}: {error}"
+
+
+def _execute_run(run_name, indices, on_error, quiet):
+    """Do the samples of a run at these places, one after another, recording each."""
+    info = _call("runInfo", {"name": run_name})[0]
+    plan = _plan_template(f"{run_name} ({info['template']})", info["copy"])
+    samples = info["samples"]
+    for position, index in enumerate(indices):
+        attempts = samples[index]["attempts"]
+        try:
+            _do_sample(run_name, index, plan, samples[index]["inputs"])
+        except KeyboardInterrupt:
+            now = _call("runInfo", {"name": run_name})[0]["samples"]
+            for rest in indices[position:]:
+                begun = rest == index
+                if begun and now[rest]["attempts"] > attempts:
+                    continue  # It went in before the interrupt arrived.
+                if not begun and now[rest]["state"] != "pending":
+                    continue  # A failed sample being retried keeps its own error.
+                _dispatch({
+                    "op": "updateRunSample", "run": run_name, "index": rest, "state": "cancelled",
+                    "error": "Interrupted." if begun else "Not done: the run was interrupted.",
+                    "attempted": begun,
+                })
+            raise
+        except Exception as error:
+            message = _error_text(error)
+            _dispatch({
+                "op": "updateRunSample", "run": run_name, "index": index, "state": "failed",
+                "error": message, "attempted": True,
+            })
+            if not quiet:
+                label = ", ".join(samples[index]["inputs"].values())
+                print(f"{run_name}: sample {index + 1} ({label}) failed: {message}")
+            if on_error == "stop":
+                break
+    result = Run(run_name)
+    if not quiet:
+        counts = result.counts
+        print(f"{run_name}: " + ", ".join(f"{count} {state}" for state, count in counts.items() if count))
+    return result
+
+
+def _run_template(template, samples, on_error="continue", name=None, quiet=False):
+    """Run a template on samples (see ``Template.run``); the action ``core.run_template``."""
+    template = template.name if isinstance(template, Template) else template
+    copy = _call("templateInfo", {"name": template})[0]
+    if on_error not in ("continue", "stop"):
+        raise OresmeError('on_error must be "continue" or "stop".')
+    # Refused before anything is kept: the actions, and the samples' inputs.
+    _plan_template(template, copy)
+    slots = [slot["name"] for slot in copy["inputs"]]
+    for number, sample in enumerate(samples, 1):
+        unknown = sorted(set(sample) - set(slots))
+        if unknown:
+            raise OresmeError(f"Sample {number}: {template} has no input {unknown[0]!r}.")
+        missing = [slot for slot in slots if slot not in sample]
+        if missing:
+            raise OresmeError(f"Sample {number} needs a wave for {', '.join(missing)}.")
+    command = {
+        "op": "addRun",
+        "run": {
+            "template": template,
+            "copy": copy,
+            "onError": on_error,
+            "samples": [{"inputs": sample} for sample in samples],
+        },
+    }
+    if name is not None:
+        command["name"] = name
+    run_name = _dispatch(command)
+    return _execute_run(run_name, list(range(len(samples))), on_error, quiet)
+
+
+def _retry_run(run_name, on_error=None, quiet=False):
+    """Do again the samples of a run that did not succeed; the action ``core.retry_run``."""
+    run_name = run_name.name if isinstance(run_name, Run) else run_name
+    info = _call("runInfo", {"name": run_name})[0]
+    on_error = info["onError"] if on_error is None else on_error
+    if on_error not in ("continue", "stop"):
+        raise OresmeError('on_error must be "continue" or "stop".')
+    indices = [index for index, sample in enumerate(info["samples"]) if sample["state"] != "succeeded"]
+    if not indices:
+        if not quiet:
+            print(f"{run_name}: every sample has succeeded; there is nothing to retry.")
+        return Run(run_name)
+    return _execute_run(run_name, indices, on_error, quiet)
+
+
+def _clean(key):
+    return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
+
+
+def _run_table(run_name, name=None, sigma=True):
+    """A table of the samples of a run (see ``Run.table``); the action ``core.run_table``."""
+    run_name = run_name.name if isinstance(run_name, Run) else run_name
+    info = _call("runInfo", {"name": run_name})[0]
+    name = run_name if name is None else name
+    samples = info["samples"]
+    slots = [slot["name"] for slot in info["copy"]["inputs"]]
+    # The parameters of each sample's results, the last step's where two share a name.
+    values = []
+    parameters = []
+    for sample in samples:
+        found = {}
+        if sample["state"] == "succeeded":
+            for result_name in sample["results"]:
+                try:
+                    result = _call("resultInfo", {"name": result_name})[0]
+                except OresmeError:
+                    continue  # Deleted since.
+                for key, coef, spread in zip(result["names"], result["coef"], result["sigma"]):
+                    found[key] = (coef, spread)
+                    if key not in parameters:
+                        parameters.append(key)
+                found["\0chisq"] = (result["chisq"], None)
+        values.append(found)
+
+    def number(value):
+        return np.nan if value is None else value
+
+    # The fixed columns keep their names. An input or parameter whose column
+    # would have one of them, or another's (an input called "state", a
+    # parameter "x" next to one "x_sd"), gets _2, _3, ...: no column of the
+    # table overwrites another.
+    used = {f"{name}_{label}" for label in ("sample", "state", "error", "result", "chisq")}
+
+    def free(wanted):
+        found, count = wanted, 2
+        while found in used:
+            found, count = f"{wanted}_{count}", count + 1
+        used.add(found)
+        return found
+
+    slot_columns = {slot: free(f"{name}_{_clean(slot)}") for slot in slots}
+    parameter_columns = {}
+    for key in parameters:
+        parameter_columns[key] = free(f"{name}_{_clean(key)}")
+        if sigma:
+            parameter_columns[key, "sd"] = free(f"{name}_{_clean(key)}_sd")
+
+    columns = [
+        make(f"{name}_sample", np.arange(1, len(samples) + 1, dtype=float)),
+        *(make(slot_columns[slot], [sample["inputs"][slot] for sample in samples]) for slot in slots),
+        make(f"{name}_state", [sample["state"] for sample in samples]),
+        make(f"{name}_error", [sample["error"] for sample in samples]),
+        make(f"{name}_result", [", ".join(sample["results"]) for sample in samples]),
+    ]
+    for key in parameters:
+        columns.append(make(parameter_columns[key], [number(found.get(key, (None,))[0]) for found in values]))
+        if sigma:
+            columns.append(
+                make(parameter_columns[key, "sd"], [number(found.get(key, (None, None))[1]) for found in values])
+            )
+    columns.append(make(f"{name}_chisq", [number(found.get("\0chisq", (None,))[0]) for found in values]))
+    existing = {table_.name: table_ for table_ in tables()}
+    if name in existing:
+        # The same table again: it shows the waves as they are now.
+        shown = {column.name for column in existing[name].columns}
+        missing = [column for column in columns if column.name not in shown]
+        if missing:
+            existing[name].append(*missing)
+        return existing[name]
+    return edit(*columns, name=name)
+
+
+def _run_template_code(given):
+    """``op.template(...).run(...)``: how a call of core.run_template reads in the history."""
+    samples = given["samples"]
+    slots = {slot for sample in samples for slot in sample}
+    if len(slots) == 1:
+        # One input: the waves alone, as t.run takes them for such a template.
+        rows = _py_literal([next(iter(sample.values())) for sample in samples])
+    else:
+        rows = _py_literal(samples)
+    parts = [rows]
+    if given.get("on_error", "continue") != "continue":
+        parts.append(f"on_error={_py_literal(given['on_error'])}")
+    for key in ("name", "quiet"):
+        if key in given:
+            parts.append(f"{key}={_py_literal(given[key])}")
+    return f"op.template({_py_literal(given['template'])}).run({', '.join(parts)})"
+
+
+def _retry_run_code(given):
+    parts = []
+    if "on_error" in given:
+        parts.append(f"{_py_literal(given['on_error'])}")
+    if given.get("quiet"):
+        parts.append("quiet=True")
+    return f"op.run({_py_literal(given['run'])}).retry({', '.join(parts)})"
+
+
+def _run_table_code(given):
+    parts = [f"name={_py_literal(given['name'])}"] if "name" in given else []
+    if given.get("sigma") is False:
+        parts.append("sigma=False")
+    return f"op.run({_py_literal(given['run'])}).table({', '.join(parts)})"
+
+
+_run_template._oresme_code = _run_template_code
+_retry_run._oresme_code = _retry_run_code
+_run_table._oresme_code = _run_table_code
+
+with _registering("core"):
+    _register_action(
+        "core.run_template", 1, "Run Template",
+        {
+            "template": {"type": "string", "title": "Template"},
+            "samples": {"type": "samples", "title": "Samples",
+                        "description": "A wave for each input of the template, for each sample."},
+            "on_error": {"type": "choice", "title": "When a sample fails",
+                         "choices": ["continue", "stop"], "default": "continue"},
+            "name": {"type": "string", "title": "Run name", "optional": True},
+            "quiet": {"type": "boolean", "title": "Quiet", "default": False},
+        },
+        "Do the steps of an analysis template to each sample, keeping a record of each.",
+        _run_template,
+        atomic=False,
+    )
+    _register_action(
+        "core.retry_run", 1, "Retry Run",
+        {
+            "run": {"type": "string", "title": "Run", "arg": "run_name"},
+            "on_error": {"type": "choice", "title": "When a sample fails",
+                         "choices": ["continue", "stop"], "optional": True},
+            "quiet": {"type": "boolean", "title": "Quiet", "default": False},
+        },
+        "Do again the samples of a run that failed, were cancelled or were not done.",
+        _retry_run,
+        atomic=False,
+    )
+    _register_action(
+        "core.run_table", 1, "Run Table",
+        {
+            "run": {"type": "string", "title": "Run", "arg": "run_name"},
+            "name": {"type": "string", "title": "Table name", "optional": True},
+            "sigma": {"type": "boolean", "title": "Standard deviations", "default": True},
+        },
+        "A table of the samples of a run: inputs, state, error and the parameters of their results.",
+        _run_table,
+    )
+
+
+# --- Panels ------------------------------------------------------------------
+#
+# A panel is a window of controls: headings, text, fields, pickers and
+# buttons. A button calls an action with the values of the panel's controls;
+# it holds the action's id and its arguments, never code.
+
+
+def control(name):
+    """A control of a panel, given as an argument of a button.
+
+    ::
+
+        p.button("run", "Fit", action="core.fit",
+                 args={"function": op.control("model"), "y": op.control("target")})
+
+    When the button is pressed, the argument is the value the control has
+    then. It is the dict ``{"$control": name}``, which is how a panel keeps it.
+    """
+    return {"$control": str(name)}
+
+
+def _panel_data(value):
+    """Plain data for a panel: waves as their names, tuples as lists, at any depth."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, dict):
+        return {str(key): _panel_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_panel_data(item) for item in value]
+    return _plain(value)
+
+
+class Control:
+    """A control of a panel: a heading, a paragraph of text, a field, a
+    picker or a button.
+
+    ``value`` is what a field or picker holds (the name of the wave, for a
+    wave picker) and ``data`` all of its properties, as the panel keeps them.
+    ``set(...)`` changes properties: ``label``, ``inline`` (on the line of
+    the control before it), and those of its kind, as the panel's methods
+    that add controls take them; ``name`` renames it, and the buttons that
+    pass its value follow.
+    """
+
+    def __init__(self, panel, name):
+        self._panel = panel
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def panel(self):
+        return self._panel
+
+    def _get(self):
+        for item in self._panel._get()["controls"]:
+            if item["name"] == self._name:
+                return item
+        raise OresmeError(f"{self._panel.name} has no control named {self._name!r}.")
+
+    @property
+    def kind(self):
+        return self._get()["kind"]
+
+    @property
+    def data(self):
+        return self._get()
+
+    @property
+    def label(self):
+        return self._get()["label"]
+
+    @label.setter
+    def label(self, value):
+        self.set(label=value)
+
+    @property
+    def value(self):
+        info = self._get()
+        if "value" not in info:
+            raise OresmeError(f"{self._name} is a {info['kind']}, which has no value.")
+        return info["value"]
+
+    @value.setter
+    def value(self, value):
+        self._panel[self._name] = value
+
+    def set(self, **props):
+        """Change several properties at once. Returns self."""
+        if props:
+            _dispatch(
+                {
+                    "op": "modifyControl",
+                    "panel": self._panel.name,
+                    "control": self._name,
+                    "props": _panel_data(props),
+                }
+            )
+            if "name" in props:
+                self._name = str(props["name"])
+        return self
+
+    def move(self, index):
+        """Put the control at a place in the panel, counted from 0 (the top)."""
+        _dispatch(
+            {"op": "moveControl", "panel": self._panel.name, "control": self._name, "to": _plain(index)}
+        )
+        return self
+
+    def press(self):
+        """Press the button: see ``Panel.press``."""
+        return self._panel.press(self._name)
+
+    def remove(self):
+        _dispatch({"op": "removeControl", "panel": self._panel.name, "control": self._name})
+
+    def __repr__(self):
+        return f"Control({self._name!r} of {self._panel.name})"
+
+
+class Panel:
+    """A panel: controls that run analyses, in a window of the experiment.
+
+    ::
+
+        p = op.panel("quick_fit", title="Quick Fit")
+        p.wave("target", label="Spectrum", dims=1)
+        p.choice("model", ["gauss", "lor"], label="Model")
+        p.button("run", "Fit", action="core.fit",
+                 args={"function": op.control("model"), "y": op.control("target")})
+        p["model"] = "lor"
+
+    The methods that add controls take the control's ``name`` first, unique
+    in the panel. When the panel has a control of that name and kind
+    already, they change it instead and keep its value, so a procedure that
+    builds a panel can run again. ``value`` is the value a new control
+    starts with. ``inline=True`` puts a control on the line of the one
+    before it; so does ``with p.row():`` for the controls added in it.
+
+    ``p["name"]`` reads and sets the value of a control; the values are part
+    of the experiment, saved with it and undone like any other change.
+    A button calls an action (see ``op.action``) with plain values and the
+    values of controls (``op.control``). To have a button run your own
+    Python, register the function as an action in a procedure and name it.
+    """
+
+    def __init__(self, name):
+        self._name = name
+        # How many controls a `with p.row():` block has added, or None outside one.
+        self._row = None
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        return _call("panelInfo", {"name": self._name})[0]
+
+    @property
+    def title(self):
+        return self._get()["title"]
+
+    @title.setter
+    def title(self, value):
+        self.set(title=value)
+
+    def set(self, *, title=None):
+        """Change the panel's title (what its window shows; its name when empty). Returns self."""
+        if title is not None:
+            _dispatch({"op": "modifyPanel", "panel": self._name, "props": {"title": str(title)}})
+        return self
+
+    @property
+    def data(self):
+        """The panel as plain data: its title and controls, as ``op.set_panel`` takes them."""
+        info = self._get()
+        return {"title": info["title"], "controls": info["controls"]}
+
+    @property
+    def controls(self):
+        return [Control(self, item["name"]) for item in self._get()["controls"]]
+
+    def control(self, name):
+        names = [item["name"] for item in self._get()["controls"]]
+        if name not in names:
+            raise OresmeError(f"{self._name} has no control named {name!r}.")
+        return Control(self, name)
+
+    def __getitem__(self, name):
+        return self.control(name).value
+
+    def __setitem__(self, name, value):
+        _dispatch(
+            {"op": "setControlValue", "panel": self._name, "control": name, "value": _panel_data(value)}
+        )
+
+    def __contains__(self, name):
+        return any(item["name"] == name for item in self._get()["controls"])
+
+    def _add(self, kind, name, props):
+        props = {key: _panel_data(value) for key, value in props.items() if value is not None}
+        if self._row is not None:
+            props.setdefault("inline", self._row > 0)
+            self._row += 1
+        for item in self._get()["controls"]:
+            if item["name"] != name:
+                continue
+            if item["kind"] != kind:
+                raise OresmeError(f"{self._name} already has a {item['kind']} named {name!r}.")
+            # Run again, the panel keeps the value the user has given the control.
+            props.pop("value", None)
+            if props:
+                _dispatch({"op": "modifyControl", "panel": self._name, "control": name, "props": props})
+            return Control(self, name)
+        _dispatch({"op": "addControl", "panel": self._name, "kind": kind, "name": name, "props": props})
+        return Control(self, name)
+
+    def heading(self, name, label=None, *, inline=None):
+        """A heading: ``label`` in bold."""
+        return self._add("heading", name, {"label": label, "inline": inline})
+
+    def text(self, name, label=None, *, inline=None):
+        """A paragraph of text: ``label``, which may have several lines."""
+        return self._add("text", name, {"label": label, "inline": inline})
+
+    def number(self, name, label=None, *, value=None, min=None, max=None, step=None, inline=None):
+        """A field for a number, from ``min`` to ``max`` (inclusive) if given;
+        ``step`` is how much the arrows change it.
+        """
+        props = {"label": label, "value": value, "min": min, "max": max, "step": step, "inline": inline}
+        return self._add("number", name, props)
+
+    def string(self, name, label=None, *, value=None, inline=None):
+        """A field for text."""
+        return self._add("string", name, {"label": label, "value": value, "inline": inline})
+
+    def checkbox(self, name, label=None, *, value=None, inline=None):
+        """A checkbox: its value is True or False."""
+        return self._add("checkbox", name, {"label": label, "value": value, "inline": inline})
+
+    def choice(self, name, options, *, value=None, label=None, inline=None):
+        """A menu of ``options`` (texts or numbers); it starts at the first unless ``value`` says."""
+        props = {"label": label, "options": list(options), "value": value, "inline": inline}
+        return self._add("choice", name, props)
+
+    #: The same as ``choice``.
+    select = choice
+
+    def wave(self, name, label=None, *, value=None, dims=None, filter=None, inline=None):
+        """A wave picker: its value is the name of the wave chosen.
+
+        ``dims`` lists only waves of that many dimensions; ``filter`` only
+        those whose names contain it, or match it as a pattern with ``*``
+        (``"*_I"``). The picker follows the wave when it is renamed; when
+        the wave is killed, the name stays and is shown as missing.
+        """
+        props = {"label": label, "value": value, "dims": dims, "filter": filter, "inline": inline}
+        return self._add("wave", name, props)
+
+    def button(self, name, label=None, *, action, args=None, version=None, inline=None):
+        """A button that calls the action ``action`` with ``args`` when pressed.
+
+        Each argument is a plain value (text, a number, True or False, a
+        list or a dict of them) or ``op.control(name)``, the value of a
+        control of the panel at the time of the press; ``op.control`` may
+        also sit inside a list or dict, as in a template's inputs.
+        ``version`` calls that version of the action rather than the highest.
+        """
+        props = {"label": label, "action": action, "args": args or {}, "version": version, "inline": inline}
+        return self._add("button", name, props)
+
+    @contextlib.contextmanager
+    def row(self):
+        """Put the controls added in the block on one line."""
+        before = self._row
+        self._row = 0
+        try:
+            yield self
+        finally:
+            self._row = before
+
+    def press(self, name):
+        """Press a button: call its action with the values the panel has now, as a click does.
+
+        Returns what the action returns. Raises ``OresmeError`` when a value
+        is missing (no wave chosen, say) or the action refuses the call.
+        """
+        call = _call("panelCall", {"panel": self._name, "button": name})[0]
+        return invoke(call["action"], call["args"], version=call["version"])
+
+    def kill(self):
+        kill_window(self._name)
+
+    def __repr__(self):
+        return f"Panel({self._name!r})"
+
+
+def panels():
+    """Every panel of the experiment."""
+    return [Panel(name) for name in _call("listWindows", {"kind": "panel"})[0]]
+
+
+def panel(name=None, title=None):
+    """The panel named ``name``, made (with a window) if there is none; with no name, the frontmost.
+
+    ``title`` gives it a title, as its window shows it.
+    """
+    names = _call("listWindows", {"kind": "panel"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no panels.")
+        return Panel(names[-1])
+    if name not in names:
+        return new_panel(name, title=title)
+    found = Panel(name)
+    if title is not None and found.title != title:
+        found.title = title
+    return found
+
+
+def new_panel(name=None, title=None):
+    """Make an empty panel with a window. Without a name, one is chosen (Panel0, ...)."""
+    command = {"op": "newPanel"}
+    if name is not None:
+        command["name"] = name
+    if title is not None:
+        command["title"] = str(title)
+    return Panel(_dispatch(command))
+
+
+def set_panel(name, data):
+    """Give the panel ``name`` a title and controls from a dict (``p.data``, or a file
+    exported from a panel window), making it if there is none. Returns it.
+
+    ``data`` is ``{"title": ..., "controls": [...]}``, where each control is
+    a dict of its ``kind``, ``name`` and properties, as ``Control.data``
+    gives them. Unknown keys and bad values are refused.
+    """
+    if isinstance(data, Panel):
+        data = data.data
+    _dispatch({"op": "setPanel", "name": name, "panel": _panel_data(data)})
+    return Panel(name)
 
 
 def _input(prompt=""):

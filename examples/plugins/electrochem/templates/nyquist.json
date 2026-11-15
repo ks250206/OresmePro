@@ -1,0 +1,208 @@
+{
+  "format": "oresme-graph-templates",
+  "version": 1,
+  "templates": {
+    "Nyquist": {
+      "style": {
+        "graph": {
+          "fontSize": 12,
+          "fontFamily": "Helvetica Neue, Helvetica, Arial, sans-serif"
+        },
+        "size": {
+          "width": 440,
+          "height": 440
+        },
+        "axes": {
+          "left": {
+            "mirror": "off",
+            "ticks": "outside",
+            "minor": false,
+            "grid": "off",
+            "labelSize": null,
+            "labelStyle": "plain",
+            "tickLabelSize": null
+          },
+          "bottom": {
+            "mirror": "off",
+            "ticks": "outside",
+            "minor": false,
+            "grid": "off",
+            "labelSize": null,
+            "labelStyle": "plain",
+            "tickLabelSize": null
+          },
+          "right": {
+            "mirror": "off",
+            "ticks": "outside",
+            "minor": false,
+            "grid": "off",
+            "labelSize": null,
+            "labelStyle": "plain",
+            "tickLabelSize": null
+          },
+          "top": {
+            "mirror": "off",
+            "ticks": "outside",
+            "minor": false,
+            "grid": "off",
+            "labelSize": null,
+            "labelStyle": "plain",
+            "tickLabelSize": null
+          }
+        },
+        "traces": [
+          {
+            "mode": "markers",
+            "color": "#1f5fa8",
+            "lineSize": 1,
+            "lineStyle": "solid",
+            "marker": "circle",
+            "markerSize": 3,
+            "markerFill": true
+          },
+          {
+            "mode": "lines",
+            "color": "#c0392b",
+            "lineSize": 1.5,
+            "lineStyle": "solid",
+            "marker": "circle",
+            "markerSize": 3,
+            "markerFill": true
+          }
+        ]
+      },
+      "slots": [
+        {
+          "name": "zim",
+          "role": "y",
+          "unit": "Ω",
+          "xUnit": null,
+          "yUnit": null
+        },
+        {
+          "name": "zre",
+          "role": "x",
+          "unit": "Ω",
+          "xUnit": null,
+          "yUnit": null
+        },
+        {
+          "name": "zim_fit",
+          "role": "y",
+          "unit": "Ω",
+          "xUnit": null,
+          "yUnit": null
+        },
+        {
+          "name": "zre_fit",
+          "role": "x",
+          "unit": "Ω",
+          "xUnit": null,
+          "yUnit": null
+        }
+      ],
+      "traces": [
+        {
+          "y": "zim",
+          "x": "zre",
+          "vAxis": "left",
+          "hAxis": "bottom",
+          "yError": null,
+          "xError": null,
+          "fill": "none",
+          "fillColor": null,
+          "fillOpacity": 0.25,
+          "xOffset": 0,
+          "yOffset": 0,
+          "colorWave": null,
+          "colorTable": "rainbow",
+          "colorMin": null,
+          "colorMax": null,
+          "part": "real"
+        },
+        {
+          "y": "zim_fit",
+          "x": "zre_fit",
+          "vAxis": "left",
+          "hAxis": "bottom",
+          "yError": null,
+          "xError": null,
+          "fill": "none",
+          "fillColor": null,
+          "fillOpacity": 0.25,
+          "xOffset": 0,
+          "yOffset": 0,
+          "colorWave": null,
+          "colorTable": "rainbow",
+          "colorMin": null,
+          "colorMax": null,
+          "part": "real"
+        }
+      ],
+      "images": [],
+      "contours": [],
+      "axes": [
+        {
+          "name": "left",
+          "side": "left",
+          "label": "−Z″ (Ω)",
+          "min": null,
+          "max": null,
+          "log": false,
+          "reverse": false,
+          "tickStep": null,
+          "tickFormat": null,
+          "span": [0, 1]
+        },
+        {
+          "name": "bottom",
+          "side": "bottom",
+          "label": "Z′ (Ω)",
+          "min": null,
+          "max": null,
+          "log": false,
+          "reverse": false,
+          "tickStep": null,
+          "tickFormat": null,
+          "span": [0, 1]
+        },
+        {
+          "name": "right",
+          "side": "right",
+          "label": null,
+          "min": null,
+          "max": null,
+          "log": false,
+          "reverse": false,
+          "tickStep": null,
+          "tickFormat": null,
+          "span": [0, 1]
+        },
+        {
+          "name": "top",
+          "side": "top",
+          "label": null,
+          "min": null,
+          "max": null,
+          "log": false,
+          "reverse": false,
+          "tickStep": null,
+          "tickFormat": null,
+          "span": [0, 1]
+        }
+      ],
+      "annotations": [
+        {
+          "kind": "legend",
+          "text": "\\s({trace1}) data\n\\s({trace2}) fit",
+          "anchor": "RT",
+          "frame": true,
+          "x": 0,
+          "y": 0,
+          "trace": null,
+          "point": 0
+        }
+      ]
+    }
+  }
+}

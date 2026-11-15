@@ -74,9 +74,13 @@ import {
   TextInput,
 } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
+import { GraphTemplatesDialog, SaveGraphTemplateDialog } from "./GraphTemplateDialogs";
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
+import { PluginsDialog } from "./PluginsDialog";
+import { TemplatesDialog } from "./TemplatesDialog";
+import { SetWaveValuesDialog } from "./SetWaveValuesDialog";
 
 const close = () => ui.set({ dialog: null });
 
@@ -2982,6 +2986,8 @@ function OnsetDialog({ wave: initial }: { wave?: string }) {
 
 function renderDialog(dialog: DialogRequest) {
   switch (dialog.kind) {
+    case "plugins":
+      return <PluginsDialog />;
     case "newGraph":
       return <NewGraphDialog />;
     case "appendTraces":
@@ -3020,6 +3026,8 @@ function renderDialog(dialog: DialogRequest) {
       return <WaveScalingDialog wave={dialog.wave} />;
     case "waveType":
       return <WaveTypeDialog wave={dialog.wave} />;
+    case "setWaveValues":
+      return <SetWaveValuesDialog wave={dialog.wave} />;
     case "curveFit":
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
@@ -3032,6 +3040,10 @@ function renderDialog(dialog: DialogRequest) {
       return <GraphScriptDialog graph={dialog.graph} />;
     case "styles":
       return <StylesDialog graph={dialog.graph} />;
+    case "saveGraphTemplate":
+      return <SaveGraphTemplateDialog graph={dialog.graph} />;
+    case "graphTemplates":
+      return <GraphTemplatesDialog template={dialog.template} />;
     case "timeZone":
       return <TimeZoneDialog />;
     case "pageText":
@@ -3049,6 +3061,13 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "results":
       return <ResultsDialog {...(dialog.result ? { focus: dialog.result } : {})} />;
+    case "templates":
+      return (
+        <TemplatesDialog
+          {...(dialog.template ? { template: dialog.template } : {})}
+          {...(dialog.run ? { run: dialog.run } : {})}
+        />
+      );
     case "experiments":
       return <ExperimentsDialog />;
     case "about":

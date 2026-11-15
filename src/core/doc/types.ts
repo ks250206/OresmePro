@@ -1,4 +1,5 @@
 import { dict, type Dict } from "./dict";
+import type { AnalysisTemplate, TemplateRun } from "./analysisTemplates";
 import type { AnalysisResult } from "./results";
 
 /** The number types a wave can hold, named as NumPy names them. */
@@ -131,8 +132,40 @@ export interface Wave {
   /** Unit of the stored values. */
   readonly unit: string;
   readonly note: string;
-  /** Changes every time the wave changes; unique across all waves. */
+  /**
+   * Changes every time the wave's content changes (values, shape, scaling,
+   * units, note, name); unique across all waves. Not when only its formula
+   * changes: that is about where the values come from, not what they are.
+   */
   readonly rev: number;
+  /** The formula that gives the wave its values (see ./formula); absent when it has none. */
+  readonly formula?: Formula;
+}
+
+/**
+ * A wave's formula: an expression of other waves that its values are
+ * computed from (Igor's dependency formula, `R := V / I`).
+ *
+ * Whether the values are up to date is told by revisions: `rev` is the
+ * wave's own revision once the values were written, and `inputs` the
+ * revision of each input then. Both change whenever their wave does and are
+ * never reused, so the values are up to date exactly when all of them still
+ * match. Revisions do not survive saving, so the file keeps only whether the
+ * values were out of date then.
+ */
+export interface Formula {
+  /** As it was typed (rewritten only when an input is renamed). */
+  readonly expr: string;
+  /** Recomputed whenever an input changes; otherwise only when asked to (Recalculate). */
+  readonly auto: boolean;
+  /** The revision of each input wave when last computed: null for one that did not exist. */
+  readonly inputs: Dict<number | null>;
+  /** The wave's own revision as the last computation left it. */
+  readonly rev: number;
+  /** Why the last computation failed, or null. The values are still those from before it. */
+  readonly error: string | null;
+  /** How many points of the last computation were divided by zero, and so are NaN. */
+  readonly zeroDivisions: number;
 }
 
 /** The unit that marks values as dates: seconds since 1970-01-01 UTC. As in Igor. */
@@ -475,6 +508,104 @@ export interface StyleSpec {
   traces?: readonly Partial<TraceLook>[];
 }
 
+/*
+ * A graph template is a graph with its waves taken out: the same traces,
+ * axes, look, text and size, made again for other data. Where the graph had
+ * a wave, the template has a slot, named by what the wave was for ("y",
+ * "x", or "y1", "y2" for several traces), and making a graph from it means
+ * saying which wave goes in each slot. It sits between a style, which keeps
+ * only the look, and the recreation script, which makes the same graph of
+ * the same waves.
+ *
+ * A template holds no wave names, so renaming or killing a wave does not
+ * touch it. Text in its annotations and axis labels can name what fills a
+ * slot instead: {y.name} and {y.unit} become the name and the unit of the
+ * wave in slot y, {trace1} the name of the first trace and {image1} that of
+ * the first image.
+ */
+
+/** What a wave fills in a graph template. */
+export const SLOT_ROLES = ["y", "x", "yError", "xError", "color", "z"] as const;
+export type SlotRole = (typeof SLOT_ROLES)[number];
+
+export interface TemplateSlot {
+  name: string;
+  /** What the wave was first used for in the graph the template was made from. */
+  role: SlotRole;
+  /**
+   * The units of the wave it was made from, to warn when a graph is made of
+   * data in other units: the unit of its values, and of its X and Y scaling
+   * where the graph used them (null where it did not).
+   */
+  unit: string;
+  xUnit: string | null;
+  yUnit: string | null;
+}
+
+/** Properties of a trace that a template keeps besides the look its style holds. */
+export const TRACE_DATA = [
+  "yError",
+  "xError",
+  "fill",
+  "fillColor",
+  "fillOpacity",
+  "xOffset",
+  "yOffset",
+  "colorWave",
+  "colorTable",
+  "colorMin",
+  "colorMax",
+  "part",
+] as const;
+
+/** A trace of a template: slot names where the trace has wave names. */
+export interface TemplateTrace extends Pick<TraceStyle, (typeof TRACE_DATA)[number]> {
+  y: string;
+  x: string | null;
+  vAxis: string;
+  hAxis: string;
+}
+
+/** Properties of an axis that a template keeps besides the look its style holds. */
+export const AXIS_DATA = [
+  "label",
+  "min",
+  "max",
+  "log",
+  "reverse",
+  "tickStep",
+  "tickFormat",
+  "span",
+] as const;
+
+export interface TemplateAxis extends Pick<AxisSpec, "side" | (typeof AXIS_DATA)[number]> {
+  name: string;
+}
+
+/** An image or contour of a template: `wave` is a slot name. */
+export type TemplateImage = Omit<ImageSpec, "name">;
+export type TemplateContour = Omit<ContourSpec, "name">;
+
+export interface TemplateAnnotation extends Pick<
+  AnnotationSpec,
+  "kind" | "text" | "anchor" | "frame" | "x" | "y" | "point"
+> {
+  /** For a tag: the place of its trace in the template's traces. */
+  trace: number | null;
+}
+
+export interface GraphTemplate {
+  /** The look and the size, as a style holds them. */
+  style: StyleSpec;
+  slots: readonly TemplateSlot[];
+  traces: readonly TemplateTrace[];
+  images: readonly TemplateImage[];
+  contours: readonly TemplateContour[];
+  /** Every axis, the four sides first. A range left as null is worked out from the data. */
+  axes: readonly TemplateAxis[];
+  annotations: readonly TemplateAnnotation[];
+}
+
 export interface TableSpec {
   name: string;
   /** The waves shown, as columns. */
@@ -539,10 +670,120 @@ export const PAGE_SIZES = {
   Letter: [612, 792],
 } as const;
 
-export interface WindowState {
-  /** Same as the name of the graph, table, procedure or page layout it shows. */
+/*
+ * A panel is a window of controls that runs analyses: fields and pickers
+ * that hold values, and buttons that call registered actions with them
+ * (Igor's control panel). The values are part of the document, so they are
+ * saved, undone and recorded like any other change.
+ *
+ * A button calls an action by its id with arguments that are plain values
+ * or the value of a control of the panel (see ControlArg). It never holds
+ * code: a panel whose buttons call only the application's own actions is
+ * data, while one that calls an action a procedure registered runs the
+ * user's Python (see panelTrust in ./panels).
+ */
+
+/** The kinds of control a panel can hold. */
+export const CONTROL_KINDS = [
+  "heading",
+  "text",
+  "number",
+  "string",
+  "checkbox",
+  "choice",
+  "wave",
+  "button",
+] as const;
+export type ControlKind = (typeof CONTROL_KINDS)[number];
+
+/** A reference to a control of the panel, as a button's argument. */
+export interface ControlRef {
+  readonly $control: string;
+}
+
+/**
+ * An argument of a button's action: plain data (JSON) in which a reference
+ * to a control stands for the control's value. Mostly the argument is a
+ * plain value or a reference itself; a reference deep inside (in a list of
+ * dicts, say) is the value there.
+ */
+export type ControlArg =
+  | null
+  | boolean
+  | number
+  | string
+  | ControlRef
+  | readonly ControlArg[]
+  | { readonly [key: string]: ControlArg };
+
+interface ControlBase {
+  /** Unique in its panel; what buttons and Python name it by. */
+  readonly name: string;
+  /** The words shown: a heading or paragraph itself, a button's caption, or a field's label. */
+  readonly label: string;
+  /** Sits on the same line as the control before it, instead of a line of its own. */
+  readonly inline: boolean;
+}
+
+export type PanelControl =
+  | (ControlBase & { readonly kind: "heading" })
+  | (ControlBase & { readonly kind: "text" })
+  | (ControlBase & {
+      readonly kind: "number";
+      readonly value: number;
+      /** Inclusive limits, or null for none. */
+      readonly min: number | null;
+      readonly max: number | null;
+      /** How much the arrows change the value; null for 1. */
+      readonly step: number | null;
+    })
+  | (ControlBase & { readonly kind: "string"; readonly value: string })
+  | (ControlBase & { readonly kind: "checkbox"; readonly value: boolean })
+  | (ControlBase & {
+      readonly kind: "choice";
+      /** One of the options, or null while there are none. */
+      readonly value: string | number | null;
+      readonly options: readonly (string | number)[];
+    })
+  | (ControlBase & {
+      readonly kind: "wave";
+      /**
+       * The wave chosen, or null. It follows the wave when it is renamed; when
+       * the wave is killed the name stays, and the control shows it as missing.
+       */
+      readonly value: string | null;
+      /** Lists only waves of this many dimensions; null lists all numeric waves. */
+      readonly dims: number | null;
+      /** Lists only waves whose names match: text they contain, or a pattern with "*". */
+      readonly filter: string;
+    })
+  | (ControlBase & {
+      readonly kind: "button";
+      /** The id of the action it calls; "" for none yet. */
+      readonly action: string;
+      /** The version of the action; null for the highest there is. */
+      readonly version: number | null;
+      /** The action's arguments by name. */
+      readonly args: Dict<ControlArg>;
+    });
+
+/** The controls that hold a value a button can pass on. */
+export type ValueControl = Extract<PanelControl, { value: unknown }>;
+
+export const hasValue = (control: PanelControl): control is ValueControl => "value" in control;
+
+export interface PanelSpec {
   name: string;
-  kind: "graph" | "table" | "procedure" | "page";
+  /** What the window's title bar says; the name when empty. */
+  title: string;
+  /** In the order they are shown. */
+  controls: readonly PanelControl[];
+}
+
+export interface WindowState {
+  /** Same as the name of the graph, table, procedure, page layout or panel it shows. */
+  name: string;
+  kind: "graph" | "table" | "procedure" | "page" | "panel";
   x: number;
   y: number;
   w: number;
@@ -560,12 +801,19 @@ export interface DocState {
   readonly tables: Dict<TableSpec>;
   readonly procedures: Dict<ProcedureSpec>;
   readonly pages: Dict<PageSpec>;
+  readonly panels: Dict<PanelSpec>;
   /** Graph styles, by name. */
   readonly styles: Dict<StyleSpec>;
   /** The style new graphs are given, or null. Always one of `styles`. */
   readonly defaultStyle: string | null;
+  /** Graph templates, by name. */
+  readonly graphTemplates: Dict<GraphTemplate>;
   /** Analysis results (fits), by name, with what was asked for. */
   readonly results: Dict<AnalysisResult>;
+  /** Analysis templates, by name: steps of actions to do to one sample after another. */
+  readonly templates: Dict<AnalysisTemplate>;
+  /** Records of templates run on lists of samples, by name, each with a copy of its template. */
+  readonly runs: Dict<TemplateRun>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -583,9 +831,13 @@ export const emptyDoc = (): DocState => ({
   tables: dict(),
   procedures: dict(),
   pages: dict(),
+  panels: dict(),
   styles: dict(),
   defaultStyle: null,
+  graphTemplates: dict(),
   results: dict(),
+  templates: dict(),
+  runs: dict(),
   timeZone: "UTC",
   windows: [],
 });

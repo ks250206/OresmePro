@@ -2,16 +2,40 @@ import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import { dict, filterDict, withEntry, withoutEntries } from "./dict";
 import {
+  checkCycle,
+  evaluateFormula,
+  formulaCurrent,
+  formulaOrder,
+  FormulaError,
+  parseFormula,
+  renameInFormula,
+  type FormulaOutcome,
+} from "./formula";
+import {
   checkResult,
   renameInResult,
   RESULT_BASE,
   RESULT_KINDS,
   type AnalysisResult,
 } from "./results";
+import { captureTemplate, makeFromTemplate, RESERVED_SLOT_NAMES } from "./graphTemplates";
+import { applyPanelCommand, renameInPanels } from "./panels";
+import {
+  checkAnalysisTemplate,
+  checkRun,
+  renameInRun,
+  renameResultInRun,
+  RUN_BASE,
+  withSampleOutcome,
+  type AnalysisTemplate,
+  type SampleOutcome,
+  type TemplateRun,
+} from "./analysisTemplates";
 import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
+  AXIS_DATA,
   AXIS_LOOK,
   AXIS_ROLES,
   AXIS_SIDES,
@@ -29,8 +53,10 @@ import {
   MARKER_SHAPES,
   MIRROR_MODES,
   PAGE_SIZES,
+  SLOT_ROLES,
   TAG_OFFSET,
   TICK_MODES,
+  TRACE_DATA,
   TRACE_LOOK,
   TRACE_MODES,
   WAVE_TYPES,
@@ -53,13 +79,21 @@ import {
   type CursorName,
   type DocState,
   type ErrorSource,
+  type Formula,
   type FigureSize,
   type GraphLook,
   type GraphSpec,
   type GraphStyle,
+  type GraphTemplate,
   type ImageSpec,
   type TableSpec,
   type StyleSpec,
+  type TemplateAnnotation,
+  type TemplateAxis,
+  type TemplateContour,
+  type TemplateImage,
+  type TemplateSlot,
+  type TemplateTrace,
   type TraceLook,
   type TraceSpec,
   type TraceStyle,
@@ -137,6 +171,15 @@ export type Command =
     }
   | { op: "setWaveMeta"; name: string; unit?: string; note?: string }
   | { op: "renameWave"; name: string; newName: string }
+  /**
+   * Gives a wave a formula and computes it now, making the wave if it does
+   * not exist (see ./formula). `auto` (true when left out) keeps it up to
+   * date as its inputs change; otherwise it is computed again only by
+   * recalculate. An `expr` of null removes the formula and keeps the values.
+   */
+  | { op: "setFormula"; name: string; expr: string | null; auto?: boolean }
+  /** Computes again the formulas of these waves (all, when left out) that are out of date or failed. */
+  | { op: "recalculate"; names?: readonly string[] }
   | { op: "duplicateWave"; name: string; newName: string; overwrite?: boolean }
   | { op: "killWaves"; names: readonly string[] }
   | { op: "newFolder"; path: string }
@@ -224,6 +267,22 @@ export type Command =
     }
   | { op: "modifyLayoutItem"; layout: string; item: string; props: Props }
   | { op: "removeLayoutItem"; layout: string; item: string }
+  /** Makes an empty panel (see PanelSpec) with its window. */
+  | { op: "newPanel"; name?: string; title?: string }
+  /**
+   * Gives a panel its title and controls, as data (see checkPanel): an
+   * imported panel, say. Makes the panel and its window if there is none.
+   */
+  | { op: "setPanel"; name: string; panel: unknown }
+  | { op: "modifyPanel"; panel: string; props: Props }
+  /** Adds a control at the end. Left out, the name is chosen from its kind. */
+  | { op: "addControl"; panel: string; kind: string; name?: string; props?: Props }
+  /** Changes a control's properties; `name` among them renames it, and buttons follow. */
+  | { op: "modifyControl"; panel: string; control: string; props: Props }
+  | { op: "removeControl"; panel: string; control: string }
+  /** Puts a control at a place in the panel's order, counted from 0. */
+  | { op: "moveControl"; panel: string; control: string; to: number }
+  | { op: "setControlValue"; panel: string; control: string; value: unknown }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
@@ -234,10 +293,41 @@ export type Command =
   | { op: "renameStyle"; name: string; newName: string }
   | { op: "applyStyle"; style: string; graphs: readonly string[] }
   | { op: "setDefaultStyle"; name: string | null }
+  /**
+   * Keeps a graph as a template (see GraphTemplate). The axes in `fixed`
+   * keep their ranges; the others are worked out from the data of each graph.
+   */
+  | { op: "saveGraphTemplate"; name: string; graph: string; fixed?: readonly string[] }
+  /** Defines a template from its parts, replacing one of that name. */
+  | { op: "setGraphTemplate"; name: string; template: unknown }
+  | { op: "removeGraphTemplate"; name: string }
+  | { op: "renameGraphTemplate"; name: string; newName: string }
+  /**
+   * Makes a graph from a template for each sample: wave names by slot. All
+   * are made or none. `names` names the graphs; left out, they are chosen.
+   */
+  | {
+      op: "makeGraphs";
+      template: string;
+      samples: readonly Readonly<Record<string, string | null>>[];
+      names?: readonly string[];
+    }
   /** Keeps the outcome of an analysis. `result` is as Python reports it (see checkResult). */
   | { op: "addResult"; result: unknown; name?: string }
   | { op: "removeResults"; names: readonly string[] }
   | { op: "renameResult"; name: string; newName: string }
+  /** Defines an analysis template (see AnalysisTemplate), replacing one of that name. */
+  | { op: "setTemplate"; name: string; template: unknown }
+  | { op: "removeTemplate"; name: string }
+  | { op: "renameTemplate"; name: string; newName: string }
+  /**
+   * Keeps the record of a template run on samples (see TemplateRun), as
+   * Python starts it: every sample pending. Named Run0, Run1, ... unless named.
+   */
+  | { op: "addRun"; run: unknown; name?: string }
+  /** Records how one sample of a run went; the inputs are fingerprinted as they are now. */
+  | ({ op: "updateRunSample"; run: string; index: number } & SampleOutcome)
+  | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
@@ -456,11 +546,15 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-/** Whether a window (graph, table, procedure or page layout) already has this name. */
+/** Whether a window (graph, table, procedure, page layout or panel) already has this name. */
 export const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
+  name in state.graphs ||
+  name in state.tables ||
+  name in state.procedures ||
+  name in state.pages ||
+  name in state.panels;
 
-function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
+export function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
   const size =
     kind === "graph"
@@ -469,7 +563,9 @@ function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): 
         ? { w: 360, h: 300 }
         : kind === "page"
           ? { w: 440, h: 560 }
-          : { w: 520, h: 340 };
+          : kind === "panel"
+            ? { w: 340, h: 280 }
+            : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -867,6 +963,303 @@ const ITEM_VALIDATORS: { [K in keyof ItemProps]: (value: unknown) => ItemProps[K
   },
 };
 
+const TRACE_DATA_VALIDATORS = someOf<TraceStyle, (typeof TRACE_DATA)[number]>(
+  TRACE_VALIDATORS,
+  TRACE_DATA,
+);
+const AXIS_DATA_VALIDATORS = someOf<Omit<AxisSpec, "side">, (typeof AXIS_DATA)[number]>(
+  AXIS_VALIDATORS,
+  AXIS_DATA,
+);
+
+function listOf(value: unknown, what: string): readonly unknown[] {
+  if (!Array.isArray(value) || value.length > 1000) throw new DocError(`${what} must be a list.`);
+  return value;
+}
+
+function textOf(value: unknown, what: string): string {
+  if (typeof value !== "string") throw new DocError(`${what} must be text.`);
+  return value;
+}
+
+/** The properties of an object (as read from data) besides some that are taken out. */
+function restOf(props: Props, taken: readonly string[]): Props {
+  return Object.fromEntries(Object.entries(props).filter(([key]) => !taken.includes(key)));
+}
+
+/** A validator that lets anything through, for properties checked on their own. */
+const anything = (value: unknown): unknown => value;
+
+/**
+ * Checks a graph template given as data (from Python, a file or the
+ * browser's library) and returns it in its usual form, with its parts in one
+ * order so that equal templates are written alike. What is left out takes
+ * the value a new graph would have; unknown properties, bad values and
+ * references to slots, axes or traces it does not have are refused.
+ */
+export function checkGraphTemplate(value: unknown): GraphTemplate {
+  const parts = propsOf(value, "A graph template");
+  validateProps(
+    parts,
+    {
+      style: anything,
+      slots: anything,
+      traces: anything,
+      images: anything,
+      contours: anything,
+      axes: anything,
+      annotations: anything,
+    },
+    "graph template",
+  );
+
+  const slots = listOf(parts.slots ?? [], "slots").map((item): TemplateSlot => {
+    const props = propsOf(item, "A slot");
+    validateProps(
+      props,
+      { name: anything, role: anything, unit: anything, xUnit: anything, yUnit: anything },
+      "slot",
+    );
+    const name = checkName(props.name, "slot");
+    if (RESERVED_SLOT_NAMES.has(name)) {
+      throw new DocError(`A slot cannot be called ${name}: Python uses that word.`);
+    }
+    const scaling = (unit: unknown, what: string) =>
+      unit === undefined || unit === null ? null : textOf(unit, what);
+    return {
+      name,
+      role: oneOf(props.role, SLOT_ROLES, "role"),
+      unit: props.unit === undefined ? "" : textOf(props.unit, "unit"),
+      xUnit: scaling(props.xUnit, "xUnit"),
+      yUnit: scaling(props.yUnit, "yUnit"),
+    };
+  });
+  const slotNames = slots.map((slot) => slot.name);
+  const doubled = slotNames.find((name, at) => slotNames.indexOf(name) !== at);
+  if (doubled !== undefined) throw new DocError(`Two slots are called ${doubled}.`);
+  const slot = (name: unknown, what: string): string => {
+    if (typeof name === "string" && slotNames.includes(name)) return name;
+    throw new DocError(
+      `${what} must be one of the template's slots (${slotNames.join(", ") || "it has none"}), not ${JSON.stringify(name)}.`,
+    );
+  };
+
+  const axisOf = (name: string, side: TemplateAxis["side"], data: AxisSpec): TemplateAxis => ({
+    name,
+    side,
+    label: data.label,
+    min: data.min,
+    max: data.max,
+    log: data.log,
+    reverse: data.reverse,
+    tickStep: data.tickStep,
+    tickFormat: data.tickFormat,
+    span: data.span,
+  });
+  const given = listOf(parts.axes ?? [], "axes").map((item): TemplateAxis => {
+    const props = propsOf(item, "An axis");
+    const name = checkName(props.name, "axis");
+    const isSide = (AXIS_SIDES as readonly string[]).includes(name);
+    const side = oneOf(props.side ?? (isSide ? name : undefined), AXIS_SIDES, "side");
+    if (isSide && side !== name) throw new DocError(`The ${name} axis is on the ${name} side.`);
+    const axis = axisOf(name, side, {
+      ...defaultAxis(side),
+      ...validateProps(restOf(props, ["name", "side"]), AXIS_DATA_VALIDATORS, "template axis"),
+    });
+    if (axis.min !== null && axis.max !== null && axis.min === axis.max) {
+      throw new DocError("The axis range must not be empty.");
+    }
+    return axis;
+  });
+  const axisNames = given.map((axis) => axis.name);
+  const twice = axisNames.find((name, at) => axisNames.indexOf(name) !== at);
+  if (twice !== undefined) throw new DocError(`Two axes are called ${twice}.`);
+  // The four sides are always there, first, as in every graph.
+  const axes: TemplateAxis[] = [
+    ...AXIS_SIDES.map(
+      (side) => given.find((axis) => axis.name === side) ?? axisOf(side, side, defaultAxis(side)),
+    ),
+    ...given.filter((axis) => !(AXIS_SIDES as readonly string[]).includes(axis.name)),
+  ];
+  const axisRef = (name: unknown, vertical: boolean): string => {
+    const axis = axes.find((item) => item.name === name);
+    if (!axis) {
+      throw new DocError(
+        `The template has no axis named ${JSON.stringify(name)}. Axes: ${axes.map((item) => item.name).join(", ")}.`,
+      );
+    }
+    if (isVerticalSide(axis.side) !== vertical) {
+      throw new DocError(
+        `Axis ${axis.name} is ${vertical ? "horizontal" : "vertical"}; a ${vertical ? "vertical" : "horizontal"} axis is needed here.`,
+      );
+    }
+    return axis.name;
+  };
+
+  const traces = listOf(parts.traces ?? [], "traces").map((item): TemplateTrace => {
+    const props = propsOf(item, "A trace");
+    const data = {
+      ...defaultTraceStyle(0),
+      ...validateProps(
+        restOf(props, ["y", "x", "vAxis", "hAxis"]),
+        TRACE_DATA_VALIDATORS,
+        "template trace",
+      ),
+    };
+    const source = (value: ErrorSource, what: string): ErrorSource =>
+      typeof value === "string" ? slot(value, what) : value;
+    return {
+      y: slot(props.y, "A trace's y"),
+      x: props.x === undefined || props.x === null ? null : slot(props.x, "A trace's x"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      yError: source(data.yError, "yError"),
+      xError: source(data.xError, "xError"),
+      fill: data.fill,
+      fillColor: data.fillColor,
+      fillOpacity: data.fillOpacity,
+      xOffset: data.xOffset,
+      yOffset: data.yOffset,
+      colorWave: data.colorWave === null ? null : slot(data.colorWave, "colorWave"),
+      colorTable: data.colorTable,
+      colorMin: data.colorMin,
+      colorMax: data.colorMax,
+      part: data.part,
+    };
+  });
+
+  const images = listOf(parts.images ?? [], "images").map((item): TemplateImage => {
+    const props = propsOf(item, "An image");
+    const data: ImageProps = {
+      colorTable: "grays",
+      zMin: null,
+      zMax: null,
+      reverse: false,
+      layer: 0,
+      chunk: 0,
+      part: "real",
+      ...validateProps<ImageProps>(
+        restOf(props, ["wave", "vAxis", "hAxis"]),
+        IMAGE_VALIDATORS,
+        "image",
+      ),
+    };
+    return {
+      wave: slot(props.wave, "An image's wave"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      colorTable: data.colorTable,
+      zMin: data.zMin,
+      zMax: data.zMax,
+      reverse: data.reverse,
+      layer: data.layer,
+      chunk: data.chunk,
+      part: data.part,
+    };
+  });
+
+  const contours = listOf(parts.contours ?? [], "contours").map((item): TemplateContour => {
+    const props = propsOf(item, "A contour");
+    const data: ContourProps = {
+      levels: 10,
+      color: "#000000",
+      lineSize: 1,
+      colorTable: null,
+      labels: true,
+      layer: 0,
+      chunk: 0,
+      ...validateProps<ContourProps>(
+        restOf(props, ["wave", "vAxis", "hAxis"]),
+        CONTOUR_VALIDATORS,
+        "contour",
+      ),
+    };
+    return {
+      wave: slot(props.wave, "A contour's wave"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      levels: data.levels,
+      color: data.color,
+      lineSize: data.lineSize,
+      colorTable: data.colorTable,
+      labels: data.labels,
+      layer: data.layer,
+      chunk: data.chunk,
+    };
+  });
+
+  const annotations = listOf(parts.annotations ?? [], "annotations").map(
+    (item): TemplateAnnotation => {
+      const props = propsOf(item, "An annotation");
+      const kind = oneOf(props.kind, ANNOTATION_KINDS, "kind");
+      const tag = kind === "tag";
+      const data = validateProps<AnnotationProps>(
+        restOf(props, ["kind", "trace"]),
+        ANNOTATION_VALIDATORS,
+        "annotation",
+      );
+      const trace = props.trace === undefined || props.trace === null ? null : props.trace;
+      if (trace !== null && !tag) throw new DocError("Only a tag points at a trace.");
+      if (tag && trace === null) throw new DocError("A tag needs the trace it points at.");
+      const place = trace === null ? null : index(trace, "trace");
+      if (place !== null && place >= traces.length) {
+        throw new DocError(
+          `A tag points at trace ${place}, but the template has ${traces.length} (counted from 0).`,
+        );
+      }
+      return {
+        kind,
+        text: data.text ?? "",
+        anchor: data.anchor ?? (kind === "colorscale" ? "RC" : "RT"),
+        frame: data.frame ?? true,
+        x: data.x ?? (tag ? TAG_OFFSET.x : 0),
+        y: data.y ?? (tag ? TAG_OFFSET.y : 0),
+        trace: place,
+        point: data.point ?? 0,
+      };
+    },
+  );
+
+  return {
+    style: checkStyle(parts.style ?? {}),
+    slots,
+    traces,
+    images,
+    contours,
+    axes,
+    annotations,
+  };
+}
+
+function requireTemplate(state: DocState, name: unknown): GraphTemplate {
+  const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
+  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  return template;
+}
+
+const putTemplate = (state: DocState, name: string, template: GraphTemplate): DocState => ({
+  ...state,
+  graphTemplates: withEntry(state.graphTemplates, name, template),
+});
+
+function requireAnalysisTemplate(state: DocState, name: unknown): AnalysisTemplate {
+  const template = typeof name === "string" ? state.templates[name] : undefined;
+  if (!template) throw new DocError(`No template named ${JSON.stringify(name)}.`);
+  return template;
+}
+
+const putAnalysisTemplate = (
+  state: DocState,
+  name: string,
+  template: AnalysisTemplate,
+): DocState => ({ ...state, templates: withEntry(state.templates, name, template) });
+
+function requireRun(state: DocState, name: unknown): TemplateRun {
+  const run = typeof name === "string" ? state.runs[name] : undefined;
+  if (!run) throw new DocError(`No run named ${JSON.stringify(name)}.`);
+  return run;
+}
+
 function requirePage(state: DocState, name: string): PageSpec {
   const page = state.pages[name];
   if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
@@ -899,8 +1292,16 @@ function validateProps<T>(
   return result;
 }
 
-/** Rewrites every reference to a wave after waves have been renamed or moved. */
-function renameReferences(state: DocState, rename: (name: string) => string): DocState {
+/**
+ * Rewrites every reference to a wave after waves have been renamed or moved.
+ * `previous` holds the waves as they were before: a formula that was up to
+ * date with an input stays so when only the input's name changed.
+ */
+function renameReferences(
+  state: DocState,
+  rename: (name: string) => string,
+  previous: DocState["waves"],
+): DocState {
   const graphs = dict<GraphSpec>();
   for (const graph of Object.values(state.graphs)) {
     const traces: TraceSpec[] = [];
@@ -949,7 +1350,127 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
   for (const result of Object.values(state.results)) {
     results[result.name] = renameInResult(result, rename);
   }
-  return { ...state, graphs, tables, results };
+  const runs = dict<TemplateRun>();
+  for (const run of Object.values(state.runs)) runs[run.name] = renameInRun(run, rename);
+  let waves = state.waves;
+  for (const wave of Object.values(state.waves)) {
+    const formula = wave.formula;
+    if (!formula || !Object.keys(formula.inputs).some((input) => rename(input) !== input)) {
+      continue;
+    }
+    const inputs = dict<number | null>();
+    for (const [input, rev] of Object.entries(formula.inputs)) {
+      const name = rename(input);
+      inputs[name] =
+        rev !== null && previous[input]?.rev === rev ? (state.waves[name]?.rev ?? null) : rev;
+    }
+    const expr = renameInFormula(formula.expr, rename);
+    // Only where the values come from has changed, not the values: no new revision.
+    waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
+  }
+  const panels = renameInPanels(state.panels, rename);
+  return { ...state, waves, graphs, tables, results, panels, runs };
+}
+
+/** A wave under a new name; a formula that was up to date with it stays so. */
+function moved(wave: Wave, name: string): Wave {
+  const next = changed(wave, { name });
+  const { formula } = wave;
+  return formula && formula.rev === wave.rev
+    ? { ...next, formula: { ...formula, rev: next.rev } }
+    : next;
+}
+
+/** A wave without its formula, keeping its values. */
+function withoutFormula(wave: Wave): Wave {
+  const { formula: _formula, ...rest } = wave;
+  return rest;
+}
+
+/** Writes what a formula computed into its wave, making the wave if it does not exist. */
+function putFormulaResult(
+  state: DocState,
+  name: string,
+  formula: Pick<Formula, "expr" | "auto">,
+  outcome: FormulaOutcome,
+): DocState {
+  const existing = state.waves[name];
+  const rev = nextRev();
+  const content = {
+    data: outcome.values,
+    imag: null,
+    type: "float64" as const,
+    text: null,
+    shape: [outcome.values.length],
+    rev,
+  };
+  const wave: Wave = existing
+    ? { ...existing, ...content }
+    : {
+        name,
+        ...content,
+        x0: outcome.x0,
+        dx: outcome.dx,
+        xUnit: outcome.xUnit,
+        y0: 0,
+        dy: 1,
+        yUnit: "",
+        unit: "",
+        note: "",
+      };
+  return putWave(state, {
+    ...wave,
+    formula: {
+      expr: formula.expr,
+      auto: formula.auto,
+      inputs: outcome.inputs,
+      rev,
+      error: null,
+      zeroDivisions: outcome.zeroDivisions,
+    },
+  });
+}
+
+/**
+ * Computes a wave's formula again. If that fails, the values stay as they
+ * were and the formula keeps why, as of the inputs as they are now: it is
+ * not tried again until one of them (or the wave) changes.
+ */
+function recompute(state: DocState, name: string): DocState {
+  const wave = state.waves[name]!;
+  const formula = wave.formula!;
+  try {
+    return putFormulaResult(state, name, formula, evaluateFormula(state, name, formula.expr));
+  } catch (error) {
+    if (!(error instanceof DocError)) throw error;
+    const inputs = dict<number | null>(
+      Object.keys(formula.inputs).map((input) => [input, state.waves[input]?.rev ?? null]),
+    );
+    const message = error instanceof FormulaError ? `${error.detail}.` : error.message;
+    return putWave(state, {
+      ...wave,
+      formula: { ...formula, inputs, rev: wave.rev, error: message },
+    });
+  }
+}
+
+/**
+ * Brings every automatic formula up to date with its inputs, inputs before
+ * the waves computed from them. The document runs every change through
+ * this, so that in every state it holds, automatic formulas are up to date
+ * and their recomputation belongs to the change that made it necessary.
+ */
+export function settleFormulas(state: DocState): DocState {
+  const outdated = Object.values(state.waves).some(
+    (wave) => wave.formula?.auto && !formulaCurrent(state, wave.name, wave.formula),
+  );
+  if (!outdated) return state;
+  let next = state;
+  for (const name of formulaOrder(state)) {
+    const formula = next.waves[name]?.formula;
+    if (formula?.auto && !formulaCurrent(next, name, formula)) next = recompute(next, name);
+  }
+  return next;
 }
 
 function waveUsers(state: DocState, name: string): string[] {
@@ -1201,7 +1722,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const waves = withEntry(
         withoutEntries(state.waves, [wave.name]),
         newName,
-        changed(wave, { name: newName }),
+        moved(wave, newName),
       );
       const renamed = renameReferences(
         {
@@ -1210,6 +1731,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           waveOrder: state.waveOrder.map((name) => (name === wave.name ? newName : name)),
         },
         (name) => (name === wave.name ? newName : name),
+        state.waves,
       );
       return { state: renamed, result: newName };
     }
@@ -1220,13 +1742,16 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       return {
+        // The copy has the values but not the formula, as in Igor.
         state: putWave(
           state,
-          changed(wave, {
-            name: newName,
-            data: wave.data.slice(),
-            imag: wave.imag?.slice() ?? null,
-          }),
+          withoutFormula(
+            changed(wave, {
+              name: newName,
+              data: wave.data.slice(),
+              imag: wave.imag?.slice() ?? null,
+            }),
+          ),
         ),
         result: newName,
       };
@@ -1234,6 +1759,41 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "killWaves": {
       const names = command.names.map((name) => requireWave(state, name).name);
       return { state: removeWaves(state, names), result: null };
+    }
+    case "setFormula": {
+      const name = checkPath(command.name, "wave");
+      if (command.expr === null) {
+        const wave = requireWave(state, name);
+        if (!wave.formula) return { state, result: null };
+        return { state: putWave(state, withoutFormula(wave)), result: null };
+      }
+      if (typeof command.expr !== "string") throw new DocError("A formula must be text.");
+      const auto = command.auto === undefined ? true : bool(command.auto, "auto");
+      const expr = command.expr.trim();
+      const parsed = parseFormula(expr);
+      checkCycle(state, name, parsed);
+      const outcome = evaluateFormula(state, name, parsed);
+      return { state: putFormulaResult(state, name, { expr, auto }, outcome), result: name };
+    }
+    case "recalculate": {
+      let names: Set<string> | null = null;
+      if (command.names !== undefined) {
+        names = new Set();
+        for (const given of command.names) {
+          const wave = requireWave(state, given);
+          if (!wave.formula) throw new DocError(`${wave.name} has no formula.`);
+          names.add(wave.name);
+        }
+      }
+      let next = state;
+      for (const name of formulaOrder(state)) {
+        if (names && !names.has(name)) continue;
+        const formula = next.waves[name]!.formula!;
+        // What failed is tried again: the reason may lie outside its inputs (the wave's scaling).
+        if (formula.error === null && formulaCurrent(next, name, formula)) continue;
+        next = recompute(next, name);
+      }
+      return { state: next, result: null };
     }
     case "newFolder": {
       const path = checkPath(command.path, "data folder");
@@ -1260,9 +1820,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         if (name !== wave.name && name in state.waves) {
           throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
         }
-        waves[name] = name === wave.name ? wave : changed(wave, { name });
+        waves[name] = name === wave.name ? wave : moved(wave, name);
       }
-      const moved = renameReferences(
+      const renamed = renameReferences(
         {
           ...state,
           waves,
@@ -1270,8 +1830,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           folders: state.folders.map(move),
         },
         move,
+        state.waves,
       );
-      return { state: withFolders(moved, parentFolder(newPath)), result: newPath };
+      return { state: withFolders(renamed, parentFolder(newPath)), result: newPath };
     }
     case "killFolder": {
       const path = checkPath(command.path, "data folder");
@@ -1727,6 +2288,15 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "newPanel":
+    case "setPanel":
+    case "modifyPanel":
+    case "addControl":
+    case "modifyControl":
+    case "removeControl":
+    case "moveControl":
+    case "setControlValue":
+      return applyPanelCommand(state, command);
     case "newProcedure": {
       let name = "Procedure";
       if (command.name !== undefined) {
@@ -1817,6 +2387,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.results) {
         throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
       }
+      const runs = dict<TemplateRun>();
+      for (const run of Object.values(state.runs)) {
+        runs[run.name] = renameResultInRun(run, command.name, newName);
+      }
       return {
         state: {
           ...state,
@@ -1824,9 +2398,54 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
             ...result,
             name: newName,
           }),
+          runs,
         },
         result: newName,
       };
+    }
+    case "setTemplate": {
+      const name = checkName(command.name, "template");
+      const template = checkAnalysisTemplate(command.template);
+      return { state: putAnalysisTemplate(state, name, template), result: name };
+    }
+    case "removeTemplate": {
+      requireAnalysisTemplate(state, command.name);
+      return {
+        state: { ...state, templates: withoutEntries(state.templates, [command.name]) },
+        result: null,
+      };
+    }
+    case "renameTemplate": {
+      const template = requireAnalysisTemplate(state, command.name);
+      const newName = checkName(command.newName, "template");
+      if (newName === command.name) return { state, result: newName };
+      if (newName in state.templates) {
+        throw new DocError(`Template ${JSON.stringify(newName)} already exists.`);
+      }
+      const templates = withEntry(
+        withoutEntries(state.templates, [command.name]),
+        newName,
+        template,
+      );
+      return { state: { ...state, templates }, result: newName };
+    }
+    case "addRun": {
+      const taken = (name: string) => name in state.runs;
+      const name =
+        command.name === undefined ? uniqueName(RUN_BASE, taken) : checkName(command.name, "run");
+      if (taken(name)) throw new DocError(`A run named ${JSON.stringify(name)} already exists.`);
+      const run = checkRun(command.run, name);
+      return { state: { ...state, runs: withEntry(state.runs, name, run) }, result: name };
+    }
+    case "updateRunSample": {
+      const run = requireRun(state, command.run);
+      const { op: _op, run: _run, index, ...outcome } = command;
+      const next = withSampleOutcome(state, run, index, outcome);
+      return { state: { ...state, runs: withEntry(state.runs, run.name, next) }, result: null };
+    }
+    case "removeRuns": {
+      for (const name of command.names) requireRun(state, name);
+      return { state: { ...state, runs: withoutEntries(state.runs, command.names) }, result: null };
     }
     case "removeStyle": {
       requireStyle(state, command.name);
@@ -1881,6 +2500,74 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (command.name === state.defaultStyle) return { state, result: null };
       return { state: { ...state, defaultStyle: command.name }, result: null };
     }
+    case "saveGraphTemplate": {
+      const name = checkName(command.name, "graph template");
+      requireGraph(state, command.graph);
+      const fixed = command.fixed ?? [];
+      if (!Array.isArray(fixed) || fixed.some((axis) => typeof axis !== "string")) {
+        throw new DocError("fixed must be a list of axis names.");
+      }
+      // Checked like a template given as data, which also puts it in the usual order.
+      const template = checkGraphTemplate(captureTemplate(state, command.graph, fixed));
+      return { state: putTemplate(state, name, template), result: name };
+    }
+    case "setGraphTemplate": {
+      const name = checkName(command.name, "graph template");
+      return {
+        state: putTemplate(state, name, checkGraphTemplate(command.template)),
+        result: name,
+      };
+    }
+    case "removeGraphTemplate": {
+      requireTemplate(state, command.name);
+      return {
+        state: { ...state, graphTemplates: withoutEntries(state.graphTemplates, [command.name]) },
+        result: null,
+      };
+    }
+    case "renameGraphTemplate": {
+      const template = requireTemplate(state, command.name);
+      const newName = checkName(command.newName, "graph template");
+      if (newName === command.name) return { state, result: null };
+      if (newName in state.graphTemplates) {
+        throw new DocError(`Graph template ${JSON.stringify(newName)} already exists.`);
+      }
+      const graphTemplates = withEntry(
+        withoutEntries(state.graphTemplates, [command.name]),
+        newName,
+        template,
+      );
+      return { state: { ...state, graphTemplates }, result: newName };
+    }
+    case "makeGraphs": {
+      const template = requireTemplate(state, command.template);
+      const { samples, names } = command;
+      if (!Array.isArray(samples) || samples.length === 0) {
+        throw new DocError("Give at least one sample: a dict of wave names by slot.");
+      }
+      if (names !== undefined && (!Array.isArray(names) || names.length !== samples.length)) {
+        throw new DocError(
+          `names must be a list of ${samples.length} graph names, one for each sample.`,
+        );
+      }
+      // Each graph is made on the document the one before left, so the
+      // reducer returns all of them or, if one cannot be made, none.
+      let next = state;
+      let made: string | null = null;
+      samples.forEach((sample: unknown, at) => {
+        const name = names?.[at] ?? uniqueName("Graph", windowTaken(next));
+        try {
+          next = makeFromTemplate(next, template, sample, name, applyCommand);
+        } catch (error) {
+          if (samples.length > 1 && error instanceof DocError) {
+            throw new DocError(`Sample ${at + 1}: ${error.message}`);
+          }
+          throw error;
+        }
+        made = name;
+      });
+      return { state: next, result: made };
+    }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
         throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
@@ -1905,6 +2592,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           tables: withoutEntries(state.tables, gone),
           procedures: withoutEntries(state.procedures, gone),
           pages,
+          panels: withoutEntries(state.panels, gone),
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

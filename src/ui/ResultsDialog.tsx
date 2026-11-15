@@ -1,8 +1,18 @@
 import { useMemo, useState } from "react";
 import { pyName, runPython } from "../app/actions";
-import { runGui, ui, useDoc } from "../app/session";
+import { doc, runGui, ui, useDoc } from "../app/session";
 import { changedInputs, type AnalysisResult, type Json } from "../core/doc/results";
-import { Button, Dialog, NameList } from "./controls";
+import { checkName, uniqueName } from "../core/doc/commands";
+import { Button, Dialog, NameList, TextInput } from "./controls";
+
+const isTemplateName = (name: string): boolean => {
+  try {
+    checkName(name, "template");
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** A number as a table shows it: six significant digits, no trailing zeros. */
 const show = (value: number | null): string =>
@@ -99,6 +109,7 @@ export function ResultsDialog({ focus }: { focus?: string }) {
   const [selected, setSelected] = useState<string[]>(focus ? [focus] : []);
   const [applying, setApplying] = useState(false);
   const [targets, setTargets] = useState<string[]>([]);
+  const [templateName, setTemplateName] = useState<string | null>(null);
   const chosen = list.filter((result) => selected.includes(result.name));
   const shown = chosen.at(-1) ?? null;
   // Columns for every parameter of the results listed, in the order they first appear.
@@ -119,6 +130,11 @@ export function ResultsDialog({ focus }: { focus?: string }) {
     close();
   };
   const names = chosen.map((result) => pyName(result.name)).join(", ");
+  // In the order the analyses were done: a later one may read what an earlier one made.
+  const makeTemplate = (name: string) => {
+    runPython(`op.make_template(${pyName(name)}, [${names}])`);
+    ui.set({ dialog: { kind: "templates", template: name } });
+  };
   const waves = state.waveOrder.filter((name) => {
     const wave = state.waves[name];
     return wave && !wave.text && wave.shape.length === 1;
@@ -237,6 +253,41 @@ export function ResultsDialog({ focus }: { focus?: string }) {
           </div>
         </div>
       ) : null}
+      {templateName !== null && chosen.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-muted">
+            Keep{" "}
+            {chosen.length === 1
+              ? `the analysis of ${chosen[0]!.name}`
+              : `these ${chosen.length} analyses, in the order they were done,`}{" "}
+            as a template, to do to other samples (Analysis › Templates…). The waves they read
+            become its inputs; a wave one of them made becomes what that step returns.
+          </span>
+          <div className="flex gap-1.5">
+            <TextInput
+              aria-label="Template name"
+              aria-invalid={!isTemplateName(templateName)}
+              autoFocus
+              className="w-40"
+              value={templateName}
+              onChange={(event) => setTemplateName(event.target.value.trim())}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (isTemplateName(templateName)) makeTemplate(templateName);
+                }
+              }}
+            />
+            <Button
+              primary
+              disabled={!isTemplateName(templateName)}
+              onClick={() => makeTemplate(templateName)}
+            >
+              Make Template
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button
           disabled={chosen.length === 0}
@@ -253,6 +304,19 @@ export function ResultsDialog({ focus }: { focus?: string }) {
           onClick={() => setApplying(!applying)}
         >
           Apply to Waves…
+        </Button>
+        <Button
+          disabled={chosen.length === 0 || chosen.some((result) => result.kind === "global")}
+          title="Keep the selected analyses as a template, to do the same to many samples."
+          onClick={() =>
+            setTemplateName(
+              templateName !== null
+                ? null
+                : uniqueName("template", (name) => name in doc.getState().templates),
+            )
+          }
+        >
+          Make Template…
         </Button>
         <Button
           disabled={list.length === 0}

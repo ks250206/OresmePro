@@ -1,4 +1,5 @@
 import type { PyodideAPI } from "pyodide";
+import type { ActionSpec } from "../core/actions";
 import { bootPython, type PythonKernel } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
 import { armSyncBuffer, createSyncBuffer, waitSyncReply } from "./syncChannel";
@@ -71,6 +72,8 @@ async function boot(indexURL: string, interruptBuffer: SharedArrayBuffer): Promi
         flushStream();
         post({ type: "error", id: currentId, name, message, traceback });
       },
+      actions: (catalogJson) =>
+        post({ type: "actions", catalog: JSON.parse(catalogJson) as ActionSpec[] }),
     },
     (message) => post({ type: "progress", message }),
   );
@@ -101,16 +104,28 @@ scope.onmessage = (event: MessageEvent<ToWorker>) => {
   }
   const ready = kernel;
   if (!ready) return;
-  if (message.type === "execute") {
+  if (message.type === "execute" || message.type === "invoke") {
     queue = queue.then(async () => {
       const python = await ready;
       currentId = message.id;
       if (interrupt) interrupt[0] = 0;
       post({ type: "started", id: message.id });
       let ok = false;
+      let result: string | undefined;
       executing = true;
       try {
-        ok = await python.execute(message.code);
+        if (message.type === "execute") {
+          ok = await python.execute(message.code);
+        } else {
+          const reply = await python.invoke(
+            message.action,
+            message.version,
+            message.argsJson,
+            (code) => post({ type: "echo", id: message.id, code }),
+          );
+          ok = reply !== null;
+          if (reply !== null) result = reply;
+        }
       } catch (error) {
         post({
           type: "error",
@@ -122,7 +137,7 @@ scope.onmessage = (event: MessageEvent<ToWorker>) => {
       }
       executing = false;
       flushStream();
-      post({ type: "done", id: message.id, ok });
+      post({ type: "done", id: message.id, ok, ...(result === undefined ? {} : { result }) });
     });
     // A failure to boot is reported once, by the init handler.
     queue = queue.catch(() => {});

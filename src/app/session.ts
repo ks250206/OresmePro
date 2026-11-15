@@ -1,3 +1,4 @@
+import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
@@ -10,10 +11,12 @@ import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
 import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
+import { PluginHost } from "./plugins/host";
+import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
-import { browserLibrary, LIBRARY_KEY } from "./styleLibrary";
+import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
 
 export type DialogRequest =
   | { kind: "newGraph" }
@@ -34,6 +37,8 @@ export type DialogRequest =
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
   | { kind: "waveType"; wave: string }
+  /** `wave`: the wave to set; left out, a new one. */
+  | { kind: "setWaveValues"; wave?: string }
   | { kind: "newFolder"; parent: string }
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }
@@ -43,13 +48,21 @@ export type DialogRequest =
   | { kind: "graphScript"; graph: string }
   /** The styles of the experiment and the library; `graph` is the one to save or apply to. */
   | { kind: "styles"; graph?: string }
+  /** Keeps a graph as a graph template. */
+  | { kind: "saveGraphTemplate"; graph: string }
+  /** The graph templates of the experiment and the library, to make graphs from; `template` is the one picked. */
+  | { kind: "graphTemplates"; template?: string }
   | { kind: "timeZone" }
   | { kind: "pageText"; layout: string; item?: string }
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
   | { kind: "results"; result?: string }
+  /** The analysis templates and their runs; `template` and `run` are the ones picked. */
+  | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** Installing, managing and running plugins. */
+  | { kind: "plugins" }
   | { kind: "about" };
 
 /** A file of data read into memory, waiting to be loaded through the Load Data dialog. */
@@ -123,6 +136,8 @@ export async function startExperiment(): Promise<void> {
   } catch {
     // It is only a convenience.
   }
+  // Plugins belong to the browser, not the experiment; a failure to read them stops nothing.
+  void pluginStore.load().catch(() => {});
   await experiment.start();
 }
 
@@ -248,10 +263,22 @@ function runProcedures(): void {
   }
 }
 
+/** The plugins installed in this browser, kept apart from the experiments (see src/app/plugins/). */
+export const pluginStore = new PluginStore(
+  typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function"
+    ? new OpfsPluginStorage()
+    : new MemoryPluginStorage(),
+  // Every tab keeps the same plugins: changes go one at a time and the others hear of them.
+  { locks: browserLocks(), channel: "oresme-plugins" },
+);
+export const plugins = new PluginHost({ store: pluginStore, doc, pyodideURL: PYODIDE_URL });
+
 export const kernel: KernelClient = new KernelClient({
   doc,
   history,
   files,
+  pluginCatalog: () => plugins.catalog(),
+  invokePlugin: (action, args, writer) => plugins.run(action, args as ActionArgs, writer),
   onStart: runProcedures,
   onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
@@ -262,6 +289,72 @@ export const kernel: KernelClient = new KernelClient({
   importPresets: () => importPresets.list(),
   indexURL: PYODIDE_URL,
 });
+
+let catalogParts: [readonly ActionSpec[], readonly ActionSpec[]] | null = null;
+let catalog: readonly ActionSpec[] = [];
+
+/**
+ * Every action there is: Python's (the app's own and those procedures
+ * register) and the plugins'. The same list until one of them changes, so
+ * that it can be read during rendering.
+ */
+export function actionCatalog(): readonly ActionSpec[] {
+  const fromKernel = kernel.getActions();
+  const fromPlugins = plugins.catalog();
+  if (!catalogParts || catalogParts[0] !== fromKernel || catalogParts[1] !== fromPlugins) {
+    catalogParts = [fromKernel, fromPlugins];
+    catalog = [...fromKernel, ...fromPlugins];
+  }
+  return catalog;
+}
+
+export function subscribeCatalog(listener: () => void): () => void {
+  const fromKernel = kernel.subscribeActions(listener);
+  const fromPlugins = plugins.subscribe(listener);
+  return () => {
+    fromKernel();
+    fromPlugins();
+  };
+}
+
+/**
+ * Calls an action by id, as panels and the Plugins dialog do. The app's own
+ * and the procedures' go to Python; a plugin's goes to its sandbox, with the
+ * call recorded in the history as the Python that does the same.
+ */
+export async function invokeAction(
+  id: string,
+  args: ActionArgs,
+  version?: number,
+): Promise<unknown> {
+  if (!id.startsWith("plugin.")) return kernel.invoke(id, args, version);
+  flushEchoes();
+  const startedAt = Date.now();
+  const entry = history.add("gui", invokeCode(id, args), "running", startedAt);
+  try {
+    const outcome = await plugins.run(id, args);
+    if (outcome.log)
+      history.appendOutput(entry, { kind: "stream", name: "stdout", text: outcome.log });
+    const made = Object.values(outcome.waves);
+    const parts = [
+      made.length > 0 ? `Made ${made.join(", ")}.` : "",
+      outcome.result ? `Kept the result ${outcome.result}.` : "",
+    ].filter(Boolean);
+    if (parts.length > 0) history.appendOutput(entry, { kind: "result", text: parts.join(" ") });
+    history.update(entry, { status: "ok", durationMs: Date.now() - startedAt });
+    return outcome;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    history.appendOutput(entry, {
+      kind: "error",
+      name: "PluginError",
+      message,
+      traceback: message,
+    });
+    history.update(entry, { status: "error", durationMs: Date.now() - startedAt });
+    throw error;
+  }
+}
 
 export function showError(title: string, error: unknown): void {
   ui.set({ alert: { title, message: error instanceof Error ? error.message : String(error) } });
@@ -276,8 +369,9 @@ let batchCounter = 0;
  * user is told why).
  *
  * `echo` is the Python to write instead of a line per command, for an action
- * that Python does in one call although it takes several commands. Should a
- * command fail midway, the lines for those that ran are written instead.
+ * that Python does in one call although it takes several commands. The
+ * commands go in together: should one fail, none of them has changed anything
+ * and nothing is written.
  */
 export function runGui(
   commands: Command | readonly Command[],
@@ -291,16 +385,20 @@ export function runGui(
   const echoes: string[] = [];
   let result: string | null = null;
   try {
-    for (const command of list) {
-      result = doc.dispatch(command, { group });
-      const echo = isTransient(command)
-        ? null
-        : echoPython(command, (wave) => doc.getState().waves[wave]?.shape);
-      if (echo) echoes.push(echo);
-    }
+    doc.transact(
+      (writer) => {
+        for (const command of list) {
+          result = writer.dispatch(command);
+          const echo = isTransient(command)
+            ? null
+            : echoPython(command, (wave) => writer.getState().waves[wave]?.shape);
+          if (echo) echoes.push(echo);
+        }
+      },
+      { group },
+    );
   } catch (error) {
     showError("That did not work", error);
-    if (echoes.length > 0) history.add("gui", echoes.join("\n"));
     return undefined;
   }
   if (options.echo !== undefined) history.add("gui", options.echo);
@@ -339,7 +437,12 @@ export function runGuiCoalesced(
   echo: () => string,
 ): void {
   try {
-    for (const command of commands) doc.dispatch(command, { group: `coalesced:${key}` });
+    doc.transact(
+      (writer) => {
+        for (const command of commands) writer.dispatch(command);
+      },
+      { group: `coalesced:${key}` },
+    );
   } catch (error) {
     showError("That did not work", error);
     return;
@@ -388,18 +491,23 @@ export function useFiles() {
   return useSyncExternalStore(files.subscribe, files.list);
 }
 
-/** The styles in the browser's library, following changes made in other tabs too. */
-export function useLibraryStyles() {
-  const library = browserLibrary();
+/** What a library of the browser holds, following changes made in other tabs too. */
+function useLibrary<T>(library: Library<T>) {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === LIBRARY_KEY) library.changed();
+      if (event.key === null || event.key === library.kind.key) library.changed();
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [library]);
   return useSyncExternalStore(library.subscribe, library.list);
 }
+
+/** The styles in the browser's library. */
+export const useLibraryStyles = () => useLibrary(browserLibrary());
+
+/** The graph templates in the browser's library. */
+export const useLibraryTemplates = () => useLibrary(templateLibrary());
 
 export function useHistoryEntries() {
   return useSyncExternalStore(history.subscribe, history.getEntries);
