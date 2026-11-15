@@ -82,6 +82,10 @@ __all__ = [
     "apply_style",
     "set_default_style",
     "default_style",
+    "GraphTemplate",
+    "graph_template",
+    "graph_templates",
+    "set_graph_template",
 ]
 
 
@@ -1184,6 +1188,30 @@ class Graph(_Props):
         _dispatch({"op": "saveStyle", "name": name, "graph": self._name, "size": bool(size)})
         return Style(name)
 
+    def save_template(self, name, fixed=()):
+        """Keep this graph as a graph template named ``name`` and return it.
+
+        Each wave the graph plots becomes a slot of the template (see
+        ``GraphTemplate``); the traces, axes, look, text and size are kept.
+        An axis keeps its range only if it is named in ``fixed`` (a name or
+        a list of names; ``True`` for every axis): the others follow the
+        data of each graph made from the template. A template of that name
+        is replaced.
+        """
+        if fixed is True:
+            fixed = list(self._info()["axes"])
+        elif isinstance(fixed, str):
+            fixed = [fixed]
+        _dispatch(
+            {
+                "op": "saveGraphTemplate",
+                "name": name,
+                "graph": self._name,
+                "fixed": [str(axis) for axis in fixed or ()],
+            }
+        )
+        return GraphTemplate(name)
+
     def apply_style(self, style):
         """Give this graph the look of a style (a name or a Style). Returns self."""
         apply_style(style, graphs=[self])
@@ -2098,6 +2126,169 @@ def default_style():
     """The Style new graphs are given, or None."""
     name = _call("listStyles")[0]["default"]
     return None if name is None else Style(name)
+
+
+class GraphTemplate:
+    """A graph template: a graph kept with its waves taken out, to make the
+    same graph of other data.
+
+    Where the graph had a wave, the template has a slot, named after what
+    the wave was for: ``"y"`` and ``"x"``, ``"yerr"`` and ``"xerr"`` for
+    error bars, ``"color"`` for a color wave and ``"z"`` for an image or
+    contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
+    ``slots`` lists them. Make a graph by giving a wave for each slot::
+
+        t = op.graph_template(op.graph("Graph0"), "IV")
+        t.make(y="s2_I", x="s2_V")
+
+    Text in annotations and axis labels can name what fills a slot:
+    ``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
+    slot ``y``. Where the graph's text named one of its waves, the template
+    has such a reference instead, so a graph of another sample shows that
+    sample's name.
+
+    ``data`` is what the template holds, as a dict: ``"style"`` (the look
+    and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``
+    and the units of the wave it was made from), ``"traces"``, ``"images"``,
+    ``"contours"``, ``"axes"`` and ``"annotations"`` as in a graph, with
+    slot names where the graph has wave names. ``op.set_graph_template``
+    defines one from such a dict.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    def _info(self):
+        return _call("graphTemplateInfo", {"name": self._name})[0]
+
+    @property
+    def data(self):
+        """What the template holds, as a dict (a copy: change it with ``op.set_graph_template``)."""
+        return _keys(self._info(), _snake)
+
+    @property
+    def slots(self):
+        """The names of the slots, in the order of the graph."""
+        return [slot["name"] for slot in self._info()["slots"]]
+
+    def make(self, /, name=None, **slots):
+        """Make a graph of the waves given for the slots, and return it.
+
+        Give a wave (a Wave or a name) for each slot: ``t.make(y=w, x=t)``.
+        A slot of X, error bars or a color wave may be left out; the graph
+        then goes without it. Lists make several graphs, one for each item,
+        and return a list of them: ``t.make(y=[a, b, c], x=t)`` makes three
+        graphs, all against ``t``. ``name`` names the graph (a list, the
+        graphs); left out, names are chosen.
+
+        Where a wave's unit differs from that of the wave the template was
+        made from, a warning says so, and the graph is made all the same.
+        All the graphs are made or, if one cannot be, none; and they are one
+        step to undo.
+        """
+        listed = [value for value in [*slots.values(), name] if isinstance(value, (list, tuple))]
+        many = bool(listed)
+        if many:
+            counts = {len(value) for value in listed}
+            if len(counts) != 1:
+                raise OresmeError(
+                    "Lists given for the slots must all have one item for each graph."
+                )
+            count = counts.pop()
+            columns = {
+                slot: list(value) if isinstance(value, (list, tuple)) else [value] * count
+                for slot, value in slots.items()
+            }
+            samples = [
+                {
+                    slot: _slot_wave(column[index])
+                    for slot, column in columns.items()
+                    if column[index] is not None
+                }
+                for index in range(count)
+            ]
+            names = None if name is None else [str(item) for item in name]
+        else:
+            samples = [
+                {slot: _slot_wave(value) for slot, value in slots.items() if value is not None}
+            ]
+            names = None if name is None else [str(name)]
+        found = _call("graphTemplateWarnings", {"name": self._name, "samples": samples})[0]
+        before = set(_call("listWindows", {"kind": "graph"})[0])
+        command = {"op": "makeGraphs", "template": self._name, "samples": samples}
+        if names is not None:
+            command["names"] = names
+        _dispatch(command)
+        for message in found:
+            warnings.warn(message, stacklevel=2)
+        made = [
+            Graph(item) for item in _call("listWindows", {"kind": "graph"})[0] if item not in before
+        ]
+        return made if many else made[0]
+
+    def rename(self, new_name):
+        _dispatch({"op": "renameGraphTemplate", "name": self._name, "newName": new_name})
+        self._name = new_name
+        return self
+
+    def remove(self):
+        """Delete the template. Graphs made from it stay as they are."""
+        _dispatch({"op": "removeGraphTemplate", "name": self._name})
+
+    def __repr__(self):
+        return f"GraphTemplate({self._name!r})"
+
+
+def _slot_wave(obj):
+    """The name of the wave given for a slot: a Wave or a name."""
+    if isinstance(obj, Wave):
+        return obj.name
+    if isinstance(obj, str):
+        return obj[5:] if obj.startswith("root:") else obj
+    raise TypeError(
+        f"A slot takes a wave or a wave name, not {type(obj).__name__}. "
+        "Make a wave of the data first."
+    )
+
+
+def graph_templates():
+    """Every graph template of the experiment."""
+    return [GraphTemplate(name) for name in _call("listGraphTemplates")[0]]
+
+
+def graph_template(source, name=None, fixed=()):
+    """A graph template: the one named ``source``, or one made from a graph.
+
+    ``op.graph_template("IV")`` is the template named IV.
+    ``op.graph_template(g, "IV")`` keeps the graph ``g`` (a Graph or a
+    graph name) as a template named IV and returns it; see
+    ``Graph.save_template`` for ``fixed``.
+    """
+    if name is None:
+        if isinstance(source, GraphTemplate):
+            return source
+        if source not in _call("listGraphTemplates")[0]:
+            raise OresmeError(f"No graph template named {source!r}.")
+        return GraphTemplate(source)
+    graph_ = source if isinstance(source, Graph) else graph(source)
+    return graph_.save_template(name, fixed=fixed)
+
+
+def set_graph_template(name, data):
+    """Define a graph template from a dict (see ``GraphTemplate``) or copy another; returns it.
+
+    A template of that name is replaced. What the dict leaves out is as in a
+    new graph; unknown keys, bad values and references to slots or axes the
+    template does not have are refused.
+    """
+    if isinstance(data, GraphTemplate):
+        data = data.data
+    _dispatch({"op": "setGraphTemplate", "name": name, "template": _keys(data, _camel)})
+    return GraphTemplate(name)
 
 
 def _input(prompt=""):

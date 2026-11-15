@@ -2119,4 +2119,83 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
   });
+
+  it("keeps a graph as a template and makes graphs of other samples from it", async () => {
+    const ok = await run(
+      [
+        "import warnings",
+        'for s in ("gt1", "gt2", "gt3"):',
+        '    op.make(f"{s}_V", [0.0, 1.0, 2.0], unit="V")',
+        '    op.make(f"{s}_I", [0.0, 1.0, 4.0], unit="mA" if s == "gt3" else "A")',
+        'g = op.display("gt1_I", x="gt1_V", name="GtSource")',
+        'g.textbox("Sample gt1_I")',
+        "g.bottom.range = (0, 2)",
+        'g.trace("gt1_I").color = "green"',
+        't = op.graph_template(g, "gtIV", fixed="bottom")',
+        'print(t, t.slots, t.data["slots"][0], t.data["axes"][1]["min"])',
+        "with warnings.catch_warnings(record=True) as caught:",
+        '    warnings.simplefilter("always")',
+        '    made = op.graph_template("gtIV").make(y=["gt2_I", "gt3_I"], x=["gt2_V", "gt3_V"])',
+        "print([m.traces[0].name for m in made], [str(w.message) for w in caught])",
+        'print([m.annotations[0].text for m in made], made[1].trace("gt3_I").color)',
+        'one = t.make(y=op.wave("gt2_I"), name="GtOne")',
+        "print(one, one.traces[0].x, one.bottom.range)",
+        'print([x.name for x in op.graph_templates() if x.name.startswith("gt")])',
+        "try:",
+        '    t.make(y="gt1_I", x="gt1_V", z="gt1_V")',
+        "except op.OresmeError as error:",
+        "    print(error)",
+        "try:",
+        '    t.make(y=["gt1_I", "gt2_I"], x=["gt1_V"])',
+        "except op.OresmeError as error:",
+        "    print(error)",
+        'op.set_graph_template("gtCopy", t)',
+        't.rename("gtRenamed")',
+        'op.graph_template("gtCopy").remove()',
+        'print([x.name for x in op.graph_templates() if x.name.startswith("gt")])',
+      ].join("\n"),
+    );
+    expect(ok).toBe(true);
+    expect(stdout).toBe(
+      [
+        "GraphTemplate('gtIV') ['y', 'x'] {'name': 'y', 'role': 'y', 'unit': 'A', 'x_unit': None, 'y_unit': None} 0",
+        "['gt2_I', 'gt3_I'] ['Sample 2: gt3_I in slot y has values in \"mA\"; the template was made with \"A\".']",
+        "['Sample gt2_I', 'Sample gt3_I'] #009900",
+        "Graph('GtOne') None (0, 2)",
+        "['gtIV']",
+        'The template has no slot "z". Its slots: y, x.',
+        "Lists given for the slots must all have one item for each graph.",
+        "['gtRenamed']",
+        "",
+      ].join("\n"),
+    );
+
+    // What the GUI writes into the history does the same when it is run.
+    const { graphTemplates } = doc.getState();
+    const line = echoPython({
+      op: "setGraphTemplate",
+      name: "gtEcho",
+      template: graphTemplates.gtRenamed,
+    });
+    expect(await run(line!)).toBe(true);
+    expect(doc.getState().graphTemplates.gtEcho).toEqual(graphTemplates.gtRenamed);
+    const make = echoPython({
+      op: "makeGraphs",
+      template: "gtEcho",
+      samples: [
+        { y: "gt1_I", x: "gt1_V" },
+        { y: "gt2_I", x: "gt1_V" },
+      ],
+      names: ["GtEcho1", "GtEcho2"],
+    });
+    expect(await run(make!)).toBe(true);
+    expect(doc.getState().graphs.GtEcho2!.traces[0]).toMatchObject({ y: "gt2_I", x: "gt1_V" });
+    expect(
+      await run(echoPython({ op: "saveGraphTemplate", name: "gtSaved", graph: "GtEcho1" })!),
+    ).toBe(true);
+    expect(doc.getState().graphTemplates.gtSaved!.slots.map((slot) => slot.name)).toEqual([
+      "y",
+      "x",
+    ]);
+  });
 });
