@@ -13,7 +13,7 @@ import { PresetStore } from "./importPresets";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
-import { browserLibrary, LIBRARY_KEY } from "./styleLibrary";
+import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
 
 export type DialogRequest =
   | { kind: "newGraph" }
@@ -45,6 +45,10 @@ export type DialogRequest =
   | { kind: "graphScript"; graph: string }
   /** The styles of the experiment and the library; `graph` is the one to save or apply to. */
   | { kind: "styles"; graph?: string }
+  /** Keeps a graph as a graph template. */
+  | { kind: "saveGraphTemplate"; graph: string }
+  /** The graph templates of the experiment and the library, to make graphs from; `template` is the one picked. */
+  | { kind: "graphTemplates"; template?: string }
   | { kind: "timeZone" }
   | { kind: "pageText"; layout: string; item?: string }
   /** `items`: the graphs to put in the grid, in order; empty for all of the page's graphs. */
@@ -400,18 +404,23 @@ export function useFiles() {
   return useSyncExternalStore(files.subscribe, files.list);
 }
 
-/** The styles in the browser's library, following changes made in other tabs too. */
-export function useLibraryStyles() {
-  const library = browserLibrary();
+/** What a library of the browser holds, following changes made in other tabs too. */
+function useLibrary<T>(library: Library<T>) {
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === LIBRARY_KEY) library.changed();
+      if (event.key === null || event.key === library.kind.key) library.changed();
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, [library]);
   return useSyncExternalStore(library.subscribe, library.list);
 }
+
+/** The styles in the browser's library. */
+export const useLibraryStyles = () => useLibrary(browserLibrary());
+
+/** The graph templates in the browser's library. */
+export const useLibraryTemplates = () => useLibrary(templateLibrary());
 
 export function useHistoryEntries() {
   return useSyncExternalStore(history.subscribe, history.getEntries);

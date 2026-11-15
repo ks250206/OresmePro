@@ -273,6 +273,12 @@ function useMenus(): MenuDefinition[] {
           label: "Styles…",
           onSelect: () => ui.set({ dialog: { kind: "styles", graph: graph ?? undefined } }),
         },
+        graphDialog("Save as Template…", (name) => ({ kind: "saveGraphTemplate", graph: name })),
+        // Like styles, templates can be used with no graph open.
+        {
+          label: "Make Graphs from Template…",
+          onSelect: () => ui.set({ dialog: { kind: "graphTemplates" } }),
+        },
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
       ],
     },

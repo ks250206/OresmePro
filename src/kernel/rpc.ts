@@ -5,7 +5,8 @@ import type { Doc, DocWriter, Stage } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
 import { formulaOrder, formulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
-import { DocError, type DocState, type Wave } from "../core/doc/types";
+import { templateWarnings } from "../core/doc/graphTemplates";
+import { DocError, type DocState, type GraphTemplate, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import { planIgorImport } from "../core/io/igorImport";
@@ -82,6 +83,12 @@ function transportData(wave: Wave): Float64Array {
   both.set(wave.data);
   both.set(wave.imag, wave.data.length);
   return both;
+}
+
+function requireTemplate(state: DocState, name: unknown): GraphTemplate {
+  const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
+  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  return template;
 }
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
@@ -270,6 +277,14 @@ export function handleRpc(
       const style = typeof params.name === "string" ? state.styles[params.name] : undefined;
       if (!style) throw new DocError(`No style named ${JSON.stringify(params.name)}.`);
       return { result: style };
+    }
+    case "listGraphTemplates":
+      return { result: Object.keys(state.graphTemplates) };
+    case "graphTemplateInfo":
+      return { result: requireTemplate(state, params.name) };
+    case "graphTemplateWarnings": {
+      const samples = Array.isArray(params.samples) ? (params.samples as unknown[]) : [];
+      return { result: templateWarnings(state, requireTemplate(state, params.name), samples) };
     }
     case "tableInfo": {
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;

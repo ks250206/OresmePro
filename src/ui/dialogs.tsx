@@ -74,6 +74,7 @@ import {
   TextInput,
 } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
+import { GraphTemplatesDialog, SaveGraphTemplateDialog } from "./GraphTemplateDialogs";
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
@@ -3035,6 +3036,10 @@ function renderDialog(dialog: DialogRequest) {
       return <GraphScriptDialog graph={dialog.graph} />;
     case "styles":
       return <StylesDialog graph={dialog.graph} />;
+    case "saveGraphTemplate":
+      return <SaveGraphTemplateDialog graph={dialog.graph} />;
+    case "graphTemplates":
+      return <GraphTemplatesDialog template={dialog.template} />;
     case "timeZone":
       return <TimeZoneDialog />;
     case "pageText":

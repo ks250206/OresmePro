@@ -18,10 +18,12 @@ import {
   RESULT_KINDS,
   type AnalysisResult,
 } from "./results";
+import { captureTemplate, makeFromTemplate, RESERVED_SLOT_NAMES } from "./graphTemplates";
 import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
   ANNOTATION_KINDS,
+  AXIS_DATA,
   AXIS_LOOK,
   AXIS_ROLES,
   AXIS_SIDES,
@@ -39,8 +41,10 @@ import {
   MARKER_SHAPES,
   MIRROR_MODES,
   PAGE_SIZES,
+  SLOT_ROLES,
   TAG_OFFSET,
   TICK_MODES,
+  TRACE_DATA,
   TRACE_LOOK,
   TRACE_MODES,
   WAVE_TYPES,
@@ -68,9 +72,16 @@ import {
   type GraphLook,
   type GraphSpec,
   type GraphStyle,
+  type GraphTemplate,
   type ImageSpec,
   type TableSpec,
   type StyleSpec,
+  type TemplateAnnotation,
+  type TemplateAxis,
+  type TemplateContour,
+  type TemplateImage,
+  type TemplateSlot,
+  type TemplateTrace,
   type TraceLook,
   type TraceSpec,
   type TraceStyle,
@@ -254,6 +265,25 @@ export type Command =
   | { op: "renameStyle"; name: string; newName: string }
   | { op: "applyStyle"; style: string; graphs: readonly string[] }
   | { op: "setDefaultStyle"; name: string | null }
+  /**
+   * Keeps a graph as a template (see GraphTemplate). The axes in `fixed`
+   * keep their ranges; the others are worked out from the data of each graph.
+   */
+  | { op: "saveGraphTemplate"; name: string; graph: string; fixed?: readonly string[] }
+  /** Defines a template from its parts, replacing one of that name. */
+  | { op: "setGraphTemplate"; name: string; template: unknown }
+  | { op: "removeGraphTemplate"; name: string }
+  | { op: "renameGraphTemplate"; name: string; newName: string }
+  /**
+   * Makes a graph from a template for each sample: wave names by slot. All
+   * are made or none. `names` names the graphs; left out, they are chosen.
+   */
+  | {
+      op: "makeGraphs";
+      template: string;
+      samples: readonly Readonly<Record<string, string | null>>[];
+      names?: readonly string[];
+    }
   /** Keeps the outcome of an analysis. `result` is as Python reports it (see checkResult). */
   | { op: "addResult"; result: unknown; name?: string }
   | { op: "removeResults"; names: readonly string[] }
@@ -886,6 +916,285 @@ const ITEM_VALIDATORS: { [K in keyof ItemProps]: (value: unknown) => ItemProps[K
     return value;
   },
 };
+
+const TRACE_DATA_VALIDATORS = someOf<TraceStyle, (typeof TRACE_DATA)[number]>(
+  TRACE_VALIDATORS,
+  TRACE_DATA,
+);
+const AXIS_DATA_VALIDATORS = someOf<Omit<AxisSpec, "side">, (typeof AXIS_DATA)[number]>(
+  AXIS_VALIDATORS,
+  AXIS_DATA,
+);
+
+function listOf(value: unknown, what: string): readonly unknown[] {
+  if (!Array.isArray(value) || value.length > 1000) throw new DocError(`${what} must be a list.`);
+  return value;
+}
+
+function textOf(value: unknown, what: string): string {
+  if (typeof value !== "string") throw new DocError(`${what} must be text.`);
+  return value;
+}
+
+/** The properties of an object (as read from data) besides some that are taken out. */
+function restOf(props: Props, taken: readonly string[]): Props {
+  return Object.fromEntries(Object.entries(props).filter(([key]) => !taken.includes(key)));
+}
+
+/** A validator that lets anything through, for properties checked on their own. */
+const anything = (value: unknown): unknown => value;
+
+/**
+ * Checks a graph template given as data (from Python, a file or the
+ * browser's library) and returns it in its usual form, with its parts in one
+ * order so that equal templates are written alike. What is left out takes
+ * the value a new graph would have; unknown properties, bad values and
+ * references to slots, axes or traces it does not have are refused.
+ */
+export function checkGraphTemplate(value: unknown): GraphTemplate {
+  const parts = propsOf(value, "A graph template");
+  validateProps(
+    parts,
+    {
+      style: anything,
+      slots: anything,
+      traces: anything,
+      images: anything,
+      contours: anything,
+      axes: anything,
+      annotations: anything,
+    },
+    "graph template",
+  );
+
+  const slots = listOf(parts.slots ?? [], "slots").map((item): TemplateSlot => {
+    const props = propsOf(item, "A slot");
+    validateProps(
+      props,
+      { name: anything, role: anything, unit: anything, xUnit: anything, yUnit: anything },
+      "slot",
+    );
+    const name = checkName(props.name, "slot");
+    if (RESERVED_SLOT_NAMES.has(name)) {
+      throw new DocError(`A slot cannot be called ${name}: Python uses that word.`);
+    }
+    const scaling = (unit: unknown, what: string) =>
+      unit === undefined || unit === null ? null : textOf(unit, what);
+    return {
+      name,
+      role: oneOf(props.role, SLOT_ROLES, "role"),
+      unit: props.unit === undefined ? "" : textOf(props.unit, "unit"),
+      xUnit: scaling(props.xUnit, "xUnit"),
+      yUnit: scaling(props.yUnit, "yUnit"),
+    };
+  });
+  const slotNames = slots.map((slot) => slot.name);
+  const doubled = slotNames.find((name, at) => slotNames.indexOf(name) !== at);
+  if (doubled !== undefined) throw new DocError(`Two slots are called ${doubled}.`);
+  const slot = (name: unknown, what: string): string => {
+    if (typeof name === "string" && slotNames.includes(name)) return name;
+    throw new DocError(
+      `${what} must be one of the template's slots (${slotNames.join(", ") || "it has none"}), not ${JSON.stringify(name)}.`,
+    );
+  };
+
+  const axisOf = (name: string, side: TemplateAxis["side"], data: AxisSpec): TemplateAxis => ({
+    name,
+    side,
+    label: data.label,
+    min: data.min,
+    max: data.max,
+    log: data.log,
+    reverse: data.reverse,
+    tickStep: data.tickStep,
+    tickFormat: data.tickFormat,
+    span: data.span,
+  });
+  const given = listOf(parts.axes ?? [], "axes").map((item): TemplateAxis => {
+    const props = propsOf(item, "An axis");
+    const name = checkName(props.name, "axis");
+    const isSide = (AXIS_SIDES as readonly string[]).includes(name);
+    const side = oneOf(props.side ?? (isSide ? name : undefined), AXIS_SIDES, "side");
+    if (isSide && side !== name) throw new DocError(`The ${name} axis is on the ${name} side.`);
+    const axis = axisOf(name, side, {
+      ...defaultAxis(side),
+      ...validateProps(restOf(props, ["name", "side"]), AXIS_DATA_VALIDATORS, "template axis"),
+    });
+    if (axis.min !== null && axis.max !== null && axis.min === axis.max) {
+      throw new DocError("The axis range must not be empty.");
+    }
+    return axis;
+  });
+  const axisNames = given.map((axis) => axis.name);
+  const twice = axisNames.find((name, at) => axisNames.indexOf(name) !== at);
+  if (twice !== undefined) throw new DocError(`Two axes are called ${twice}.`);
+  // The four sides are always there, first, as in every graph.
+  const axes: TemplateAxis[] = [
+    ...AXIS_SIDES.map(
+      (side) => given.find((axis) => axis.name === side) ?? axisOf(side, side, defaultAxis(side)),
+    ),
+    ...given.filter((axis) => !(AXIS_SIDES as readonly string[]).includes(axis.name)),
+  ];
+  const axisRef = (name: unknown, vertical: boolean): string => {
+    const axis = axes.find((item) => item.name === name);
+    if (!axis) {
+      throw new DocError(
+        `The template has no axis named ${JSON.stringify(name)}. Axes: ${axes.map((item) => item.name).join(", ")}.`,
+      );
+    }
+    if (isVerticalSide(axis.side) !== vertical) {
+      throw new DocError(
+        `Axis ${axis.name} is ${vertical ? "horizontal" : "vertical"}; a ${vertical ? "vertical" : "horizontal"} axis is needed here.`,
+      );
+    }
+    return axis.name;
+  };
+
+  const traces = listOf(parts.traces ?? [], "traces").map((item): TemplateTrace => {
+    const props = propsOf(item, "A trace");
+    const data = {
+      ...defaultTraceStyle(0),
+      ...validateProps(
+        restOf(props, ["y", "x", "vAxis", "hAxis"]),
+        TRACE_DATA_VALIDATORS,
+        "template trace",
+      ),
+    };
+    const source = (value: ErrorSource, what: string): ErrorSource =>
+      typeof value === "string" ? slot(value, what) : value;
+    return {
+      y: slot(props.y, "A trace's y"),
+      x: props.x === undefined || props.x === null ? null : slot(props.x, "A trace's x"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      yError: source(data.yError, "yError"),
+      xError: source(data.xError, "xError"),
+      fill: data.fill,
+      fillColor: data.fillColor,
+      fillOpacity: data.fillOpacity,
+      xOffset: data.xOffset,
+      yOffset: data.yOffset,
+      colorWave: data.colorWave === null ? null : slot(data.colorWave, "colorWave"),
+      colorTable: data.colorTable,
+      colorMin: data.colorMin,
+      colorMax: data.colorMax,
+      part: data.part,
+    };
+  });
+
+  const images = listOf(parts.images ?? [], "images").map((item): TemplateImage => {
+    const props = propsOf(item, "An image");
+    const data: ImageProps = {
+      colorTable: "grays",
+      zMin: null,
+      zMax: null,
+      reverse: false,
+      layer: 0,
+      chunk: 0,
+      part: "real",
+      ...validateProps<ImageProps>(
+        restOf(props, ["wave", "vAxis", "hAxis"]),
+        IMAGE_VALIDATORS,
+        "image",
+      ),
+    };
+    return {
+      wave: slot(props.wave, "An image's wave"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      colorTable: data.colorTable,
+      zMin: data.zMin,
+      zMax: data.zMax,
+      reverse: data.reverse,
+      layer: data.layer,
+      chunk: data.chunk,
+      part: data.part,
+    };
+  });
+
+  const contours = listOf(parts.contours ?? [], "contours").map((item): TemplateContour => {
+    const props = propsOf(item, "A contour");
+    const data: ContourProps = {
+      levels: 10,
+      color: "#000000",
+      lineSize: 1,
+      colorTable: null,
+      labels: true,
+      layer: 0,
+      chunk: 0,
+      ...validateProps<ContourProps>(
+        restOf(props, ["wave", "vAxis", "hAxis"]),
+        CONTOUR_VALIDATORS,
+        "contour",
+      ),
+    };
+    return {
+      wave: slot(props.wave, "A contour's wave"),
+      vAxis: axisRef(props.vAxis ?? "left", true),
+      hAxis: axisRef(props.hAxis ?? "bottom", false),
+      levels: data.levels,
+      color: data.color,
+      lineSize: data.lineSize,
+      colorTable: data.colorTable,
+      labels: data.labels,
+      layer: data.layer,
+      chunk: data.chunk,
+    };
+  });
+
+  const annotations = listOf(parts.annotations ?? [], "annotations").map(
+    (item): TemplateAnnotation => {
+      const props = propsOf(item, "An annotation");
+      const kind = oneOf(props.kind, ANNOTATION_KINDS, "kind");
+      const tag = kind === "tag";
+      const data = validateProps<AnnotationProps>(
+        restOf(props, ["kind", "trace"]),
+        ANNOTATION_VALIDATORS,
+        "annotation",
+      );
+      const trace = props.trace === undefined || props.trace === null ? null : props.trace;
+      if (trace !== null && !tag) throw new DocError("Only a tag points at a trace.");
+      if (tag && trace === null) throw new DocError("A tag needs the trace it points at.");
+      const place = trace === null ? null : index(trace, "trace");
+      if (place !== null && place >= traces.length) {
+        throw new DocError(
+          `A tag points at trace ${place}, but the template has ${traces.length} (counted from 0).`,
+        );
+      }
+      return {
+        kind,
+        text: data.text ?? "",
+        anchor: data.anchor ?? (kind === "colorscale" ? "RC" : "RT"),
+        frame: data.frame ?? true,
+        x: data.x ?? (tag ? TAG_OFFSET.x : 0),
+        y: data.y ?? (tag ? TAG_OFFSET.y : 0),
+        trace: place,
+        point: data.point ?? 0,
+      };
+    },
+  );
+
+  return {
+    style: checkStyle(parts.style ?? {}),
+    slots,
+    traces,
+    images,
+    contours,
+    axes,
+    annotations,
+  };
+}
+
+function requireTemplate(state: DocState, name: unknown): GraphTemplate {
+  const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
+  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  return template;
+}
+
+const putTemplate = (state: DocState, name: string, template: GraphTemplate): DocState => ({
+  ...state,
+  graphTemplates: withEntry(state.graphTemplates, name, template),
+});
 
 function requirePage(state: DocState, name: string): PageSpec {
   const page = state.pages[name];
@@ -2065,6 +2374,74 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (command.name !== null) requireStyle(state, command.name);
       if (command.name === state.defaultStyle) return { state, result: null };
       return { state: { ...state, defaultStyle: command.name }, result: null };
+    }
+    case "saveGraphTemplate": {
+      const name = checkName(command.name, "graph template");
+      requireGraph(state, command.graph);
+      const fixed = command.fixed ?? [];
+      if (!Array.isArray(fixed) || fixed.some((axis) => typeof axis !== "string")) {
+        throw new DocError("fixed must be a list of axis names.");
+      }
+      // Checked like a template given as data, which also puts it in the usual order.
+      const template = checkGraphTemplate(captureTemplate(state, command.graph, fixed));
+      return { state: putTemplate(state, name, template), result: name };
+    }
+    case "setGraphTemplate": {
+      const name = checkName(command.name, "graph template");
+      return {
+        state: putTemplate(state, name, checkGraphTemplate(command.template)),
+        result: name,
+      };
+    }
+    case "removeGraphTemplate": {
+      requireTemplate(state, command.name);
+      return {
+        state: { ...state, graphTemplates: withoutEntries(state.graphTemplates, [command.name]) },
+        result: null,
+      };
+    }
+    case "renameGraphTemplate": {
+      const template = requireTemplate(state, command.name);
+      const newName = checkName(command.newName, "graph template");
+      if (newName === command.name) return { state, result: null };
+      if (newName in state.graphTemplates) {
+        throw new DocError(`Graph template ${JSON.stringify(newName)} already exists.`);
+      }
+      const graphTemplates = withEntry(
+        withoutEntries(state.graphTemplates, [command.name]),
+        newName,
+        template,
+      );
+      return { state: { ...state, graphTemplates }, result: newName };
+    }
+    case "makeGraphs": {
+      const template = requireTemplate(state, command.template);
+      const { samples, names } = command;
+      if (!Array.isArray(samples) || samples.length === 0) {
+        throw new DocError("Give at least one sample: a dict of wave names by slot.");
+      }
+      if (names !== undefined && (!Array.isArray(names) || names.length !== samples.length)) {
+        throw new DocError(
+          `names must be a list of ${samples.length} graph names, one for each sample.`,
+        );
+      }
+      // Each graph is made on the document the one before left, so the
+      // reducer returns all of them or, if one cannot be made, none.
+      let next = state;
+      let made: string | null = null;
+      samples.forEach((sample: unknown, at) => {
+        const name = names?.[at] ?? uniqueName("Graph", windowTaken(next));
+        try {
+          next = makeFromTemplate(next, template, sample, name, applyCommand);
+        } catch (error) {
+          if (samples.length > 1 && error instanceof DocError) {
+            throw new DocError(`Sample ${at + 1}: ${error.message}`);
+          }
+          throw error;
+        }
+        made = name;
+      });
+      return { state: next, result: made };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {

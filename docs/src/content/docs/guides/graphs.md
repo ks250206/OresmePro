@@ -20,4 +20,17 @@ g.trace().set(mode="lines+markers", color="#ab1831")
 
 保存したグラフスタイルは同じ Experiment の他のグラフにも適用できます。`g.script()` はグラフの作り方を Python コードで返します。元データが使える Experiment で実行してください。図として共有する場合は `g.save("response.svg")` や **File → Save Graph as PDF / SVG / PNG** を使います。
 
+## グラフテンプレート
+
+同じ構成の図を別の試料のデータで作るには、グラフをテンプレートとして保存します。グラフの右クリック › **Save as Template…** で保存すると、グラフが描いている Wave はスロット(`y`、`x`、誤差棒の `yerr` と `xerr`、色の `color`、画像と等高線の `z`)に置き換わり、トレース・軸・見た目・注釈・図の大きさが残ります。トレースが複数あるときは `y1`、`y2` のように番号が付きます。軸の範囲は、軸ごとに固定するか新しいデータに合わせるかを保存するときに選びます。
+
+注釈と軸ラベルでは `{y.name}` と `{y.unit}` がスロットに入れた Wave の名前と単位になります。元のグラフの Wave の名前や、括弧の中の単位(`(A)`)が文字の中にあれば、保存するときにこの参照に置き換わるので、別の試料で作った図に古い試料名は残りません。
+
+**Graph → Make Graphs from Template…** でテンプレートを選び、行ごとにスロットの Wave を選びます。1 行が 1 枚のグラフで、何枚作っても Undo 1 回で戻ります。Wave の単位がテンプレートを作ったときと違えば警告が出ます。テンプレートは Experiment に保存され、スタイルと同じくブラウザのライブラリや JSON ファイルにも置けます。
+
+```python
+t = op.graph_template(g, "IV", fixed="bottom")
+t.make(y=["s1_I", "s2_I", "s3_I"], x=["s1_V", "s2_V", "s3_V"])
+```
+
 [Graph API](../../reference/api/graph/) · [Trace API](../../reference/api/trace/) · [重ね描き](../../examples/overlay/)
