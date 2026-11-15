@@ -30,6 +30,7 @@ SECTIONS = {
     "table": ("Table API", "Table edit table tables to_dataframe from_dataframe"),
     "folder": ("Folder API", "Folder new_folder folder folders"),
     "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
+    "actions": ("Actions API", "action actions invoke"),
     "global": (
         "Global Functions",
         (

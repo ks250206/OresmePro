@@ -16,6 +16,7 @@ description: OresmePro の公開 Python API を分類ごとに調べる。
 | Wave を列に並べる                               | [Table](./api/table/)                   | [テーブル操作](../guides/tables/)                                  |
 | Wave を階層化する                               | [Folder](./api/folder/)                 | [フォルダに整理する](../guides/waves/#フォルダに整理する)          |
 | フィット、統計、変換を行う                      | [Analysis](./api/analysis/)             | [FFT](../examples/fft/)                                            |
+| 解析を名前と型の決まった引数で呼ぶ              | [Actions](./api/actions/)               | [解析を名前で呼ぶ](../guides/python/#解析を名前で呼ぶ)             |
 | ファイル、Procedure、レイアウト、時刻表示を扱う | [Global Functions](./api/global/)       | [CSV の読み込み](../getting-started/import-csv/)                   |
 
 ## シグネチャとエラー
