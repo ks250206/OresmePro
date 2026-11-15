@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { contributionCommands } from "../app/plugins/contributions";
 import { fetchFromGitHub, readLocalPackage } from "../app/plugins/sources";
 import type { InstalledPlugin } from "../app/plugins/store";
 import { invokeAction, pluginStore, runGui, showError, ui, useDoc } from "../app/session";
@@ -274,16 +275,7 @@ function Contributions({ plugin }: { plugin: InstalledPlugin }) {
     try {
       const files = await pluginStore.files(plugin);
       for (const path of contributes[kind]) {
-        const data = JSON.parse(new TextDecoder().decode(files.get(path)!)) as { name?: unknown };
-        const name =
-          typeof data.name === "string"
-            ? data.name
-            : path.replace(/^.*\//, "").replace(/\.json$/, "");
-        runGui(
-          kind === "styles"
-            ? { op: "setStyle", name, style: data }
-            : { op: "setGraphTemplate", name, template: data },
-        );
+        for (const command of contributionCommands(kind, path, files.get(path)!)) runGui(command);
       }
     } catch (error) {
       showError("Could not add it", error);
