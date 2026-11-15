@@ -4,8 +4,10 @@ These are part of the ``oresme`` module (``op.fit``, ``op.stats``, ...). They
 need only NumPy.
 """
 
+import collections
 import inspect
 import math
+import warnings
 
 import numpy as np
 
@@ -18,6 +20,7 @@ __all__ = [
     "result",
     "results",
     "results_table",
+    "make_template",
     "fit",
     "fit_batch",
     "fit_global",
@@ -512,6 +515,10 @@ class FitResult:
     def apply(self, waves, **changes):
         """Fit other waves with the same settings; see ``Result.apply``."""
         return self.result.apply(waves, **changes)
+
+    def template(self, name, description=""):
+        """Keep this fit as an analysis template; see ``Result.template``."""
+        return self.result.template(name, description)
 
     def __getitem__(self, name):
         return float(self.coef[self.names.index(name)])
@@ -1247,6 +1254,10 @@ class Result:
             results_table(outcomes)
         return outcomes
 
+    def template(self, name, description=""):
+        """Keep this analysis as a template, to do to other samples; see ``op.make_template``."""
+        return make_template(name, [self], description)
+
     def rename(self, name):
         self._name = _op._dispatch({"op": "renameResult", "name": self._name, "newName": name})
         return self
@@ -1381,6 +1392,115 @@ def fit_batch(function, waves, *, table=True, quiet=True, **options):
         state = "" if outcome.converged else "  (did not converge)"
         print(f"{outcome.name or '-'}: {outcome.function}, chi-square = {outcome.chisq:.6g}{state}")
     return outcomes
+
+
+#: The action that does each kind of kept analysis again.
+_RESULT_ACTIONS = {"fit": "core.fit", "peaks": "core.fit_peaks"}
+#: Settings that say what to call what is made, or how to keep it: a template chooses those anew.
+_NOT_TEMPLATED = ("name", "result", "record", "graph", "custom")
+
+
+def _says_something(value):
+    """Whether a setting left out of a template would have changed the analysis."""
+    return value not in (None, False, "", [], {}, ())
+
+
+def make_template(name, results_, description=""):
+    """Keep analyses as a template: their steps and settings, with the waves taken out.
+
+    ``results_`` is a list of results (names, or what the fits returned), in
+    the order they were done; each becomes a step that calls its action
+    (``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+    A wave an analysis read becomes an input of the template, named after
+    the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
+    made becomes a reference to that step's output instead, so that results
+    done one after the other become a template of several steps. Steps are
+    quiet. Settings the action cannot take (``hold=``, ``bounds=``,
+    ``exclude=``, data given as an array) are left out with a warning. A
+    fit of several waves at once (``op.fit_global``) has no action and
+    cannot be in a template. Returns the template (see ``op.Template``).
+    """
+    items = [results_] if isinstance(results_, (str, Result, FitResult, PeakFitResult)) else results_
+    names = [_result_name(item) for item in items]
+    if not names:
+        raise _op.OresmeError("Give the results to make the template from.")
+    inputs = []
+    steps = []
+    slot_of = {}  # wave read -> input slot
+    made_by = {}  # wave made -> (step id, output)
+    for result_name in names:
+        info = _op._call("resultInfo", {"name": result_name})[0]
+        action_id = _RESULT_ACTIONS.get(info["kind"])
+        if action_id is None:
+            raise _op.OresmeError(
+                f"{result_name} fitted several waves at once, which a template cannot do: "
+                "fit them in a procedure of your own, registered as an action."
+            )
+        settings = info["settings"]
+        if settings.get("custom"):
+            raise _op.OresmeError(
+                f"{result_name} used your function {settings.get('function')!r}: a template "
+                "calls actions, so register the fit as an action of your own."
+            )
+        found = _op._find_action(action_id, None)
+        step_id = action_id.split(".", 1)[1]
+        taken_ids = {step["id"] for step in steps}
+        number = 2
+        while step_id in taken_ids:
+            step_id = f"{action_id.split('.', 1)[1]}{number}"
+            number += 1
+
+        def wave_arg(wave_name, key, spec):
+            if wave_name in made_by:
+                step, output = made_by[wave_name]
+                return {"$step": step, "output": output}
+            if wave_name not in slot_of:
+                slot = key
+                used = {item["name"] for item in inputs}
+                count = 2
+                while slot in used:
+                    slot = f"{key}{count}"
+                    count += 1
+                slot_of[wave_name] = slot
+                inputs.append({"name": slot, "title": spec.get("title", key), "kind": "wave"})
+            return {"$input": slot_of[wave_name]}
+
+        args = {}
+        left_out = []
+        for key, value in settings.items():
+            if key in _NOT_TEMPLATED or value is None:
+                continue
+            spec = found.params.get(key)
+            if spec is None or value == _UNREPEATABLE:
+                if _says_something(value):
+                    left_out.append(key)
+                continue
+            if "default" in spec and spec["default"] == value:
+                continue
+            if spec["type"] == "wave":
+                if not isinstance(value, str):
+                    left_out.append(key)
+                    continue
+                args[key] = wave_arg(value, key, spec)
+            elif spec["type"] == "waves":
+                args[key] = [wave_arg(item, key, spec) for item in value]
+            else:
+                try:
+                    args[key] = _op._check_value(spec, value, key, resolve_names=False)
+                except _op.OresmeError:
+                    left_out.append(key)
+        if "quiet" in found.params:
+            args["quiet"] = True
+        if left_out:
+            warnings.warn(
+                f"{result_name}: {', '.join(left_out)} left out of the template: "
+                f"{action_id} does not take {'it' if len(left_out) == 1 else 'them'}.",
+                stacklevel=2,
+            )
+        steps.append({"id": step_id, "action": found.id, "version": found.version, "args": args})
+        for role, wave_name in info["outputs"].items():
+            made_by.setdefault(wave_name, (step_id, role))
+    return _op.set_template(name, {"description": description, "inputs": inputs, "steps": steps})
 
 
 class GlobalFitResult:
@@ -2145,6 +2265,10 @@ class PeakFitResult:
             raise _op.OresmeError("This fit was not recorded (record=False).")
         return Result(self.name)
 
+    def template(self, name, description=""):
+        """Keep this fit as an analysis template; see ``Result.template``."""
+        return self.result.template(name, description)
+
     def __len__(self):
         return len(self.peaks)
 
@@ -2671,7 +2795,8 @@ def background(wave_, method="shirley", *, x=None, range=None, cursors=False, gr
     The B used is written in the note of the background wave.
 
     ``subtract=True`` also makes ``<name>_sub``, the data minus the
-    background, and returns (background, subtracted).
+    background, and returns (background, subtracted), a named tuple whose
+    fields are also ``.background`` and ``.subtracted``.
     """
     if method not in ("shirley", "tougaard", "linear"):
         raise _op.OresmeError('method must be "shirley", "tougaard" or "linear".')
@@ -2728,7 +2853,12 @@ def background(wave_, method="shirley", *, x=None, range=None, cursors=False, gr
     made = _op.make(_sibling(source, "_bg", name), whole, note=note, **scaling)
     if not subtract:
         return made
-    return made, _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
+    subtracted = _op.make(f"{source.name}_sub", values - whole, note=f"data minus {note}", **scaling)
+    return Background(made, subtracted)
+
+
+#: What ``op.background`` returns with ``subtract=True``: unpacks as (background, subtracted).
+Background = collections.namedtuple("Background", ["background", "subtracted"])
 
 
 def _with_error(value, error):

@@ -26,6 +26,7 @@ const every: ActionSpec = {
     string: { type: "string", optional: true },
     boolean: { type: "boolean", optional: true },
     choice: { type: "choice", optional: true, choices: ["a", "b", 3] },
+    samples: { type: "samples", optional: true },
   },
 };
 
@@ -92,6 +93,13 @@ describe("validateArgs", () => {
     expect(problem({ boolean: "yes" })).toEqual(["lab.every: boolean must be true or false."]);
     expect(problem({ choice: "c" })).toEqual(['lab.every: choice must be one of "a", "b", 3.']);
     expect(problem({ choice: true })).toHaveLength(1);
+    expect(problem({ samples: [{ y: "a", x: "b" }, { y: "c" }] })).toEqual([]);
+    expect(problem({ samples: ["a"] })).toEqual([
+      "lab.every: samples[0] must give a wave name for each input.",
+    ]);
+    expect(problem({ samples: [{ y: "" }] })).toEqual([
+      "lab.every: samples[0]: y must be the name of a wave.",
+    ]);
   });
 
   it("checks that waves exist when it is told how", () => {

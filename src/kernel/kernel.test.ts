@@ -2739,3 +2739,355 @@ describe("formulas", () => {
     expect([...doc.getState().waves.fh!.data]).toEqual([10, 20]);
   });
 });
+
+describe("analysis templates", () => {
+  const runs = () => doc.getState().runs;
+  const lines = (...code: string[]) => code.join("\n");
+
+  it("makes twenty samples and keeps a template of a Gaussian fit", async () => {
+    expect(
+      await run(
+        lines(
+          "x = np.linspace(-5, 5, 101)",
+          "for i in range(20):",
+          '    op.make(f"tpl{i:02d}", 1 + (2 + i / 10) * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+          "# Two samples no fit can be made of.",
+          'op.make("tpl03", np.full(101, np.nan), x0=-5, dx=0.1)',
+          'op.make("tpl11", np.full(101, np.nan), x0=-5, dx=0.1)',
+          't = op.set_template("Peak", {',
+          '    "description": "A Gaussian on a constant",',
+          '    "inputs": [{"name": "spectrum", "title": "Spectrum"}],',
+          '    "steps": [{"id": "fit", "action": "core.fit",',
+          '               "args": {"function": "gauss", "y": {"$input": "spectrum"}, "quiet": True}}],',
+          "})",
+          "print(t, t.inputs, t.steps[0]['version'])",
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("Template('Peak') ['spectrum'] 1\n");
+    expect(doc.getState().templates.Peak).toEqual({
+      description: "A Gaussian on a constant",
+      inputs: [{ name: "spectrum", title: "Spectrum", kind: "wave" }],
+      steps: [
+        {
+          id: "fit",
+          action: "core.fit",
+          version: 1,
+          args: { function: "gauss", y: { $input: "spectrum" }, quiet: true },
+        },
+      ],
+    });
+  });
+
+  it("does 20 samples: 18 succeed and 2 fail, and the table shows both", async () => {
+    expect(
+      await run(
+        lines(
+          'r = op.template("Peak").run([f"tpl{i:02d}" for i in range(20)])',
+          "print(r, r.counts)",
+          'print([i for i, s in enumerate(r.samples) if s["state"] == "failed"])',
+          "tab = r.table()",
+          'print(tab.name, op.wave(f"{r.name}_state").data[3], op.wave(f"{r.name}_error").data[3])',
+          'print(np.isnan(op.wave(f"{r.name}_x0").data[3]), round(op.wave(f"{r.name}_x0").data[0], 6))',
+        ),
+      ),
+    ).toBe(true);
+    const out = stdout.split("\n");
+    // Each failure is told as it happens, and the count at the end.
+    expect(out[0]).toMatch(/^Run0: sample 4 \(tpl03\) failed: /);
+    expect(out[1]).toMatch(/^Run0: sample 12 \(tpl11\) failed: /);
+    expect(out[2]).toBe("Run0: 18 succeeded, 2 failed");
+    expect(out[3]).toBe(
+      "Run('Run0': 18 succeeded, 2 failed) {'succeeded': 18, 'failed': 2, 'cancelled': 0, 'pending': 0}",
+    );
+    expect(out[4]).toBe("[3, 11]");
+    expect(out[5]).toMatch(/^Run0 failed .*points/);
+    expect(out[6]).toBe("True 0.5");
+    const record = runs().Run0!;
+    expect(record.template).toBe("Peak");
+    expect(record.samples).toHaveLength(20);
+    expect(record.samples[0]!).toMatchObject({
+      inputs: { spectrum: "tpl00" },
+      state: "succeeded",
+      attempts: 1,
+      error: "",
+    });
+    expect(record.samples[0]!.fingerprints.spectrum).toMatch(/^[0-9a-f]{8}-101$/);
+    expect(record.samples[0]!.results).toHaveLength(1);
+    expect(record.samples[0]!.waves).toContain("fit_tpl00");
+    expect(record.samples[3]!).toMatchObject({ state: "failed", results: [], waves: [] });
+    // The failures say so in the history, with a count at the end.
+    expect(record.samples[3]!.error).toMatch(/No points are left to fit/);
+    expect(doc.getState().waves.fit_tpl03).toBeUndefined();
+    const table = doc.getState().tables.Run0!;
+    expect(table.columns).toContain("Run0_state");
+    expect(table.columns).toContain("Run0_spectrum");
+    expect(table.columns).toContain("Run0_A");
+  });
+
+  it("keeps the run's conditions when the template changes, and retries only the failed", async () => {
+    const before = doc.getState().runs.Run0!;
+    expect(
+      await run(
+        lines(
+          "# The template now fits a Lorentzian: Run0 still holds the Gaussian it was run with.",
+          'op.set_template("Peak", {"inputs": ["spectrum"], "steps": [{"id": "fit", "action": "core.fit",',
+          '    "args": {"function": "lor", "y": {"$input": "spectrum"}, "quiet": True}}]})',
+          'print(op.run("Run0").copy["steps"][0]["args"]["function"])',
+          "# The two broken samples are mended, then retried.",
+          'op.make("tpl03", 1 + 2.3 * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+          'op.make("tpl11", 1 + 3.1 * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+          'r = op.run("Run0").retry()',
+          "print(r.counts)",
+          'print([s["attempts"] for s in r.samples].count(2))',
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "gauss\nRun0: 20 succeeded\n{'succeeded': 20, 'failed': 0, 'cancelled': 0, 'pending': 0}\n2\n",
+    );
+    const after = doc.getState().runs.Run0!;
+    expect(after.copy).toEqual(before.copy);
+    // The samples that had succeeded were not done again.
+    expect(after.samples[0]).toBe(before.samples[0]);
+    expect(after.samples[3]!.attempts).toBe(2);
+    const fitted = after.samples[3]!.results[0]!;
+    expect(doc.getState().results[fitted]!.label).toBe("gauss(tpl03)");
+  });
+
+  it("gives outputs new names instead of replacing waves that were there", async () => {
+    const old = doc.getState().waves.fit_tpl00!;
+    expect(
+      await run(
+        lines(
+          'r = op.template("Peak").run(["tpl00", "tpl01"], quiet=True)',
+          'print(r.samples[0]["waves"], op.exists("fit_tpl00_1"))',
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("['fit_tpl00_1'] True\n");
+    // The earlier fit's wave is as it was; the scratch waves of a fit are written as usual.
+    expect(doc.getState().waves.fit_tpl00).toBe(old);
+    expect(doc.getState().waves.W_coef_1).toBeUndefined();
+  });
+
+  it("passes what one step returns to the next", async () => {
+    expect(
+      await run(
+        lines(
+          'op.set_template("SmoothFit", {"inputs": ["y"], "steps": [',
+          '    {"id": "sm", "action": "core.smooth", "args": {"wave": {"$input": "y"}, "n": 3}},',
+          '    {"id": "fit", "action": "core.fit", "args": {"function": "gauss", "y": {"$step": "sm", "output": "wave"}, "quiet": True}},',
+          "]})",
+          'r = op.template("SmoothFit").run({"y": ["tpl05", "tpl06"]}, quiet=True)',
+          'print(r.counts["succeeded"], r.samples[0]["waves"])',
+          'print(op.result(r.samples[0]["results"][0]).settings["y"])',
+          "# A background's two waves are its fields, by name.",
+          'op.set_template("Sub", {"inputs": ["y"], "steps": [',
+          '    {"id": "bg", "action": "core.background", "args": {"wave": {"$input": "y"}, "method": "linear", "subtract": True}},',
+          '    {"id": "st", "action": "core.stats", "args": {"wave": {"$step": "bg", "output": "subtracted"}, "quiet": True}},',
+          "]})",
+          'r = op.template("Sub").run(["tpl07"], quiet=True)',
+          'print(r.states, r.samples[0]["waves"])',
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "2 ['tpl05_smth', 'fit_tpl05_smth']\ntpl05_smth\n['succeeded'] ['tpl07_bg', 'tpl07_sub']\n",
+    );
+  });
+
+  it("refuses a template that cannot be run before anything is done", async () => {
+    const cases: [string, RegExp][] = [
+      [
+        'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "core.fit", "args": {"y": {"$input": "z"}}}]})',
+        /refers to "z", which is not an input/,
+      ],
+      [
+        'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "core.smooth", "args": {"wave": {"$step": "b", "output": "wave"}}}, {"id": "b", "action": "core.smooth", "args": {"wave": {"$input": "y"}}}]})',
+        /refers to step "b", which is not an earlier step/,
+      ],
+      [
+        'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "core.smooth", "args": {"wave": {"$step": "a", "output": "wave"}}}]})',
+        /refers to step "a", which is not an earlier step/,
+      ],
+      [
+        'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "core.smooth", "args": {"wave": {"expr": "y * 2"}}}]})',
+        /actions take no other objects/,
+      ],
+      [
+        'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "lab.nothing", "args": {}}]})',
+        /no action named 'lab.nothing' is registered/,
+      ],
+    ];
+    const before = doc.getState();
+    for (const [code, message] of cases) {
+      expect(await run(code), code).toBe(false);
+      expect(errors.join("\n")).toMatch(message);
+    }
+    expect(doc.getState()).toBe(before);
+    const refused: [string, RegExp][] = [
+      [
+        '{"id": "a", "action": "lab.nothing", "version": 1, "args": {}}',
+        /step a: No action named 'lab.nothing'/,
+      ],
+      [
+        '{"id": "a", "action": "core.smooth", "args": {"wave": {"$input": "y"}, "n": "3"}}',
+        /step a: n must be a number/,
+      ],
+      [
+        '{"id": "a", "action": "core.smooth", "args": {"wave": {"$input": "y"}, "n": {"$input": "y"}}}',
+        /the input 'y' is a wave, which n \(integer\) does not take/,
+      ],
+      ['{"id": "a", "action": "core.smooth", "args": {"n": 3}}', /core.smooth needs 'wave'/],
+      ['{"id": "a", "action": "core.run_template", "args": {}}', /a template cannot run templates/],
+    ];
+    for (const [step, message] of refused) {
+      expect(await run(`op.set_template("Bad", {"inputs": ["y"], "steps": [${step}]})`), step).toBe(
+        true,
+      );
+      const kept = doc.getState();
+      expect(await run('op.template("Bad").run(["tpl00"])'), step).toBe(false);
+      expect(errors.join("\n")).toMatch(message);
+      // Refused: no run was recorded and nothing was made.
+      expect(doc.getState()).toBe(kept);
+    }
+    expect(await run('op.template("Bad").remove()')).toBe(true);
+  });
+
+  it("stops at the first failure when told to, leaving the rest pending", async () => {
+    expect(
+      await run(
+        lines(
+          'op.make("tplBad", np.full(101, np.nan))',
+          'r = op.template("Peak").run(["tpl00", "tplBad", "tpl01"], on_error="stop", quiet=True)',
+          "print(r.states)",
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("['succeeded', 'failed', 'pending']\n");
+  });
+
+  it("keeps the samples done when Python is interrupted, and cancels the rest", async () => {
+    expect(
+      await run(
+        lines(
+          '@op.action("lab.halt", title="Halt", params={"wave": {"type": "wave"}})',
+          "def halt(wave):",
+          '    op.make(f"{wave.name}_seen", [1.0])',
+          '    if wave.name == "tpl02":',
+          "        raise KeyboardInterrupt",
+          "    return wave",
+          'op.set_template("Halt", {"inputs": ["w"], "steps": [{"id": "h", "action": "lab.halt", "args": {"wave": {"$input": "w"}}}]})',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      await run('op.template("Halt").run(["tpl00", "tpl01", "tpl02", "tpl04"], name="Halted")'),
+    ).toBe(false);
+    expect(errors.join("\n")).toMatch(/KeyboardInterrupt/);
+    const halted = runs().Halted!;
+    expect(halted.samples.map((sample) => sample.state)).toEqual([
+      "succeeded",
+      "succeeded",
+      "cancelled",
+      "cancelled",
+    ]);
+    expect(halted.samples.map((sample) => sample.attempts)).toEqual([1, 1, 1, 0]);
+    // The interrupted sample left nothing; those before it are kept.
+    expect(doc.getState().waves.tpl02_seen).toBeUndefined();
+    expect(doc.getState().waves.tpl01_seen).toBeDefined();
+  });
+
+  it("is run from the main thread as an action, and the GUI sees each sample go in", async () => {
+    const seen: number[] = [];
+    beforeRpc = (method) => {
+      if (method !== "beginAtomic") return;
+      const latest = Object.values(doc.getState().runs).find((item) => item.name === "FromGui");
+      if (latest) seen.push(latest.samples.filter((s) => s.state === "succeeded").length);
+    };
+    try {
+      const call = await invoke("core.run_template", {
+        template: "Peak",
+        samples: [{ spectrum: "tpl00" }, { spectrum: "tpl01" }, { spectrum: "tpl02" }],
+        on_error: "stop",
+        name: "FromGui",
+      });
+      expect(call.ok).toBe(true);
+      expect(call.code).toBe(
+        'op.template("Peak").run(["tpl00", "tpl01", "tpl02"], on_error="stop", name="FromGui")',
+      );
+      expect(call.result).toEqual({
+        run: "FromGui",
+        succeeded: 3,
+        failed: 0,
+        cancelled: 0,
+        pending: 0,
+      });
+    } finally {
+      beforeRpc = null;
+    }
+    // Before each sample's block began, the samples before it were in the document already.
+    expect(seen).toContain(1);
+    expect(seen).toContain(2);
+    const table = await invoke("core.run_table", { run: "FromGui", name: "GuiTable" });
+    expect(table.code).toBe('op.run("FromGui").table(name="GuiTable")');
+    expect(table.result).toEqual({ table: "GuiTable" });
+    const retry = await invoke("core.retry_run", { run: "FromGui" });
+    expect(retry.code).toBe('op.run("FromGui").retry()');
+    expect(stdout).toBe("FromGui: every sample has succeeded; there is nothing to retry.\n");
+  });
+
+  it("makes a template from kept fits, chaining one fit to what another made", async () => {
+    expect(
+      await run(
+        lines(
+          "import warnings",
+          'a = op.fit("line", op.wave("tpl08"), residuals=True, quiet=True)',
+          'b = op.fit("gauss", op.wave("res_tpl08"), xrange=(-3, 4), quiet=True)',
+          "with warnings.catch_warnings(record=True) as caught:",
+          '    warnings.simplefilter("always")',
+          '    c = op.fit("gauss", op.wave("tpl09"), hold={"y0": 1}, quiet=True)',
+          '    one = c.template("Held")',
+          "print([str(w.message) for w in caught])",
+          't = op.make_template("Chain", [a, b.result], description="Line, then a peak in what is left")',
+          "print(t.inputs, [s['id'] for s in t.steps])",
+          "print(t.steps[1]['args'])",
+          'r = t.run(["tpl10"], quiet=True)',
+          "print(r.states, r.samples[0]['waves'])",
+        ),
+      ),
+    ).toBe(true);
+    const out = stdout.split("\n");
+    expect(out[0]).toMatch(/hold left out of the template: core.fit does not take it/);
+    expect(out[1]).toBe("['y'] ['fit', 'fit2']");
+    expect(out[2]).toBe(
+      "{'function': 'gauss', 'y': {'$step': 'fit', 'output': 'residuals'}, 'xrange': [-3, 4], 'quiet': True}",
+    );
+    expect(out[3]).toBe("['succeeded'] ['fit_tpl10_1', 'res_tpl10', 'fit_res_tpl10']");
+    expect(doc.getState().templates.Held!.steps[0]!.args).toEqual({
+      function: "gauss",
+      y: { $input: "y" },
+      quiet: true,
+    });
+  });
+
+  it("writes template changes made in the GUI as Python that does the same", async () => {
+    const template = doc.getState().templates.Held!;
+    const code = echoPython({ op: "setTemplate", name: "Copy", template });
+    expect(code).toBe(
+      'op.set_template("Copy", {"description": "", "inputs": [{"name": "y", "title": "Y wave", "kind": "wave"}], "steps": [{"id": "fit", "action": "core.fit", "version": 1, "args": {"function": "gauss", "y": {"$input": "y"}, "quiet": True}}]})',
+    );
+    expect(await run(code!)).toBe(true);
+    expect(doc.getState().templates.Copy).toEqual(template);
+    for (const command of [
+      { op: "renameTemplate", name: "Copy", newName: "Copy2" },
+      { op: "removeTemplate", name: "Copy2" },
+      { op: "removeRuns", names: ["Halted"] },
+    ] as const) {
+      expect(await run(echoPython(command)!)).toBe(true);
+    }
+    expect(doc.getState().templates.Copy2).toBeUndefined();
+    expect(doc.getState().runs.Halted).toBeUndefined();
+  });
+});
