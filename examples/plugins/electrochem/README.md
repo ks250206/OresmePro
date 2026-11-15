@@ -7,6 +7,7 @@ OresmePro のプラグインの見本です。サイクリックボルタモグ�
 - [`tafel`: Tafel 勾配と交換電流密度](#tafel-tafel-勾配と交換電流密度)
 - [`eis_fit`: インピーダンスの等価回路フィット](#eis_fit-インピーダンスの等価回路フィット)
 - [Nyquist 図のグラフテンプレート](#nyquist-図のグラフテンプレート)
+- [EIS フィットのパネル](#eis-フィットのパネル)
 - [English](#english)
 
 ## 入れ方
@@ -126,6 +127,10 @@ op.graph_template("Nyquist").make(zre="zre", zim="zim", zre_fit="f_zre_fit", zim
 
 虚部の wave は −Z″(正)を想定しています。
 
+## EIS フィットのパネル
+
+`panels/eis_fit.json` は、周波数・Z′・Z″ の wave、虚部の向き、モデル、重みを選んで **Fit** を押すと `eis_fit` を呼ぶパネルです。プラグインダイアログの **Add Panels to Experiment** で実験に入ります(パネル `EISFit`)。ボタンが呼ぶのはプラグインの Action だけなので、パネルは「データのみ」です。プラグインを外してもパネルは残り、ボタンを押すと、プラグインを入れるか有効にするよう表示します。
+
 ## 検算
 
 `tests/test_electrochem.py` が、答えのわかっている合成データで確かめます。
@@ -152,5 +157,6 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/electro
 - **`tafel`** (current, potential, e_from, e_to, e_eq, area, temperature): least-squares line through log10|j| against η = E − E_eq over a range; reports the Tafel slope (mV/dec, negative on the cathodic branch), the exchange current density j0 (extrapolated to η = 0), the transfer coefficient α = ln(10)RT/(F|b|), with uncertainties from the fit's covariance; makes `abs` (|j|) and `fit` (the line from η = 0 to the end of the range).
 - **`eis_fit`** (frequency, zre, zim, model, imaginary, weighting, f_min, f_max): complex nonlinear least squares (`scipy.optimize.least_squares` on stacked real and imaginary residuals, modulus weighting by default) of `R(RC)` = R0 + R1∥C1, `R(RQ)` = R0 + R1∥CPE, or `Randles` = R0 + CPE∥(R1 + semi-infinite Warburg σ). The imaginary wave holds −Z″ by default (`imaginary="Z''"` for Z″ itself). Initial guesses come from the high-frequency intercept, the arc's apex and the low-frequency Warburg slope; uncertainties from the Jacobian, χ² and reduced χ². Makes `zre_fit`/`zim_fit` at the measured frequencies, in the same sign convention as the input.
 - **Nyquist graph template** (`templates/nyquist.json`, in the app's export format): slots `zre`, `zim` (data, markers) and `zre_fit`, `zim_fit` (fit, line); axes Z′ (Ω) and −Z″ (Ω); a square figure.
+- **EIS fit panel** (`panels/eis_fit.json`): pick the frequency, Z′ and Z″ waves, the sign of Z″, the model and the weighting, and click **Fit** to call `eis_fit`. Add it with **Add Panels to Experiment**; it calls only the plugin's action, so it is data only.
 
 Limits: only a semi-infinite Warburg element (no finite-length diffusion), no inductive high-frequency points (exclude them with `f_max`), and initial guesses that expect a visible arc. `tests/test_electrochem.py` checks every action on synthetic data with known answers (a simulated reversible CV against Randles–Ševčík and the 28.5 mV peak offset, Butler–Volmer currents, the three circuits with and without noise); run it with any Python that has NumPy and SciPy.

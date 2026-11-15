@@ -10,7 +10,7 @@ const TRUE = { R0: 20, R1: 100, Q1: 2e-5, n1: 0.9, sigma: 50 };
 test.describe("the example plugin electrochem", () => {
   test.describe.configure({ timeout: 240_000 });
 
-  test("fits an impedance spectrum from the Plugins dialog, and its result stays when it is removed", async ({
+  test("fits an impedance spectrum from the Plugins dialog and from its panel, and its results stay when it is removed", async ({
     app,
     page,
   }) => {
@@ -36,7 +36,7 @@ test.describe("the example plugin electrochem", () => {
     await expect(approval).toContainText("plugin.electrochem.eis_fit");
     await expect(approval).toContainText("Python packages: numpy, scipy");
     // The manifest's files only: not the README or the tests next to them.
-    await expect(approval).toContainText("6 files");
+    await expect(approval).toContainText("7 files");
     await approval.getByRole("button", { name: "Install" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });
@@ -107,6 +107,29 @@ test.describe("the example plugin electrochem", () => {
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().graphTemplates)))
       .toEqual(["Nyquist"]);
 
+    // Its panel comes into the experiment too, and its Fit button calls the plugin.
+    await dialog.getByRole("button", { name: "Add Panels to Experiment" }).click();
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().panels)))
+      .toEqual(["EISFit"]);
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    const panel = app.window("EISFit");
+    await panel.getByLabel("Frequency (Hz)").selectOption("eis_f");
+    await panel.getByLabel("Z′ (Ω)").selectOption("eis_re");
+    await panel.getByLabel("−Z″ (Ω)").selectOption("eis_im");
+    await panel.getByLabel("Model").selectOption("R(RQ)");
+    await panel.getByRole("button", { name: "Fit", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().results)), {
+        timeout: 150_000,
+      })
+      .toEqual(["Plugin0", "Plugin1"]);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => globalThis.oresme.doc.getState().results.Plugin1!.settings),
+    ).toMatchObject({ params: { model: "R(RQ)" } });
+    await app.menu("Analysis", "Plugins…");
+
     // Removed, the plugin leaves its result, waves and template; running it again says what is needed.
     page.once("dialog", (confirm) => void confirm.accept());
     await dialog.getByRole("button", { name: "Remove…" }).click();
@@ -134,8 +157,16 @@ test.describe("the example plugin electrochem", () => {
       };
     });
     expect(kept).toEqual({
-      results: ["Plugin0"],
-      waves: ["eis_f", "eis_re", "eis_im", "eis_f_zre_fit", "eis_f_zim_fit"],
+      results: ["Plugin0", "Plugin1"],
+      waves: [
+        "eis_f",
+        "eis_re",
+        "eis_im",
+        "eis_f_zre_fit",
+        "eis_f_zim_fit",
+        "eis_f_zre_fit_1",
+        "eis_f_zim_fit_1",
+      ],
       traces: [
         [
           ["eis_im", "eis_re"],

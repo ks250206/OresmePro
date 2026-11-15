@@ -5,14 +5,18 @@
   "version": "0.1.0",
   "description": "Cyclic voltammetry peaks (Epa, Epc, ΔEp, E1/2, ipa/ipc), Tafel slopes and exchange current densities, and equivalent-circuit fits of impedance spectra (R(RC), R(RQ), Randles) with a Nyquist graph template. Potentials in V, impedances in Ω, frequencies in Hz.",
   "license": "MIT",
-  "python": { "entry": "electrochem", "packages": ["numpy", "scipy"] },
+  "python": {
+    "entry": "electrochem",
+    "packages": ["numpy", "scipy"]
+  },
   "files": [
     "electrochem/__init__.py",
     "electrochem/common.py",
     "electrochem/cv.py",
     "electrochem/tafel.py",
     "electrochem/eis.py",
-    "templates/nyquist.json"
+    "templates/nyquist.json",
+    "panels/eis_fit.json"
   ],
   "actions": [
     {
@@ -20,7 +24,10 @@
       "title": "CV Peaks",
       "description": "Oxidation and reduction peaks of one cycle of a cyclic voltammogram: Epa, Epc, ΔEp = Epa − Epc, E1/2 = (Epa + Epc)/2 (V), the peak currents ipa and ipc as heights above an optional linear baseline, and ipa/ipc. Makes peak_E and peak_i (the two peaks, to plot over the CV) and, with a baseline, baseline (to plot against the potential).",
       "params": {
-        "current": { "type": "wave", "title": "Current" },
+        "current": {
+          "type": "wave",
+          "title": "Current"
+        },
         "potential": {
           "type": "wave",
           "title": "Potential",
@@ -68,14 +75,23 @@
       "title": "Tafel Slope",
       "description": "Fits log10|j| = log10 j0 + (E − E_eq)/b over a potential range: the Tafel slope b (mV/dec, negative on the cathodic branch), the exchange current density j0 (extrapolated to E_eq) and the transfer coefficient α, with uncertainties from the fit. Makes abs (|j|) and fit (the line from E_eq to the end of the range), to plot against the potential on a log axis.",
       "params": {
-        "current": { "type": "wave", "title": "Current" },
+        "current": {
+          "type": "wave",
+          "title": "Current"
+        },
         "potential": {
           "type": "wave",
           "title": "Potential",
           "description": "Potential or overpotential (V)."
         },
-        "e_from": { "type": "number", "title": "Fit from (V)" },
-        "e_to": { "type": "number", "title": "Fit to (V)" },
+        "e_from": {
+          "type": "number",
+          "title": "Fit from (V)"
+        },
+        "e_to": {
+          "type": "number",
+          "title": "Fit to (V)"
+        },
         "e_eq": {
           "type": "number",
           "title": "Equilibrium potential (V)",
@@ -102,9 +118,18 @@
       "title": "EIS Fit",
       "description": "Fits an equivalent circuit to an impedance spectrum by complex nonlinear least squares: R(RC) = R0 + R1∥C1, R(RQ) = R0 + R1∥CPE, or Randles = R0 + CPE∥(R1 + Warburg σ). Reports the parameters with their uncertainties and χ², and makes zre_fit and zim_fit at the measured frequencies, for a Nyquist plot over the data.",
       "params": {
-        "frequency": { "type": "wave", "title": "Frequency (Hz)" },
-        "zre": { "type": "wave", "title": "Z′ (Ω)" },
-        "zim": { "type": "wave", "title": "Z″ or −Z″ (Ω)" },
+        "frequency": {
+          "type": "wave",
+          "title": "Frequency (Hz)"
+        },
+        "zre": {
+          "type": "wave",
+          "title": "Z′ (Ω)"
+        },
+        "zim": {
+          "type": "wave",
+          "title": "Z″ or −Z″ (Ω)"
+        },
         "model": {
           "type": "choice",
           "title": "Model",
@@ -125,10 +150,23 @@
           "default": "modulus",
           "description": "modulus divides each point's residuals by |Z|."
         },
-        "f_min": { "type": "number", "title": "Lowest frequency (Hz)", "optional": true, "min": 0 },
-        "f_max": { "type": "number", "title": "Highest frequency (Hz)", "optional": true, "min": 0 }
+        "f_min": {
+          "type": "number",
+          "title": "Lowest frequency (Hz)",
+          "optional": true,
+          "min": 0
+        },
+        "f_max": {
+          "type": "number",
+          "title": "Highest frequency (Hz)",
+          "optional": true,
+          "min": 0
+        }
       }
     }
   ],
-  "contributes": { "graphTemplates": ["templates/nyquist.json"] }
+  "contributes": {
+    "graphTemplates": ["templates/nyquist.json"],
+    "panels": ["panels/eis_fit.json"]
+  }
 }
