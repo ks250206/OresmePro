@@ -475,6 +475,104 @@ export interface StyleSpec {
   traces?: readonly Partial<TraceLook>[];
 }
 
+/*
+ * A graph template is a graph with its waves taken out: the same traces,
+ * axes, look, text and size, made again for other data. Where the graph had
+ * a wave, the template has a slot, named by what the wave was for ("y",
+ * "x", or "y1", "y2" for several traces), and making a graph from it means
+ * saying which wave goes in each slot. It sits between a style, which keeps
+ * only the look, and the recreation script, which makes the same graph of
+ * the same waves.
+ *
+ * A template holds no wave names, so renaming or killing a wave does not
+ * touch it. Text in its annotations and axis labels can name what fills a
+ * slot instead: {y.name} and {y.unit} become the name and the unit of the
+ * wave in slot y, {trace1} the name of the first trace and {image1} that of
+ * the first image.
+ */
+
+/** What a wave fills in a graph template. */
+export const SLOT_ROLES = ["y", "x", "yError", "xError", "color", "z"] as const;
+export type SlotRole = (typeof SLOT_ROLES)[number];
+
+export interface TemplateSlot {
+  name: string;
+  /** What the wave was first used for in the graph the template was made from. */
+  role: SlotRole;
+  /**
+   * The units of the wave it was made from, to warn when a graph is made of
+   * data in other units: the unit of its values, and of its X and Y scaling
+   * where the graph used them (null where it did not).
+   */
+  unit: string;
+  xUnit: string | null;
+  yUnit: string | null;
+}
+
+/** Properties of a trace that a template keeps besides the look its style holds. */
+export const TRACE_DATA = [
+  "yError",
+  "xError",
+  "fill",
+  "fillColor",
+  "fillOpacity",
+  "xOffset",
+  "yOffset",
+  "colorWave",
+  "colorTable",
+  "colorMin",
+  "colorMax",
+  "part",
+] as const;
+
+/** A trace of a template: slot names where the trace has wave names. */
+export interface TemplateTrace extends Pick<TraceStyle, (typeof TRACE_DATA)[number]> {
+  y: string;
+  x: string | null;
+  vAxis: string;
+  hAxis: string;
+}
+
+/** Properties of an axis that a template keeps besides the look its style holds. */
+export const AXIS_DATA = [
+  "label",
+  "min",
+  "max",
+  "log",
+  "reverse",
+  "tickStep",
+  "tickFormat",
+  "span",
+] as const;
+
+export interface TemplateAxis extends Pick<AxisSpec, "side" | (typeof AXIS_DATA)[number]> {
+  name: string;
+}
+
+/** An image or contour of a template: `wave` is a slot name. */
+export type TemplateImage = Omit<ImageSpec, "name">;
+export type TemplateContour = Omit<ContourSpec, "name">;
+
+export interface TemplateAnnotation extends Pick<
+  AnnotationSpec,
+  "kind" | "text" | "anchor" | "frame" | "x" | "y" | "point"
+> {
+  /** For a tag: the place of its trace in the template's traces. */
+  trace: number | null;
+}
+
+export interface GraphTemplate {
+  /** The look and the size, as a style holds them. */
+  style: StyleSpec;
+  slots: readonly TemplateSlot[];
+  traces: readonly TemplateTrace[];
+  images: readonly TemplateImage[];
+  contours: readonly TemplateContour[];
+  /** Every axis, the four sides first. A range left as null is worked out from the data. */
+  axes: readonly TemplateAxis[];
+  annotations: readonly TemplateAnnotation[];
+}
+
 export interface TableSpec {
   name: string;
   /** The waves shown, as columns. */
@@ -564,6 +662,8 @@ export interface DocState {
   readonly styles: Dict<StyleSpec>;
   /** The style new graphs are given, or null. Always one of `styles`. */
   readonly defaultStyle: string | null;
+  /** Graph templates, by name. */
+  readonly graphTemplates: Dict<GraphTemplate>;
   /** Analysis results (fits), by name, with what was asked for. */
   readonly results: Dict<AnalysisResult>;
   /**
@@ -585,6 +685,7 @@ export const emptyDoc = (): DocState => ({
   pages: dict(),
   styles: dict(),
   defaultStyle: null,
+  graphTemplates: dict(),
   results: dict(),
   timeZone: "UTC",
   windows: [],

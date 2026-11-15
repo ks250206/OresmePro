@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand, checkName, checkStyle } from "../doc/commands";
+import { applyCommand, checkGraphTemplate, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
 import { checkResult, type AnalysisResult } from "../doc/results";
 import {
@@ -15,6 +15,7 @@ import {
   type GraphSpec,
   type PageSpec,
   type ProcedureSpec,
+  type GraphTemplate,
   type StyleSpec,
   type TableSpec,
   type TraceSpec,
@@ -56,6 +57,7 @@ export interface SavedExperiment {
   pages?: Record<string, PageSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
+  graphTemplates?: Record<string, GraphTemplate>;
   results?: Record<string, AnalysisResult>;
   timeZone?: string;
   windows: WindowState[];
@@ -88,6 +90,7 @@ export function describeExperiment(
     pages: dictFrom(state.pages),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
+    graphTemplates: dictFrom(state.graphTemplates),
     results: dictFrom(state.results),
     timeZone: state.timeZone,
     windows: [...state.windows],
@@ -190,6 +193,16 @@ export function buildState(
     typeof saved.defaultStyle === "string" && saved.defaultStyle in styles
       ? saved.defaultStyle
       : null;
+  const graphTemplates = dict<GraphTemplate>();
+  for (const [name, template] of Object.entries(saved.graphTemplates ?? {})) {
+    checkName(name, "graph template");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      graphTemplates[name] = checkGraphTemplate(template);
+    } catch {
+      continue;
+    }
+  }
   const graphs = dict<GraphSpec>();
   for (const [name, graph] of Object.entries(saved.graphs)) {
     graphs[checkName(name, "graph")] = upgradeGraph(name, graph, styles);
@@ -245,6 +258,7 @@ export function buildState(
     pages,
     styles,
     defaultStyle,
+    graphTemplates,
     results,
     timeZone,
     windows,

@@ -79,6 +79,30 @@ const axisKeywords = (command: { vAxis?: string; hAxis?: string }) => ({
 });
 
 /**
+ * The arguments of `make` for graphs made from a template: a wave for each
+ * slot, or a list of them, one for each graph. A slot that has the same wave
+ * in every graph is written once; Python repeats it for each graph, which it
+ * counts from the lists, so at least one argument stays a list.
+ */
+function makeArguments(command: Extract<Command, { op: "makeGraphs" }>): string {
+  const { samples, names } = command;
+  const many = samples.length > 1;
+  const slots = [...new Set(samples.flatMap((sample) => Object.keys(sample)))];
+  const columns = slots
+    .map((slot) => [slot, samples.map((sample) => sample[slot] ?? null)] as const)
+    // A slot left empty everywhere is left out, as Python leaves it.
+    .filter(([, values]) => values.some((value) => value !== null));
+  const same = (values: readonly unknown[]) => values.every((value) => value === values[0]);
+  const listed = !many || names !== undefined || columns.some(([, values]) => !same(values));
+  const args = columns.map(([slot, values]) => {
+    const value = !many || (listed && same(values)) ? values[0] : values;
+    return `${slot}=${pyLiteral(value)}`;
+  });
+  if (names !== undefined) args.push(`name=${pyLiteral(many ? [...names] : names[0])}`);
+  return args.join(", ");
+}
+
+/**
  * The Python statement that has the same effect as a command, for writing GUI
  * actions into the command history. Returns null for commands that cannot be
  * replayed from text (bulk data) or that are only view state.
@@ -293,6 +317,19 @@ export function echoPython(
         : `op.apply_style(${pyLiteral(command.style)}, graphs=${pyLiteral([...command.graphs])})`;
     case "setDefaultStyle":
       return `op.set_default_style(${pyLiteral(command.name)})`;
+    case "saveGraphTemplate":
+      return `op.graph(${pyLiteral(command.graph)}).save_template(${joinArgs(
+        pyLiteral(command.name),
+        command.fixed && command.fixed.length > 0 ? `fixed=${pyLiteral([...command.fixed])}` : "",
+      )})`;
+    case "setGraphTemplate":
+      return `op.set_graph_template(${pyLiteral(command.name)}, ${pyLiteral(snakeKeys(command.template))})`;
+    case "removeGraphTemplate":
+      return `op.graph_template(${pyLiteral(command.name)}).remove()`;
+    case "renameGraphTemplate":
+      return `op.graph_template(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "makeGraphs":
+      return `op.graph_template(${pyLiteral(command.template)}).make(${makeArguments(command)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
   }
