@@ -529,6 +529,46 @@ page.arrange(2, 2, margin=36, gap=12)                # 全グラフを読む順�
 page.arrange(1, 2, items=["graph1", "graph0"])       # items を渡すとその順に。入りきらないグラフは警告して残す
 ```
 
+### パネル
+
+ボタンと入力欄で解析を動かすウィンドウです(**Windows › New Panel**)。Igor のコントロールパネル(`NewPanel`、`Button`、`PopupMenu`、`SetVariable`)に当たります。
+研究室で決まった解析を、Python を書かない人にも使ってもらうためのものです。
+
+- 部品は、見出し(Heading)・説明文(Text)・数値(Number)・文字(Text Field)・チェック(Checkbox)・選択(Choice)・wave の選択(Wave Picker)・ボタン(Button)です。
+  部品は上から順に 1 行に 1 つ並び、**On the line before** を付けた部品は前の部品と同じ行に並びます。
+- パネルはグラフや表と同じく実験の中のウィンドウで、部品と**値**は実験に保存されます。値の変更はコマンドなので、Undo でき、履歴には `op.panel("quick_fit")["model"] = "lor"` のように残ります。
+  数値や文字を打ち込んだときは、その欄の 1 回の編集が 1 回の Undo・履歴の 1 行です。
+- wave の選択は wave の名前を持ちます。wave の名前を変えると追従し、wave を削除すると名前が残って **missing** と表示されます。次元の数と名前(`*_I` のようなパターンも可)で一覧を絞れます。
+- **ボタンが呼ぶのは登録された Action だけ**です([解析を名前で呼ぶ](#解析を名前で呼ぶopaction))。コードの文字列は持ちません。
+  引数は、決まった値(文字・数・真偽・リスト)か、パネルの部品の値(`{"$control": "model"}`、Python では `op.control("model")`)です。
+  押したときに部品の値を読んで引数を作り、Action の引数の型で確かめてから呼びます。足りないもの・合わないものはボタンの下に出ます(「Choose a wave for Spectrum.」など)。
+- 呼び出しの実行中は、そのパネルのボタンは押せません。連打しても 1 回しか動きません。実行中に値を変えても、動いている呼び出しには影響しません(引数は押したときに決まっています)。
+  失敗したときはエラーがボタンの下に出て、値はそのまま残ります。履歴には呼び出しが同じ意味の Python(`op.fit("gauss", op.wave("sig"))` など)として残ります。
+- **作り方**: タイトルバーの **Edit**(または右クリック › **Edit Panel**)で編集モードになります。**Add ▾** で部品を足し、クリックで選んだ部品の設定を右のフォームで変えます。
+  ↑ ↓(`Alt`+矢印キー)で並べ替え、**Delete** で削除です。ボタンは **Action** を一覧から選ぶと、その引数が並びます。引数ごとに、省く(Leave out)・決まった値(Fixed value)・部品の値(Control)を選びます。
+  **New control** は、引数に合った部品(wave なら wave の選択、選択肢ならその選択肢のメニュー、数ならその範囲の数値)を作って結び付けます。
+- **データのみ / コードを含む**: ボタンが `core.`(本体)と `plugin.`(隔離して動くプラグイン)の Action だけを呼ぶパネルは「データのみ」です。
+  プロシージャで登録した Action(`lab.normalize` など)を呼ぶボタンがあると「コードを含む」で、押すとこの実験の Python が動きます。編集モードのツールバーに表示されます。
+  自分の Python をボタンで動かしたいときは、プロシージャで関数を `@op.action` で登録し、ボタンでその Action を選びます。
+- **Export…** で JSON ファイル(`<名前>.panel.json`)に書き出し、**Windows › Import Panel…** で読み込みます。コードを含むパネルを読み込むと、そのことが履歴に出ます。
+
+```python
+p = op.panel("quick_fit", title="Quick Fit")         # なければ作る(ウィンドウも)
+p.wave("target", label="Spectrum", dims=1)           # filter="*_I" で名前を絞る
+p.choice("model", ["gauss", "lor"], label="Model")   # p.select も同じ
+with p.row():                                        # 同じ行に並べる(inline=True と同じ)
+    p.number("n", "Points", value=5, min=1)
+    p.checkbox("quiet", "Quiet", value=True)
+p.button("run", "Fit", action="core.fit",
+         args={"function": op.control("model"), "y": op.control("target"), "quiet": op.control("quiet")})
+p["model"] = "lor"; p["target"]                      # 値の読み書き(wave の選択は名前)
+r = p.press("run")                                   # 押したのと同じ(Action の戻り値が返る)
+p.controls; p.control("model").set(label="Shape", name="shape"); p.control("run").move(0)
+p.data; op.set_panel("copy", p.data); op.panels(); p.kill()
+```
+
+- 部品を足すメソッドは、同じ名前・同じ種類の部品がすでにあれば、設定だけを変えて値は残します。パネルを組み立てるプロシージャを何度実行しても、使っている人の値は消えません。
+
 ### Python のファイル
 
 Python の作業ディレクトリ(`/experiment`)は実験の一部です。
@@ -784,6 +824,9 @@ r.lmfit                                                # lmfit 自身の結果(M
 - **GUI から解析を呼ぶ入口は Action です。** Python の関数に名前と引数の型を付けて登録し(`@op.action`)、メインスレッドは `{type: "invoke", action, version, argsJson}` をワーカーに送ります。
   Python が登録表を引いて引数を検査し、`op.atomic()` の中で関数を呼んで、結果を JSON で返します。コードの文字列は組み立てません。
   TypeScript 側に別の API を作らないので、解析の定義は Python の関数だけです。登録表は Python の起動時と、変わるたびにメインスレッドへ送られます。
+- **パネルはデータです。** ボタンが持つのは Action の id と引数(決まった値か `{"$control": 名前}`)だけで、押されると TypeScript が部品の値から引数を作り(`resolveButton`)、登録表で確かめて `invoke` します。
+  どの Action を呼ぶかでパネルの信頼の段階が決まります(`panelTrust`: `core.` と `plugin.` だけなら「データのみ」、それ以外は利用者のプロシージャの Python なので「コードを含む」)。
+  実行中かどうかは文書ではなく画面の状態(`src/app/panels.ts`)に置き、Undo や保存の対象にしません。
 - **自動の式は、どの状態でも最新です。** 作業用の状態にコマンドを適用するたびに(`Working.dispatch`)、入力が変わった自動の式を依存の順に計算し直します。
   式は前回計算したときの入力と自分自身の `rev` を覚えていて、どれかが違えば古いと分かります。そのため計算し直しは元の変更と同じ Undo の段・トランザクション・`op.atomic()` に入り、ブロックを適用し直すときにも計算し直されます。
   式の言語は `src/core/doc/formula.ts` の手書きの構文解析器が読み、DOM に依存しません。

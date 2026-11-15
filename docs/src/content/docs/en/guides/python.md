@@ -50,6 +50,6 @@ def normalize(wave, to=1.0):
 
 The argument types are `wave`, `waves`, `number`, `integer`, `numbers`, `string`, `boolean`, and `choice`. Numbers can have `min` and `max`, lists a `length`, and a choice its `choices`. A `default` must equal the function's own default. An argument that is left out is not passed to the function.
 
-An action called from the interface appears in the history as the equivalent Python, such as `op.fit("gauss", op.wave("signal"))`.
+An action called from the interface appears in the history as the equivalent Python, such as `op.fit("gauss", op.wave("signal"))`. The buttons of a panel call actions too ([Panels](../panels/)).
 
 [Using the API](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)

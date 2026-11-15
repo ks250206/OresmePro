@@ -17,6 +17,7 @@ Use `import oresme as op` in the Command Window or a procedure. Python runs in t
 | Organize waves in a hierarchy                        | [Folder](./api/folder/)                 | [Data folders](../guides/waves/#organize-waves-in-folders)             |
 | Fit, summarize, and transform data                   | [Analysis](./api/analysis/)             | [FFT](../examples/fft/)                                                |
 | Call analyses by name with typed arguments           | [Actions](./api/actions/)               | [Call analyses by name](../guides/python/#call-analyses-by-name)       |
+| Build panels of buttons and fields that run analyses | [Panel](./api/panel/)                   | [Panels](../guides/panels/)                                            |
 | Work with files, procedures, layouts, and time zones | [Global Functions](./api/global/)       | [Import a CSV file](../getting-started/import-csv/)                    |
 
 ## Signatures and errors
