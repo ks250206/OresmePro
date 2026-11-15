@@ -78,6 +78,7 @@ import { GraphTemplatesDialog, SaveGraphTemplateDialog } from "./GraphTemplateDi
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
+import { PluginsDialog } from "./PluginsDialog";
 import { SetWaveValuesDialog } from "./SetWaveValuesDialog";
 
 const close = () => ui.set({ dialog: null });
@@ -2984,6 +2985,8 @@ function OnsetDialog({ wave: initial }: { wave?: string }) {
 
 function renderDialog(dialog: DialogRequest) {
   switch (dialog.kind) {
+    case "plugins":
+      return <PluginsDialog />;
     case "newGraph":
       return <NewGraphDialog />;
     case "appendTraces":
