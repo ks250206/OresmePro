@@ -14,4 +14,16 @@ Choose **Windows → New Procedure**, enter Python, and click **Run**. **Shift+E
 
 The command session starts with `np` and `op` preloaded. Include `import numpy as np` and `import oresme as op` in a procedure to make its dependencies clear. SciPy, pandas, scikit-learn, and lmfit load on first use. Use **Python → Interrupt** for a long-running command. Restarting Python clears session variables and leaves the experiment's waves in the app.
 
-[Using the API](../../reference/) · [Procedure](../../reference/api/global/#procedure)
+## Apply changes together
+
+Changes made inside `with op.atomic():` reach the experiment together, as one undo step, when the block ends without an exception. If the block raises, nothing it did is kept. Python inside the block sees its own changes; the interface shows none of them until the block ends.
+
+```python
+with op.atomic():
+    corrected = op.make("corrected", raw.data - background.data)
+    op.display(corrected)
+```
+
+Analyses that make waves and results, such as `op.fit`, `op.fit_peaks`, and `op.background`, each run in such a block. Changes made in the interface while a block runs are kept alongside the block's changes when they do not overlap. If a wave the block read has changed meanwhile, nothing is kept and `OresmeError` is raised. Graphs cannot be drawn or saved inside a block.
+
+[Using the API](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic)

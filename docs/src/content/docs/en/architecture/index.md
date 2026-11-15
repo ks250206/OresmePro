@@ -15,6 +15,12 @@ description: How OresmePro stores state, executes Python, renders graphs, and sa
 
 A call such as `op.make` sends an RPC request from the worker to the main thread. The worker waits on a shared buffer using `Atomics.wait`. The handler in `src/kernel/rpc.ts` reads or updates the Doc. The response contains JSON and optional numeric data. The main thread writes it to the buffer and wakes the worker with `Atomics.notify`. If the response is too large, the worker grows the buffer and requests the same response again.
 
+## Changes that go in together
+
+An operation made of several commands is applied entirely or not at all. `Doc.transact()` applies the commands to a working state and replaces the document's state once at the end. Because `applyCommand` is a pure function returning immutable state, a failure only discards the working state. Interface actions use it.
+
+Python's `op.atomic()` is the same mechanism spread over many RPC requests. While a block is open, `src/kernel/rpc.ts` directs reads and writes to a `Stage` instead of the document. When the block ends, the stage replays its commands on the document as the interface left it meanwhile. It refuses if a wave the block read has a different `rev`: revisions are unique across all waves and never reused, so an unchanged `rev` means unchanged content.
+
 ## SharedArrayBuffer and cross-origin isolation
 
 Synchronous RPC and interruption require `SharedArrayBuffer`. The Vite development and preview servers return `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. On static hosts without configurable headers, the app's service worker adds them to responses. The app can reload once on first launch after the service worker activates.

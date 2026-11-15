@@ -14,4 +14,16 @@ sidebar:
 
 コマンド入力には `np` と `op` が初期設定されています。Procedure に `import numpy as np` と `import oresme as op` を書いておくと依存が明確です。SciPy、pandas、scikit-learn、lmfit は利用時に読み込まれます。長い処理を止めるには **Python → Interrupt** を使います。Python を再起動するとセッション変数は消えますが、Experiment の Wave はアプリ側に残ります。
 
-[Python API の使い方](../../reference/) · [Procedure](../../reference/api/global/#procedure)
+## 変更をまとめて反映する
+
+`with op.atomic():` の中の変更は、ブロックが例外なく終わったときに 1 回の Undo 単位としてまとめて Experiment に入ります。途中で例外が起きると何も残りません。ブロックの中の Python には自分の変更が見えますが、画面にはブロックが終わるまで何も表示されません。
+
+```python
+with op.atomic():
+    corrected = op.make("corrected", raw.data - background.data)
+    op.display(corrected)
+```
+
+`op.fit`、`op.fit_peaks`、`op.background` など Wave と結果を作る解析は、それぞれこのブロックの中で動きます。ブロックの実行中に画面で行った変更は、ブロックの変更とぶつからなければ両方残ります。ブロックが読んだ Wave が途中で変わっていた場合は何も残さず `OresmeError` になります。ブロックの中ではグラフを描画・保存できません。
+
+[Python API の使い方](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic)
