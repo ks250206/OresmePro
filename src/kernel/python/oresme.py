@@ -96,6 +96,13 @@ __all__ = [
     "graph_template",
     "graph_templates",
     "set_graph_template",
+    "Panel",
+    "Control",
+    "panel",
+    "panels",
+    "new_panel",
+    "set_panel",
+    "control",
 ]
 
 
@@ -2926,6 +2933,351 @@ def set_graph_template(name, data):
         data = data.data
     _dispatch({"op": "setGraphTemplate", "name": name, "template": _keys(data, _camel)})
     return GraphTemplate(name)
+
+
+# --- Panels ------------------------------------------------------------------
+#
+# A panel is a window of controls: headings, text, fields, pickers and
+# buttons. A button calls an action with the values of the panel's controls;
+# it holds the action's id and its arguments, never code.
+
+
+def control(name):
+    """A control of a panel, given as an argument of a button.
+
+    ::
+
+        p.button("run", "Fit", action="core.fit",
+                 args={"function": op.control("model"), "y": op.control("target")})
+
+    When the button is pressed, the argument is the value the control has
+    then. It is the dict ``{"$control": name}``, which is how a panel keeps it.
+    """
+    return {"$control": str(name)}
+
+
+def _panel_data(value):
+    """Plain data for a panel: waves as their names, tuples as lists, at any depth."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, dict):
+        return {str(key): _panel_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_panel_data(item) for item in value]
+    return _plain(value)
+
+
+class Control:
+    """A control of a panel: a heading, a paragraph of text, a field, a
+    picker or a button.
+
+    ``value`` is what a field or picker holds (the name of the wave, for a
+    wave picker) and ``data`` all of its properties, as the panel keeps them.
+    ``set(...)`` changes properties: ``label``, ``inline`` (on the line of
+    the control before it), and those of its kind, as the panel's methods
+    that add controls take them; ``name`` renames it, and the buttons that
+    pass its value follow.
+    """
+
+    def __init__(self, panel, name):
+        self._panel = panel
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def panel(self):
+        return self._panel
+
+    def _get(self):
+        for item in self._panel._get()["controls"]:
+            if item["name"] == self._name:
+                return item
+        raise OresmeError(f"{self._panel.name} has no control named {self._name!r}.")
+
+    @property
+    def kind(self):
+        return self._get()["kind"]
+
+    @property
+    def data(self):
+        return self._get()
+
+    @property
+    def label(self):
+        return self._get()["label"]
+
+    @label.setter
+    def label(self, value):
+        self.set(label=value)
+
+    @property
+    def value(self):
+        info = self._get()
+        if "value" not in info:
+            raise OresmeError(f"{self._name} is a {info['kind']}, which has no value.")
+        return info["value"]
+
+    @value.setter
+    def value(self, value):
+        self._panel[self._name] = value
+
+    def set(self, **props):
+        """Change several properties at once. Returns self."""
+        if props:
+            _dispatch(
+                {
+                    "op": "modifyControl",
+                    "panel": self._panel.name,
+                    "control": self._name,
+                    "props": _panel_data(props),
+                }
+            )
+            if "name" in props:
+                self._name = str(props["name"])
+        return self
+
+    def move(self, index):
+        """Put the control at a place in the panel, counted from 0 (the top)."""
+        _dispatch(
+            {"op": "moveControl", "panel": self._panel.name, "control": self._name, "to": _plain(index)}
+        )
+        return self
+
+    def press(self):
+        """Press the button: see ``Panel.press``."""
+        return self._panel.press(self._name)
+
+    def remove(self):
+        _dispatch({"op": "removeControl", "panel": self._panel.name, "control": self._name})
+
+    def __repr__(self):
+        return f"Control({self._name!r} of {self._panel.name})"
+
+
+class Panel:
+    """A panel: controls that run analyses, in a window of the experiment.
+
+    ::
+
+        p = op.panel("quick_fit", title="Quick Fit")
+        p.wave("target", label="Spectrum", dims=1)
+        p.choice("model", ["gauss", "lor"], label="Model")
+        p.button("run", "Fit", action="core.fit",
+                 args={"function": op.control("model"), "y": op.control("target")})
+        p["model"] = "lor"
+
+    The methods that add controls take the control's ``name`` first, unique
+    in the panel. When the panel has a control of that name and kind
+    already, they change it instead and keep its value, so a procedure that
+    builds a panel can run again. ``value`` is the value a new control
+    starts with. ``inline=True`` puts a control on the line of the one
+    before it; so does ``with p.row():`` for the controls added in it.
+
+    ``p["name"]`` reads and sets the value of a control; the values are part
+    of the experiment, saved with it and undone like any other change.
+    A button calls an action (see ``op.action``) with plain values and the
+    values of controls (``op.control``). To have a button run your own
+    Python, register the function as an action in a procedure and name it.
+    """
+
+    def __init__(self, name):
+        self._name = name
+        # How many controls a `with p.row():` block has added, or None outside one.
+        self._row = None
+
+    @property
+    def name(self):
+        return self._name
+
+    def _get(self):
+        return _call("panelInfo", {"name": self._name})[0]
+
+    @property
+    def title(self):
+        return self._get()["title"]
+
+    @title.setter
+    def title(self, value):
+        self.set(title=value)
+
+    def set(self, *, title=None):
+        """Change the panel's title (what its window shows; its name when empty). Returns self."""
+        if title is not None:
+            _dispatch({"op": "modifyPanel", "panel": self._name, "props": {"title": str(title)}})
+        return self
+
+    @property
+    def data(self):
+        """The panel as plain data: its title and controls, as ``op.set_panel`` takes them."""
+        info = self._get()
+        return {"title": info["title"], "controls": info["controls"]}
+
+    @property
+    def controls(self):
+        return [Control(self, item["name"]) for item in self._get()["controls"]]
+
+    def control(self, name):
+        names = [item["name"] for item in self._get()["controls"]]
+        if name not in names:
+            raise OresmeError(f"{self._name} has no control named {name!r}.")
+        return Control(self, name)
+
+    def __getitem__(self, name):
+        return self.control(name).value
+
+    def __setitem__(self, name, value):
+        _dispatch(
+            {"op": "setControlValue", "panel": self._name, "control": name, "value": _panel_data(value)}
+        )
+
+    def __contains__(self, name):
+        return any(item["name"] == name for item in self._get()["controls"])
+
+    def _add(self, kind, name, props):
+        props = {key: _panel_data(value) for key, value in props.items() if value is not None}
+        if self._row is not None:
+            props.setdefault("inline", self._row > 0)
+            self._row += 1
+        for item in self._get()["controls"]:
+            if item["name"] != name:
+                continue
+            if item["kind"] != kind:
+                raise OresmeError(f"{self._name} already has a {item['kind']} named {name!r}.")
+            # Run again, the panel keeps the value the user has given the control.
+            props.pop("value", None)
+            if props:
+                _dispatch({"op": "modifyControl", "panel": self._name, "control": name, "props": props})
+            return Control(self, name)
+        _dispatch({"op": "addControl", "panel": self._name, "kind": kind, "name": name, "props": props})
+        return Control(self, name)
+
+    def heading(self, name, label=None, *, inline=None):
+        """A heading: ``label`` in bold."""
+        return self._add("heading", name, {"label": label, "inline": inline})
+
+    def text(self, name, label=None, *, inline=None):
+        """A paragraph of text: ``label``, which may have several lines."""
+        return self._add("text", name, {"label": label, "inline": inline})
+
+    def number(self, name, label=None, *, value=None, min=None, max=None, step=None, inline=None):
+        """A field for a number, from ``min`` to ``max`` (inclusive) if given;
+        ``step`` is how much the arrows change it.
+        """
+        props = {"label": label, "value": value, "min": min, "max": max, "step": step, "inline": inline}
+        return self._add("number", name, props)
+
+    def string(self, name, label=None, *, value=None, inline=None):
+        """A field for text."""
+        return self._add("string", name, {"label": label, "value": value, "inline": inline})
+
+    def checkbox(self, name, label=None, *, value=None, inline=None):
+        """A checkbox: its value is True or False."""
+        return self._add("checkbox", name, {"label": label, "value": value, "inline": inline})
+
+    def choice(self, name, options, *, value=None, label=None, inline=None):
+        """A menu of ``options`` (texts or numbers); it starts at the first unless ``value`` says."""
+        props = {"label": label, "options": list(options), "value": value, "inline": inline}
+        return self._add("choice", name, props)
+
+    #: The same as ``choice``.
+    select = choice
+
+    def wave(self, name, label=None, *, value=None, dims=None, filter=None, inline=None):
+        """A wave picker: its value is the name of the wave chosen.
+
+        ``dims`` lists only waves of that many dimensions; ``filter`` only
+        those whose names contain it, or match it as a pattern with ``*``
+        (``"*_I"``). The picker follows the wave when it is renamed; when
+        the wave is killed, the name stays and is shown as missing.
+        """
+        props = {"label": label, "value": value, "dims": dims, "filter": filter, "inline": inline}
+        return self._add("wave", name, props)
+
+    def button(self, name, label=None, *, action, args=None, version=None, inline=None):
+        """A button that calls the action ``action`` with ``args`` when pressed.
+
+        Each argument is a plain value (text, a number, True or False, a
+        list) or ``op.control(name)``, the value of a control of the panel
+        at the time of the press. ``version`` calls that version of the
+        action rather than the highest.
+        """
+        props = {"label": label, "action": action, "args": args or {}, "version": version, "inline": inline}
+        return self._add("button", name, props)
+
+    @contextlib.contextmanager
+    def row(self):
+        """Put the controls added in the block on one line."""
+        before = self._row
+        self._row = 0
+        try:
+            yield self
+        finally:
+            self._row = before
+
+    def press(self, name):
+        """Press a button: call its action with the values the panel has now, as a click does.
+
+        Returns what the action returns. Raises ``OresmeError`` when a value
+        is missing (no wave chosen, say) or the action refuses the call.
+        """
+        call = _call("panelCall", {"panel": self._name, "button": name})[0]
+        return invoke(call["action"], call["args"], version=call["version"])
+
+    def kill(self):
+        kill_window(self._name)
+
+    def __repr__(self):
+        return f"Panel({self._name!r})"
+
+
+def panels():
+    """Every panel of the experiment."""
+    return [Panel(name) for name in _call("listWindows", {"kind": "panel"})[0]]
+
+
+def panel(name=None, title=None):
+    """The panel named ``name``, made (with a window) if there is none; with no name, the frontmost.
+
+    ``title`` gives it a title, as its window shows it.
+    """
+    names = _call("listWindows", {"kind": "panel"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no panels.")
+        return Panel(names[-1])
+    if name not in names:
+        return new_panel(name, title=title)
+    found = Panel(name)
+    if title is not None and found.title != title:
+        found.title = title
+    return found
+
+
+def new_panel(name=None, title=None):
+    """Make an empty panel with a window. Without a name, one is chosen (Panel0, ...)."""
+    command = {"op": "newPanel"}
+    if name is not None:
+        command["name"] = name
+    if title is not None:
+        command["title"] = str(title)
+    return Panel(_dispatch(command))
+
+
+def set_panel(name, data):
+    """Give the panel ``name`` a title and controls from a dict (``p.data``, or a file
+    exported from a panel window), making it if there is none. Returns it.
+
+    ``data`` is ``{"title": ..., "controls": [...]}``, where each control is
+    a dict of its ``kind``, ``name`` and properties, as ``Control.data``
+    gives them. Unknown keys and bad values are refused.
+    """
+    if isinstance(data, Panel):
+        data = data.data
+    _dispatch({"op": "setPanel", "name": name, "panel": _panel_data(data)})
+    return Panel(name)
 
 
 def _input(prompt=""):

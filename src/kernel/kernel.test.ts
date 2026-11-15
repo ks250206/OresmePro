@@ -2,6 +2,7 @@ import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { appendPlan, newGraphPlan, nextGraphName } from "../app/newGraph";
 import type { ActionSpec } from "../core/actions";
+import type { Command } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
 import { planMakeWaves, type MakeWavesRequest } from "../core/doc/makeWaves";
@@ -2737,5 +2738,124 @@ describe("formulas", () => {
     expect(stdout).toBe("[50.0, 20.0]\n");
     doc.undo();
     expect([...doc.getState().waves.fh!.data]).toEqual([10, 20]);
+  });
+});
+
+describe("panels", () => {
+  const panel = () => doc.getState().panels.qf!;
+
+  it("builds a panel, reads and sets its values, and lists it", async () => {
+    expect(
+      await run(
+        [
+          "x = np.linspace(-5, 5, 201)",
+          'op.make("pk", 1 + 3 * np.exp(-((x - 1) / 0.8) ** 2), x0=-5, dx=0.05)',
+          'p = op.panel("qf", title="Quick Fit")',
+          'p.heading("top", "Fit a peak")',
+          'p.wave("target", label="Spectrum", value=op.wave("pk"), dims=1)',
+          'p.choice("model", ["gauss", "lor"], label="Model")',
+          "with p.row():",
+          '    p.number("n", "Points", value=5, min=1)',
+          '    p.checkbox("quiet", "Quiet", value=True)',
+          'p.button("run", "Fit", action="core.fit",',
+          '         args={"function": op.control("model"), "y": op.control("target"), "quiet": op.control("quiet")})',
+          'p["model"] = "lor"',
+          'print(p["target"], p["model"], p["n"], [c.name for c in p.controls], op.panels(), p.title)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "pk lor 5 ['top', 'target', 'model', 'n', 'quiet', 'run'] [Panel('qf')] Quick Fit\n",
+    );
+    expect(panel().controls.map((item) => item.inline)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+    ]);
+    expect(doc.getState().windows.at(-1)).toMatchObject({ name: "qf", kind: "panel" });
+    expect(await run('p["n"] = 0')).toBe(false);
+    expect(errors.join("")).toMatch(/Points must be at least 1\./);
+    expect(await run('p.number("model")')).toBe(false);
+    expect(errors.join("")).toMatch(/qf already has a choice named 'model'/);
+  });
+
+  it("builds again without losing the values, as a procedure run twice does", async () => {
+    expect(
+      await run(
+        [
+          'p = op.panel("qf")',
+          'p.choice("model", ["gauss", "lor", "exp"], label="Shape", value="gauss")',
+          'print(p["model"], p.control("model").label, p.control("model").data["options"])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("lor Shape ['gauss', 'lor', 'exp']\n");
+  });
+
+  it("presses a button with the values the panel has", async () => {
+    expect(await run('op.panel("qf")["model"] = "gauss"\nr = op.panel("qf").press("run")')).toBe(
+      true,
+    );
+    expect(await run('print(round(r["x0"], 6), op.exists("fit_pk"))')).toBe(true);
+    expect(stdout).toBe("1.0 True\n");
+    expect(await run('op.panel("qf")["target"] = None\nop.panel("qf").press("run")')).toBe(false);
+    expect(errors.join("")).toMatch(/Choose a wave for Spectrum\./);
+  });
+
+  it("renames, moves and removes controls, and gives the data back as set_panel takes it", async () => {
+    expect(
+      await run(
+        [
+          'p = op.panel("qf")',
+          'p.control("model").set(name="shape")',
+          'p.control("run").move(0)',
+          'p.control("top").remove()',
+          'op.set_panel("qf2", p.data)',
+          'q = op.panel("qf2")',
+          'print([c.name for c in q.controls], q.control("run").data["args"]["function"])',
+          "q.kill()",
+          'print("qf2" in [x.name for x in op.panels()])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("['run', 'target', 'shape', 'n', 'quiet'] {'$control': 'shape'}\nFalse\n");
+  });
+
+  it("runs the echo of the GUI's commands", async () => {
+    const commands: Command[] = [
+      { op: "newPanel", name: "echoed" },
+      { op: "modifyPanel", panel: "echoed", props: { title: "Echoed" } },
+      {
+        op: "addControl",
+        panel: "echoed",
+        kind: "choice",
+        name: "model",
+        props: { label: "Model", options: ["gauss", "lor"] },
+      },
+      {
+        op: "addControl",
+        panel: "echoed",
+        kind: "button",
+        name: "go",
+        props: { label: "Go", action: "core.fit", args: { function: { $control: "model" } } },
+      },
+      { op: "setControlValue", panel: "echoed", control: "model", value: "lor" },
+      { op: "moveControl", panel: "echoed", control: "go", to: 0 },
+      { op: "modifyControl", panel: "echoed", control: "go", props: { label: "Run" } },
+    ];
+    for (const command of commands) {
+      expect(await run(echoPython(command)!)).toBe(true);
+    }
+    const echoed = doc.getState().panels.echoed!;
+    expect(echoed.title).toBe("Echoed");
+    expect(echoed.controls.map((item) => item.name)).toEqual(["go", "model"]);
+    expect(echoed.controls[0]).toMatchObject({
+      label: "Run",
+      args: { function: { $control: "model" } },
+    });
+    expect(echoed.controls[1]).toMatchObject({ value: "lor" });
   });
 });

@@ -6,7 +6,14 @@ import { graphScript } from "../core/doc/recreate";
 import { formulaOrder, formulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
 import { templateWarnings } from "../core/doc/graphTemplates";
-import { DocError, type DocState, type GraphTemplate, type Wave } from "../core/doc/types";
+import { resolveButton } from "../core/doc/panels";
+import {
+  DocError,
+  type DocState,
+  type GraphTemplate,
+  type PanelSpec,
+  type Wave,
+} from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import { planIgorImport } from "../core/io/igorImport";
@@ -89,6 +96,13 @@ function requireTemplate(state: DocState, name: unknown): GraphTemplate {
   const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
   if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
   return template;
+}
+
+function requirePanel(state: DocState, name: unknown): PanelSpec {
+  const panel =
+    typeof name === "string" && Object.hasOwn(state.panels, name) ? state.panels[name] : undefined;
+  if (!panel) throw new DocError(`No panel named ${JSON.stringify(name)}.`);
+  return panel;
 }
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
@@ -322,6 +336,18 @@ export function handleRpc(
         for (const command of commands) writer.dispatch(command);
       });
       return { result: { leftOut } };
+    }
+    case "panelInfo":
+      return { result: requirePanel(state, params.name) };
+    case "panelCall": {
+      // A press of a button from Python: the call as a click would make it.
+      const { call, problems } = resolveButton(
+        requirePanel(state, params.panel),
+        String(params.button),
+        { waveExists: (name) => name in state.waves },
+      );
+      if (!call) throw new DocError(problems.join(" "));
+      return { result: call };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
