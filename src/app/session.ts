@@ -8,6 +8,7 @@ import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
 import { layoutPage } from "../core/plot/page";
 import { toSvg } from "../core/plot/svg";
+import { fittedWindowSize, graphWaveKey, windowFitCommands } from "../core/plot/windowFit";
 import { KernelClient } from "../kernel/client";
 import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
@@ -107,6 +108,39 @@ export interface UiState {
 }
 
 export const doc = new Doc();
+
+/** What each graph window's fit last came to, and from what, to skip laying out graphs that did not change. */
+const fits = new Map<string, { key: readonly unknown[]; size: { w: number; h: number } | null }>();
+
+const cachedFit: typeof fittedWindowSize = (state, window, measure) => {
+  const graph = state.graphs[window.name];
+  if (window.kind !== "graph" || !graph) return null;
+  const key = [graph, graphWaveKey(graph, state.waves), window.w, window.h, state.timeZone];
+  const last = fits.get(window.name);
+  if (last && last.key.every((item, index) => item === key[index])) return last.size;
+  const size = fittedWindowSize(state, window, measure);
+  fits.set(window.name, { key, size });
+  return size;
+};
+
+/*
+ * A graph whose plot area has a size of its own (not auto) in a side gets a
+ * window that fits its figure in that side, after every change that could
+ * change the figure: of its modes, its axes' ranges or data, its fonts. The
+ * window is moved once the change is in, as a separate step of view state.
+ */
+let fitting = false;
+doc.subscribe(() => {
+  if (fitting) return;
+  fitting = true;
+  queueMicrotask(() => {
+    fitting = false;
+    for (const command of windowFitCommands(doc.getState(), measureText, cachedFit)) {
+      doc.dispatch(command);
+    }
+  });
+});
+
 export const history = new History();
 /** The experiment's files: what Python wrote, and what was added for it to read. */
 export const files = new FileStore();
