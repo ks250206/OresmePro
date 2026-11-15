@@ -1,6 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
+import { formulaCurrent, parseFormula } from "../doc/formula";
 import { checkResult, type AnalysisResult } from "../doc/results";
 import {
   AXIS_SIDES,
@@ -44,6 +45,21 @@ export interface SavedWave {
   yUnit?: string;
   unit: string;
   note: string;
+  /** Left out for a wave without a formula. */
+  formula?: SavedFormula;
+}
+
+/**
+ * A wave's formula as saved. Revisions are not (a loaded document has new
+ * ones), so whether the values were out of date is kept instead.
+ */
+export interface SavedFormula {
+  expr: string;
+  auto: boolean;
+  /** True when the values were not those the inputs give (a manual formula not recalculated). */
+  stale?: boolean;
+  error?: string;
+  zeroDivisions?: number;
 }
 
 export interface SavedExperiment {
@@ -77,9 +93,17 @@ export function describeExperiment(
       const wave = state.waves[name]!;
       const { x0, dx, xUnit, y0, dy, yUnit, unit, note } = wave;
       const scaling = { x0, dx, xUnit, y0, dy, yUnit, unit, note };
-      return wave.text
+      const saved: SavedWave = wave.text
         ? { name, file: null, text: wave.text, ...scaling }
         : { name, file: fileFor(wave), ...scaling };
+      const { formula } = wave;
+      if (formula) {
+        saved.formula = { expr: formula.expr, auto: formula.auto };
+        if (!formulaCurrent(state, name, formula)) saved.formula.stale = true;
+        if (formula.error !== null) saved.formula.error = formula.error;
+        if (formula.zeroDivisions > 0) saved.formula.zeroDivisions = formula.zeroDivisions;
+      }
+      return saved;
     }),
     folders: [...state.folders],
     graphs: dictFrom(state.graphs),
@@ -145,6 +169,43 @@ function upgradeGraph(
   };
 }
 
+/**
+ * Gives the waves of a document being rebuilt the formulas they were saved
+ * with, up to date as they were then: as of the revisions the waves have
+ * now, or, for values that were out of date, of none. A formula that cannot
+ * be read (from a later version, say) is left behind; the values stay.
+ */
+function withFormulas(state: DocState, saved: readonly SavedWave[]): DocState {
+  const waves = dictFrom(state.waves);
+  for (const item of saved) {
+    const wave = waves[item.name];
+    const formula = item.formula;
+    if (!wave || !formula || typeof formula.expr !== "string") continue;
+    let inputs: readonly string[];
+    try {
+      inputs = parseFormula(formula.expr).inputs;
+    } catch {
+      continue;
+    }
+    // Revisions start at 1, so -1 matches no wave: the values stay out of date.
+    const stale = formula.stale === true;
+    waves[item.name] = {
+      ...wave,
+      formula: {
+        expr: formula.expr,
+        auto: formula.auto !== false,
+        inputs: dict(
+          inputs.map((input) => [input, stale ? -1 : (state.waves[input]?.rev ?? null)]),
+        ),
+        rev: stale ? -1 : wave.rev,
+        error: typeof formula.error === "string" ? formula.error : null,
+        zeroDivisions: typeof formula.zeroDivisions === "number" ? formula.zeroDivisions : 0,
+      },
+    };
+  }
+  return { ...state, waves };
+}
+
 /** Rebuilds a document from its saved description and the files it refers to. */
 export function buildState(
   saved: SavedExperiment,
@@ -173,6 +234,7 @@ export function buildState(
     // Waves are rebuilt through makeWave so the document assigns their revisions.
     state = applyCommand(state, { op: "makeWave", name, ...decodeNpy(bytes), ...scaling }).state;
   }
+  state = withFormulas(state, saved.waves);
   // Names are checked as the commands that make these would check them. The
   // records are rebuilt without a prototype (see ../doc/dict), whatever JSON gave.
   const styles = dict<StyleSpec>();

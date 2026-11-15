@@ -54,6 +54,8 @@ __all__ = [
     "waves",
     "exists",
     "kill",
+    "set_formula",
+    "recalculate",
     "display",
     "image",
     "contour",
@@ -533,6 +535,42 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         _dispatch(command)
         return self
 
+    @property
+    def formula(self):
+        """The formula the values are computed from, as text; None if there is none.
+
+        Assigning one computes it now and keeps it up to date as its waves
+        change: ``r.formula = "V / I"`` (see ``op.set_formula`` for the
+        language, and for a formula computed only when asked). Assigning
+        None removes the formula and keeps the values.
+        """
+        info = self._info()["formula"]
+        return None if info is None else info["expr"]
+
+    @formula.setter
+    def formula(self, expr):
+        if expr is None:
+            _dispatch({"op": "setFormula", "name": self._name, "expr": None})
+        else:
+            set_formula(self, expr)
+
+    @property
+    def formula_info(self):
+        """How the formula stands, as a dict; None if there is none.
+
+        ``expr`` and ``auto`` are as set; ``inputs`` names the waves it
+        reads; ``status`` is ``"ok"``, ``"stale"`` (a manual formula whose
+        inputs changed since it was computed), ``"error"`` (the last
+        computation failed and the values are from before it) or
+        ``"missing"`` (one of its waves does not exist), with ``message``
+        saying more; ``zero_divisions`` counts the points that were divided
+        by zero and so are NaN.
+        """
+        info = self._info()["formula"]
+        if info is None:
+            return None
+        return {_snake(key): value for key, value in info.items() if key != "name"}
+
     def rename(self, new_name):
         """Rename the wave. A name with a folder ("run1:signal") moves it there."""
         new_name = _dispatch({"op": "renameWave", "name": self._name, "newName": new_name})
@@ -657,6 +695,8 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
         if info["xUnit"]:
             scale += f" {info['xUnit']}"
         unit = f", unit={info['unit']!r}" if info["unit"] else ""
+        if info["formula"]:
+            unit += f", formula={info['formula']['expr']!r}"
         if len(info["shape"]) > 1:
             return f"Wave({self._name!r}, shape={tuple(info['shape'])}{scale}{unit})"
         return f"Wave({self._name!r}, n={info['shape'][0]}{scale}{unit})"
@@ -1700,6 +1740,77 @@ def kill(*waves_):
     _dispatch({"op": "killWaves", "names": names})
     for name in names:
         _data_cache.pop(name, None)
+
+
+def set_formula(wave, expr, *, auto=True):
+    """Compute a wave's values from other waves with a formula, and return it.
+
+    ::
+
+        op.set_formula("R", "V / I")
+        op.set_formula("ratio", "run1:A / run2:A", auto=False)
+
+    The wave is made if it does not exist, with the length and X scaling of
+    the waves in the formula. The values are computed now, as float64, and
+    with ``auto=True`` again whenever one of those waves changes, in the
+    same undo step as the change; with ``auto=False`` only by
+    ``op.recalculate()``, the wave being marked out of date meanwhile.
+    Values written into the wave itself are replaced by the formula's (or
+    mark it out of date); ``w.formula = None`` removes the formula first.
+
+    The formula is not Python. It works point by point on 1-D numeric waves
+    with the same number of points and the same X scaling (nothing is
+    interpolated), and knows only:
+
+    - numbers, wave names (``run1:V`` in a data folder; ``'x'`` in quotes
+      for a wave named like one of the words below), ``p`` (the point
+      number), ``x`` (its X value), ``pi``, ``e``, ``nan``, ``inf``
+    - ``+ - * / ^`` (``^`` is a power, ``-2^2`` is -4), comparisons
+      ``< <= > >= == !=``, ``&& || !`` and ``test ? a : b``
+    - ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh
+      cosh tanh floor ceil round min max pow hypot sign isnan``; ``log`` is
+      the common logarithm, as in Igor
+
+    Division by zero gives NaN; a warning says how many points it took.
+    NaN goes through everything but ``isnan``: ``isnan(V) ? 0 : V``. A
+    formula that cannot be computed, or that would make a wave depend on
+    itself, raises ``OresmeError`` saying where, and changes nothing. When
+    an automatic recomputation fails later (an input deleted or of another
+    length), the values stay as they were and ``w.formula_info`` says why.
+    """
+    command = {"op": "setFormula", "name": _wave_name(wave), "expr": str(expr)}
+    if not auto:
+        command["auto"] = False
+    result = Wave(_dispatch(command))
+    count = result.formula_info["zero_divisions"]
+    if count:
+        warnings.warn(
+            f"{count} point{'s were' if count != 1 else ' was'} divided by zero and "
+            f"{'are' if count != 1 else 'is'} NaN.",
+            stacklevel=2,
+        )
+    return result
+
+
+def recalculate(waves=None):
+    """Compute formulas again: those of the given waves, or all.
+
+    Only formulas that are out of date (manual ones whose waves changed) or
+    whose last computation failed are computed, inputs before the waves
+    computed from them. A warning names those that still fail.
+    """
+    command = {"op": "recalculate"}
+    if waves is not None:
+        if isinstance(waves, (Wave, str)):
+            waves = [waves]
+        command["names"] = [_wave_name(item) for item in waves]
+    _dispatch(command)
+    asked = None if waves is None else set(command["names"])
+    for info in _call("formulas")[0]:
+        if asked is not None and info["name"] not in asked:
+            continue
+        if info["status"] in ("error", "missing"):
+            warnings.warn(f"{info['name']}: {info['message']}", stacklevel=2)
 
 
 _DEFAULT = object()

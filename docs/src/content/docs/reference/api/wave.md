@@ -41,6 +41,8 @@ A wave is numeric with 1 to 4 dimensions, or a 1-D list of text.
 - `x_unit` (read/write)
 - `unit` (read/write) · Unit of the stored values, shown on axes.
 - `note` (read/write)
+- `formula` (read/write) · The formula the values are computed from, as text; None if there is none. Assigning one computes it now and keeps it up to date as its waves change: ``r.formula = "V / I"`` (see ``op.set_formula`` for the language, and for a formula computed only when asked). Assigning None removes the formula and keeps the values.
+- `formula_info` (read-only) · How the formula stands, as a dict; None if there is none. ``expr`` and ``auto`` are as set; ``inputs`` names the waves it reads; ``status`` is ``"ok"``, ``"stale"`` (a manual formula whose inputs changed since it was computed), ``"error"`` (the last computation failed and the values are from before it) or ``"missing"`` (one of its waves does not exist), with ``message`` saying more; ``zero_divisions`` counts the points that were divided by zero and so are NaN.
 - `flat` (read-only) · The points in storage order, whatever the shape: ``w.flat[6:9] = 0``.
 
 ### `Wave.redimension`
@@ -174,6 +176,59 @@ op.kill(*waves_)
 ```
 
 Delete waves. A wave shown in a graph or table cannot be killed.
+
+## `set_formula`
+
+```python
+op.set_formula(wave, expr, *, auto=True)
+```
+
+Compute a wave's values from other waves with a formula, and return it.
+
+::
+
+    op.set_formula("R", "V / I")
+    op.set_formula("ratio", "run1:A / run2:A", auto=False)
+
+The wave is made if it does not exist, with the length and X scaling of
+the waves in the formula. The values are computed now, as float64, and
+with ``auto=True`` again whenever one of those waves changes, in the
+same undo step as the change; with ``auto=False`` only by
+``op.recalculate()``, the wave being marked out of date meanwhile.
+Values written into the wave itself are replaced by the formula's (or
+mark it out of date); ``w.formula = None`` removes the formula first.
+
+The formula is not Python. It works point by point on 1-D numeric waves
+with the same number of points and the same X scaling (nothing is
+interpolated), and knows only:
+
+- numbers, wave names (``run1:V`` in a data folder; ``'x'`` in quotes
+  for a wave named like one of the words below), ``p`` (the point
+  number), ``x`` (its X value), ``pi``, ``e``, ``nan``, ``inf``
+- ``+ - * / ^`` (``^`` is a power, ``-2^2`` is -4), comparisons
+  ``< <= > >= == !=``, ``&& || !`` and ``test ? a : b``
+- ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh
+  cosh tanh floor ceil round min max pow hypot sign isnan``; ``log`` is
+  the common logarithm, as in Igor
+
+Division by zero gives NaN; a warning says how many points it took.
+NaN goes through everything but ``isnan``: ``isnan(V) ? 0 : V``. A
+formula that cannot be computed, or that would make a wave depend on
+itself, raises ``OresmeError`` saying where, and changes nothing. When
+an automatic recomputation fails later (an input deleted or of another
+length), the values stay as they were and ``w.formula_info`` says why.
+
+## `recalculate`
+
+```python
+op.recalculate(waves=None)
+```
+
+Compute formulas again: those of the given waves, or all.
+
+Only formulas that are out of date (manual ones whose waves changed) or
+whose last computation failed are computed, inputs before the waves
+computed from them. A warning names those that still fail.
 
 ## `WAVE_TYPES`
 

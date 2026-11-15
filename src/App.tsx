@@ -93,6 +93,9 @@ function useMenus(): MenuDefinition[] {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
   const pages = useDoc((state) => state.pages);
+  const hasFormulas = useDoc((state) =>
+    Object.values(state.waves).some((wave) => wave.formula !== undefined),
+  );
   const pageSelection = useUi((state) => state.pageSelection);
   const top = windows.at(-1);
   const graph = top?.kind === "graph" ? top.name : null;
@@ -168,6 +171,18 @@ function useMenus(): MenuDefinition[] {
       title: "Data",
       items: [
         { label: "Make Waves…", onSelect: open({ kind: "makeWaves" }) },
+        {
+          label: "Set Wave Values…",
+          onSelect: open({
+            kind: "setWaveValues",
+            ...(selected.length === 1 ? { wave: selected[0]! } : {}),
+          }),
+        },
+        {
+          label: "Recalculate Formulas",
+          disabled: !hasFormulas,
+          onSelect: () => runGui({ op: "recalculate" }),
+        },
         { separator: true },
         { label: "Load Delimited Text…", onSelect: loadDelimitedText },
         { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },

@@ -3,6 +3,7 @@ import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc, DocWriter, Stage } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
+import { formulaOrder, formulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
 import { DocError, type DocState, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
@@ -39,7 +40,23 @@ export interface RpcReply {
   data?: Float64Array;
 }
 
-const waveInfo = (wave: Wave) => ({
+/** A wave's formula as Python reads it, with how it stands; null for a wave without one. */
+function formulaInfo(state: DocState, wave: Wave) {
+  const { formula } = wave;
+  if (!formula) return null;
+  const { status, message } = formulaStatus(state, wave.name, formula);
+  return {
+    name: wave.name,
+    expr: formula.expr,
+    auto: formula.auto,
+    status,
+    message,
+    inputs: Object.keys(formula.inputs),
+    zeroDivisions: formula.zeroDivisions,
+  };
+}
+
+const waveInfo = (state: DocState, wave: Wave) => ({
   name: wave.name,
   kind: wave.text ? "text" : "numeric",
   type: wave.type,
@@ -53,6 +70,7 @@ const waveInfo = (wave: Wave) => ({
   unit: wave.unit,
   note: wave.note,
   rev: wave.rev,
+  formula: formulaInfo(state, wave),
 });
 
 /** A wave's numbers as they are sent to Python: float64, real parts then imaginary parts. */
@@ -181,17 +199,21 @@ export function handleRpc(
       return { result: null };
     }
     case "waveInfo":
-      return { result: waveInfo(readWave(params.name)) };
+      return { result: waveInfo(state, readWave(params.name)) };
     case "waveData": {
       const wave = readWave(params.name);
-      if (wave.text) return { result: { ...waveInfo(wave), text: wave.text } };
+      if (wave.text) return { result: { ...waveInfo(state, wave), text: wave.text } };
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
-        ? { result: waveInfo(wave) }
-        : { result: waveInfo(wave), data: transportData(wave) };
+        ? { result: waveInfo(state, wave) }
+        : { result: waveInfo(state, wave), data: transportData(wave) };
     }
     case "listWaves":
       return { result: state.waveOrder };
+    case "formulas":
+      return {
+        result: formulaOrder(state).map((name) => formulaInfo(state, state.waves[name]!)),
+      };
     case "timeZone":
       return { result: state.timeZone };
     case "listFolders":

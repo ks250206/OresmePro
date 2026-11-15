@@ -2,6 +2,16 @@ import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import { dict, filterDict, withEntry, withoutEntries } from "./dict";
 import {
+  checkCycle,
+  evaluateFormula,
+  formulaCurrent,
+  formulaOrder,
+  FormulaError,
+  parseFormula,
+  renameInFormula,
+  type FormulaOutcome,
+} from "./formula";
+import {
   checkResult,
   renameInResult,
   RESULT_BASE,
@@ -53,6 +63,7 @@ import {
   type CursorName,
   type DocState,
   type ErrorSource,
+  type Formula,
   type FigureSize,
   type GraphLook,
   type GraphSpec,
@@ -137,6 +148,15 @@ export type Command =
     }
   | { op: "setWaveMeta"; name: string; unit?: string; note?: string }
   | { op: "renameWave"; name: string; newName: string }
+  /**
+   * Gives a wave a formula and computes it now, making the wave if it does
+   * not exist (see ./formula). `auto` (true when left out) keeps it up to
+   * date as its inputs change; otherwise it is computed again only by
+   * recalculate. An `expr` of null removes the formula and keeps the values.
+   */
+  | { op: "setFormula"; name: string; expr: string | null; auto?: boolean }
+  /** Computes again the formulas of these waves (all, when left out) that are out of date or failed. */
+  | { op: "recalculate"; names?: readonly string[] }
   | { op: "duplicateWave"; name: string; newName: string; overwrite?: boolean }
   | { op: "killWaves"; names: readonly string[] }
   | { op: "newFolder"; path: string }
@@ -899,8 +919,16 @@ function validateProps<T>(
   return result;
 }
 
-/** Rewrites every reference to a wave after waves have been renamed or moved. */
-function renameReferences(state: DocState, rename: (name: string) => string): DocState {
+/**
+ * Rewrites every reference to a wave after waves have been renamed or moved.
+ * `previous` holds the waves as they were before: a formula that was up to
+ * date with an input stays so when only the input's name changed.
+ */
+function renameReferences(
+  state: DocState,
+  rename: (name: string) => string,
+  previous: DocState["waves"],
+): DocState {
   const graphs = dict<GraphSpec>();
   for (const graph of Object.values(state.graphs)) {
     const traces: TraceSpec[] = [];
@@ -949,7 +977,124 @@ function renameReferences(state: DocState, rename: (name: string) => string): Do
   for (const result of Object.values(state.results)) {
     results[result.name] = renameInResult(result, rename);
   }
-  return { ...state, graphs, tables, results };
+  let waves = state.waves;
+  for (const wave of Object.values(state.waves)) {
+    const formula = wave.formula;
+    if (!formula || !Object.keys(formula.inputs).some((input) => rename(input) !== input)) {
+      continue;
+    }
+    const inputs = dict<number | null>();
+    for (const [input, rev] of Object.entries(formula.inputs)) {
+      const name = rename(input);
+      inputs[name] =
+        rev !== null && previous[input]?.rev === rev ? (state.waves[name]?.rev ?? null) : rev;
+    }
+    const expr = renameInFormula(formula.expr, rename);
+    // Only where the values come from has changed, not the values: no new revision.
+    waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
+  }
+  return { ...state, waves, graphs, tables, results };
+}
+
+/** A wave under a new name; a formula that was up to date with it stays so. */
+function moved(wave: Wave, name: string): Wave {
+  const next = changed(wave, { name });
+  const { formula } = wave;
+  return formula && formula.rev === wave.rev
+    ? { ...next, formula: { ...formula, rev: next.rev } }
+    : next;
+}
+
+/** A wave without its formula, keeping its values. */
+function withoutFormula(wave: Wave): Wave {
+  const { formula: _formula, ...rest } = wave;
+  return rest;
+}
+
+/** Writes what a formula computed into its wave, making the wave if it does not exist. */
+function putFormulaResult(
+  state: DocState,
+  name: string,
+  formula: Pick<Formula, "expr" | "auto">,
+  outcome: FormulaOutcome,
+): DocState {
+  const existing = state.waves[name];
+  const rev = nextRev();
+  const content = {
+    data: outcome.values,
+    imag: null,
+    type: "float64" as const,
+    text: null,
+    shape: [outcome.values.length],
+    rev,
+  };
+  const wave: Wave = existing
+    ? { ...existing, ...content }
+    : {
+        name,
+        ...content,
+        x0: outcome.x0,
+        dx: outcome.dx,
+        xUnit: outcome.xUnit,
+        y0: 0,
+        dy: 1,
+        yUnit: "",
+        unit: "",
+        note: "",
+      };
+  return putWave(state, {
+    ...wave,
+    formula: {
+      expr: formula.expr,
+      auto: formula.auto,
+      inputs: outcome.inputs,
+      rev,
+      error: null,
+      zeroDivisions: outcome.zeroDivisions,
+    },
+  });
+}
+
+/**
+ * Computes a wave's formula again. If that fails, the values stay as they
+ * were and the formula keeps why, as of the inputs as they are now: it is
+ * not tried again until one of them (or the wave) changes.
+ */
+function recompute(state: DocState, name: string): DocState {
+  const wave = state.waves[name]!;
+  const formula = wave.formula!;
+  try {
+    return putFormulaResult(state, name, formula, evaluateFormula(state, name, formula.expr));
+  } catch (error) {
+    if (!(error instanceof DocError)) throw error;
+    const inputs = dict<number | null>(
+      Object.keys(formula.inputs).map((input) => [input, state.waves[input]?.rev ?? null]),
+    );
+    const message = error instanceof FormulaError ? `${error.detail}.` : error.message;
+    return putWave(state, {
+      ...wave,
+      formula: { ...formula, inputs, rev: wave.rev, error: message },
+    });
+  }
+}
+
+/**
+ * Brings every automatic formula up to date with its inputs, inputs before
+ * the waves computed from them. The document runs every change through
+ * this, so that in every state it holds, automatic formulas are up to date
+ * and their recomputation belongs to the change that made it necessary.
+ */
+export function settleFormulas(state: DocState): DocState {
+  const outdated = Object.values(state.waves).some(
+    (wave) => wave.formula?.auto && !formulaCurrent(state, wave.name, wave.formula),
+  );
+  if (!outdated) return state;
+  let next = state;
+  for (const name of formulaOrder(state)) {
+    const formula = next.waves[name]?.formula;
+    if (formula?.auto && !formulaCurrent(next, name, formula)) next = recompute(next, name);
+  }
+  return next;
 }
 
 function waveUsers(state: DocState, name: string): string[] {
@@ -1201,7 +1346,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const waves = withEntry(
         withoutEntries(state.waves, [wave.name]),
         newName,
-        changed(wave, { name: newName }),
+        moved(wave, newName),
       );
       const renamed = renameReferences(
         {
@@ -1210,6 +1355,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           waveOrder: state.waveOrder.map((name) => (name === wave.name ? newName : name)),
         },
         (name) => (name === wave.name ? newName : name),
+        state.waves,
       );
       return { state: renamed, result: newName };
     }
@@ -1220,13 +1366,16 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
       }
       return {
+        // The copy has the values but not the formula, as in Igor.
         state: putWave(
           state,
-          changed(wave, {
-            name: newName,
-            data: wave.data.slice(),
-            imag: wave.imag?.slice() ?? null,
-          }),
+          withoutFormula(
+            changed(wave, {
+              name: newName,
+              data: wave.data.slice(),
+              imag: wave.imag?.slice() ?? null,
+            }),
+          ),
         ),
         result: newName,
       };
@@ -1234,6 +1383,41 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "killWaves": {
       const names = command.names.map((name) => requireWave(state, name).name);
       return { state: removeWaves(state, names), result: null };
+    }
+    case "setFormula": {
+      const name = checkPath(command.name, "wave");
+      if (command.expr === null) {
+        const wave = requireWave(state, name);
+        if (!wave.formula) return { state, result: null };
+        return { state: putWave(state, withoutFormula(wave)), result: null };
+      }
+      if (typeof command.expr !== "string") throw new DocError("A formula must be text.");
+      const auto = command.auto === undefined ? true : bool(command.auto, "auto");
+      const expr = command.expr.trim();
+      const parsed = parseFormula(expr);
+      checkCycle(state, name, parsed);
+      const outcome = evaluateFormula(state, name, parsed);
+      return { state: putFormulaResult(state, name, { expr, auto }, outcome), result: name };
+    }
+    case "recalculate": {
+      let names: Set<string> | null = null;
+      if (command.names !== undefined) {
+        names = new Set();
+        for (const given of command.names) {
+          const wave = requireWave(state, given);
+          if (!wave.formula) throw new DocError(`${wave.name} has no formula.`);
+          names.add(wave.name);
+        }
+      }
+      let next = state;
+      for (const name of formulaOrder(state)) {
+        if (names && !names.has(name)) continue;
+        const formula = next.waves[name]!.formula!;
+        // What failed is tried again: the reason may lie outside its inputs (the wave's scaling).
+        if (formula.error === null && formulaCurrent(next, name, formula)) continue;
+        next = recompute(next, name);
+      }
+      return { state: next, result: null };
     }
     case "newFolder": {
       const path = checkPath(command.path, "data folder");
@@ -1260,9 +1444,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         if (name !== wave.name && name in state.waves) {
           throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
         }
-        waves[name] = name === wave.name ? wave : changed(wave, { name });
+        waves[name] = name === wave.name ? wave : moved(wave, name);
       }
-      const moved = renameReferences(
+      const renamed = renameReferences(
         {
           ...state,
           waves,
@@ -1270,8 +1454,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           folders: state.folders.map(move),
         },
         move,
+        state.waves,
       );
-      return { state: withFolders(moved, parentFolder(newPath)), result: newPath };
+      return { state: withFolders(renamed, parentFolder(newPath)), result: newPath };
     }
     case "killFolder": {
       const path = checkPath(command.path, "data folder");

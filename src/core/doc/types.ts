@@ -131,8 +131,40 @@ export interface Wave {
   /** Unit of the stored values. */
   readonly unit: string;
   readonly note: string;
-  /** Changes every time the wave changes; unique across all waves. */
+  /**
+   * Changes every time the wave's content changes (values, shape, scaling,
+   * units, note, name); unique across all waves. Not when only its formula
+   * changes: that is about where the values come from, not what they are.
+   */
   readonly rev: number;
+  /** The formula that gives the wave its values (see ./formula); absent when it has none. */
+  readonly formula?: Formula;
+}
+
+/**
+ * A wave's formula: an expression of other waves that its values are
+ * computed from (Igor's dependency formula, `R := V / I`).
+ *
+ * Whether the values are up to date is told by revisions: `rev` is the
+ * wave's own revision once the values were written, and `inputs` the
+ * revision of each input then. Both change whenever their wave does and are
+ * never reused, so the values are up to date exactly when all of them still
+ * match. Revisions do not survive saving, so the file keeps only whether the
+ * values were out of date then.
+ */
+export interface Formula {
+  /** As it was typed (rewritten only when an input is renamed). */
+  readonly expr: string;
+  /** Recomputed whenever an input changes; otherwise only when asked to (Recalculate). */
+  readonly auto: boolean;
+  /** The revision of each input wave when last computed: null for one that did not exist. */
+  readonly inputs: Dict<number | null>;
+  /** The wave's own revision as the last computation left it. */
+  readonly rev: number;
+  /** Why the last computation failed, or null. The values are still those from before it. */
+  readonly error: string | null;
+  /** How many points of the last computation were divided by zero, and so are NaN. */
+  readonly zeroDivisions: number;
 }
 
 /** The unit that marks values as dates: seconds since 1970-01-01 UTC. As in Igor. */

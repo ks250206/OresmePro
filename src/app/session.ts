@@ -34,6 +34,8 @@ export type DialogRequest =
   | { kind: "duplicateWave"; wave: string }
   | { kind: "waveScaling"; wave: string }
   | { kind: "waveType"; wave: string }
+  /** `wave`: the wave to set; left out, a new one. */
+  | { kind: "setWaveValues"; wave?: string }
   | { kind: "newFolder"; parent: string }
   | { kind: "renameFolder"; folder: string }
   | { kind: "curveFit"; wave?: string }

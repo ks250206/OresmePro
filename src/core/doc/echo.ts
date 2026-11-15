@@ -184,6 +184,18 @@ export function echoPython(
       return `op.wave(${pyLiteral(command.name)}).duplicate(${pyLiteral(command.newName)})`;
     case "killWaves":
       return `op.kill(${names(command.names)})`;
+    case "setFormula":
+      return command.expr === null
+        ? `op.wave(${pyLiteral(command.name)}).formula = None`
+        : `op.set_formula(${joinArgs(
+            pyLiteral(command.name),
+            pyLiteral(command.expr),
+            command.auto === false ? "auto=False" : "",
+          )})`;
+    case "recalculate":
+      return command.names === undefined
+        ? "op.recalculate()"
+        : `op.recalculate(${pyLiteral([...command.names])})`;
     case "newFolder":
       return `op.new_folder(${pyLiteral(command.path)})`;
     case "renameFolder":
