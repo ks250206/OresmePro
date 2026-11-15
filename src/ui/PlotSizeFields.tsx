@@ -30,7 +30,14 @@ export interface PlotSideDraft {
   axis: string;
 }
 
-const numberText = (value: number): string => String(Number(value.toPrecision(4)));
+/** A value offered to start from (a length the side has now, say): rounded, to read well. */
+const offeredText = (value: number): string => String(Number(value.toPrecision(4)));
+
+/**
+ * A value the side holds: exactly, so that opening the dialog and pressing
+ * Do It changes nothing, and a length at a limit is not rounded past it.
+ */
+const heldText = (value: number): string => String(value);
 
 /**
  * The fields of a side as they start: its mode and values, and for the
@@ -50,7 +57,7 @@ export function plotSideDraft(
   const vAxis = first(true);
   const draft: PlotSideDraft = {
     mode: dimension.mode,
-    value: numberText(current / SCREEN_UNITS_PER_POINT / POINTS_PER.cm),
+    value: offeredText(current / SCREEN_UNITS_PER_POINT / POINTS_PER.cm),
     unit: "cm",
     factor: "1",
     hAxis,
@@ -59,20 +66,20 @@ export function plotSideDraft(
   };
   switch (dimension.mode) {
     case "absolute":
-      return { ...draft, value: numberText(dimension.value), unit: dimension.unit };
+      return { ...draft, value: heldText(dimension.value), unit: dimension.unit };
     case "aspect":
-      return { ...draft, factor: numberText(dimension.factor) };
+      return { ...draft, factor: heldText(dimension.factor) };
     case "plan":
       return {
         ...draft,
-        factor: numberText(dimension.factor),
+        factor: heldText(dimension.factor),
         hAxis: dimension.hAxis,
         vAxis: dimension.vAxis,
       };
     case "perUnit":
       return {
         ...draft,
-        value: numberText(dimension.value),
+        value: heldText(dimension.value),
         unit: dimension.unit,
         axis: dimension.axis,
       };
