@@ -27,7 +27,7 @@ export function Button({
     <button
       type="button"
       {...props}
-      className={`h-6 rounded border px-3 outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50 ${
+      className={`h-6 shrink-0 whitespace-nowrap rounded border px-3 outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50 ${
         primary
           ? "border-accent bg-accent font-medium text-white hover:brightness-110"
           : "border-line bg-paper hover:bg-chrome"
