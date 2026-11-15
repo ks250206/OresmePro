@@ -23,4 +23,6 @@ a = g.cursor("A", g.trace(), 2)
 print(a.point, a.x, a.y)
 ```
 
+Placing a cursor shows the cursor info bar under the graph, with the cursors' positions and the difference between A and B. You can also show or hide it with **Show Cursor Info** in the graph's context menu, `⌘I` / `Ctrl+I`, or `g.set(show_info=True)` in Python. Showing the bar keeps the graph (the figure) the same size and makes the window taller by the bar's height; hiding it shrinks the window back, as Igor's info panel does. An exported figure is therefore the same size with or without the bar, and undo restores the bar and the window's height together. Experiments saved by earlier versions with the bar showing open with the window and figure sizes they were saved with.
+
 Put both cursors on the same trace to use the points between them as a [fit range](../curve-fitting/). [Axis API](../../reference/api/axis/) · [Cursor API](../../reference/api/cursor/)

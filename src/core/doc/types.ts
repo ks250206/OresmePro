@@ -847,10 +847,18 @@ export const TITLE_BAR_HEIGHT = 24;
 /** Height of the cursor readout bar under a graph. */
 export const INFO_BAR_HEIGHT = 56;
 
+/**
+ * The height the cursor readout bar takes in a graph's window: a graph's
+ * window is its title bar, the figure, and this, from top to bottom. Showing
+ * the bar grows the window and hiding it shrinks it, so the figure keeps its
+ * size (see the "modifyGraph" command).
+ */
+export const infoBarHeight = (graph: GraphSpec | undefined): number =>
+  graph?.showInfo ? INFO_BAR_HEIGHT : 0;
+
 /** The size a graph is drawn at in its window, and exported at. */
 export function figureSize(window: WindowState, graph: GraphSpec | undefined): FigureSize {
-  const info = graph?.showInfo ? INFO_BAR_HEIGHT : 0;
-  return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info };
+  return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - infoBarHeight(graph) };
 }
 
 export class DocError extends Error {

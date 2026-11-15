@@ -23,4 +23,6 @@ a = g.cursor("A", g.trace(), 2)
 print(a.point, a.x, a.y)
 ```
 
+カーソルを置くと、グラフの下にカーソル情報の欄が出て、位置と A–B 間の差を表示します。グラフのコンテキストメニューの **Show Cursor Info**、`⌘I` / `Ctrl+I`、Python の `g.set(show_info=True)` でも出し入れできます。欄を出すとグラフ(図)の大きさはそのままでウィンドウが欄の高さだけ下へ伸び、隠すと縮みます(Igor の Info パネルと同じ)。そのため書き出す図の大きさは欄の有無で変わらず、Undo すると欄とウィンドウの高さが一緒に戻ります。以前の版で欄を出したまま保存した実験は、保存したときのウィンドウと図の大きさのまま開きます。
+
 A・B を同じトレースに置くと、その間の点を [フィット範囲](../curve-fitting/) に使えます。[Axis API](../../reference/api/axis/) · [Cursor API](../../reference/api/cursor/)

@@ -1,6 +1,6 @@
 import { applyCommand, isTransient, settleFormulas, type Command } from "./commands";
 import { dictFrom, filterDict, type Dict } from "./dict";
-import { DocError, emptyDoc, type DocState, type WindowState } from "./types";
+import { DocError, emptyDoc, infoBarHeight, type DocState, type WindowState } from "./types";
 
 interface UndoEntry {
   state: DocState;
@@ -456,7 +456,9 @@ export class Doc {
    * editors have their own undo). Whatever exists in both states keeps its
    * current value. The one exception is a window the step itself resized (a
    * style with a size does), as long as it is still as the step left it
-   * (`stepWindows`): its size is part of what is undone.
+   * (`stepWindows`): its size is part of what is undone. A graph's window
+   * the user has resized since keeps its figure, so it still grows or shrinks
+   * by the cursor readout bar if undo shows or hides that.
    */
   private keepViewState(target: DocState, stepWindows: readonly WindowState[]): DocState {
     const now = this.state;
@@ -484,7 +486,11 @@ export class Doc {
         if (!live) return window;
         const step = left.get(window.name);
         const untouched = step !== undefined && step.w === live.w && step.h === live.h;
-        const size = untouched ? { w: window.w, h: window.h } : { w: live.w, h: live.h };
+        const bar =
+          window.kind === "graph"
+            ? infoBarHeight(target.graphs[window.name]) - infoBarHeight(now.graphs[window.name])
+            : 0;
+        const size = untouched ? { w: window.w, h: window.h } : { w: live.w, h: live.h + bar };
         return { ...window, x: live.x, y: live.y, ...size };
       }),
     };

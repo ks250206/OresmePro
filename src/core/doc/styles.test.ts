@@ -360,6 +360,7 @@ describe("graph styles", () => {
     doc.dispatch({ op: "display", y: ["c"], name: "B" });
     doc.dispatch({ op: "display", y: ["d"], name: "C" });
     doc.dispatch({ op: "modifyGraph", graph: "C", props: { showInfo: true } });
+    // Showing the cursor bar grew C's window to 440 x 356.
     const before = doc.getState();
     doc.dispatch({ op: "applyStyle", style: "figure", graphs: ["B", "C", "B"] });
     const windows = () =>
@@ -378,7 +379,7 @@ describe("graph styles", () => {
     expect(doc.getState().graphs).toEqual(before.graphs);
     expect(windows()).toEqual([
       ["B", 440, 300],
-      ["C", 440, 300],
+      ["C", 440, 356],
     ]);
     expect(doc.redo()).toBe(true);
     expect(windows()).toEqual([
@@ -391,7 +392,7 @@ describe("graph styles", () => {
     doc.undo();
     expect(windows()).toEqual([
       ["B", 500, 350],
-      ["C", 440, 300],
+      ["C", 440, 356],
     ]);
   });
 

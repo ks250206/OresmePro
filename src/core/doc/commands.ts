@@ -68,6 +68,7 @@ import {
   type WaveData,
   defaultAxis,
   defaultTraceStyle,
+  infoBarHeight,
   isVerticalSide,
   leafName,
   parentFolder,
@@ -1973,7 +1974,19 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "modifyGraph": {
       const graph = requireGraph(state, command.graph);
       const props = validateProps<GraphStyle>(command.props, GRAPH_VALIDATORS, "graph");
-      return { state: putGraph(state, { ...graph, ...props }), result: null };
+      const next = { ...graph, ...props };
+      // Showing the cursor readout grows the window by its bar, and hiding it
+      // shrinks the window back, so the figure keeps its size (as in Igor).
+      // The window grows downwards, past the desktop if need be, as it does
+      // when a style with a size is given; undo gives the old size back.
+      const grow = infoBarHeight(next) - infoBarHeight(graph);
+      const windows =
+        grow === 0
+          ? state.windows
+          : state.windows.map((window) =>
+              window.name === graph.name ? { ...window, h: window.h + grow } : window,
+            );
+      return { state: { ...putGraph(state, next), windows }, result: null };
     }
     case "appendImage": {
       const graph = requireGraph(state, command.graph);
