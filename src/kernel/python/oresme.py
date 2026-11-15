@@ -2139,7 +2139,7 @@ class _FileNames:
             if path not in self._waves and self._claimed.get(path, groups) == groups:
                 break
             suffix += 1
-            name = f"{base}_{suffix}"
+            name = _suffixed(base, suffix)
         self._claimed[path] = groups
         self._mapped[groups] = path
         return path
@@ -2153,9 +2153,15 @@ class _FileNames:
             if path not in self._waves and path not in self._folders and path not in self._claimed:
                 break
             suffix += 1
-            name = f"{base}_{suffix}"
+            name = _suffixed(base, suffix)
         self._waves.add(path)
         return path
+
+
+def _suffixed(base, suffix):
+    """``base_<suffix>``, cut short so it stays within the 255 characters a name may have."""
+    tag = f"_{suffix}"
+    return base[: 255 - len(tag)] + tag
 
 
 _EXACT = 2**53
@@ -2283,7 +2289,9 @@ def _make_loaded(specs):
     for name, values, unit, note in specs:
         kind = getattr(values, "dtype", None)
         dtype = kind.name if kind is not None and kind.name in WAVE_TYPES else None
-        made.append(make(name, values, dtype=dtype, unit=unit, note=note, overwrite=False))
+        # The names are paths from the experiment's root. Said so outright: a
+        # group of the file called "root" would otherwise read as the root itself.
+        made.append(make(f"root:{name}", values, dtype=dtype, unit=unit, note=note, overwrite=False))
     return made
 
 

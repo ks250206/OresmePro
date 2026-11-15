@@ -2393,6 +2393,28 @@ describe("oresme Python API", () => {
     }
   }, 120_000);
 
+  it("keeps a group named root as a folder, and long names within the limit when made unique", async () => {
+    const long = "L".repeat(300);
+    expect(
+      await run(
+        [
+          "import h5py, pyarrow as pa, pyarrow.parquet as pq",
+          'with h5py.File("lh_root.h5", "w") as f:',
+          '    f["root/rx"] = np.array([1.0, 2.0])',
+          'op.make("rx", [9.0])',
+          'print([w.name for w in op.load_hdf5("lh_root.h5")], op.wave("rx").data.tolist())',
+          // Two columns whose names become the same 255 characters, one of them taken already.
+          `pq.write_table(pa.table({"${long}a": [1.0], "${long}b": [2.0]}), "lh_long.parquet")`,
+          `op.make("${"L".repeat(255)}", [0.0])`,
+          'names = [w.name for w in op.load_parquet("lh_long.parquet", table=False)]',
+          "print([(len(n), n[-2:]) for n in names])",
+        ].join("\n"),
+      ),
+      errors.join("\n"),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual(["['root:rx'] [9.0]", "[(255, '_1'), (255, '_2')]"]);
+  }, 120_000);
+
   it("fetches pyarrow and h5py before code that calls the loaders runs", async () => {
     // Looked for before the input runs, as imports are: the loader itself cannot wait.
     expect(
