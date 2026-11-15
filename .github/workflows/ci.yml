@@ -7,47 +7,52 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The jobs run side by side. Most of the time is the end-to-end tests, where every
+# test starts its own Python, so they are split into shards on separate machines.
 jobs:
   check:
-    name: Check, test and build
+    name: Format, types, unit tests and docs
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: ci-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Check API reference, build docs, and check links
         run: pnpm docs:check
-
-      # Pyodide and the Python packages the app starts with (see scripts/fetch-pyodide.mjs).
-      - name: Cache Pyodide packages
-        uses: actions/cache@v4
-        with:
-          path: public/pyodide
-          key: pyodide-${{ hashFiles('pnpm-lock.yaml', 'scripts/fetch-pyodide.mjs') }}
-
-      - run: pnpm pyodide
 
       - name: Format, lint and types
         run: pnpm check
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Build and check the combined Pages site
+        run: pnpm pages:assemble
+
+      - name: Upload the Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .pages
+
+  e2e:
+    name: End-to-end (${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
 
       - name: Build
         run: pnpm build
@@ -56,10 +61,32 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
 
       - name: End-to-end tests
-        run: pnpm e2e
+        run: pnpm e2e --shard=${{ matrix.shard }}/${{ strategy.job-total }}
 
-      # What keeps plugin code apart from the app is up to each browser, so the
-      # sandbox's tests run in Firefox and WebKit as well.
+      - name: Keep the end-to-end report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
+
+  # What keeps plugin code apart from the app is up to each browser, so the
+  # sandbox's tests run in Firefox and WebKit as well.
+  browsers:
+    name: Plugin sandbox in Firefox and WebKit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: Build
+        run: pnpm build
+
       - name: Install Firefox and WebKit
         run: pnpm exec playwright install --with-deps firefox webkit
 
@@ -72,25 +99,32 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-browsers
           path: |
             playwright-report
             test-results
           retention-days: 7
 
-      - name: Build and check the combined Pages site
-        run: pnpm pages:assemble
-
-      - name: Upload the Pages artifact
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: .pages
+  # The one check that branch protection asks for: it passes only when every job above has.
+  ci:
+    name: Check, test and build
+    if: ${{ !cancelled() }}
+    needs: [check, e2e, browsers]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
 
   deploy:
     name: Deploy to GitHub Pages
     if: github.ref == 'refs/heads/main'
-    needs: check
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       pages: write
