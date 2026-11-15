@@ -861,7 +861,7 @@ function checkPlotSize(
     }
     if (isVerticalSide(side) !== vertical) {
       throw new DocError(
-        `${use} needs a ${vertical ? "vertical" : "horizontal"} axis; ${axis} is ${vertical ? "horizontal" : "vertical"}.`,
+        `${use[0]!.toUpperCase()}${use.slice(1)} needs a ${vertical ? "vertical" : "horizontal"} axis; ${axis} is ${vertical ? "horizontal" : "vertical"}.`,
       );
     }
   };
@@ -870,10 +870,10 @@ function checkPlotSize(
     [height, "the height", true],
   ] as const) {
     if (dimension.mode === "plan") {
-      axisOn(dimension.hAxis, false, `The plan of ${what}`);
-      axisOn(dimension.vAxis, true, `The plan of ${what}`);
+      axisOn(dimension.hAxis, false, `the plan of ${what}`);
+      axisOn(dimension.vAxis, true, `the plan of ${what}`);
     } else if (dimension.mode === "perUnit") {
-      axisOn(dimension.axis, vertical, `The per unit size of ${what}`);
+      axisOn(dimension.axis, vertical, `the per unit size of ${what}`);
     }
   }
 }

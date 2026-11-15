@@ -85,6 +85,10 @@ __all__ = [
     "new_layout",
     "layout",
     "layouts",
+    "Length",
+    "pt",
+    "cm",
+    "inch",
     "Style",
     "style",
     "styles",
@@ -1075,13 +1079,158 @@ class Cursor:
         )
 
 
-class Graph(_Props):
-    """A graph window."""
+_POINTS_PER = {"pt": 1.0, "cm": 72 / 2.54, "inch": 72.0}
 
-    _props = ("font_size", "font_family", "show_info")
+
+class Length(float):
+    """A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.
+
+    As a number it is the length in points (1/72 inch), so it goes wherever
+    points do (the places of a page layout's items, say); it also keeps the
+    unit it was given in, as ``value`` and ``unit``, which a graph's plot
+    area keeps to show it so again.
+    """
+
+    def __new__(cls, value, unit="pt"):
+        if unit not in _POINTS_PER:
+            raise ValueError(f"unit must be one of {', '.join(_POINTS_PER)}, not {unit!r}.")
+        value = float(value)
+        length = super().__new__(cls, value * _POINTS_PER[unit])
+        length.value = value
+        length.unit = unit
+        return length
+
+    def __repr__(self):
+        return f"op.{self.unit}({self.value:g})"
+
+
+def pt(value):
+    """A length of ``value`` points (1/72 inch)."""
+    return Length(value, "pt")
+
+
+def cm(value):
+    """A length of ``value`` centimetres."""
+    return Length(value, "cm")
+
+
+def inch(value):
+    """A length of ``value`` inches (72 points)."""
+    return Length(value, "inch")
+
+
+def _length_parts(value, what):
+    if isinstance(value, Length):
+        return value.value, value.unit
+    if isinstance(value, (int, float, np.number)) and not isinstance(value, bool):
+        return float(value), "pt"
+    raise TypeError(f"{what} must be a length (op.cm(8), op.inch(3)) or a number of points.")
+
+
+def _plot_dimension(value, what):
+    """A side of the plot area as Python writes it, as the document holds it."""
+    if isinstance(value, dict):
+        return {_camel(str(key)): _plain(item) for key, item in value.items()}
+    if isinstance(value, str):
+        if value == "auto":
+            return {"mode": "auto"}
+        raise ValueError(f'{what} must be "auto", a length or a tuple, not {value!r}.')
+    if isinstance(value, (tuple, list)) and value and isinstance(value[0], str):
+        mode, *rest = value
+        try:
+            if mode == "absolute":
+                if len(rest) == 2:
+                    number, unit = rest
+                else:
+                    (length,) = rest
+                    number, unit = _length_parts(length, what)
+                return {"mode": "absolute", "value": _plain(number), "unit": unit}
+            if mode == "aspect":
+                (factor,) = rest
+                return {"mode": "aspect", "factor": _plain(factor)}
+            if mode == "plan":
+                if len(rest) == 1:
+                    rest = [*rest, "bottom", "left"]
+                factor, haxis, vaxis = rest
+                return {"mode": "plan", "factor": _plain(factor), "hAxis": haxis, "vAxis": vaxis}
+            if mode in ("per_unit", "perUnit"):
+                if len(rest) == 3:
+                    number, unit, axis = rest
+                else:
+                    length, axis = rest
+                    number, unit = _length_parts(length, what)
+                return {"mode": "perUnit", "value": _plain(number), "unit": unit, "axis": axis}
+        except ValueError:
+            raise ValueError(f"{what}: {_PLOT_FORMS}") from None
+        raise ValueError(f"{what} has no mode {mode!r}: {_PLOT_FORMS}")
+    number, unit = _length_parts(value, what)
+    return {"mode": "absolute", "value": number, "unit": unit}
+
+
+_PLOT_FORMS = (
+    '"auto", a length (op.cm(8) or a number of points), ("aspect", f), '
+    '("plan", f, haxis, vaxis), or ("per_unit", n, unit, axis).'
+)
+
+
+def _plot_dimension_value(data):
+    """A side of the plot area as the document holds it, as Python writes it."""
+    mode = data.get("mode")
+    if mode == "absolute":
+        return Length(data["value"], data["unit"])
+    if mode == "aspect":
+        return ("aspect", data["factor"])
+    if mode == "plan":
+        return ("plan", data["factor"], data["hAxis"], data["vAxis"])
+    if mode == "perUnit":
+        return ("per_unit", data["value"], data["unit"], data["axis"])
+    return "auto"
+
+
+class Graph(_Props):
+    """A graph window.
+
+    ``width`` and ``height`` size its plot area, the rectangle the axes
+    enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
+    """
+
+    _props = ("font_size", "font_family", "show_info", "width", "height")
 
     def __init__(self, name):
         self._name = name
+
+    def set(self, **props):
+        """Change several properties at once. Returns self.
+
+        ``font_size``, ``font_family`` and ``show_info`` (the cursor bar);
+        ``width`` and ``height`` size the plot area, each one of:
+
+        - ``"auto"``: what the window leaves after the margins (the default).
+        - a length: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)`` or a
+          number of points.
+        - ``("aspect", f)``: f times the other side.
+        - ``("plan", f, haxis, vaxis)``: one unit of the horizontal axis
+          ``haxis`` is f times as long as one unit of the vertical axis
+          ``vaxis`` (the axes default to ``"bottom"`` and ``"left"``); for
+          the height, one unit of ``vaxis`` is f times one of ``haxis``.
+          ``("plan", 1)`` scales X and Y alike, as a Nyquist plot needs.
+        - ``("per_unit", n, unit, axis)``: n of ``unit`` ("pt", "cm",
+          "inch") for each unit of the axis; ``("per_unit", op.cm(2),
+          "bottom")`` says the same. A unit of a log axis is a decade.
+
+        The margins stay automatic: a side that is not auto makes the
+        figure the plot area plus the margins, and the window fits it.
+        The two sides cannot both use aspect or plan. Reading ``width`` or
+        ``height`` gives the same forms back.
+        """
+        for key in ("width", "height"):
+            if key in props:
+                props[key] = _plot_dimension(props[key], key)
+        return super().set(**props)
+
+    def __getattr__(self, key):
+        value = super().__getattr__(key)
+        return _plot_dimension_value(value) if key in ("width", "height") else value
 
     @property
     def name(self):
@@ -1319,8 +1468,11 @@ class Graph(_Props):
 
         The style holds the fonts, the look of the axes (ticks, mirror, grid)
         and of the traces in order (color, line, markers), not the data; with
-        ``size=True`` also the size the graph is drawn at. A style of that
-        name is replaced.
+        ``size=True`` also the size the graph is drawn at, and how its plot
+        area is sized where that is look (``"auto"``, a length or
+        ``("aspect", f)``; a plan or a per unit size follows the data, so the
+        style keeps the size it gave instead). A style of that name is
+        replaced.
         """
         _dispatch({"op": "saveStyle", "name": name, "graph": self._name, "size": bool(size)})
         return Style(name)
@@ -1329,7 +1481,9 @@ class Graph(_Props):
         """Keep this graph as a graph template named ``name`` and return it.
 
         Each wave the graph plots becomes a slot of the template (see
-        ``GraphTemplate``); the traces, axes, look, text and size are kept.
+        ``GraphTemplate``); the traces, axes, look, text and size are kept,
+        with how the plot area is sized (``width`` and ``height``, plan and
+        per unit too).
         An axis keeps its range only if it is named in ``fixed`` (a name or
         a list of names; ``True`` for every axis): the others follow the
         data of each graph made from the template. A template of that name
@@ -2245,9 +2399,13 @@ class Style:
 
     ``data`` is what it holds, as a plain dict with any of ``"graph"``
     (``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
-    the drawn graph, in pixels), ``"axes"`` (by ``"left"``, ``"bottom"``,
-    ``"right"``, ``"top"`` and ``"other"`` for added axes: ``mirror``,
-    ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of trace looks
+    the drawn graph, in pixels), ``"plot"`` (``width`` and ``height`` of the
+    plot area as the document holds them: ``{"mode": "auto"}``,
+    ``{"mode": "absolute", "value": 8, "unit": "cm"}`` or
+    ``{"mode": "aspect", "factor": 0.75}``), ``"axes"`` (by ``"left"``,
+    ``"bottom"``, ``"right"``, ``"top"`` and ``"other"`` for added axes:
+    ``mirror``, ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of
+    trace looks
     (``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
     ``marker_size``, ``marker_fill``) that the traces of a graph take in
     turn, starting again from the first when there are more traces. A style
