@@ -50,7 +50,8 @@ export function waveArgs(
     // As the document names the waves: "root:signal" is the wave "signal".
     if (spec.type === "wave" && typeof value === "string") waves[name] = canonical(value);
     if (spec.type === "waves" && Array.isArray(value)) {
-      waves[name] = value.map((item) => canonical(String(item)));
+      // The arguments were checked: every item is a wave's name.
+      waves[name] = value.filter((item) => typeof item === "string").map(canonical);
     }
   }
   return waves;
