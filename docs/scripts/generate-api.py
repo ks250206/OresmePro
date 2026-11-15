@@ -35,6 +35,7 @@ SECTIONS = {
     "folder": ("Folder API", "Folder new_folder folder folders"),
     "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
     "actions": ("Actions API", "action actions invoke"),
+    "templates": ("Templates API", "Template template templates set_template Run run runs"),
     "global": (
         "Global Functions",
         (

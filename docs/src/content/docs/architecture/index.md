@@ -27,6 +27,8 @@ Python の `op.atomic()` は、複数の RPC 要求にまたがる同じ仕組�
 
 履歴には、Python が作った同じ意味の呼び出し(`op.fit("gauss", op.wave("signal"))`)が記録されます。登録表は Python の起動時と、登録が変わったときにメインスレッドへ送られます。引数の型と、送る前に使う検査は DOM に依存しない `src/core/actions.ts` にあります。
 
+解析テンプレートは、Action を順に呼ぶ手順を書いたデータです。テンプレートと実行記録(Run)は Doc の `templates` と `runs` にあり、ほかと同じくコマンドで変わります。参照の形と順序は `src/core/doc/analysisTemplates.ts` が保存のときに検査します。実行するのは Action の登録表がある Python で(`core.run_template`)、試料ごとに全段を `op.atomic()` の中で行い、終わるたびにその試料の記録と出力を一緒に反映します。そのため実行中も GUI に進み具合が見え、失敗した試料は何も残しません。
+
 ## SharedArrayBuffer とクロスオリジン分離
 
 同期 RPC と割り込みには `SharedArrayBuffer` が必要です。Vite の開発・プレビューサーバーは `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を返します。ヘッダーを設定できない静的ホストでは、アプリの Service Worker が応答に付与します。初回起動時に Service Worker の有効化後、アプリが1回再読み込みされることがあります。

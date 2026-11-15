@@ -27,6 +27,8 @@ The interface, templates, and plugins call analyses through actions. An analysis
 
 The history records the equivalent call that Python writes, such as `op.fit("gauss", op.wave("signal"))`. Python sends the list of actions to the main thread when it starts and whenever it changes. The argument types, and the check a GUI runs before sending, are in the DOM-free `src/core/actions.ts`.
 
+An analysis template is data: a list of steps, each an action and its arguments. Templates and run records live in the Doc as `templates` and `runs` and change through commands like everything else; `src/core/doc/analysisTemplates.ts` checks the shape and order of references when one is saved. Python, which holds the catalog of actions, runs them (`core.run_template`): each sample's steps run inside one `op.atomic()` block, and the sample's record goes in with its outputs when it finishes. The interface sees a run progress, and a sample that fails leaves nothing behind.
+
 ## SharedArrayBuffer and cross-origin isolation
 
 Synchronous RPC and interruption require `SharedArrayBuffer`. The Vite development and preview servers return `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. On static hosts without configurable headers, the app's service worker adds them to responses. The app can reload once on first launch after the service worker activates.
