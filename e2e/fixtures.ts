@@ -169,7 +169,7 @@ export class App {
   /**
    * Drops files onto the app, as from the desktop. Files of data come up in
    * the Load Data dialog; unless `load` is false they are loaded as detected.
-   * Experiments and Igor files open or load without the dialog.
+   * Experiments, Igor, Parquet and HDF5 files open or load without the dialog.
    */
   async drop(
     files: { name: string; content: string | number[] }[],
@@ -189,7 +189,7 @@ export class App {
     }, files);
     if (!load) return;
     for (const { name } of files) {
-      if (/\.(oresme|ibw|pxp|pxt)$/i.test(name)) continue;
+      if (/\.(oresme|ibw|pxp|pxt|parquet|h5|hdf5)$/i.test(name)) continue;
       const dialog = this.page.getByRole("dialog", { name: `Load Data: ${name}` });
       await dialog.getByRole("button", { name: /^Load/ }).click();
       await dialog.waitFor({ state: "detached" });
