@@ -230,6 +230,47 @@ test.describe("graph interaction", () => {
       .toBe(`op.graph("Graph0").cursor("A", "signal", ${moved})`);
   });
 
+  test("showing the cursor info grows the window and keeps the graph's size", async ({
+    app,
+    page,
+  }) => {
+    await sineGraph(app);
+    const window = app.window("Graph0");
+    const canvas = window.locator("canvas");
+    const svgSize = async () => {
+      const svg = (await app.run("print(g.svg())")).output;
+      return svg.match(/<svg[^>]* width="([\d.]+)" height="([\d.]+)"/)!.slice(1, 3);
+    };
+    const box = async (locator: typeof window) => {
+      const { width, height } = (await locator.boundingBox())!;
+      return [Math.round(width), Math.round(height)];
+    };
+    // The graph is drawn at the size the window was given (inside its border).
+    await expect.poll(() => box(canvas)).toEqual([478, 315]);
+    const [, height] = await box(window);
+    expect(await svgSize()).toEqual(["480", "316"]);
+
+    // The title bar makes the window active without touching the graph.
+    await window.click({ position: { x: 200, y: 10 } });
+    await page.keyboard.press("ControlOrMeta+i");
+    await expect(page.getByRole("status", { name: "Cursor info" })).toBeVisible();
+    expect((await app.doc()).graphs.Graph0!.showInfo).toBe(true);
+    expect(await box(window)).toEqual([480, height! + 56]);
+    await expect.poll(() => box(canvas)).toEqual([478, 315]);
+    expect(await svgSize()).toEqual(["480", "316"]);
+
+    // Undo hides it and gives the window its height back.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(page.getByRole("status", { name: "Cursor info" })).toHaveCount(0);
+    expect((await app.doc()).windows.find((item) => item.name === "Graph0")).toMatchObject({
+      w: 480,
+      h: 340,
+    });
+    expect(await box(window)).toEqual([480, height]);
+    await expect.poll(() => box(canvas)).toEqual([478, 315]);
+    expect(await svgSize()).toEqual(["480", "316"]);
+  });
+
   test("an axis can be added and given part of the plot area", async ({ app, page }) => {
     await sineGraph(app);
     await app

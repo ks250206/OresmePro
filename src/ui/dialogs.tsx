@@ -924,7 +924,12 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
     >
       <Field label="Axis">
-        <Select aria-label="Axis" value={axis} onChange={(event) => switchAxis(event.target.value)}>
+        <Select
+          aria-label="Axis"
+          className="min-w-0 flex-1"
+          value={axis}
+          onChange={(event) => switchAxis(event.target.value)}
+        >
           {Object.keys(graph.axes).map((name) => (
             <option key={name} value={name}>
               {name}
@@ -932,7 +937,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
             </option>
           ))}
         </Select>
-        <span className="text-muted">on the {base.side}</span>
+        <span className="shrink-0 whitespace-nowrap text-muted">on the {base.side}</span>
         <Button onClick={() => ui.set({ dialog: { kind: "addAxis", graph: graphName } })}>
           New Axis…
         </Button>
@@ -984,7 +989,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         <TextInput
           aria-label="Minimum"
           aria-invalid={min !== null && min.trim() !== "" && parsedMin === null}
-          className="w-24"
+          className="w-24 min-w-0"
           placeholder="auto"
           value={min ?? show(current.min)}
           onChange={(event) => setMin(event.target.value)}
@@ -993,7 +998,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         <TextInput
           aria-label="Maximum"
           aria-invalid={max !== null && max.trim() !== "" && parsedMax === null}
-          className="w-24"
+          className="w-24 min-w-0"
           placeholder="auto"
           value={max ?? show(current.max)}
           onChange={(event) => setMax(event.target.value)}

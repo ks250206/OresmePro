@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "./doc";
 import { echoPython } from "./echo";
-import { DocError } from "./types";
+import { DocError, INFO_BAR_HEIGHT, TITLE_BAR_HEIGHT, figureSize } from "./types";
 
 const wave = (...values: number[]) => new Float64Array(values);
 
@@ -302,6 +302,69 @@ describe("axes, cursors and error bars", () => {
     expect(doc.getState().graphs.Graph0!.cursors.A).toEqual({ trace: "volts", point: 2 });
     doc.dispatch({ op: "removeTraces", graph: "Graph0", traces: ["volts"] });
     expect(doc.getState().graphs.Graph0!.cursors).toEqual({});
+  });
+
+  it("grows the window by the cursor readout bar instead of shrinking the graph", () => {
+    const doc = sample();
+    doc.dispatch({ op: "display", y: ["signal"] });
+    doc.dispatch({ op: "display", y: ["time"] });
+    doc.dispatch({ op: "moveWindow", name: "Graph0", x: 50, y: 60, w: 500, h: 324 });
+    const window = () => doc.getState().windows.find((item) => item.name === "Graph0")!;
+    const figure = () => figureSize(window(), doc.getState().graphs.Graph0);
+    const other = doc.getState().windows.find((item) => item.name === "Graph1");
+    const show = (showInfo: boolean) =>
+      doc.dispatch({ op: "modifyGraph", graph: "Graph0", props: { showInfo } });
+    expect(figure()).toEqual({ width: 500, height: 300 });
+
+    show(true);
+    // Only the height changes, downwards; the other graph's window stays.
+    expect(window()).toMatchObject({ x: 50, y: 60, w: 500, h: 324 + INFO_BAR_HEIGHT });
+    expect(figure()).toEqual({ width: 500, height: 300 });
+    expect(doc.getState().windows.find((item) => item.name === "Graph1")).toBe(other);
+    // Setting it again, or something else, leaves the window alone.
+    show(true);
+    doc.dispatch({ op: "modifyGraph", graph: "Graph0", props: { fontSize: 14 } });
+    expect(window().h).toBe(324 + INFO_BAR_HEIGHT);
+
+    show(false);
+    expect(window()).toMatchObject({ w: 500, h: 324 });
+    expect(figure()).toEqual({ width: 500, height: 300 });
+  });
+
+  it("undoes and redoes the cursor readout bar with the window's height", () => {
+    const doc = sample();
+    doc.dispatch({ op: "display", y: ["signal"] });
+    doc.dispatch({ op: "moveWindow", name: "Graph0", w: 480, h: 333 });
+    const window = () => doc.getState().windows.find((item) => item.name === "Graph0")!;
+    const figure = () => figureSize(window(), doc.getState().graphs.Graph0);
+
+    doc.dispatch({ op: "modifyGraph", graph: "Graph0", props: { showInfo: true } });
+    expect(doc.undo()).toBe(true);
+    expect(doc.getState().graphs.Graph0!.showInfo).toBe(false);
+    expect(window()).toMatchObject({ w: 480, h: 333 });
+    expect(doc.redo()).toBe(true);
+    expect(doc.getState().graphs.Graph0!.showInfo).toBe(true);
+    expect(window()).toMatchObject({ w: 480, h: 333 + INFO_BAR_HEIGHT });
+
+    // Placing a cursor shows the bar in the same step, and undo takes both back.
+    doc.dispatch({ op: "modifyGraph", graph: "Graph0", props: { showInfo: false } });
+    doc.transact((writer) => {
+      writer.dispatch({ op: "setCursor", graph: "Graph0", cursor: "A", trace: "signal", point: 1 });
+      writer.dispatch({ op: "modifyGraph", graph: "Graph0", props: { showInfo: true } });
+    });
+    expect(window().h).toBe(333 + INFO_BAR_HEIGHT);
+    doc.undo();
+    expect(doc.getState().graphs.Graph0!.cursors).toEqual({});
+    expect(window().h).toBe(333);
+
+    // A window resized by hand since keeps the figure it was given.
+    doc.redo();
+    doc.dispatch({ op: "moveWindow", name: "Graph0", w: 520, h: 400 + TITLE_BAR_HEIGHT });
+    expect(figure()).toEqual({ width: 520, height: 400 - INFO_BAR_HEIGHT });
+    doc.undo();
+    expect(doc.getState().graphs.Graph0!.showInfo).toBe(false);
+    expect(window()).toMatchObject({ w: 520, h: 400 + TITLE_BAR_HEIGHT - INFO_BAR_HEIGHT });
+    expect(figure()).toEqual({ width: 520, height: 400 - INFO_BAR_HEIGHT });
   });
 
   it("accepts a constant or a matching wave as error bars", () => {

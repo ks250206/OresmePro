@@ -422,13 +422,13 @@ export function LayoutWindow({ name }: { name: string }) {
           ))}
         </Select>
         <Button
-          className="!h-5 shrink-0 whitespace-nowrap !px-2"
+          className="!h-5 !px-2"
           onClick={() => ui.set({ dialog: { kind: "pageText", layout: name } })}
         >
           Add Text…
         </Button>
         <Button
-          className="!h-5 shrink-0 whitespace-nowrap !px-2"
+          className="!h-5 !px-2"
           aria-haspopup="menu"
           onMouseDown={keepFocus}
           onClick={(event) => {
@@ -463,10 +463,7 @@ export function LayoutWindow({ name }: { name: string }) {
           <option>portrait</option>
           <option>landscape</option>
         </Select>
-        <Button
-          className="!h-5 shrink-0 whitespace-nowrap !px-2"
-          onClick={() => exportPage(name, `${name}.pdf`)}
-        >
+        <Button className="!h-5 !px-2" onClick={() => exportPage(name, `${name}.pdf`)}>
           Save PDF
         </Button>
       </div>

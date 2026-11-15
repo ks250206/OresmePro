@@ -3,10 +3,10 @@ import {
   AXIS_LOOK,
   AXIS_SIDES,
   GRAPH_LOOK,
-  INFO_BAR_HEIGHT,
   TITLE_BAR_HEIGHT,
   TRACE_LOOK,
   figureSize,
+  infoBarHeight,
   type AxisLook,
   type AxisRole,
   type AxisSpec,
@@ -92,10 +92,9 @@ export function styledWindows(
 ): readonly WindowState[] {
   const { size } = style;
   if (!size) return windows;
-  const info = graph.showInfo ? INFO_BAR_HEIGHT : 0;
   return windows.map((window) =>
     window.name === graph.name
-      ? { ...window, w: size.width, h: size.height + TITLE_BAR_HEIGHT + info }
+      ? { ...window, w: size.width, h: size.height + TITLE_BAR_HEIGHT + infoBarHeight(graph) }
       : window,
   );
 }

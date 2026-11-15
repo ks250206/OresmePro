@@ -319,7 +319,7 @@ function TrustBadge({ panel }: { panel: PanelSpec }) {
 
 function EditBar({ panel, selected }: { panel: PanelSpec; selected: string | null }) {
   const at = panel.controls.findIndex((item) => item.name === selected);
-  const small = "!h-5 shrink-0 whitespace-nowrap !px-2";
+  const small = "!h-5 !px-2";
   return (
     <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line bg-chrome px-2 text-[11.5px]">
       <Button

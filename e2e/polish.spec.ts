@@ -115,6 +115,31 @@ test.describe("text formatting", () => {
 });
 
 test.describe("axis and trace options", () => {
+  test("the first row of Modify Axis fits on one line", async ({ app, page }) => {
+    await pairGraph(app);
+    await app.menu("Graph", "Modify Axis…");
+    const dialog = page.getByRole("dialog", { name: /Modify Axis/ });
+    const button = dialog.getByRole("button", { name: "New Axis…" });
+    const side = dialog.getByText(/^on the /);
+    const lines = (el: HTMLElement) => ({
+      height: el.getBoundingClientRect().height,
+      fontSize: parseFloat(getComputedStyle(el).fontSize),
+      overflow: el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight,
+    });
+    const b = await button.evaluate(lines);
+    expect(b.overflow).toBe(false);
+    expect(b.height).toBe(24);
+    const s = await side.evaluate(lines);
+    // One line of text is well under two font sizes tall.
+    expect(s.height).toBeLessThan(s.fontSize * 2);
+    const box = (await dialog.boundingBox())!;
+    // The buttons of the dialog stay inside it.
+    for (const name of ["New Axis…", "Autoscale"]) {
+      const edge = (await dialog.getByRole("button", { name }).boundingBox())!;
+      expect(edge.x + edge.width).toBeLessThanOrEqual(box.x + box.width);
+    }
+  });
+
   test("an axis is reversed and given a tick step and label format", async ({ app, page }) => {
     await pairGraph(app);
     await app.menu("Graph", "Modify Axis…");
