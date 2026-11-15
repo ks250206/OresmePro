@@ -2119,4 +2119,203 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
   });
+
+  it("loads Parquet columns of every type, with nulls and rounding in the notes", async () => {
+    // The file is written here by pyarrow itself, which is bundled like the loader's.
+    expect(
+      await run(
+        [
+          "import datetime as dt, pyarrow as pa, pyarrow.parquet as pq",
+          "utc = dt.timezone.utc",
+          "lp = pa.table({",
+          '    "pq Voltage (V)": pa.array([1.5, None, 3.0]),',
+          '    "pq_count": pa.array([1, None, 3], type=pa.int32()),',
+          '    "pq_n8": pa.array([1, -2, 3], type=pa.int8()),',
+          '    "pq_big": pa.array([2**53 + 1, 2**60, 5], type=pa.int64()),',
+          '    "pq_u64": pa.array([2**64 - 1, 1, 2], type=pa.uint64()),',
+          '    "pq_ok": pa.array([True, False, None]),',
+          '    "pq_flag": pa.array([True, False, True]),',
+          '    "pq_when": pa.array([dt.datetime(2026, 1, 1, tzinfo=utc), None, dt.datetime(2026, 1, 1, 0, 0, 1, 500000, tzinfo=utc)], type=pa.timestamp("ms", tz="Asia/Tokyo")),',
+          '    "pq_day": pa.array([dt.date(2026, 1, 2), dt.date(1970, 1, 1), None]),',
+          '    "pq_label": pa.array(["a", None, "c"]),',
+          '    "pq_cat": pa.array(["x", "y", "x"]).dictionary_encode(),',
+          '    "pq_f16": pa.array(np.array([0.5, 1, 2], dtype=np.float16)),',
+          '    "pq_lst": pa.array([[1], [], [2, 3]]),',
+          "})",
+          'lp = lp.cast(lp.schema.set(0, lp.schema.field(0).with_metadata({"source": "bench 3"})))',
+          'pq.write_table(lp, "lp_data.parquet")',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    // A wave that is there already keeps its name; the column gets another.
+    await run('op.make("pq_count", [0.0])');
+    const order = doc.getState().waveOrder;
+    const tables = Object.keys(doc.getState().tables).length;
+    expect(
+      await run(
+        [
+          'cols = op.load_parquet("lp_data.parquet")',
+          "print([w.name for w in cols])",
+          "print(['text' if w.is_text else str(w.dtype) for w in cols])",
+          "for w in cols[:7]: print(w.name, w.data.tolist())",
+          'print(op.wave("pq_when").unit, op.wave("pq_when").data.tolist(), op.wave("pq_day").unit, op.wave("pq_day").data.tolist())',
+          'print(op.wave("pq_label").data.tolist(), op.wave("pq_cat").data.tolist(), op.wave("pq_f16").data.tolist())',
+          'print(op.wave("pq_Voltage_V").note)',
+          'print(op.wave("pq_big").note.splitlines()[1:])',
+          'print(op.wave("pq_u64").note.splitlines()[1:])',
+          'print(op.wave("pq_count_1").note.splitlines()[1:])',
+          'print(op.wave("pq_label").note.splitlines()[1:], op.wave("pq_when").note.splitlines()[1:])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const digest = /SHA-256 ([0-9a-f]{64})/.exec(stdout)?.[1];
+    expect(stdout.trim().split("\n")).toEqual([
+      "['pq_Voltage_V', 'pq_count_1', 'pq_n8', 'pq_big', 'pq_u64', 'pq_ok', 'pq_flag', 'pq_when', 'pq_day', 'pq_label', 'pq_cat', 'pq_f16']",
+      "['float64', 'float64', 'int8', 'float64', 'float64', 'float64', 'uint8', 'float64', 'float64', 'text', 'text', 'float32']",
+      "pq_Voltage_V [1.5, nan, 3.0]",
+      "pq_count_1 [1.0, nan, 3.0]",
+      "pq_n8 [1, -2, 3]",
+      "pq_big [9007199254740992.0, 1.152921504606847e+18, 5.0]",
+      "pq_u64 [1.8446744073709552e+19, 1.0, 2.0]",
+      "pq_ok [1.0, 0.0, nan]",
+      "pq_flag [1, 0, 1]",
+      "dat [1767225600.0, nan, 1767225601.5] dat [1767312000.0, 0.0, nan]",
+      "['a', '', 'c'] ['x', 'y', 'x'] [0.5, 1.0, 2.0]",
+      `Loaded from lp_data.parquet (SHA-256 ${digest}): Parquet column 'pq Voltage (V)', double.`,
+      "1 missing value (null) is NaN.",
+      "Metadata:",
+      "source: bench 3",
+      "['1 of the 64-bit integer values is beyond 2^53 and was rounded to the nearest float64.']",
+      "['1 of the unsigned 64-bit integer values is beyond 2^53 and was rounded to the nearest float64.']",
+      "['The int32 values are float64 here, to hold NaN.', '1 missing value (null) is NaN.']",
+      "['1 missing value (null) is an empty string.'] ['The times are in UTC here (the file gives the time zone Asia/Tokyo).', '1 missing value (null) is NaN.']",
+    ]);
+    expect(stderr).toMatch(/lp_data\.parquet: columns not loaded: pq_lst \(list<element: int64>\)/);
+    expect(Object.keys(doc.getState().tables)).toHaveLength(tables + 1);
+    // One input is one step to undo: the waves and the table go together.
+    doc.undo();
+    expect(doc.getState().waveOrder).toEqual(order);
+    expect(Object.keys(doc.getState().tables)).toHaveLength(tables);
+
+    expect(
+      await run(
+        [
+          'only = op.load_parquet("lp_data.parquet", columns="pq_label", table=False)',
+          'again = op.load_parquet(open("lp_data.parquet", "rb").read(), ["pq_n8", "pq_when"], name="copy.parquet", table=False)',
+          "print([w.name for w in only + again], again[0].note[:31])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim()).toBe("['pq_label', 'pq_n8', 'pq_when'] Loaded from copy.parquet (SHA-2");
+    expect(Object.keys(doc.getState().tables)).toHaveLength(tables);
+    for (const [code, error] of [
+      [
+        'op.load_parquet("lp_data.parquet", columns=["nope"])',
+        /has no column 'nope'. Columns: pq Voltage \(V\), pq_count/,
+      ],
+      [
+        'op.load_parquet(b"x,y\\n1,2\\n", name="table.parquet")',
+        /Could not read table\.parquet as a Parquet file/,
+      ],
+      ['op.load_parquet("lp_missing.parquet")', /Could not read lp_missing\.parquet/],
+      ['op.load_parquet("lp_data.parquet", columns="pq_lst")', /no columns that waves can hold/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  }, 120_000);
+
+  it("loads HDF5 datasets into data folders, keeping shapes and attributes", async () => {
+    expect(
+      await run(
+        [
+          "import h5py",
+          'with h5py.File("lh_data.h5", "w") as f:',
+          '    f.attrs["instrument"] = "XRD"',
+          '    g = f.create_group("h5 run 1")',
+          '    g.attrs["T"] = 300.0',
+          '    d = g.create_dataset("image", data=np.arange(24, dtype=np.uint16).reshape(2, 3, 4))',
+          '    d.attrs["units"] = "counts"',
+          '    d.attrs["gain"] = np.array([1.5, 2.0])',
+          '    g.create_dataset("big", data=np.array([2**53 + 1, 7], dtype=np.int64))',
+          '    g.create_group("deep").create_dataset("x", data=[1.0])',
+          '    f["h5_names"] = np.array([[b"a", b"b"], [b"c", b"d"]])',
+          '    f["h5_labels"] = np.array(["x", "é"], dtype=h5py.string_dtype())',
+          '    f["h5_flags"] = np.array([True, False])',
+          '    f["h5_z"] = np.array([1 + 2j, 3 - 1j])',
+          '    f["h5_scalar"] = 2.5',
+          '    f["h5_stamp"] = np.array(["2026-01-01T00:00:00"], dtype="datetime64[s]").astype(h5py.opaque_dtype("M8[s]"))',
+          '    f["h5_table"] = np.array([(1, 2.5, b"q"), (2, 3.5, b"r")], dtype=[("id", "i4"), ("v", "f8"), ("tag", "S2")])',
+          '    f["h5_five"] = np.zeros((1, 1, 1, 1, 2))',
+          '    f["h5_empty"] = h5py.Empty("f")',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    await run('op.make("h5_z", [0.0])');
+    const order = doc.getState().waveOrder;
+    expect(
+      await run(
+        [
+          'made = op.load_hdf5("lh_data.h5")',
+          "print([w.name for w in made])",
+          "print(['text' if w.is_text else str(w.dtype) for w in made])",
+          'im = op.wave("h5_run_1:image"); print(im.shape, int(im.data[1, 2, 3]), im.unit)',
+          'print(op.wave("h5_names").data.tolist(), op.wave("h5_labels").data.tolist(), op.wave("h5_flags").data.tolist())',
+          'print(op.wave("h5_z_1").data.tolist(), op.wave("h5_scalar").data.tolist(), op.wave("h5_stamp").unit, op.wave("h5_stamp").data.tolist())',
+          'print(op.wave("h5_table_id").data.tolist(), op.wave("h5_table_v").data.tolist(), op.wave("h5_table_tag").data.tolist())',
+          "print(im.note.splitlines()[1:])",
+          'print(op.wave("h5_run_1:big").note.splitlines()[1], op.wave("h5_names").note.splitlines()[1])',
+          'print(op.wave("h5_table_tag").note.splitlines()[0].split(": ", 1)[1], op.wave("h5_scalar").note.startswith("Loaded from lh_data.h5 (SHA-256 "))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "['h5_run_1:big', 'h5_run_1:deep:x', 'h5_run_1:image', 'h5_flags', 'h5_labels', 'h5_names', 'h5_scalar', 'h5_stamp', 'h5_table_id', 'h5_table_v', 'h5_table_tag', 'h5_z_1']",
+      "['float64', 'float64', 'uint16', 'uint8', 'text', 'text', 'float64', 'float64', 'int32', 'float64', 'text', 'complex128']",
+      "(2, 3, 4) 23 counts",
+      "['a', 'b', 'c', 'd'] ['x', 'é'] [1, 0]",
+      "[(1+2j), (3-1j)] [2.5] dat [1767225600.0]",
+      "[1, 2] [2.5, 3.5] ['q', 'r']",
+      "['Attributes:', 'gain: [1.5, 2.0]', 'units: counts', 'Attributes of the group /:', 'instrument: XRD', 'Attributes of the group /h5 run 1:', 'T: 300.0']",
+      "1 of the 64-bit integer values is beyond 2^53 and was rounded to the nearest float64. The strings are a 1-D text wave in row-major order (the last index varies fastest); the dataset's shape is 2×2.",
+      "field 'tag' of HDF5 dataset /h5_table, |S2, shape 2. True",
+    ]);
+    expect(stderr).toMatch(
+      /lh_data\.h5: datasets not loaded: \/h5_empty \(empty\), \/h5_five \(5 dimensions\)/,
+    );
+    doc.undo();
+    expect(doc.getState().waveOrder).toEqual(order);
+
+    // A group chosen brings what is in it; folders there already are used.
+    expect(
+      await run(
+        [
+          'op.load_hdf5("lh_data.h5", datasets="/h5 run 1/deep")',
+          'print([w.name for w in op.load_hdf5("lh_data.h5", ["h5 run 1/deep/x"])])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim()).toBe("['h5_run_1:deep:x_1']");
+    for (const [code, error] of [
+      ['op.load_hdf5("lh_data.h5", datasets="nope")', /has no dataset or group 'nope'/],
+      ['op.load_hdf5(b"not hdf5", name="x.h5")', /Could not read x\.h5 as an HDF5 file/],
+      ['op.load_hdf5("lh_data.h5", datasets="h5_five")', /no datasets that waves can hold/],
+    ] as const) {
+      expect(await run(code), code).toBe(false);
+      expect(errors[0]).toMatch(error);
+    }
+  }, 120_000);
+
+  it("fetches pyarrow and h5py before code that calls the loaders runs", async () => {
+    // Looked for before the input runs, as imports are: the loader itself cannot wait.
+    expect(
+      await run(
+        [
+          "import oresme_kernel",
+          'print(sorted(oresme_kernel._imports_of(\'import scipy\\nop.load_parquet("a")\\nop.load_hdf5 ("b")\')))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim()).toBe("['h5py', 'pyarrow', 'scipy']");
+  });
 });

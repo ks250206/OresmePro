@@ -20,6 +20,8 @@ the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 """
 
 import hashlib
+import importlib
+import io
 import json
 import os
 import re
@@ -58,6 +60,8 @@ __all__ = [
     "from_dataframe",
     "load_excel",
     "load_igor",
+    "load_parquet",
+    "load_hdf5",
     "graph",
     "graphs",
     "table",
@@ -1847,6 +1851,463 @@ def load_igor(source, *, name=None):
             stacklevel=2,
         )
     return [Wave(wave_) for wave_ in reply["waves"]]
+
+
+def _package(module, function):
+    """A package of the Pyodide distribution that a loader needs, imported."""
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        raise OresmeError(
+            f"{function} needs {module}, which could not be loaded. It is fetched the first "
+            "time a line calling it runs; run the line again once online."
+        ) from None
+
+
+def _legal_name(text, fallback):
+    """A name the application accepts, made from a name in a file (as the Igor loader does)."""
+    name = re.sub(r"[^\w]+", "_", str(text).strip()).strip("_")
+    if not name:
+        name = fallback
+    if not name[0].isalpha():
+        name = f"{fallback}_{name}"
+    return name[:255]
+
+
+class _FileNames:
+    """Chooses names for what a file brings in, as the Igor loader does.
+
+    Names that are not legal here are made legal; a wave whose name is taken
+    gets ``_1``, ``_2``, ... so nothing is overwritten. A data folder that
+    exists already is used, but two groups of the file whose names become the
+    same here stay apart.
+    """
+
+    def __init__(self):
+        self._waves = set(_call("listWaves")[0])
+        self._folders = set(_call("listFolders")[0])
+        self._mapped = {}  # Groups of the file -> the folder here.
+        self._claimed = {}  # Folder here -> the groups of the file it holds.
+
+    def folder(self, groups):
+        groups = tuple(groups)
+        if not groups:
+            return ""
+        if groups in self._mapped:
+            return self._mapped[groups]
+        parent = self.folder(groups[:-1])
+        base = name = _legal_name(groups[-1], "folder")
+        suffix = 0
+        while True:
+            path = f"{parent}:{name}" if parent else name
+            if path not in self._waves and self._claimed.get(path, groups) == groups:
+                break
+            suffix += 1
+            name = f"{base}_{suffix}"
+        self._claimed[path] = groups
+        self._mapped[groups] = path
+        return path
+
+    def wave(self, groups, leaf):
+        folder = self.folder(groups)
+        base = name = _legal_name(leaf, "wave")
+        suffix = 0
+        while True:
+            path = f"{folder}:{name}" if folder else name
+            if path not in self._waves and path not in self._folders and path not in self._claimed:
+                break
+            suffix += 1
+            name = f"{base}_{suffix}"
+        self._waves.add(path)
+        return path
+
+
+_EXACT = 2**53
+
+
+def _plural(count, one, many=None):
+    return f"{count} {one if count == 1 else (many or one + 's')}"
+
+
+def _wide_integers(values, remarks):
+    """64-bit integers as float64, saying how many were rounded (as the Igor loader does)."""
+    if values.dtype.kind == "u":
+        big = values[values > _EXACT]
+    else:
+        big = values[(values > _EXACT) | (values < -_EXACT)]
+    inexact = sum(1 for value in big.tolist() if int(float(value)) != value)
+    if inexact:
+        words = "unsigned 64-bit integer" if values.dtype.kind == "u" else "64-bit integer"
+        remarks.append(
+            f"{inexact} of the {words} values {'is' if inexact == 1 else 'are'} beyond 2^53 and "
+            f"{'was' if inexact == 1 else 'were'} rounded to the nearest float64."
+        )
+    return values.astype(np.float64)
+
+
+def _numbers(values, remarks):
+    """Numbers of a file as a wave holds them: 64-bit integers and float16 change type."""
+    if values.dtype.kind in "iu" and values.dtype.itemsize == 8:
+        return _wide_integers(values, remarks)
+    if values.dtype == np.float16:
+        return values.astype(np.float32)
+    return values
+
+
+def _with_missing(values, missing, count, remarks):
+    """Numbers with NaN where the file has no value; integers become float64 to hold it."""
+    if not count:
+        return values
+    if values.dtype.kind not in "fc":
+        remarks.append(f"The {values.dtype.name} values are float64 here, to hold NaN.")
+        values = values.astype(np.float64)
+    else:
+        values = values.copy()
+    values[missing] = np.nan
+    remarks.append(f"{_plural(count, 'missing value')} (null) {'is' if count == 1 else 'are'} NaN.")
+    return values
+
+
+def _as_text(items, remarks, count=0):
+    if count:
+        empty = "is an empty string" if count == 1 else "are empty strings"
+        remarks.append(f"{_plural(count, 'missing value')} (null) {empty}.")
+    return np.array(["" if item is None else str(item) for item in items], dtype=str)
+
+
+_SECONDS = {"s": 1.0, "ms": 1e3, "us": 1e6, "ns": 1e9}
+
+
+def _arrow_values(column, pa, pc, remarks):
+    """A column of an Arrow table as wave values and a unit; None if a wave cannot hold it."""
+    kind = column.type
+    if pa.types.is_dictionary(kind):
+        column = column.dictionary_decode()
+        kind = column.type
+    count = column.null_count
+    missing = column.is_null().to_numpy(zero_copy_only=False) if count else None
+    types = pa.types
+    is_string_view = getattr(types, "is_string_view", bool)
+    if types.is_string(kind) or types.is_large_string(kind) or is_string_view(kind):
+        return _as_text(column.to_pylist(), remarks, count), None
+    if types.is_boolean(kind):
+        values = pc.fill_null(column, False).to_numpy(zero_copy_only=False)
+        return _with_missing(values, missing, count, remarks), None
+    if types.is_integer(kind) or types.is_floating(kind):
+        values = _numbers(pc.fill_null(column, 0).to_numpy(zero_copy_only=False), remarks)
+        return _with_missing(values, missing, count, remarks), None
+    if types.is_decimal(kind):
+        remarks.append("The decimal values are float64 here.")
+        values = pc.fill_null(pc.cast(column, pa.float64()), 0).to_numpy(zero_copy_only=False)
+        return _with_missing(values, missing, count, remarks), None
+    timelike = (types.is_timestamp, types.is_date, types.is_time, types.is_duration)
+    if any(test(kind) for test in timelike):
+        if types.is_date32(kind):
+            ticks, scale = pc.cast(column, pa.int32()), 1 / 86400
+        elif types.is_date64(kind):
+            ticks, scale = pc.cast(column, pa.int64()), 1e3
+        else:
+            width = pa.int32() if types.is_time32(kind) else pa.int64()
+            ticks, scale = pc.cast(column, width), _SECONDS[kind.unit]
+        values = pc.fill_null(ticks, 0).to_numpy(zero_copy_only=False).astype(np.float64) / scale
+        if types.is_timestamp(kind) or types.is_date(kind):
+            if getattr(kind, "tz", None):
+                remarks.append(f"The times are in UTC here (the file gives the time zone {kind.tz}).")
+            unit = "dat"
+        else:
+            unit = "s"
+        return _with_missing(values, missing, count, remarks), unit
+    return None
+
+
+def _metadata_lines(metadata):
+    """Key-value metadata of a file (bytes or text), as lines for a note."""
+    lines = []
+    for key, value in (metadata or {}).items():
+        if isinstance(key, bytes):
+            key = key.decode("utf-8", "replace")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", "replace")
+        lines.append(f"{key}: {_short(value)}")
+    return lines
+
+
+def _short(value, limit=300):
+    text = str(value).replace("\r\n", "\n")
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _make_loaded(specs):
+    """Make the waves a loader planned, once every one of them has been read.
+
+    Each keeps the type of its values when a wave can have it (``op.make``
+    alone would make the platform's default integers float64).
+    """
+    made = []
+    for name, values, unit, note in specs:
+        kind = getattr(values, "dtype", None)
+        dtype = kind.name if kind is not None and kind.name in WAVE_TYPES else None
+        made.append(make(name, values, dtype=dtype, unit=unit, note=note, overwrite=False))
+    return made
+
+
+def load_parquet(source, columns=None, *, table=True, name=None):
+    """Load a Parquet file as waves, one per column; returns them in a list.
+
+    ``source`` is a file in the working directory (the files of the
+    experiment are there), any other path, or the file's bytes with
+    ``name=``. ``columns`` names the columns to read (one name or a list);
+    all of them otherwise. Each column becomes a wave named after it (made
+    legal, with ``_1`` if the name is taken):
+
+    - integers, floating-point numbers and decimals are numeric waves of
+      their type (64-bit integers and decimals become float64, float16
+      becomes float32); booleans are uint8 waves of 0 and 1.
+    - timestamps and dates are date waves: seconds since 1970-01-01 UTC, unit
+      ``dat``. Times of day and durations are seconds, unit ``s``.
+    - strings, and categories (dictionary columns), are text waves.
+    - nulls are NaN (empty strings in text); a column of integers or
+      booleans with nulls is float64 to hold them.
+
+    Each wave's note says which file it came from (with its SHA-256), the
+    column's Parquet type, how many nulls became NaN and how many 64-bit
+    integers beyond 2^53 were rounded, and the column's metadata. Columns of
+    other kinds (lists, structs, binary) are not loaded; a warning names
+    them. ``table=False`` makes no table. pyarrow is fetched the first time
+    this runs.
+    """
+    pa = _package("pyarrow", "op.load_parquet")
+    pq = importlib.import_module("pyarrow.parquet")
+    pc = importlib.import_module("pyarrow.compute")
+    data, filename = _read_source(source, name)
+    digest = hashlib.sha256(data).hexdigest()
+    try:
+        parquet = pq.ParquetFile(pa.BufferReader(data))
+        schema = parquet.schema_arrow
+        if isinstance(columns, str):
+            columns = [columns]
+        if columns is not None:
+            unknown = [column for column in columns if column not in schema.names]
+            if unknown:
+                raise OresmeError(
+                    f"{filename} has no column {', '.join(map(repr, unknown))}. "
+                    f"Columns: {', '.join(schema.names)}."
+                )
+        frame = parquet.read(columns=list(columns) if columns is not None else None)
+    except OresmeError:
+        raise
+    except Exception as error:
+        raise OresmeError(f"Could not read {filename} as a Parquet file: {error}") from None
+
+    names = _FileNames()
+    specs = []
+    skipped = []
+    for index, title in enumerate(frame.column_names):
+        field = frame.schema.field(index)
+        column = frame.column(index).combine_chunks()
+        remarks = []
+        converted = _arrow_values(column, pa, pc, remarks)
+        if converted is None:
+            skipped.append(f"{title} ({field.type})")
+            continue
+        values, unit = converted
+        lines = [f"Loaded from {filename} (SHA-256 {digest}): Parquet column {title!r}, {field.type}."]
+        lines += remarks
+        metadata = _metadata_lines(field.metadata)
+        if metadata:
+            lines += ["Metadata:", *metadata]
+        specs.append((names.wave((), title), values, unit, "\n".join(lines)))
+    if not specs:
+        raise OresmeError(f"{filename} has no columns that waves can hold.")
+    made = _make_loaded(specs)
+    if table:
+        edit(*made)
+    if skipped:
+        warnings.warn(f"{filename}: columns not loaded: {', '.join(skipped)}.", stacklevel=2)
+    return made
+
+
+def _attribute_text(value):
+    """An HDF5 attribute's value in words, for a note."""
+    if isinstance(value, bytes):
+        return _short(value.decode("utf-8", "replace"))
+    if isinstance(value, np.ndarray):
+        if value.dtype.kind == "S":
+            value = np.char.decode(value, "utf-8", "replace")
+        value = value.tolist()
+    elif isinstance(value, np.generic):
+        value = value.item()
+    return _short(value)
+
+
+def _attribute_lines(attrs):
+    lines = []
+    for key in attrs:
+        try:
+            lines.append(f"{key}: {_attribute_text(attrs[key])}")
+        except Exception:  # A reference or a type that h5py does not read.
+            lines.append(f"{key}: (not readable)")
+    return lines
+
+
+def _hdf5_values(h5py, dataset, values, remarks):
+    """A dataset's values (or given values: a field of it) as wave values and a unit;
+    None if a wave cannot hold them."""
+    kind = dataset.dtype if values is None else values.dtype
+    if h5py.check_string_dtype(kind) is not None or kind.kind in "SU":
+        if values is None:
+            text = np.asarray(dataset.asstr(errors="replace")[()], dtype=object)
+        else:
+            items = [
+                item.decode("utf-8", "replace") if isinstance(item, bytes) else item
+                for item in values.ravel().tolist()
+            ]
+            text = np.asarray(items, dtype=object).reshape(values.shape)
+        if text.ndim > 1:
+            remarks.append(
+                f"The strings are a 1-D text wave in row-major order (the last index varies "
+                f"fastest); the dataset's shape is {'×'.join(map(str, text.shape))}."
+            )
+        return _as_text(text.ravel().tolist(), remarks), None
+    if kind.kind not in "biufcMm" or kind.subdtype is not None:
+        return None
+    array = np.asarray(dataset[()] if values is None else values)
+    if kind.kind == "M":
+        return array, "dat"
+    if kind.kind == "m":
+        return array.astype("timedelta64[ns]").astype(np.float64) / 1e9, "s"
+    enum = h5py.check_enum_dtype(kind)
+    if enum and kind.kind != "b":
+        labels = ", ".join(f"{label} = {number}" for label, number in enum.items())
+        remarks.append(f"Enumeration: {labels}.")
+    return _numbers(array, remarks), None
+
+
+def load_hdf5(source, datasets=None, *, name=None):
+    """Load the datasets of an HDF5 file (.h5, .hdf5) as waves; returns them in a list.
+
+    ``source`` is a file in the working directory, any other path, or the
+    file's bytes with ``name=``. ``datasets`` names the datasets to read, or
+    groups to read every dataset in (one path or a list, like
+    ``"/run1/signal"``); all of the file's otherwise. Each group becomes a
+    data folder (``/run1/signal`` is the wave ``run1:signal``); names are made
+    legal and a name that is taken gets ``_1``, as ``op.load_igor`` does.
+
+    A dataset keeps its shape (up to 4 dimensions; ``w[i, j]`` is the
+    dataset's ``[i, j]``) and its type: integers, floating-point and complex
+    numbers as waves of that type (64-bit integers become float64, float16
+    float32), booleans as uint8, NumPy dates stored by h5py as date waves
+    (unit ``dat``), strings as text waves (of 1 dimension, in row-major
+    order). The fields of a compound dataset become waves named
+    ``<dataset>_<field>``. A string attribute ``units`` (or ``unit``) is the
+    wave's unit.
+
+    Each wave's note says which file it came from (with its SHA-256), the
+    dataset's path, type and shape, how many 64-bit integers beyond 2^53
+    were rounded, and the attributes of the dataset and of the groups above
+    it. Datasets that waves cannot hold (more than 4 dimensions, references,
+    empty datasets) are not loaded; a warning names them. h5py is fetched
+    the first time this runs.
+    """
+    h5py = _package("h5py", "op.load_hdf5")
+    data, filename = _read_source(source, name)
+    digest = hashlib.sha256(data).hexdigest()
+    try:
+        handle = h5py.File(io.BytesIO(data), "r")
+    except Exception as error:
+        raise OresmeError(f"Could not read {filename} as an HDF5 file: {error}") from None
+    with handle:
+        found = []
+        handle.visititems(
+            lambda path, item: found.append(path) if isinstance(item, h5py.Dataset) else None
+        )
+        if isinstance(datasets, str):
+            datasets = [datasets]
+        if datasets is not None:
+            chosen = []
+            for wanted in datasets:
+                key = str(wanted).strip("/")
+                if key not in handle and key != "":
+                    raise OresmeError(f"{filename} has no dataset or group {wanted!r}.")
+                chosen += [
+                    path
+                    for path in found
+                    if (key == "" or path == key or path.startswith(key + "/")) and path not in chosen
+                ]
+            found = chosen
+
+        names = _FileNames()
+        specs = []
+        skipped = []
+        group_notes = {}
+
+        def group_lines(groups):
+            lines = []
+            for depth in range(len(groups) + 1):
+                path = "/" + "/".join(groups[:depth])
+                if path not in group_notes:
+                    group_notes[path] = _attribute_lines(handle[path].attrs)
+                if group_notes[path]:
+                    lines += [f"Attributes of the group {path}:", *group_notes[path]]
+            return lines
+
+        for path in found:
+            dataset = handle[path]
+            *groups, leaf = path.split("/")
+            if dataset.shape is None:
+                skipped.append(f"/{path} (empty)")
+                continue
+            if len(dataset.shape) > 4:
+                skipped.append(f"/{path} ({len(dataset.shape)} dimensions)")
+                continue
+            shape = "×".join(map(str, dataset.shape)) or "scalar"
+            if dataset.dtype.names and h5py.check_string_dtype(dataset.dtype) is None:
+                record = dataset[()]
+                parts = [
+                    (field, np.asarray(record[field]), f"field {field!r} of ")
+                    for field in dataset.dtype.names
+                ]
+            else:
+                parts = [(None, None, "")]
+            attributes = _attribute_lines(dataset.attrs)
+            unit = None
+            for key in ("units", "unit"):
+                if key in dataset.attrs:
+                    value = dataset.attrs[key]
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8", "replace")
+                    if isinstance(value, str):
+                        unit = value
+                        break
+            for field, values, words in parts:
+                kind = dataset.dtype if values is None else values.dtype
+                label = f"/{path}" + (f" field {field!r}" if field else "")
+                remarks = []
+                try:
+                    converted = _hdf5_values(h5py, dataset, values, remarks)
+                except Exception as error:  # A type that h5py itself does not read.
+                    skipped.append(f"{label} ({kind}: {error})")
+                    continue
+                if converted is None:
+                    skipped.append(f"{label} ({kind})")
+                    continue
+                array, own_unit = converted
+                lines = [
+                    f"Loaded from {filename} (SHA-256 {digest}): {words}HDF5 dataset /{path}, "
+                    f"{kind}, shape {shape}.",
+                    *remarks,
+                ]
+                if attributes:
+                    lines += ["Attributes:", *attributes]
+                lines += group_lines(groups)
+                leaf_name = f"{leaf}_{field}" if field else leaf
+                specs.append((names.wave(groups, leaf_name), array, own_unit or unit, "\n".join(lines)))
+    if not specs:
+        raise OresmeError(f"{filename} has no datasets that waves can hold.")
+    made = _make_loaded(specs)
+    if skipped:
+        warnings.warn(f"{filename}: datasets not loaded: {', '.join(skipped)}.", stacklevel=2)
+    return made
 
 
 def _column_name(text, taken, prefix=""):

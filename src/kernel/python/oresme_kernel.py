@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sys
 import time
 
@@ -281,15 +282,23 @@ def interrupt():
 _imports_seen = {}
 
 
+# Functions of oresme that import a package of the distribution when they run,
+# where it could not be waited for: code that calls them needs the package.
+_PACKAGES_OF_CALLS = {"load_parquet": "pyarrow", "load_hdf5": "h5py"}
+_CALLS = re.compile(r"\b(" + "|".join(_PACKAGES_OF_CALLS) + r")\s*\(")
+
+
 def _imports_of(code):
-    """The top-level modules a piece of code imports; nothing if it cannot be parsed."""
+    """The top-level modules a piece of code imports, or needs for the oresme
+    functions it calls; nothing if it cannot be parsed."""
     from pyodide.code import find_imports
 
     try:
         # Magics and shell escapes become Python first, so that an input with them still parses.
-        return find_imports(shell.transform_cell(code))
+        imports = find_imports(shell.transform_cell(code))
     except Exception:
         return []
+    return imports + [_PACKAGES_OF_CALLS[call] for call in set(_CALLS.findall(code))]
 
 
 def _wanted_packages(code):
