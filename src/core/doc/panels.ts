@@ -767,6 +767,8 @@ export function controlForParam(
     }
     case "waves":
     case "numbers":
+    // A template's samples: rows of waves, which no one control holds.
+    case "samples":
       return null;
   }
 }

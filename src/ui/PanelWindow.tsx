@@ -452,6 +452,7 @@ function startingValue(param: ParamSpec, waves: readonly string[]): JsonValue {
       return waves[0] ?? "";
     case "waves":
     case "numbers":
+    case "samples":
       return [];
     case "string":
       return "";

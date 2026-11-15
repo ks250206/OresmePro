@@ -1,7 +1,7 @@
 ---
 title: Global Functions
 sidebar:
-  order: 12
+  order: 13
 editUrl: false
 ---
 

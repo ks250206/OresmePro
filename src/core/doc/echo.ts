@@ -143,6 +143,9 @@ export function echoPython(
 ): string | null {
   switch (command.op) {
     case "addResult":
+    // A run is recorded by the Python that does it (t.run, run.retry), never by the GUI.
+    case "addRun":
+    case "updateRunSample":
     case "makeWave":
     case "setWaveData":
     case "moveWindow":
@@ -154,6 +157,15 @@ export function echoPython(
       return command.names.map((name) => `op.result(${pyLiteral(name)}).remove()`).join("\n");
     case "renameResult":
       return `op.result(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "setTemplate":
+      // The keys of a template are Python's already, and its arguments are named as the actions name them.
+      return `op.set_template(${pyLiteral(command.name)}, ${pyLiteral(command.template)})`;
+    case "removeTemplate":
+      return `op.template(${pyLiteral(command.name)}).remove()`;
+    case "renameTemplate":
+      return `op.template(${pyLiteral(command.name)}).rename(${pyLiteral(command.newName)})`;
+    case "removeRuns":
+      return command.names.map((name) => `op.run(${pyLiteral(name)}).remove()`).join("\n");
     case "newLayout":
       return `op.new_layout(${keywords({ name: command.name, width: command.width, height: command.height })})`;
     case "modifyLayout":

@@ -25,7 +25,9 @@ export type ParamType =
   | "string"
   | "boolean"
   | "choice"
-  | "numbers";
+  | "numbers"
+  /** Samples for a template: a list of objects giving a wave name for each input. */
+  | "samples";
 
 /** The description of one argument, as `op.action` keeps it. */
 export interface ParamSpec {
@@ -133,6 +135,19 @@ function checkValue(
       return typeof value === "string" ? null : `${where} must be a string.`;
     case "boolean":
       return typeof value === "boolean" ? null : `${where} must be true or false.`;
+    case "samples":
+      // Whether the waves exist is found out sample by sample, when each is done.
+      return list((item, what) => {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) {
+          return `${what} must give a wave name for each input.`;
+        }
+        for (const [slot, name] of Object.entries(item)) {
+          if (typeof name !== "string" || !name) {
+            return `${what}: ${slot} must be the name of a wave.`;
+          }
+        }
+        return null;
+      });
     case "choice":
       return (spec.choices ?? []).includes(value as string | number)
         ? null

@@ -219,6 +219,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
         analysis("Multi-peak Fit…", "fit_peaks"),
         { label: "Results…", onSelect: open({ kind: "results" }) },
+        { label: "Templates…", onSelect: open({ kind: "templates" }) },
         { label: "Background…", onSelect: open({ kind: "background" }) },
         { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },

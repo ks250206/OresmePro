@@ -36,6 +36,7 @@ SECTIONS = {
     "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
     "actions": ("Actions API", "action actions invoke"),
     "panel": ("Panel API", "Panel Control panel panels new_panel set_panel control"),
+    "templates": ("Templates API", "Template template templates set_template Run run runs"),
     "global": (
         "Global Functions",
         (
