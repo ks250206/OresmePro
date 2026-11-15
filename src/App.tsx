@@ -47,6 +47,7 @@ import {
   useKernelState,
   useUi,
 } from "./app/session";
+import { Sandbox } from "./sandbox/host";
 import { CommandWindow } from "./ui/CommandWindow";
 import { DataBrowser } from "./ui/DataBrowser";
 import { Desktop } from "./ui/Desktop";
@@ -518,6 +519,9 @@ export function App() {
   );
 }
 
-// Exposed for debugging from the browser console.
-const debug = { doc, history, kernel, files, activeWindow, experiment };
+// Exposed for debugging from the browser console (and for the sandbox's end-to-end tests).
+const sandbox = {
+  create: (packages: string[] = []) => Sandbox.create({ pyodideURL: PYODIDE_URL, packages }),
+};
+const debug = { doc, history, kernel, files, activeWindow, experiment, sandbox };
 Object.assign(globalThis, { oresme: debug });
