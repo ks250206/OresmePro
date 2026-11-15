@@ -5,20 +5,16 @@ const PEAK =
   'op.make("sig", 1 + 3 * np.exp(-((x - 1) / 0.8) ** 2), x0=-5, dx=0.05)\n' +
   'op.make("sig2", 2 + np.exp(-((x + 1) / 0.5) ** 2), x0=-5, dx=0.05)';
 
-/** The values of a panel's controls, by name. */
+/** The values of a panel's controls, by name; null while there is no such panel (after a reload, before the experiment is back). */
 const values = (app: App, panel: string) =>
-  app.page.evaluate(
-    (name) =>
-      Object.fromEntries(
-        globalThis.oresme.doc
-          .getState()
-          .panels[name]!.controls.map((control) => [
-            control.name,
-            "value" in control ? control.value : null,
-          ]),
-      ),
-    panel,
-  );
+  app.page.evaluate((name) => {
+    const spec = globalThis.oresme.doc.getState().panels[name];
+    return spec
+      ? Object.fromEntries(
+          spec.controls.map((control) => [control.name, "value" in control ? control.value : null]),
+        )
+      : null;
+  }, panel);
 
 test.describe("panels", () => {
   test("a panel built in its window with a wave picker, a choice and a Fit button runs the fit", async ({
@@ -96,12 +92,13 @@ test.describe("panels", () => {
     await expect.poll(() => values(app, "qf")).toEqual({ target: "sig2", model: "lor", n: 12 });
     await expect.poll(async () => (await app.lastEntry()).code).toBe('op.panel("qf")["n"] = 12');
     await page.evaluate(() => globalThis.oresme.doc.undo());
-    expect((await values(app, "qf")).n).toBe(3);
+    expect((await values(app, "qf"))?.n).toBe(3);
     await page.evaluate(() => globalThis.oresme.doc.redo());
     await points.blur();
 
     await expect(page.getByRole("group", { name: "Saving" })).toHaveText(/^Saved \d/);
     await page.reload();
+    await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => values(app, "qf")).toEqual({ target: "sig2", model: "lor", n: 12 });
     await expect(panel.getByLabel("Spectrum")).toHaveValue("sig2");
     await expect(panel.getByLabel("Points")).toHaveValue("12");
