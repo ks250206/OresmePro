@@ -1221,6 +1221,13 @@ class Result:
         outcome is kept as a new result, so that both can be compared, unless
         ``replace=True``.
         """
+        if self.kind == "plugin":
+            # A plugin's action, run again in its sandbox with the same waves and values.
+            info = self._info()
+            settings = info["settings"]
+            source = info.get("source") or {}
+            arguments = {**settings.get("inputs", {}), **settings.get("params", {}), **changes}
+            return _op._invoke_plugin(source.get("action") or settings["action"], arguments)
         call, settings = self._call(**changes)
         if replace:
             settings["result"] = self._name
@@ -1235,6 +1242,8 @@ class Result:
         """
         if self.kind == "global":
             raise _op.OresmeError("A fit of several waves at once cannot be applied wave by wave.")
+        if self.kind == "plugin":
+            raise _op.OresmeError("Run a plugin's action on other waves with op.invoke.")
         outcomes = []
         for wave_ in [waves] if isinstance(waves, (str, _op.Wave)) else list(waves):
             call, settings = self._call(**changes)

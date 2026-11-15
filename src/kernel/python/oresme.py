@@ -2598,7 +2598,35 @@ def actions():
     ``params`` maps each argument's name to its description (see ``op.action``),
     with ``optional`` always given.
     """
-    return [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+    own = [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+    # The plugins' actions run in their own sandboxes; the application knows them.
+    return own + _call("pluginActions")[0]
+
+
+def _plugin_arg(value):
+    """An argument of a plugin's action as the application takes it: waves by name."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, (list, tuple)):
+        return [_plugin_arg(item) for item in value]
+    return _plain(value)
+
+
+def _invoke_plugin(id, args):
+    """Runs a plugin's action: in the application, which hands it to the plugin's sandbox.
+
+    The waves it makes go where this code's other changes go: into the open
+    ``op.atomic()`` block, if there is one. Returns what the application
+    reports: the names of the waves made, the values and the result kept.
+    """
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise OresmeError(f"The arguments of {id} are a dict of name: value, not {args!r}.")
+    outcome = _call("invokePlugin", {"action": id, "args": {str(key): _plugin_arg(value) for key, value in args.items()}})[0]
+    if outcome.get("log"):
+        print(outcome["log"], end="" if outcome["log"].endswith("\n") else "\n")
+    return {key: outcome[key] for key in ("waves", "values", "result")}
 
 
 def _find_action(id, version):
@@ -2669,6 +2697,8 @@ def invoke(id, args=None, *, version=None):
     a version of the action, the highest by default. The call runs in an
     ``op.atomic()`` block and returns what the function returns.
     """
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        return _invoke_plugin(id, args)
     found, _, passed = _prepare_action(id, args, version)
     with atomic():
         return found.function(**passed)

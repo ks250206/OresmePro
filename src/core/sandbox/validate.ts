@@ -1,11 +1,5 @@
 import type { WaveData, WaveType } from "../doc/types";
-import {
-  SANDBOX_DTYPES,
-  SANDBOX_LIMITS,
-  type Json,
-  type SandboxActionInfo,
-  type SandboxDtype,
-} from "./protocol";
+import { SANDBOX_DTYPES, SANDBOX_LIMITS, type Json, type SandboxDtype } from "./protocol";
 
 /**
  * Checks of what a sandbox sends. The sandbox runs code the app does not
@@ -63,7 +57,6 @@ const entries = (value: Record<string, unknown>): [string, unknown][] =>
   Object.keys(value).map((key) => [key, value[key]]);
 
 const ROLE = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
-const ACTION = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 function text(value: unknown, what: string, limit: number = SANDBOX_LIMITS.shortText): string {
   if (typeof value !== "string") throw new SandboxError(`${what} is not text.`);
@@ -184,41 +177,15 @@ export function checkLog(value: unknown): string {
   return typeof value === "string" ? value.slice(0, SANDBOX_LIMITS.log) : "";
 }
 
-/** Checks the actions a plugin says it registered. */
-export function checkActions(value: unknown): SandboxActionInfo[] {
-  if (!Array.isArray(value)) throw new SandboxError("The plugin did not list its actions.");
-  if (value.length > SANDBOX_LIMITS.actions) {
-    throw new SandboxError(`The plugin registered more than ${SANDBOX_LIMITS.actions} actions.`);
+/** Checks the actions a plugin says it registered: exactly the names expected. */
+export function checkLoaded(value: unknown, expected: readonly string[]): string[] {
+  if (!Array.isArray(value) || !value.every((name) => typeof name === "string")) {
+    throw new SandboxError("The plugin did not list its actions.");
   }
-  const seen = new Set<string>();
-  return value.map((raw): SandboxActionInfo => {
-    if (!isRecord(raw)) throw new SandboxError("An action is not described.");
-    const name = text(raw.name, "An action name");
-    if (!ACTION.test(name))
-      throw new SandboxError(`${JSON.stringify(name)} is not a usable action name.`);
-    if (seen.has(name)) throw new SandboxError(`The action ${name} is listed twice.`);
-    seen.add(name);
-    const inputs: Record<string, "wave" | "waves"> = Object.create(null) as Record<
-      string,
-      "wave" | "waves"
-    >;
-    if (!isRecord(raw.inputs)) throw new SandboxError(`The inputs of ${name} are not described.`);
-    for (const [key, kind] of entries(raw.inputs)) {
-      if (!ROLE.test(key) || (kind !== "wave" && kind !== "waves")) {
-        throw new SandboxError(
-          `The input ${JSON.stringify(key.slice(0, 40))} of ${name} is not usable.`,
-        );
-      }
-      inputs[key] = kind;
-    }
-    const params = json(raw.params ?? {});
-    if (!isRecord(params)) throw new SandboxError(`The parameters of ${name} are not described.`);
-    return {
-      name,
-      title: text(raw.title, `The title of ${name}`),
-      description: text(raw.description ?? "", `The description of ${name}`, 4000),
-      inputs,
-      params: params as Record<string, unknown>,
-    };
-  });
+  const names = [...(value as string[])].sort();
+  const wanted = [...expected].sort();
+  if (names.length !== wanted.length || names.some((name, index) => name !== wanted[index])) {
+    throw new SandboxError("The plugin registered other actions than its manifest lists.");
+  }
+  return names;
 }

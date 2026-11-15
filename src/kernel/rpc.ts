@@ -28,6 +28,8 @@ export interface RpcContext {
   measureText: MeasureText;
   /** The import presets kept by the app, for `op.load_text(..., preset=...)`. */
   importPresets(): readonly NamedImportSettings[];
+  /** The actions of the plugins that are on (see src/app/plugins/host.ts). */
+  pluginCatalog?: () => readonly unknown[];
 }
 
 /** A named set of import settings, as the app keeps them for the files of an instrument. */
@@ -121,6 +123,9 @@ export function dropStage(doc: Doc): boolean {
 /** Whether Python has an atomic block open on the document. */
 export const hasStage = (doc: Doc): boolean => stages.has(doc);
 
+/** The atomic block Python has open on the document, if any: where its plugin runs put their waves. */
+export const openStage = (doc: Doc): Stage | null => stages.get(doc) ?? null;
+
 /**
  * Answers one request from the Python side. `group` ties the commands of one
  * Python execution together so they undo as a unit.
@@ -205,6 +210,8 @@ export function handleRpc(
       }
       return { result: null };
     }
+    case "pluginActions":
+      return { result: context.pluginCatalog?.() ?? [] };
     case "waveInfo":
       return { result: waveInfo(state, readWave(params.name)) };
     case "waveData": {

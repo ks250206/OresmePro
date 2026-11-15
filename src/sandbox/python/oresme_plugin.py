@@ -1,16 +1,23 @@
 """What a plugin's Python sees inside the sandbox.
 
-A plugin registers analyses with ``@action``. Each is a function of waves and
-plain values that returns new waves and values; it cannot see or change the
-experiment. The application reads the waves it is given, runs the function
-here and puts what comes back into the experiment itself::
+A plugin's actions are described in its oresme-plugin.json: their names,
+titles and arguments. Its Python registers a function for each with
+``@action``. Wave arguments arrive as ``Wave`` objects and the rest as plain
+values; the function returns new waves and plain values. It cannot see or
+change the experiment: the application reads the waves it is given, runs the
+function here and puts what comes back into the experiment itself::
 
-    import numpy as np
     from oresme_plugin import action, wave
 
-    @action("double", title="Double", inputs={"y": "wave"}, params={})
-    def double(y):
-        return {"waves": {"doubled": wave(y.data * 2, like=y)}}
+    @action("double")
+    def double(y, factor=2.0):
+        return {"waves": {"doubled": wave(y.data * factor, like=y)},
+                "values": {"total": float(y.data.sum() * factor)}}
+
+To keep a result the way the application keeps fits (shown in Analysis >
+Results, compared, run again), put ``"result": {"names": [...], "coef":
+[...], "sigma": [...]}`` among the values; ``chisq``, ``points``,
+``converged`` and ``reason`` may go with them.
 
 The sandbox has no network and no storage: only the packages the plugin
 declares (numpy, scipy, ...) and its own files.
@@ -90,32 +97,14 @@ def wave(data, *, like=None, x0=None, dx=None, x_unit=None, y0=None, dy=None, y_
     )
 
 
-def action(name, *, title, inputs, params=None, description=""):
-    """Register a function as an action of the plugin.
-
-    ``inputs`` names the waves it takes: ``{"spectrum": "wave"}``, or
-    ``"waves"`` for a list of them. ``params`` describes the plain values it
-    takes, in the same form as the application's own actions:
-    ``{"model": {"type": "choice", "choices": ["R(RC)", "Randles"]}}``.
-    """
+def action(name):
+    """Register a function as the action ``name`` described in the plugin's manifest."""
     def register(function):
         if not isinstance(name, str) or not name.replace("_", "").isalnum():
             raise ValueError(f"An action name is letters, digits and underscores: {name!r}")
         if name in _ACTIONS:
             raise ValueError(f"The action {name!r} is registered twice.")
-        for key, kind in inputs.items():
-            if kind not in ("wave", "waves"):
-                raise ValueError(f"Input {key!r} must be 'wave' or 'waves', not {kind!r}.")
-        _ACTIONS[name] = {
-            "function": function,
-            "spec": {
-                "name": name,
-                "title": str(title),
-                "description": str(description),
-                "inputs": dict(inputs),
-                "params": dict(params or {}),
-            },
-        }
+        _ACTIONS[name] = function
         return function
 
     return register
@@ -124,13 +113,28 @@ def action(name, *, title, inputs, params=None, description=""):
 # --- Used by the sandbox, not by plugins ------------------------------------------
 
 
-def _load(root, entry):
-    """Imports the plugin's entry module and returns the actions it registered, as JSON."""
+def _load(root, entry, expected_json):
+    """Imports the plugin's entry module and checks that it registered the actions its manifest lists."""
     _ACTIONS.clear()
     if root not in sys.path:
         sys.path.insert(0, root)
     importlib.import_module(entry)
-    return json.dumps([item["spec"] for item in _ACTIONS.values()])
+    expected = set(json.loads(expected_json))
+    missing = sorted(expected - set(_ACTIONS))
+    extra = sorted(set(_ACTIONS) - expected)
+    if missing:
+        raise PluginError(f"The manifest lists actions the Python does not register: {', '.join(missing)}.")
+    if extra:
+        raise PluginError(f"The Python registers actions the manifest does not list: {', '.join(extra)}.")
+    return json.dumps(sorted(_ACTIONS))
+
+
+def _is_list(value):
+    """Whether a value from JavaScript is an array (a list of waves) rather than one wave."""
+    try:
+        return value.constructor.name == "Array"
+    except AttributeError:
+        return False
 
 
 def _given(value):
@@ -210,21 +214,17 @@ def _plain(value):
 
 def _run(name, inputs, params_json):
     """Runs an action on waves and values sent by the application."""
-    entry = _ACTIONS.get(name)
-    if entry is None:
+    function = _ACTIONS.get(name)
+    if function is None:
         raise PluginError(f"The plugin has no action {name!r}.")
-    spec = entry["spec"]
     arguments = {}
-    given = inputs.to_py(depth=1)
-    for key, kind in spec["inputs"].items():
-        if key not in given:
-            raise PluginError(f"Input {key!r} is missing.")
-        if kind == "waves":
-            arguments[key] = [_input(item) for item in given[key]]
+    for key, value in inputs.to_py(depth=1).items():
+        if _is_list(value):
+            arguments[key] = [_input(item) for item in value]
         else:
-            arguments[key] = _input(given[key])
+            arguments[key] = _input(value)
     arguments.update(json.loads(params_json))
-    outcome = entry["function"](**arguments)
+    outcome = function(**arguments)
     if outcome is None:
         outcome = {}
     if not isinstance(outcome, dict):

@@ -139,7 +139,7 @@ function load(message) {
     pyodide.FS.mkdirTree(full.slice(0, full.lastIndexOf("/")));
     pyodide.FS.writeFile(full, new Uint8Array(bytes));
   }
-  const actions = runtime._load(root, message.entry);
+  const actions = runtime._load(root, message.entry, JSON.stringify(message.actions));
   send({ type: "loaded", actions: JSON.parse(actions), log });
 }
 

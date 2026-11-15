@@ -36,17 +36,6 @@ export interface SandboxWave {
   note: string;
 }
 
-/** An action a plugin registered, as it describes itself. */
-export interface SandboxActionInfo {
-  name: string;
-  title: string;
-  description: string;
-  /** Input name to "wave" (one) or "waves" (a list). */
-  inputs: Record<string, "wave" | "waves">;
-  /** Plain parameters, described as the app's own actions describe theirs. */
-  params: Record<string, unknown>;
-}
-
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 
 export type HostToSandbox =
@@ -71,6 +60,8 @@ export type HostToSandbox =
       files: Record<string, ArrayBuffer>;
       /** The module to import, which registers the actions. */
       entry: string;
+      /** The names of the actions it must register: those of its manifest, no more and no fewer. */
+      actions: string[];
     }
   | {
       type: "run";
@@ -85,7 +76,7 @@ export type SandboxToHost =
   | { type: "booted" }
   | { type: "unsupported"; reason: string }
   | { type: "boot-failed"; error: string }
-  | { type: "loaded"; actions: SandboxActionInfo[]; log: string }
+  | { type: "loaded"; actions: string[]; log: string }
   | { type: "load-failed"; error: string; log: string }
   | {
       type: "result";
@@ -113,6 +104,4 @@ export const SANDBOX_LIMITS = {
   valuesDepth: 16,
   /** Characters of output kept from one run. */
   log: 64 * 1024,
-  /** Actions one plugin may register. */
-  actions: 256,
 } as const;

@@ -44,10 +44,11 @@ test.afterAll(async () => {
 async function startSandbox(
   page: import("@playwright/test").Page,
   source: string,
+  actions: string[],
   packages: string[] = [],
 ) {
   return page.evaluate(
-    async ({ source, packages }) => {
+    async ({ source, actions, packages }) => {
       globalThis.sandboxUnderTest?.destroy();
       const sandbox = await (
         globalThis.oresme as unknown as {
@@ -55,14 +56,14 @@ async function startSandbox(
         }
       ).sandbox.create(packages);
       globalThis.sandboxUnderTest = sandbox;
-      const actions = await sandbox.load({
+      return sandbox.load({
         key: "probe",
         files: { "probe.py": new TextEncoder().encode(source).buffer },
         entry: "probe",
+        actions,
       });
-      return actions.map((action) => action.name);
     },
-    { source, packages },
+    { source, actions, packages },
   );
 }
 
@@ -141,12 +142,13 @@ test.describe("the sandbox for plugin code", () => {
         "from scipy.integrate import cumulative_trapezoid",
         "from oresme_plugin import action, wave",
         "",
-        '@action("area", title="Running area", inputs={"y": "wave"}, params={"scale": {"type": "number"}})',
+        '@action("area")',
         "def area(y, scale=1.0):",
         '    print("integrating", y.name)',
         "    total = cumulative_trapezoid(y.data, dx=y.dx, initial=0) * scale",
         '    return {"waves": {"area": wave(total, like=y, unit="V*s")}, "values": {"total": total[-1]}}',
       ].join("\n"),
+      ["area"],
       ["numpy", "scipy"],
     );
     expect(names).toEqual(["area"]);
@@ -218,7 +220,7 @@ def font():
     face = js.FontFace.new("probe", "url(" + CANARY + "/font)")
     return face.load()
 
-@action("probe", title="Probe", inputs={}, params={})
+@action("probe")
 def probe():
     attempt("fetch", lambda: js.fetch(CANARY + "/fetch"))
     attempt("fetch no-cors", lambda: js.fetch(CANARY + "/no-cors", to_js({"mode": "no-cors"}, dict_converter=js.Object.fromEntries)))
@@ -240,10 +242,11 @@ def probe():
         attempt("beacon", lambda: js.navigator.sendBeacon(CANARY + "/beacon", "x"))
     return {"values": {"origin": str(js.self.origin)}}
 
-@action("report", title="Report", inputs={}, params={})
+@action("report")
 def report():
     return {"values": attempts}
 `,
+      ["probe", "report"],
     );
     // The app listens where a plugin might broadcast to it.
     await page.evaluate(() => {
@@ -284,11 +287,12 @@ def report():
       page,
       [
         "from oresme_plugin import action",
-        '@action("spin", title="Spin", inputs={}, params={})',
+        '@action("spin")',
         "def spin():",
         "    while True:",
         "        pass",
       ].join("\n"),
+      ["spin"],
     );
     const outcome = await runAction(page, "spin", {}, {}, 3000);
     expect(outcome).toMatchObject({ ok: false, destroyed: true });
@@ -306,7 +310,7 @@ def report():
       [
         "import js",
         "from oresme_plugin import action",
-        '@action("lie", title="Lie", inputs={}, params={})',
+        '@action("lie")',
         "def lie():",
         "    # Rewrite what the sandbox sends: a wave of a million points with the data of eight.",
         '    js.eval("""',
@@ -323,6 +327,7 @@ def report():
         '    """)',
         '    return {"values": {}}',
       ].join("\n"),
+      ["lie"],
     );
     const outcome = await runAction(page, "lie", {});
     expect(outcome).toMatchObject({ ok: false });

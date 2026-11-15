@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { packageClosure } from "./packages";
-import { checkActions, checkLog, checkResult, SandboxError } from "./validate";
+import { checkLoaded, checkLog, checkResult, SandboxError } from "./validate";
 
 const goodWave = (points = 3) => ({
   dtype: "float64",
@@ -106,51 +106,18 @@ describe("results from a sandbox", () => {
   });
 });
 
-describe("actions a plugin says it has", () => {
-  it("are taken when well described", () => {
-    expect(
-      checkActions([
-        {
-          name: "eis_fit",
-          title: "EIS fit",
-          description: "",
-          inputs: { re: "wave", im: "wave", spectra: "waves" },
-          params: { model: { type: "choice", choices: ["Randles"] } },
-        },
-      ]),
-    ).toEqual([
-      {
-        name: "eis_fit",
-        title: "EIS fit",
-        description: "",
-        inputs: { re: "wave", im: "wave", spectra: "waves" },
-        params: { model: { type: "choice", choices: ["Randles"] } },
-      },
-    ]);
+describe("actions a plugin says it registered", () => {
+  it("are taken when they are those of its manifest", () => {
+    expect(checkLoaded(["tafel", "eis_fit"], ["eis_fit", "tafel"])).toEqual(["eis_fit", "tafel"]);
   });
 
   it.each([
-    [
-      "a name that is not one",
-      [{ name: "a.b", title: "x", inputs: {} }],
-      /not a usable action name/,
-    ],
-    [
-      "a name given twice",
-      [
-        { name: "a", title: "x", inputs: {} },
-        { name: "a", title: "y", inputs: {} },
-      ],
-      /twice/,
-    ],
-    [
-      "an input of an unknown kind",
-      [{ name: "a", title: "x", inputs: { y: "table" } }],
-      /not usable/,
-    ],
-    ["no list", { name: "a" }, /did not list/],
-  ])("are refused for %s", (_, actions, message) => {
-    expect(() => checkActions(actions)).toThrow(message);
+    ["one more", ["eis_fit", "tafel", "extra"]],
+    ["one fewer", ["eis_fit"]],
+    ["another", ["eis_fit", "other"]],
+    ["no list", { name: "eis_fit" }],
+  ])("are refused when there is %s", (_, actions) => {
+    expect(() => checkLoaded(actions, ["eis_fit", "tafel"])).toThrow(SandboxError);
   });
 });
 

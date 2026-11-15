@@ -1,0 +1,339 @@
+import { strToU8, zipSync } from "fflate";
+import { describe, expect, it } from "vite-plus/test";
+import { Doc } from "../../core/doc/doc";
+import { verifyPackage } from "../../core/plugins/package";
+import type { RunRequest, Sandbox } from "../../sandbox/host";
+import { PluginHost } from "./host";
+import { fetchFromGitHub, readLocalPackage, unzipPackage } from "./sources";
+import { MemoryPluginStorage, PluginStore } from "./store";
+
+const encode = (value: unknown) =>
+  new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value));
+
+const manifest = (change: Record<string, unknown> = {}) => ({
+  manifestVersion: 1,
+  name: "electrochem",
+  title: "Electrochemistry",
+  version: "0.1.0",
+  python: { entry: "electrochem", packages: ["scipy"] },
+  files: ["electrochem.py", "styles/paper.json"],
+  actions: [
+    {
+      name: "scale",
+      title: "Scale",
+      params: { y: { type: "wave" }, factor: { type: "number", default: 2 } },
+    },
+  ],
+  contributes: { styles: ["styles/paper.json"] },
+  ...change,
+});
+
+const files = (code = "from oresme_plugin import action\n") =>
+  new Map<string, Uint8Array>([
+    ["electrochem.py", encode(code)],
+    ["styles/paper.json", encode({ graph: { fontSize: 12 } })],
+  ]);
+
+const github = { kind: "github" as const, owner: "lab", repo: "ec", ref: "main", path: "" };
+
+async function packageOf(change: Record<string, unknown> = {}, code?: string, source = github) {
+  return verifyPackage(
+    encode(manifest(change)),
+    files(code),
+    source,
+    source.kind === "github" ? "c".repeat(40) : null,
+  );
+}
+
+describe("the plugin store", () => {
+  it("installs, lists after a restart, turns off and removes, leaving no files behind", async () => {
+    const storage = new MemoryPluginStorage();
+    const store = new PluginStore(storage);
+    await store.install(await packageOf());
+    expect(store.list().map((plugin) => plugin.manifest.name)).toEqual(["electrochem"]);
+
+    const reopened = new PluginStore(storage);
+    await reopened.load();
+    expect(reopened.find("electrochem")).toMatchObject({
+      enabled: true,
+      lock: { commit: "c".repeat(40) },
+    });
+    await reopened.setEnabled("electrochem", false);
+    expect(reopened.find("electrochem")!.enabled).toBe(false);
+
+    await reopened.remove("electrochem");
+    expect(reopened.list()).toEqual([]);
+    expect([...storage.files.keys()]).toEqual(["index.json"]);
+  });
+
+  it("refuses a plugin of the same name from somewhere else", async () => {
+    const store = new PluginStore(new MemoryPluginStorage());
+    await store.install(await packageOf());
+    const other = await packageOf({}, undefined, { ...github, owner: "someone" });
+    await expect(store.install(other)).rejects.toThrow(/already installed from lab\/ec/);
+    expect(store.find("electrochem")!.lock.source).toEqual(github);
+  });
+
+  it("replaces a plugin by its update from the same place and drops the old files", async () => {
+    const storage = new MemoryPluginStorage();
+    const store = new PluginStore(storage);
+    const first = await packageOf();
+    await store.install(first);
+    const update = await packageOf(
+      { version: "0.2.0" },
+      "from oresme_plugin import action  # new\n",
+    );
+    await store.install(update);
+    expect(store.list()).toHaveLength(1);
+    expect(store.find("electrochem")!.manifest.version).toBe("0.2.0");
+    const oldCode = first.lock.files.find((file) => file.path === "electrochem.py")!.sha256;
+    expect(storage.files.has(oldCode)).toBe(false);
+  });
+
+  it("refuses files changed in storage since they were installed", async () => {
+    const storage = new MemoryPluginStorage();
+    const store = new PluginStore(storage);
+    const installed = await store.install(await packageOf());
+    expect((await store.files(installed)).get("electrochem.py")).toBeDefined();
+    const code = installed.lock.files.find((file) => file.path === "electrochem.py")!.sha256;
+    storage.files.set(code, encode("import js; js.fetch('https://example.com')\n"));
+    await expect(store.files(installed)).rejects.toThrow(
+      /has changed since the plugin was installed/,
+    );
+  });
+});
+
+/** A fetch that serves a repository at one commit, and records what was asked. */
+function fakeGitHub(served: Map<string, Uint8Array>, commit = "d".repeat(40)) {
+  const asked: string[] = [];
+  const fetchImpl = (url: string) => {
+    asked.push(url);
+    if (url.startsWith("https://api.github.com/repos/lab/ec/commits/")) {
+      return Promise.resolve(new Response(`${commit}\n`));
+    }
+    const prefix = `https://raw.githubusercontent.com/lab/ec/${commit}/`;
+    const bytes = url.startsWith(prefix)
+      ? served.get(decodeURIComponent(url.slice(prefix.length)))
+      : undefined;
+    return Promise.resolve(
+      bytes ? new Response(bytes as Uint8Array<ArrayBuffer>) : new Response("", { status: 404 }),
+    );
+  };
+  return { fetchImpl, asked };
+}
+
+describe("fetching a plugin from GitHub", () => {
+  it("fixes the branch to a commit and fetches every file from that commit", async () => {
+    const served = new Map([["oresme-plugin.json", encode(manifest())], ...files()]);
+    const { fetchImpl, asked } = fakeGitHub(served);
+    const pkg = await fetchFromGitHub(github, fetchImpl);
+    expect(pkg.lock.commit).toBe("d".repeat(40));
+    expect(asked[0]).toBe("https://api.github.com/repos/lab/ec/commits/main");
+    expect(asked.slice(1).every((url) => url.includes(`/${"d".repeat(40)}/`))).toBe(true);
+    expect(pkg.manifest.name).toBe("electrochem");
+  });
+
+  it("refuses a package with a file missing", async () => {
+    const served = new Map([
+      ["oresme-plugin.json", encode(manifest())],
+      ["electrochem.py", encode("")],
+    ]);
+    const { fetchImpl } = fakeGitHub(served);
+    await expect(fetchFromGitHub(github, fetchImpl)).rejects.toThrow(/styles\/paper.json \(404\)/);
+  });
+
+  it("says when the repository or branch is not there", async () => {
+    const fetchImpl = () => Promise.resolve(new Response("", { status: 404 }));
+    await expect(fetchFromGitHub(github, fetchImpl)).rejects.toThrow(/GitHub has no lab\/ec/);
+  });
+});
+
+describe("reading a plugin from files", () => {
+  const picked = (entries: Record<string, Uint8Array>) =>
+    Object.entries(entries).map(([path, bytes]) => ({ path, bytes: () => Promise.resolve(bytes) }));
+
+  it("takes the folder that holds the manifest, and only the files it lists", async () => {
+    const pkg = await readLocalPackage(
+      picked({
+        "electrochem-plugin/oresme-plugin.json": encode(manifest()),
+        "electrochem-plugin/electrochem.py": encode("x = 1\n"),
+        "electrochem-plugin/styles/paper.json": encode({}),
+        "electrochem-plugin/README.md": encode("# notes"),
+      }),
+    );
+    expect(pkg.lock.files.map((file) => file.path)).toEqual([
+      "electrochem.py",
+      "styles/paper.json",
+    ]);
+    expect(pkg.lock.source).toEqual({ kind: "local", label: "electrochem" });
+  });
+
+  it("reads a zip, and never takes a file from outside the package", async () => {
+    const zip = zipSync({
+      "oresme-plugin.json": encode(manifest()),
+      "electrochem.py": encode("x = 1\n"),
+      "styles/paper.json": encode({}),
+      "../escape.py": strToU8("import js\n"),
+    });
+    const pkg = await readLocalPackage(picked({ "plugin.zip": zip }));
+    expect(pkg.lock.files.map((file) => file.path)).toEqual([
+      "electrochem.py",
+      "styles/paper.json",
+    ]);
+  });
+
+  it("refuses a zip that unpacks to more than a package may hold", () => {
+    // Compresses to almost nothing, unpacks to 9 MiB.
+    const zip = zipSync({
+      "oresme-plugin.json": encode(manifest()),
+      "big.bin": new Uint8Array(9 * 1024 * 1024),
+    });
+    expect(zip.byteLength).toBeLessThan(100_000);
+    expect(() => unzipPackage(zip)).toThrow(/more than a plugin package may/);
+  });
+});
+
+/** A sandbox that runs the action in JavaScript, as the plugin's Python would. */
+function fakeSandbox(onRun?: (request: RunRequest) => void) {
+  const runs: RunRequest[] = [];
+  let destroyed = false;
+  const sandbox = {
+    load: () => Promise.resolve(["scale"]),
+    run: (request: RunRequest) => {
+      runs.push(request);
+      onRun?.(request);
+      const input = request.inputs.y as { data: ArrayBuffer; x0: number; dx: number };
+      const factor = (request.params.factor as number | undefined) ?? 2;
+      const data = new Float64Array(input.data).map((value) => value * factor);
+      return Promise.resolve({
+        waves: [
+          [
+            "scaled",
+            {
+              type: "float64",
+              shape: [data.length],
+              data,
+              imag: null,
+              x0: input.x0,
+              dx: input.dx,
+              xUnit: "",
+              y0: 0,
+              dy: 1,
+              yUnit: "",
+              unit: "",
+              note: "",
+            },
+          ],
+        ],
+        values: { result: { names: ["factor"], coef: [factor], sigma: [0] } },
+        log: "scaled\n",
+      });
+    },
+    destroy: () => {
+      destroyed = true;
+    },
+    get isDestroyed() {
+      return destroyed;
+    },
+  };
+  return { sandbox: sandbox as unknown as Sandbox, runs };
+}
+
+async function setUp(onRun?: (request: RunRequest) => void) {
+  const doc = new Doc();
+  doc.dispatch({ op: "makeWave", name: "signal", data: new Float64Array([1, 2, 3]) });
+  const store = new PluginStore(new MemoryPluginStorage());
+  await store.install(await packageOf());
+  const fake = fakeSandbox(onRun);
+  let started = 0;
+  const host = new PluginHost({
+    store,
+    doc,
+    pyodideURL: "/pyodide/",
+    createSandbox: () => {
+      started += 1;
+      return Promise.resolve(fake.sandbox);
+    },
+  });
+  return { doc, store, host, fake, started: () => started };
+}
+
+describe("running a plugin's action", () => {
+  it("lists the actions of the plugins that are on", async () => {
+    const { host, store } = await setUp();
+    expect(host.catalog().map((spec) => spec.id)).toEqual(["plugin.electrochem.scale"]);
+    await store.setEnabled("electrochem", false);
+    expect(host.catalog()).toEqual([]);
+  });
+
+  it("hands over copies of the waves and keeps what comes back as one change", async () => {
+    const { doc, host, fake } = await setUp();
+    const outcome = await host.run("plugin.electrochem.scale", { y: "signal", factor: 3 });
+    expect(outcome).toMatchObject({ waves: { scaled: "signal_scaled" }, log: "scaled\n" });
+    const state = doc.getState();
+    expect([...state.waves.signal_scaled!.data]).toEqual([3, 6, 9]);
+    expect(state.results[outcome.result!]).toMatchObject({
+      kind: "plugin",
+      source: {
+        action: "plugin.electrochem.scale",
+        plugin: "electrochem",
+        origin: "github:lab/ec",
+        commit: "c".repeat(40),
+      },
+    });
+    // The document's own array was not handed over.
+    const handed = fake.runs[0]!.inputs.y as { data: ArrayBuffer };
+    expect(handed.data).not.toBe(state.waves.signal!.data.buffer);
+    expect([...new Float64Array(handed.data)]).toEqual([1, 2, 3]);
+    doc.undo();
+    expect(doc.getState().waves.signal_scaled).toBeUndefined();
+    expect(Object.keys(doc.getState().results)).toEqual([]);
+  });
+
+  it("starts one sandbox and stops it when the plugin is turned off", async () => {
+    const { host, store, fake, started } = await setUp();
+    await host.run("plugin.electrochem.scale", { y: "signal" });
+    await host.run("plugin.electrochem.scale", { y: "signal" });
+    expect(started()).toBe(1);
+    await store.setEnabled("electrochem", false);
+    await Promise.resolve();
+    expect(fake.sandbox.isDestroyed).toBe(true);
+    await expect(host.run("plugin.electrochem.scale", { y: "signal" })).rejects.toThrow(
+      /turned off/,
+    );
+  });
+
+  it("refuses arguments the action does not take before anything runs", async () => {
+    const { host, fake } = await setUp();
+    await expect(host.run("plugin.electrochem.scale", { y: "nothing" })).rejects.toThrow(
+      /no wave named/,
+    );
+    await expect(host.run("plugin.electrochem.scale", { y: "signal", extra: 1 })).rejects.toThrow(
+      /no argument/,
+    );
+    await expect(host.run("plugin.electrochem.unknown", {})).rejects.toThrow(/No installed plugin/);
+    expect(fake.runs).toEqual([]);
+  });
+
+  it("keeps nothing when a wave it was given changed while it ran", async () => {
+    let doc: Doc | null = null;
+    const set = await setUp(() =>
+      doc!.dispatch({ op: "setWavePoints", name: "signal", start: 0, values: [100] }),
+    );
+    doc = set.doc;
+    await expect(set.host.run("plugin.electrochem.scale", { y: "signal" })).rejects.toThrow(
+      /signal changed while the plugin was running/,
+    );
+    expect(set.doc.getState().waves.signal_scaled).toBeUndefined();
+  });
+
+  it("puts its waves into a block of Python's that is open", async () => {
+    const { doc, host } = await setUp();
+    const stage = doc.stage();
+    stage.dispatch({ op: "makeWave", name: "staged", data: new Float64Array([5]) });
+    await host.run("plugin.electrochem.scale", { y: "staged" }, stage);
+    expect(doc.getState().waves.staged_scaled).toBeUndefined();
+    stage.commit();
+    expect([...doc.getState().waves.staged_scaled!.data]).toEqual([10]);
+  });
+});

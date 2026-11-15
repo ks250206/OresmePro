@@ -1,12 +1,6 @@
-import type {
-  HostToSandbox,
-  Json,
-  SandboxActionInfo,
-  SandboxToHost,
-  SandboxWave,
-} from "../core/sandbox/protocol";
+import type { HostToSandbox, Json, SandboxToHost, SandboxWave } from "../core/sandbox/protocol";
 import {
-  checkActions,
+  checkLoaded,
   checkLog,
   checkResult,
   SandboxError,
@@ -90,6 +84,8 @@ export interface PluginFiles {
   key: string;
   files: Record<string, ArrayBuffer>;
   entry: string;
+  /** The actions its manifest lists, which its Python must register. */
+  actions: string[];
 }
 
 export interface RunRequest {
@@ -212,7 +208,7 @@ export class Sandbox {
   }
 
   /** Puts a plugin's files in the sandbox and imports it; returns the actions it registered. */
-  load(plugin: PluginFiles, timeoutMs = 60_000): Promise<SandboxActionInfo[]> {
+  load(plugin: PluginFiles, timeoutMs = 60_000): Promise<string[]> {
     if (!KEY.test(plugin.key)) throw new SandboxError(`${plugin.key} is not a usable plugin key.`);
     return this.serial(async () => {
       const answer = this.expect(
@@ -222,13 +218,19 @@ export class Sandbox {
       const files = Object.fromEntries(
         Object.entries(plugin.files).map(([path, bytes]) => [path, bytes.slice(0)]),
       );
-      const message: HostToSandbox = { type: "load", key: plugin.key, files, entry: plugin.entry };
+      const message: HostToSandbox = {
+        type: "load",
+        key: plugin.key,
+        files,
+        entry: plugin.entry,
+        actions: plugin.actions,
+      };
       this.port.postMessage(message, Object.values(files));
       const reply = await answer;
       if (reply.type === "load-failed") {
         throw new SandboxError(`The plugin did not load: ${checkLog(reply.error)}`);
       }
-      return checkActions((reply as { actions: unknown }).actions);
+      return checkLoaded((reply as { actions: unknown }).actions, plugin.actions);
     });
   }
 
