@@ -198,10 +198,22 @@ export class Stage implements DocWriter {
    * Notes that a wave was read: the commit fails if it changes in the
    * document meanwhile. A wave the stage made or changed itself is its own.
    */
-  read(name: string): void {
+  read(name: string, seen: Set<string> = new Set()): void {
+    if (seen.has(name)) return;
+    seen.add(name);
     const wave = this.working.state.waves[name];
-    if (!wave || this.base.waves[name] !== wave || this.reads.has(name)) return;
-    this.reads.set(name, wave.rev);
+    if (!wave) return;
+    if (this.base.waves[name] === wave) {
+      if (!this.reads.has(name)) this.reads.set(name, wave.rev);
+      return;
+    }
+    // A wave the stage made or changed is its own, but a formula's values
+    // come from its inputs: what was read from it is out of date when one of
+    // those changes in the document, though replaying would compute the
+    // formula again. So its inputs count as read, down to the document's.
+    if (wave.formula) {
+      for (const input of Object.keys(wave.formula.inputs)) this.read(input, seen);
+    }
   }
 
   /** Remembers this point, for {@link rollback}: the start of a block within the block. */
