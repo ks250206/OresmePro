@@ -1,4 +1,4 @@
-import { applyCommand, isTransient, type Command } from "./commands";
+import { applyCommand, isTransient, settleFormulas, type Command } from "./commands";
 import { dictFrom, filterDict, type Dict } from "./dict";
 import { DocError, emptyDoc, type DocState, type WindowState } from "./types";
 
@@ -93,7 +93,13 @@ class Working implements DocWriter {
   dispatch(command: Command): string | null {
     const applied = applyCommand(this.state, command);
     if (applied.state !== this.state) {
-      this.state = withDicts(applied.state);
+      // Formulas that depend on what the command changed are computed again
+      // here, so that they belong to the same step: they undo with it, go into
+      // a transaction or an op.atomic() block with it, and are computed again
+      // when a block's commands are replayed. Waves untouched, nothing to do.
+      const settled =
+        applied.state.waves === this.state.waves ? applied.state : settleFormulas(applied.state);
+      this.state = withDicts(settled);
       if (!isTransient(command)) this.durable = true;
     }
     return applied.result;
