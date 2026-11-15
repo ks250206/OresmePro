@@ -3,7 +3,15 @@ import type { ActionSpec } from "../core/actions";
 import { uniqueName, windowTaken } from "../core/doc/commands";
 import { codeActions, panelFile, readPanelFile, resolveButton } from "../core/doc/panels";
 import { download, pickFile } from "./actions";
-import { doc, kernel, note, runGui, showError } from "./session";
+import {
+  actionCatalog,
+  doc,
+  invokeAction,
+  note,
+  runGui,
+  showError,
+  subscribeCatalog,
+} from "./session";
 import { createStore, useStore } from "./store";
 
 /**
@@ -41,9 +49,9 @@ function without<T>(record: Readonly<Record<string, T>>, key: string): Record<st
   return rest;
 }
 
-/** The actions Python has registered, following changes. */
+/** The actions there are (Python's and the plugins'), following changes. */
 export const useCatalog = (): readonly ActionSpec[] =>
-  useSyncExternalStore(kernel.subscribeActions, kernel.getActions);
+  useSyncExternalStore(subscribeCatalog, actionCatalog);
 
 /**
  * Presses a button: resolves its arguments from the panel's values as they
@@ -60,7 +68,7 @@ export function pressButton(panel: string, button: string): Promise<void> {
   const key = buttonKey(panel, button);
   const { call, problems } = resolveButton(spec, button, {
     waveExists: (name) => name in doc.getState().waves,
-    catalog: kernel.getActions(),
+    catalog: actionCatalog(),
   });
   if (!call) {
     panelRuntime.set((now) => ({ errors: { ...now.errors, [key]: problems.join("\n") } }));
@@ -76,7 +84,7 @@ export function pressButton(panel: string, button: string): Promise<void> {
       busy: without(now.busy, panel),
       errors: error === null ? now.errors : { ...now.errors, [key]: error },
     }));
-  return kernel.invoke(call.action, call.args, call.version ?? undefined).then(
+  return invokeAction(call.action, call.args, call.version ?? undefined).then(
     () => done(null),
     (error: unknown) =>
       done((error instanceof Error ? error.message : String(error)).replace(/^OresmeError: /, "")),

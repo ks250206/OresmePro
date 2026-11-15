@@ -2694,7 +2694,32 @@ def _invoke_plugin(id, args):
     return {key: outcome[key] for key in ("waves", "values", "result")}
 
 
+def _plugin_action(id):
+    """A plugin's action as one of Python's, for checking a call and making it.
+
+    The plugin runs in its own sandbox; the application knows its actions
+    and runs them (see ``_invoke_plugin``). Its waves go into the open
+    ``op.atomic()`` block like everything else this code changes.
+    """
+    for spec in _call("pluginActions")[0]:
+        if spec["id"] == id:
+            params = {
+                name: {**param, "optional": bool(param.get("optional"))}
+                for name, param in spec["params"].items()
+            }
+            return _Action(
+                id, spec["version"], spec["title"], spec.get("description"), params,
+                lambda **passed: _invoke_plugin(id, passed),
+            )
+    raise OresmeError(f"No installed plugin has the action {id}, or it is turned off.")
+
+
 def _find_action(id, version):
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        found = _plugin_action(id)
+        if version is not None and version != found.version:
+            raise OresmeError(f"{id} has no version {version!r} (it has {found.version}).")
+        return found
     if not isinstance(id, str) or id not in _actions:
         raise OresmeError(f"No action named {id!r}.")
     versions = _actions[id]

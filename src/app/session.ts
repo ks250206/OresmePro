@@ -288,9 +288,22 @@ export const kernel: KernelClient = new KernelClient({
   indexURL: PYODIDE_URL,
 });
 
-/** Every action there is: Python's (the app's own and those procedures register) and the plugins'. */
-export function actionCatalog(): ActionSpec[] {
-  return [...kernel.getActions(), ...plugins.catalog()];
+let catalogParts: [readonly ActionSpec[], readonly ActionSpec[]] | null = null;
+let catalog: readonly ActionSpec[] = [];
+
+/**
+ * Every action there is: Python's (the app's own and those procedures
+ * register) and the plugins'. The same list until one of them changes, so
+ * that it can be read during rendering.
+ */
+export function actionCatalog(): readonly ActionSpec[] {
+  const fromKernel = kernel.getActions();
+  const fromPlugins = plugins.catalog();
+  if (!catalogParts || catalogParts[0] !== fromKernel || catalogParts[1] !== fromPlugins) {
+    catalogParts = [fromKernel, fromPlugins];
+    catalog = [...fromKernel, ...fromPlugins];
+  }
+  return catalog;
 }
 
 export function subscribeCatalog(listener: () => void): () => void {

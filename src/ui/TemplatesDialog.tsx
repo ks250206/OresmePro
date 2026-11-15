@@ -1,5 +1,5 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { doc, kernel, runGui, ui, useDoc } from "../app/session";
+import { actionCatalog, doc, kernel, runGui, subscribeCatalog, ui, useDoc } from "../app/session";
 import { findAction, type ActionArgs } from "../core/actions";
 import {
   argText,
@@ -153,7 +153,7 @@ export function TemplatesDialog({
   run?: string;
 }) {
   const state = useDoc((current) => current);
-  const catalog = useSyncExternalStore(kernel.subscribeActions, kernel.getActions);
+  const catalog = useSyncExternalStore(subscribeCatalog, actionCatalog);
   const names = Object.keys(state.templates);
   const [picked, setPicked] = useState<string | null>(initial ?? names[0] ?? null);
   const name = picked !== null && picked in state.templates ? picked : null;
