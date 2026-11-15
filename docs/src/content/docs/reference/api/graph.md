@@ -216,6 +216,21 @@ and of the traces in order (color, line, markers), not the data; with
 ``size=True`` also the size the graph is drawn at. A style of that
 name is replaced.
 
+### `Graph.save_template`
+
+```python
+save_template(name, fixed=())
+```
+
+Keep this graph as a graph template named ``name`` and return it.
+
+Each wave the graph plots becomes a slot of the template (see
+``GraphTemplate``); the traces, axes, look, text and size are kept.
+An axis keeps its range only if it is named in ``fixed`` (a name or
+a list of names; ``True`` for every axis): the others follow the
+data of each graph made from the template. A template of that name
+is replaced.
+
 ### `Graph.apply_style`
 
 ```python
@@ -409,3 +424,114 @@ op.default_style()
 ```
 
 The Style new graphs are given, or None.
+
+## `GraphTemplate`
+
+```python
+op.GraphTemplate(name)
+```
+
+A graph template: a graph kept with its waves taken out, to make the
+same graph of other data.
+
+Where the graph had a wave, the template has a slot, named after what
+the wave was for: ``"y"`` and ``"x"``, ``"yerr"`` and ``"xerr"`` for
+error bars, ``"color"`` for a color wave and ``"z"`` for an image or
+contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
+``slots`` lists them. Make a graph by giving a wave for each slot::
+
+    t = op.graph_template(op.graph("Graph0"), "IV")
+    t.make(y="s2_I", x="s2_V")
+
+Text in annotations and axis labels can name what fills a slot:
+``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
+slot ``y``. Where the graph's text named one of its waves, the template
+has such a reference instead, so a graph of another sample shows that
+sample's name.
+
+``data`` is what the template holds, as a dict: ``"style"`` (the look
+and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``
+and the units of the wave it was made from), ``"traces"``, ``"images"``,
+``"contours"``, ``"axes"`` and ``"annotations"`` as in a graph, with
+slot names where the graph has wave names. ``op.set_graph_template``
+defines one from such a dict.
+
+**プロパティ**
+
+- `name` (read-only)
+- `data` (read-only) · What the template holds, as a dict (a copy: change it with ``op.set_graph_template``).
+- `slots` (read-only) · The names of the slots, in the order of the graph.
+
+### `GraphTemplate.make`
+
+```python
+make(name=None, **slots)
+```
+
+Make a graph of the waves given for the slots, and return it.
+
+Give a wave (a Wave or a name) for each slot:
+``t.make(y=current, x=voltage)``. A slot of X, error bars or a color
+wave may be left out; the graph then goes without it. Lists make
+several graphs, one for each item, and return a list of them:
+``t.make(y=[a, b, c], x=voltage)`` makes three graphs, all against
+``voltage``. ``name`` names the graph (a list, the
+graphs); left out, names are chosen.
+
+Where a wave's unit differs from that of the wave the template was
+made from, a warning says so, and the graph is made all the same.
+All the graphs are made or, if one cannot be, none; and they are one
+step to undo.
+
+**明示的な例外** · `OresmeError`
+
+### `GraphTemplate.rename`
+
+```python
+rename(new_name)
+```
+
+Give the template another name. Returns self.
+
+### `GraphTemplate.remove`
+
+```python
+remove()
+```
+
+Delete the template. Graphs made from it stay as they are.
+
+## `graph_template`
+
+```python
+op.graph_template(source, name=None, fixed=())
+```
+
+A graph template: the one named ``source``, or one made from a graph.
+
+``op.graph_template("IV")`` is the template named IV.
+``op.graph_template(g, "IV")`` keeps the graph ``g`` (a Graph or a
+graph name) as a template named IV and returns it; see
+``Graph.save_template`` for ``fixed``.
+
+**明示的な例外** · `OresmeError`
+
+## `graph_templates`
+
+```python
+op.graph_templates()
+```
+
+Every graph template of the experiment.
+
+## `set_graph_template`
+
+```python
+op.set_graph_template(name, data)
+```
+
+Define a graph template from a dict (see ``GraphTemplate``) or copy another; returns it.
+
+A template of that name is replaced. What the dict leaves out is as in a
+new graph; unknown keys, bad values and references to slots or axes the
+template does not have are refused.

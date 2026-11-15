@@ -2178,11 +2178,12 @@ class GraphTemplate:
     def make(self, /, name=None, **slots):
         """Make a graph of the waves given for the slots, and return it.
 
-        Give a wave (a Wave or a name) for each slot: ``t.make(y=w, x=t)``.
-        A slot of X, error bars or a color wave may be left out; the graph
-        then goes without it. Lists make several graphs, one for each item,
-        and return a list of them: ``t.make(y=[a, b, c], x=t)`` makes three
-        graphs, all against ``t``. ``name`` names the graph (a list, the
+        Give a wave (a Wave or a name) for each slot:
+        ``t.make(y=current, x=voltage)``. A slot of X, error bars or a color
+        wave may be left out; the graph then goes without it. Lists make
+        several graphs, one for each item, and return a list of them:
+        ``t.make(y=[a, b, c], x=voltage)`` makes three graphs, all against
+        ``voltage``. ``name`` names the graph (a list, the
         graphs); left out, names are chosen.
 
         Where a wave's unit differs from that of the wave the template was
@@ -2231,6 +2232,7 @@ class GraphTemplate:
         return made if many else made[0]
 
     def rename(self, new_name):
+        """Give the template another name. Returns self."""
         _dispatch({"op": "renameGraphTemplate", "name": self._name, "newName": new_name})
         self._name = new_name
         return self
