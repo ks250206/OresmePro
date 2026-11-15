@@ -19,6 +19,18 @@ import {
   type AnalysisResult,
 } from "./results";
 import { captureTemplate, makeFromTemplate, RESERVED_SLOT_NAMES } from "./graphTemplates";
+import { applyPanelCommand, renameInPanels } from "./panels";
+import {
+  checkAnalysisTemplate,
+  checkRun,
+  renameInRun,
+  renameResultInRun,
+  RUN_BASE,
+  withSampleOutcome,
+  type AnalysisTemplate,
+  type SampleOutcome,
+  type TemplateRun,
+} from "./analysisTemplates";
 import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
@@ -255,6 +267,22 @@ export type Command =
     }
   | { op: "modifyLayoutItem"; layout: string; item: string; props: Props }
   | { op: "removeLayoutItem"; layout: string; item: string }
+  /** Makes an empty panel (see PanelSpec) with its window. */
+  | { op: "newPanel"; name?: string; title?: string }
+  /**
+   * Gives a panel its title and controls, as data (see checkPanel): an
+   * imported panel, say. Makes the panel and its window if there is none.
+   */
+  | { op: "setPanel"; name: string; panel: unknown }
+  | { op: "modifyPanel"; panel: string; props: Props }
+  /** Adds a control at the end. Left out, the name is chosen from its kind. */
+  | { op: "addControl"; panel: string; kind: string; name?: string; props?: Props }
+  /** Changes a control's properties; `name` among them renames it, and buttons follow. */
+  | { op: "modifyControl"; panel: string; control: string; props: Props }
+  | { op: "removeControl"; panel: string; control: string }
+  /** Puts a control at a place in the panel's order, counted from 0. */
+  | { op: "moveControl"; panel: string; control: string; to: number }
+  | { op: "setControlValue"; panel: string; control: string; value: unknown }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
@@ -288,6 +316,18 @@ export type Command =
   | { op: "addResult"; result: unknown; name?: string }
   | { op: "removeResults"; names: readonly string[] }
   | { op: "renameResult"; name: string; newName: string }
+  /** Defines an analysis template (see AnalysisTemplate), replacing one of that name. */
+  | { op: "setTemplate"; name: string; template: unknown }
+  | { op: "removeTemplate"; name: string }
+  | { op: "renameTemplate"; name: string; newName: string }
+  /**
+   * Keeps the record of a template run on samples (see TemplateRun), as
+   * Python starts it: every sample pending. Named Run0, Run1, ... unless named.
+   */
+  | { op: "addRun"; run: unknown; name?: string }
+  /** Records how one sample of a run went; the inputs are fingerprinted as they are now. */
+  | ({ op: "updateRunSample"; run: string; index: number } & SampleOutcome)
+  | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
@@ -506,11 +546,15 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-/** Whether a window (graph, table, procedure or page layout) already has this name. */
+/** Whether a window (graph, table, procedure, page layout or panel) already has this name. */
 export const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
+  name in state.graphs ||
+  name in state.tables ||
+  name in state.procedures ||
+  name in state.pages ||
+  name in state.panels;
 
-function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
+export function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
   const size =
     kind === "graph"
@@ -519,7 +563,9 @@ function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): 
         ? { w: 360, h: 300 }
         : kind === "page"
           ? { w: 440, h: 560 }
-          : { w: 520, h: 340 };
+          : kind === "panel"
+            ? { w: 340, h: 280 }
+            : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -1196,6 +1242,24 @@ const putTemplate = (state: DocState, name: string, template: GraphTemplate): Do
   graphTemplates: withEntry(state.graphTemplates, name, template),
 });
 
+function requireAnalysisTemplate(state: DocState, name: unknown): AnalysisTemplate {
+  const template = typeof name === "string" ? state.templates[name] : undefined;
+  if (!template) throw new DocError(`No template named ${JSON.stringify(name)}.`);
+  return template;
+}
+
+const putAnalysisTemplate = (
+  state: DocState,
+  name: string,
+  template: AnalysisTemplate,
+): DocState => ({ ...state, templates: withEntry(state.templates, name, template) });
+
+function requireRun(state: DocState, name: unknown): TemplateRun {
+  const run = typeof name === "string" ? state.runs[name] : undefined;
+  if (!run) throw new DocError(`No run named ${JSON.stringify(name)}.`);
+  return run;
+}
+
 function requirePage(state: DocState, name: string): PageSpec {
   const page = state.pages[name];
   if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
@@ -1286,6 +1350,8 @@ function renameReferences(
   for (const result of Object.values(state.results)) {
     results[result.name] = renameInResult(result, rename);
   }
+  const runs = dict<TemplateRun>();
+  for (const run of Object.values(state.runs)) runs[run.name] = renameInRun(run, rename);
   let waves = state.waves;
   for (const wave of Object.values(state.waves)) {
     const formula = wave.formula;
@@ -1302,7 +1368,8 @@ function renameReferences(
     // Only where the values come from has changed, not the values: no new revision.
     waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
   }
-  return { ...state, waves, graphs, tables, results };
+  const panels = renameInPanels(state.panels, rename);
+  return { ...state, waves, graphs, tables, results, panels, runs };
 }
 
 /** A wave under a new name; a formula that was up to date with it stays so. */
@@ -2221,6 +2288,15 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "newPanel":
+    case "setPanel":
+    case "modifyPanel":
+    case "addControl":
+    case "modifyControl":
+    case "removeControl":
+    case "moveControl":
+    case "setControlValue":
+      return applyPanelCommand(state, command);
     case "newProcedure": {
       let name = "Procedure";
       if (command.name !== undefined) {
@@ -2311,6 +2387,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.results) {
         throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
       }
+      const runs = dict<TemplateRun>();
+      for (const run of Object.values(state.runs)) {
+        runs[run.name] = renameResultInRun(run, command.name, newName);
+      }
       return {
         state: {
           ...state,
@@ -2318,9 +2398,54 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
             ...result,
             name: newName,
           }),
+          runs,
         },
         result: newName,
       };
+    }
+    case "setTemplate": {
+      const name = checkName(command.name, "template");
+      const template = checkAnalysisTemplate(command.template);
+      return { state: putAnalysisTemplate(state, name, template), result: name };
+    }
+    case "removeTemplate": {
+      requireAnalysisTemplate(state, command.name);
+      return {
+        state: { ...state, templates: withoutEntries(state.templates, [command.name]) },
+        result: null,
+      };
+    }
+    case "renameTemplate": {
+      const template = requireAnalysisTemplate(state, command.name);
+      const newName = checkName(command.newName, "template");
+      if (newName === command.name) return { state, result: newName };
+      if (newName in state.templates) {
+        throw new DocError(`Template ${JSON.stringify(newName)} already exists.`);
+      }
+      const templates = withEntry(
+        withoutEntries(state.templates, [command.name]),
+        newName,
+        template,
+      );
+      return { state: { ...state, templates }, result: newName };
+    }
+    case "addRun": {
+      const taken = (name: string) => name in state.runs;
+      const name =
+        command.name === undefined ? uniqueName(RUN_BASE, taken) : checkName(command.name, "run");
+      if (taken(name)) throw new DocError(`A run named ${JSON.stringify(name)} already exists.`);
+      const run = checkRun(command.run, name);
+      return { state: { ...state, runs: withEntry(state.runs, name, run) }, result: name };
+    }
+    case "updateRunSample": {
+      const run = requireRun(state, command.run);
+      const { op: _op, run: _run, index, ...outcome } = command;
+      const next = withSampleOutcome(state, run, index, outcome);
+      return { state: { ...state, runs: withEntry(state.runs, run.name, next) }, result: null };
+    }
+    case "removeRuns": {
+      for (const name of command.names) requireRun(state, name);
+      return { state: { ...state, runs: withoutEntries(state.runs, command.names) }, result: null };
     }
     case "removeStyle": {
       requireStyle(state, command.name);
@@ -2467,6 +2592,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           tables: withoutEntries(state.tables, gone),
           procedures: withoutEntries(state.procedures, gone),
           pages,
+          panels: withoutEntries(state.panels, gone),
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

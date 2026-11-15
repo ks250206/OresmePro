@@ -5,8 +5,16 @@ import type { Doc, DocWriter, Stage } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
 import { formulaOrder, formulaStatus } from "../core/doc/formula";
 import { changedInputs } from "../core/doc/results";
+import { changedSampleInputs } from "../core/doc/analysisTemplates";
 import { templateWarnings } from "../core/doc/graphTemplates";
-import { DocError, type DocState, type GraphTemplate, type Wave } from "../core/doc/types";
+import { resolveButton } from "../core/doc/panels";
+import {
+  DocError,
+  type DocState,
+  type GraphTemplate,
+  type PanelSpec,
+  type Wave,
+} from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import { planIgorImport } from "../core/io/igorImport";
@@ -91,6 +99,13 @@ function requireTemplate(state: DocState, name: unknown): GraphTemplate {
   const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
   if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
   return template;
+}
+
+function requirePanel(state: DocState, name: unknown): PanelSpec {
+  const panel =
+    typeof name === "string" && Object.hasOwn(state.panels, name) ? state.panels[name] : undefined;
+  if (!panel) throw new DocError(`No panel named ${JSON.stringify(name)}.`);
+  return panel;
 }
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
@@ -182,6 +197,12 @@ export function handleRpc(
       if (command.op === "addResult" && typeof command.result === "object" && command.result) {
         // Stamped here: the document's commands do not read the clock.
         command.result = { created: Date.now(), ...command.result };
+      }
+      if (command.op === "addRun" && typeof command.run === "object" && command.run) {
+        command.run = { created: Date.now(), ...command.run };
+      }
+      if (command.op === "updateRunSample" && command.attempted === true) {
+        command.finished ??= Date.now();
       }
       return { result: write((writer) => writer.dispatch(command as unknown as Command)) };
     }
@@ -330,6 +351,18 @@ export function handleRpc(
       });
       return { result: { leftOut } };
     }
+    case "panelInfo":
+      return { result: requirePanel(state, params.name) };
+    case "panelCall": {
+      // A press of a button from Python: the call as a click would make it.
+      const { call, problems } = resolveButton(
+        requirePanel(state, params.panel),
+        String(params.button),
+        { waveExists: (name) => name in state.waves },
+      );
+      if (!call) throw new DocError(problems.join(" "));
+      return { result: call };
+    }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
       if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`);
@@ -377,6 +410,32 @@ export function handleRpc(
           : undefined;
       if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
       return { result: { ...result, changed: changedInputs(state, result) } };
+    }
+    case "listTemplates":
+      return { result: Object.keys(state.templates) };
+    case "templateInfo": {
+      const template = typeof params.name === "string" ? state.templates[params.name] : undefined;
+      if (!template) throw new DocError(`No template named ${JSON.stringify(params.name)}.`);
+      return { result: template };
+    }
+    case "listRuns":
+      return {
+        result: Object.values(state.runs)
+          .sort((a, b) => a.created - b.created)
+          .map((run) => run.name),
+      };
+    case "runInfo": {
+      const run = typeof params.name === "string" ? state.runs[params.name] : undefined;
+      if (!run) throw new DocError(`No run named ${JSON.stringify(params.name)}.`);
+      return {
+        result: {
+          ...run,
+          samples: run.samples.map((sample) => ({
+            ...sample,
+            changed: changedSampleInputs(state, sample),
+          })),
+        },
+      };
     }
     case "importData": {
       const filename = String(params.filename);

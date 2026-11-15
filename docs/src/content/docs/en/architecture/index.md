@@ -27,6 +27,8 @@ The interface, templates, and plugins call analyses through actions. An analysis
 
 The history records the equivalent call that Python writes, such as `op.fit("gauss", op.wave("signal"))`. Python sends the list of actions to the main thread when it starts and whenever it changes. The argument types, and the check a GUI runs before sending, are in the DOM-free `src/core/actions.ts`.
 
+An analysis template is data: a list of steps, each an action and its arguments. Templates and run records live in the Doc as `templates` and `runs` and change through commands like everything else; `src/core/doc/analysisTemplates.ts` checks the shape and order of references when one is saved. Python, which holds the catalog of actions, runs them (`core.run_template`): each sample's steps run inside one `op.atomic()` block, and the sample's record goes in with its outputs when it finishes. The interface sees a run progress, and a sample that fails leaves nothing behind.
+
 ## The plugin sandbox
 
 Code the app does not trust, a plugin's Python, runs apart from the app's Python. `src/sandbox/host.ts` creates an iframe with `sandbox="allow-scripts"` (no `allow-same-origin`), starts a worker in it from a `data:` URL, and runs a Pyodide of the plugin's own in that worker.

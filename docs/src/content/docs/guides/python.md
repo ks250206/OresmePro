@@ -50,6 +50,6 @@ def normalize(wave, to=1.0):
 
 引数の型は `wave`、`waves`、`number`、`integer`、`numbers`、`string`、`boolean`、`choice` です。数には `min` と `max`、リストには `length`、選択肢には `choices` を付けられます。`default` は関数の既定値と同じにします。省略した引数は関数に渡されません。
 
-画面から呼んだ Action は、同じ意味の Python(`op.fit("gauss", op.wave("signal"))` など)として履歴に残ります。
+画面から呼んだ Action は、同じ意味の Python(`op.fit("gauss", op.wave("signal"))` など)として履歴に残ります。パネルのボタンも Action を呼びます([パネル](../panels/))。
 
 [Python API の使い方](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)

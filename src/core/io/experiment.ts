@@ -2,7 +2,14 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand, checkGraphTemplate, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
 import { formulaCurrent, parseFormula } from "../doc/formula";
+import { checkPanel } from "../doc/panels";
 import { checkResult, type AnalysisResult } from "../doc/results";
+import {
+  checkAnalysisTemplate,
+  checkRun,
+  type AnalysisTemplate,
+  type TemplateRun,
+} from "../doc/analysisTemplates";
 import {
   AXIS_SIDES,
   CURSOR_NAMES,
@@ -15,6 +22,7 @@ import {
   type DocState,
   type GraphSpec,
   type PageSpec,
+  type PanelSpec,
   type ProcedureSpec,
   type GraphTemplate,
   type StyleSpec,
@@ -71,10 +79,13 @@ export interface SavedExperiment {
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
+  panels?: Record<string, PanelSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
   graphTemplates?: Record<string, GraphTemplate>;
   results?: Record<string, AnalysisResult>;
+  templates?: Record<string, AnalysisTemplate>;
+  runs?: Record<string, TemplateRun>;
   timeZone?: string;
   windows: WindowState[];
 }
@@ -112,10 +123,13 @@ export function describeExperiment(
     tables: dictFrom(state.tables),
     procedures: dictFrom(state.procedures),
     pages: dictFrom(state.pages),
+    panels: dictFrom(state.panels),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
     graphTemplates: dictFrom(state.graphTemplates),
     results: dictFrom(state.results),
+    templates: dictFrom(state.templates),
+    runs: dictFrom(state.runs),
     timeZone: state.timeZone,
     windows: [...state.windows],
   };
@@ -294,12 +308,23 @@ export function buildState(
     const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
     pages[name] = { ...page, name, items };
   }
+  const panels = dict<PanelSpec>();
+  for (const [name, panel] of Object.entries(saved.panels ?? {})) {
+    checkName(name, "panel");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      panels[name] = { name, ...checkPanel({ title: panel.title, controls: panel.controls }) };
+    } catch {
+      continue;
+    }
+  }
   const windows = saved.windows.filter(
     (window) =>
       window.name in graphs ||
       window.name in tables ||
       window.name in procedures ||
-      window.name in pages,
+      window.name in pages ||
+      window.name in panels,
   );
   const results = dict<AnalysisResult>();
   for (const [name, result] of Object.entries(saved.results ?? {})) {
@@ -311,6 +336,24 @@ export function buildState(
       continue;
     }
   }
+  const templates = dict<AnalysisTemplate>();
+  for (const [name, template] of Object.entries(saved.templates ?? {})) {
+    checkName(name, "template");
+    try {
+      templates[name] = checkAnalysisTemplate(template);
+    } catch {
+      continue;
+    }
+  }
+  const runs = dict<TemplateRun>();
+  for (const [name, run] of Object.entries(saved.runs ?? {})) {
+    checkName(name, "run");
+    try {
+      runs[name] = checkRun(run, name);
+    } catch {
+      continue;
+    }
+  }
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
   return {
     ...state,
@@ -318,10 +361,13 @@ export function buildState(
     tables,
     procedures,
     pages,
+    panels,
     styles,
     defaultStyle,
     graphTemplates,
     results,
+    templates,
+    runs,
     timeZone,
     windows,
   };

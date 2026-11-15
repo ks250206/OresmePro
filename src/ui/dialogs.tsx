@@ -79,6 +79,7 @@ import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
 import { PluginsDialog } from "./PluginsDialog";
+import { TemplatesDialog } from "./TemplatesDialog";
 import { SetWaveValuesDialog } from "./SetWaveValuesDialog";
 
 const close = () => ui.set({ dialog: null });
@@ -3060,6 +3061,13 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "results":
       return <ResultsDialog {...(dialog.result ? { focus: dialog.result } : {})} />;
+    case "templates":
+      return (
+        <TemplatesDialog
+          {...(dialog.template ? { template: dialog.template } : {})}
+          {...(dialog.run ? { run: dialog.run } : {})}
+        />
+      );
     case "experiments":
       return <ExperimentsDialog />;
     case "about":

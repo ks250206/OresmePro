@@ -23,6 +23,7 @@ import {
   keepPackagesForOffline,
   openLaunchedFiles,
 } from "./app/isolate";
+import { importPanels, newPanel } from "./app/panels";
 import { ruffFiles } from "./editor/loadRuff";
 import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
@@ -220,6 +221,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Curve Fitting…", onSelect: open({ kind: "curveFit" }) },
         analysis("Multi-peak Fit…", "fit_peaks"),
         { label: "Results…", onSelect: open({ kind: "results" }) },
+        { label: "Templates…", onSelect: open({ kind: "templates" }) },
         { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
         { label: "Background…", onSelect: open({ kind: "background" }) },
         { label: "Onset…", onSelect: open({ kind: "onset" }) },
@@ -295,6 +297,8 @@ function useMenus(): MenuDefinition[] {
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
         { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
         { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
+        { label: "New Panel", onSelect: newPanel },
+        { label: "Import Panel…", onSelect: importPanels },
         { separator: true },
         {
           label: "Data Browser",
