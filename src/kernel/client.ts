@@ -4,7 +4,8 @@ import type { FileStore } from "../core/files/files";
 import type { History } from "../core/history/history";
 import type { CompletionItem } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
-import { answerRpc, dropStage, type RpcContext } from "./rpc";
+import type { DocWriter } from "../core/doc/doc";
+import { answerRpc, dropStage, openStage, type RpcContext } from "./rpc";
 import { writeSyncReply } from "./syncChannel";
 
 export interface KernelState {
@@ -31,6 +32,17 @@ export interface KernelOptions {
   exportPage: RpcContext["exportPage"];
   measureText: RpcContext["measureText"];
   importPresets: RpcContext["importPresets"];
+  pluginCatalog?: RpcContext["pluginCatalog"];
+  /**
+   * Runs a plugin's action for Python (`op.invoke("plugin....")`). It is
+   * answered later, when the plugin's sandbox is done; Python waits. Its
+   * waves go into `writer`, Python's open atomic block, when there is one.
+   */
+  invokePlugin?: (
+    action: string,
+    args: Record<string, unknown>,
+    writer: DocWriter | null,
+  ) => Promise<unknown>;
   indexURL: string;
 }
 
@@ -424,6 +436,10 @@ export class KernelClient {
           this.setState({ input: prompt });
           break;
         }
+        if (message.method === "invokePlugin") {
+          this.answerPlugin(message.paramsJson, message.buffer);
+          break;
+        }
         const reply = answerRpc(
           this.options,
           message.method,
@@ -441,6 +457,44 @@ export class KernelClient {
         }
         break;
     }
+  }
+
+  /** Answers Python's request to run a plugin's action once the plugin is done with it. */
+  private answerPlugin(paramsJson: string, buffer: SharedArrayBuffer): void {
+    const reply = (json: string) => {
+      // Python may have been restarted meanwhile; then nobody waits on this buffer.
+      if (!this.worker) return;
+      const answer = { json, data: null };
+      this.pendingReply = writeSyncReply(buffer, json, null) ? null : answer;
+    };
+    const fail = (error: unknown) =>
+      reply(
+        JSON.stringify({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    let params: { action?: unknown; args?: unknown };
+    try {
+      params = JSON.parse(paramsJson) as typeof params;
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    const run = this.options.invokePlugin;
+    if (
+      !run ||
+      typeof params.action !== "string" ||
+      typeof params.args !== "object" ||
+      params.args === null
+    ) {
+      fail(new Error("Plugins cannot be run here."));
+      return;
+    }
+    run(params.action, params.args as Record<string, unknown>, openStage(this.options.doc)).then(
+      (result) => reply(JSON.stringify({ ok: true, result: result ?? null })),
+      fail,
+    );
   }
 
   private failAll(reason: string): void {

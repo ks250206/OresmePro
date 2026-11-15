@@ -29,6 +29,18 @@ The history records the equivalent call that Python writes, such as `op.fit("gau
 
 An analysis template is data: a list of steps, each an action and its arguments. Templates and run records live in the Doc as `templates` and `runs` and change through commands like everything else; `src/core/doc/analysisTemplates.ts` checks the shape and order of references when one is saved. Python, which holds the catalog of actions, runs them (`core.run_template`): each sample's steps run inside one `op.atomic()` block, and the sample's record goes in with its outputs when it finishes. The interface sees a run progress, and a sample that fails leaves nothing behind.
 
+## The plugin sandbox
+
+Code the app does not trust, a plugin's Python, runs apart from the app's Python. `src/sandbox/host.ts` creates an iframe with `sandbox="allow-scripts"` (no `allow-same-origin`), starts a worker in it from a `data:` URL, and runs a Pyodide of the plugin's own in that worker.
+
+- The iframe's origin is opaque, so the app's OPFS, IndexedDB, and caches are out of reach
+- The iframe's CSP forbids all fetching (`connect-src 'none'` and the rest), and no source of script is on the network. The app loads Pyodide, the packages, and the plugin's files and hands them over as bytes
+- On start, the worker checks that its origin is opaque, that a `data:` URL cannot be fetched (so the CSP applies), and that storage is out of reach, and refuses to start otherwise
+
+The app and the sandbox are joined by one dedicated `MessagePort`. Everything from the sandbox is checked in `src/core/sandbox/validate.ts` (wave types, shapes and byte lengths, the length of units and other text, the depth and size of values). A run hands over copies of the input waves and puts the returned waves and result in as one change with `transact` (or into the `Stage` of Python's `op.atomic()` when called from there). A run that takes too long has its iframe thrown away.
+
+A plugin package (`src/core/plugins/`) declares all its files and actions in `oresme-plugin.json`. Installing from GitHub first resolves the branch or tag to a commit and fetches every file from that commit. Files are stored by their SHA-256 in a separate part of OPFS (`src/app/plugins/store.ts`) and checked against the record whenever they are read back.
+
 ## SharedArrayBuffer and cross-origin isolation
 
 Synchronous RPC and interruption require `SharedArrayBuffer`. The Vite development and preview servers return `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. On static hosts without configurable headers, the app's service worker adds them to responses. The app can reload once on first launch after the service worker activates.

@@ -37,9 +37,29 @@ export interface AnalysisResult {
   reason: string;
   /** The waves it made, by role: "fit", "residuals", ... */
   outputs: Record<string, string>;
+  /** For a result of a plugin: which plugin, at which commit, made it. Null for the app's own. */
+  source: ResultSource | null;
 }
 
-export const RESULT_KINDS = ["fit", "peaks", "global"] as const;
+/**
+ * Where a plugin's result came from: enough to tell, on any computer, whether
+ * the plugin needed to run it again is the one installed. The result itself
+ * needs none of it to be shown, compared or saved.
+ */
+export interface ResultSource {
+  /** The action's id: plugin.<plugin>.<action>. */
+  action: string;
+  plugin: string;
+  /** The plugin's version, as its manifest says. */
+  version: string;
+  /** Where it was installed from (github:owner/repo/folder, local:name). */
+  origin: string;
+  commit: string | null;
+  /** The digest of the package (see src/core/plugins/package.ts). */
+  digest: string;
+}
+
+export const RESULT_KINDS = ["fit", "peaks", "global", "plugin"] as const;
 export type ResultKind = (typeof RESULT_KINDS)[number];
 
 /** The first part of the name a result gets when none is given: Fit0, Peaks0, Global0. */
@@ -47,6 +67,7 @@ export const RESULT_BASE: Record<ResultKind, string> = {
   fit: "Fit",
   peaks: "Peaks",
   global: "Global",
+  plugin: "Plugin",
 };
 
 export interface ResultInput {
@@ -178,6 +199,22 @@ export function checkResult(value: unknown, name: string, state: DocState | null
       if (typeof wave === "string") outputs[role] = wave;
     }
   }
+  let source: ResultSource | null = null;
+  if (isObject(value.source)) {
+    const given = value.source;
+    const field = (key: string) => (typeof given[key] === "string" ? given[key] : "");
+    source = {
+      action: field("action"),
+      plugin: field("plugin"),
+      version: field("version"),
+      origin: field("origin"),
+      commit: typeof given.commit === "string" ? given.commit : null,
+      digest: field("digest"),
+    };
+  }
+  if (kind === "plugin" && (!source || !source.action)) {
+    throw new DocError("A plugin's result must say which plugin made it.");
+  }
   const count = (item: unknown) =>
     typeof item === "number" && Number.isFinite(item) ? Math.max(0, Math.round(item)) : 0;
   return {
@@ -199,6 +236,7 @@ export function checkResult(value: unknown, name: string, state: DocState | null
     converged: value.converged === true,
     reason: typeof value.reason === "string" ? value.reason : "",
     outputs,
+    source,
   };
 }
 
@@ -216,6 +254,13 @@ export function renameInResult(
   const settings: JsonObject = { ...result.settings };
   for (const key of ["y", "x", "sigma", "mask", "ys", "xs"]) {
     if (key in settings) settings[key] = renamed(settings[key]!);
+  }
+  // A plugin's result keeps the waves it was given apart from its other values.
+  const given = settings.inputs;
+  if (result.kind === "plugin" && given && typeof given === "object" && !Array.isArray(given)) {
+    settings.inputs = Object.fromEntries(
+      Object.entries(given).map(([key, value]) => [key, renamed(value)]),
+    );
   }
   const inputs = result.inputs.map((input) => ({ ...input, wave: rename(input.wave) }));
   const outputs = Object.fromEntries(

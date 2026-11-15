@@ -142,6 +142,8 @@ Keyword arguments change settings (``rerun(hold={"y0": 0})``). The
 outcome is kept as a new result, so that both can be compared, unless
 ``replace=True``.
 
+**明示的な例外** · `OresmeError`
+
 ### `Result.apply`
 
 ```python

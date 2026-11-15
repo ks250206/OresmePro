@@ -2663,10 +2663,63 @@ def actions():
     ``params`` maps each argument's name to its description (see ``op.action``),
     with ``optional`` always given.
     """
-    return [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+    own = [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+    # The plugins' actions run in their own sandboxes; the application knows them.
+    return own + _call("pluginActions")[0]
+
+
+def _plugin_arg(value):
+    """An argument of a plugin's action as the application takes it: waves by name."""
+    if isinstance(value, Wave):
+        return value.name
+    if isinstance(value, (list, tuple)):
+        return [_plugin_arg(item) for item in value]
+    return _plain(value)
+
+
+def _invoke_plugin(id, args):
+    """Runs a plugin's action: in the application, which hands it to the plugin's sandbox.
+
+    The waves it makes go where this code's other changes go: into the open
+    ``op.atomic()`` block, if there is one. Returns what the application
+    reports: the names of the waves made, the values and the result kept.
+    """
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise OresmeError(f"The arguments of {id} are a dict of name: value, not {args!r}.")
+    outcome = _call("invokePlugin", {"action": id, "args": {str(key): _plugin_arg(value) for key, value in args.items()}})[0]
+    if outcome.get("log"):
+        print(outcome["log"], end="" if outcome["log"].endswith("\n") else "\n")
+    return {key: outcome[key] for key in ("waves", "values", "result")}
+
+
+def _plugin_action(id):
+    """A plugin's action as one of Python's, for checking a call and making it.
+
+    The plugin runs in its own sandbox; the application knows its actions
+    and runs them (see ``_invoke_plugin``). Its waves go into the open
+    ``op.atomic()`` block like everything else this code changes.
+    """
+    for spec in _call("pluginActions")[0]:
+        if spec["id"] == id:
+            params = {
+                name: {**param, "optional": bool(param.get("optional"))}
+                for name, param in spec["params"].items()
+            }
+            return _Action(
+                id, spec["version"], spec["title"], spec.get("description"), params,
+                lambda **passed: _invoke_plugin(id, passed),
+            )
+    raise OresmeError(f"No installed plugin has the action {id}, or it is turned off.")
 
 
 def _find_action(id, version):
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        found = _plugin_action(id)
+        if version is not None and version != found.version:
+            raise OresmeError(f"{id} has no version {version!r} (it has {found.version}).")
+        return found
     if not isinstance(id, str) or id not in _actions:
         raise OresmeError(f"No action named {id!r}.")
     versions = _actions[id]
@@ -2734,6 +2787,8 @@ def invoke(id, args=None, *, version=None):
     a version of the action, the highest by default. The call runs in an
     ``op.atomic()`` block and returns what the function returns.
     """
+    if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
+        return _invoke_plugin(id, args)
     found, _, passed = _prepare_action(id, args, version)
     with atomic() if found.atomic else contextlib.nullcontext():
         return found.function(**passed)

@@ -35,3 +35,6 @@ playwright-report/
 
 # Local assembly of the combined GitHub Pages artifact
 .pages/
+
+# Python byte code, from running the example plugin's checks
+__pycache__/

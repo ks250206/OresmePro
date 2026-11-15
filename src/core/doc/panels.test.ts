@@ -440,3 +440,31 @@ describe("controls made for an argument", () => {
     expect(doc.getState().panels.p!.controls[0]).toMatchObject({ value: 5, min: 1, step: 1 });
   });
 });
+
+describe("buttons of a plugin's panel", () => {
+  it("say which plugin to install when its action is not there", () => {
+    const panel: PanelSpec = {
+      name: "EISFit",
+      title: "",
+      controls: [
+        {
+          kind: "button",
+          name: "fit",
+          label: "Fit",
+          inline: false,
+          action: "plugin.electrochem.eis_fit",
+          version: null,
+          args: {},
+        },
+      ],
+    };
+    const { call, problems } = resolveButton(panel, "fit", {
+      waveExists: () => true,
+      catalog: [{ id: "core.fit", version: 1, title: "Fit", description: null, params: {} }],
+    });
+    expect(call).toBeNull();
+    expect(problems).toEqual([
+      "There is no action plugin.electrochem.eis_fit: install the plugin electrochem, or turn it on (Analysis › Plugins…).",
+    ]);
+  });
+});

@@ -29,6 +29,18 @@ Python の `op.atomic()` は、複数の RPC 要求にまたがる同じ仕組�
 
 解析テンプレートは、Action を順に呼ぶ手順を書いたデータです。テンプレートと実行記録(Run)は Doc の `templates` と `runs` にあり、ほかと同じくコマンドで変わります。参照の形と順序は `src/core/doc/analysisTemplates.ts` が保存のときに検査します。実行するのは Action の登録表がある Python で(`core.run_template`)、試料ごとに全段を `op.atomic()` の中で行い、終わるたびにその試料の記録と出力を一緒に反映します。そのため実行中も GUI に進み具合が見え、失敗した試料は何も残しません。
 
+## プラグインのサンドボックス
+
+作者を知らないコード(プラグインの Python)は、アプリの Python とは別の場所で動きます。`src/sandbox/host.ts` が `sandbox="allow-scripts"`(`allow-same-origin` なし)の iframe を作り、その中で `data:` URL から Worker を起動し、Worker の中でプラグイン専用の Pyodide を動かします。
+
+- iframe のオリジンは不透明なので、アプリの OPFS・IndexedDB・キャッシュに届きません
+- iframe の CSP は、取得をすべて禁止します(`connect-src 'none'` ほか)。スクリプトの読込元にもネットワーク上の場所はありません。Pyodide・パッケージ・プラグインのファイルは、アプリが読み込んでバイト列として渡します
+- Worker は起動時に、オリジンが不透明であること、`data:` URL を fetch できないこと(CSP が効いていること)、保存領域に届かないことを確かめ、どれかが成り立たなければ起動しません
+
+アプリとサンドボックスは、専用の `MessagePort` 1 本だけでつながります。サンドボックスから届くものは、すべて `src/core/sandbox/validate.ts` で検査します(wave の型・形・バイト数、単位などの文字列の長さ、値の深さと大きさ)。プラグインの実行は、入力の wave のコピーを渡し、返った wave と結果を `transact`(Python の `op.atomic()` の中からなら、その `Stage`)で 1 つの変更として入れます。時間切れでは iframe ごと破棄します。
+
+プラグインのパッケージ(`src/core/plugins/`)は、`oresme-plugin.json` が全ファイルと Action を宣言します。GitHub から入れるときは、ブランチやタグを最初にコミットに解決し、すべてのファイルをそのコミットから取得します。ファイルは SHA-256 で OPFS の別の場所に保存し(`src/app/plugins/store.ts`)、読み出すたびに記録と照合します。
+
 ## SharedArrayBuffer とクロスオリジン分離
 
 同期 RPC と割り込みには `SharedArrayBuffer` が必要です。Vite の開発・プレビューサーバーは `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を返します。ヘッダーを設定できない静的ホストでは、アプリの Service Worker が応答に付与します。初回起動時に Service Worker の有効化後、アプリが1回再読み込みされることがあります。

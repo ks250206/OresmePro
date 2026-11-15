@@ -668,10 +668,13 @@ export function resolveButton(
   if (catalog && catalog.length > 0) {
     const spec = findAction(catalog, control.action, control.version ?? undefined);
     if (!spec) {
+      const plugin = /^plugin\.([a-z][a-z0-9_]*)\./.exec(control.action)?.[1];
       problems.push(
-        control.version === null
-          ? `There is no action ${control.action}. If a procedure registers it, run the procedure.`
-          : `There is no version ${control.version} of the action ${control.action}.`,
+        control.version !== null
+          ? `There is no version ${control.version} of the action ${control.action}.`
+          : plugin
+            ? `There is no action ${control.action}: install the plugin ${plugin}, or turn it on (Analysis › Plugins…).`
+            : `There is no action ${control.action}. If a procedure registers it, run the procedure.`,
       );
     } else {
       const prefix = `${spec.id}: `;

@@ -1,3 +1,4 @@
+import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
@@ -10,6 +11,8 @@ import { toSvg } from "../core/plot/svg";
 import { KernelClient } from "../kernel/client";
 import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
+import { PluginHost } from "./plugins/host";
+import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
@@ -58,6 +61,8 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** Installing, managing and running plugins. */
+  | { kind: "plugins" }
   | { kind: "about" };
 
 /** A file of data read into memory, waiting to be loaded through the Load Data dialog. */
@@ -131,6 +136,8 @@ export async function startExperiment(): Promise<void> {
   } catch {
     // It is only a convenience.
   }
+  // Plugins belong to the browser, not the experiment; a failure to read them stops nothing.
+  void pluginStore.load().catch(() => {});
   await experiment.start();
 }
 
@@ -256,10 +263,22 @@ function runProcedures(): void {
   }
 }
 
+/** The plugins installed in this browser, kept apart from the experiments (see src/app/plugins/). */
+export const pluginStore = new PluginStore(
+  typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function"
+    ? new OpfsPluginStorage()
+    : new MemoryPluginStorage(),
+  // Every tab keeps the same plugins: changes go one at a time and the others hear of them.
+  { locks: browserLocks(), channel: "oresme-plugins" },
+);
+export const plugins = new PluginHost({ store: pluginStore, doc, pyodideURL: PYODIDE_URL });
+
 export const kernel: KernelClient = new KernelClient({
   doc,
   history,
   files,
+  pluginCatalog: () => plugins.catalog(),
+  invokePlugin: (action, args, writer) => plugins.run(action, args as ActionArgs, writer),
   onStart: runProcedures,
   onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
@@ -270,6 +289,72 @@ export const kernel: KernelClient = new KernelClient({
   importPresets: () => importPresets.list(),
   indexURL: PYODIDE_URL,
 });
+
+let catalogParts: [readonly ActionSpec[], readonly ActionSpec[]] | null = null;
+let catalog: readonly ActionSpec[] = [];
+
+/**
+ * Every action there is: Python's (the app's own and those procedures
+ * register) and the plugins'. The same list until one of them changes, so
+ * that it can be read during rendering.
+ */
+export function actionCatalog(): readonly ActionSpec[] {
+  const fromKernel = kernel.getActions();
+  const fromPlugins = plugins.catalog();
+  if (!catalogParts || catalogParts[0] !== fromKernel || catalogParts[1] !== fromPlugins) {
+    catalogParts = [fromKernel, fromPlugins];
+    catalog = [...fromKernel, ...fromPlugins];
+  }
+  return catalog;
+}
+
+export function subscribeCatalog(listener: () => void): () => void {
+  const fromKernel = kernel.subscribeActions(listener);
+  const fromPlugins = plugins.subscribe(listener);
+  return () => {
+    fromKernel();
+    fromPlugins();
+  };
+}
+
+/**
+ * Calls an action by id, as panels and the Plugins dialog do. The app's own
+ * and the procedures' go to Python; a plugin's goes to its sandbox, with the
+ * call recorded in the history as the Python that does the same.
+ */
+export async function invokeAction(
+  id: string,
+  args: ActionArgs,
+  version?: number,
+): Promise<unknown> {
+  if (!id.startsWith("plugin.")) return kernel.invoke(id, args, version);
+  flushEchoes();
+  const startedAt = Date.now();
+  const entry = history.add("gui", invokeCode(id, args), "running", startedAt);
+  try {
+    const outcome = await plugins.run(id, args);
+    if (outcome.log)
+      history.appendOutput(entry, { kind: "stream", name: "stdout", text: outcome.log });
+    const made = Object.values(outcome.waves);
+    const parts = [
+      made.length > 0 ? `Made ${made.join(", ")}.` : "",
+      outcome.result ? `Kept the result ${outcome.result}.` : "",
+    ].filter(Boolean);
+    if (parts.length > 0) history.appendOutput(entry, { kind: "result", text: parts.join(" ") });
+    history.update(entry, { status: "ok", durationMs: Date.now() - startedAt });
+    return outcome;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    history.appendOutput(entry, {
+      kind: "error",
+      name: "PluginError",
+      message,
+      traceback: message,
+    });
+    history.update(entry, { status: "error", durationMs: Date.now() - startedAt });
+    throw error;
+  }
+}
 
 export function showError(title: string, error: unknown): void {
   ui.set({ alert: { title, message: error instanceof Error ? error.message : String(error) } });

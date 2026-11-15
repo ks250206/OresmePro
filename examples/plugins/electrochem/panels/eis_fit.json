@@ -1,0 +1,82 @@
+{
+  "format": "oresme-panel",
+  "version": 1,
+  "name": "EISFit",
+  "title": "EIS Fit",
+  "controls": [
+    { "kind": "heading", "name": "title", "label": "Equivalent circuit fit", "inline": false },
+    {
+      "kind": "text",
+      "name": "about",
+      "label": "Choose the frequency, Z′ and Z″ waves of a spectrum, then a model. The fitted curve is made next to Z′; the parameters go to Analysis › Results.",
+      "inline": false
+    },
+    {
+      "kind": "wave",
+      "name": "frequency",
+      "label": "Frequency (Hz)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "wave",
+      "name": "zre",
+      "label": "Z′ (Ω)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "wave",
+      "name": "zim",
+      "label": "−Z″ (Ω)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "choice",
+      "name": "imaginary",
+      "label": "The Z″ wave holds",
+      "inline": false,
+      "value": "-Z''",
+      "options": ["-Z''", "Z''"]
+    },
+    {
+      "kind": "choice",
+      "name": "model",
+      "label": "Model",
+      "inline": false,
+      "value": "Randles",
+      "options": ["Randles", "R(RQ)", "R(RC)"]
+    },
+    {
+      "kind": "choice",
+      "name": "weighting",
+      "label": "Weighting",
+      "inline": true,
+      "value": "modulus",
+      "options": ["modulus", "unit"]
+    },
+    {
+      "kind": "button",
+      "name": "fit",
+      "label": "Fit",
+      "inline": false,
+      "action": "plugin.electrochem.eis_fit",
+      "version": null,
+      "args": {
+        "frequency": { "$control": "frequency" },
+        "zre": { "$control": "zre" },
+        "zim": { "$control": "zim" },
+        "imaginary": { "$control": "imaginary" },
+        "model": { "$control": "model" },
+        "weighting": { "$control": "weighting" }
+      }
+    }
+  ]
+}

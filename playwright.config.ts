@@ -35,6 +35,22 @@ export default defineConfig({
           : {},
       },
     },
+    // What keeps plugin code apart is up to each browser, so the sandbox's tests
+    // also run in Firefox and WebKit when E2E_ALL_BROWSERS is set.
+    ...(process.env.E2E_ALL_BROWSERS
+      ? [
+          {
+            name: "firefox",
+            testMatch: /sandbox\.spec\.ts/,
+            use: { ...devices["Desktop Firefox"], viewport: { width: 1400, height: 900 } },
+          },
+          {
+            name: "webkit",
+            testMatch: /sandbox\.spec\.ts/,
+            use: { ...devices["Desktop Safari"], viewport: { width: 1400, height: 900 } },
+          },
+        ]
+      : []),
   ],
   webServer: {
     command: `pnpm preview --port ${PORT} --strictPort`,

@@ -1228,6 +1228,24 @@ class Result:
         outcome is kept as a new result, so that both can be compared, unless
         ``replace=True``.
         """
+        if self.kind == "plugin":
+            # A plugin's action, run again in its sandbox with the same waves and values.
+            info = self._info()
+            settings = info["settings"]
+            source = info.get("source") or {}
+            arguments = {**settings.get("inputs", {}), **settings.get("params", {}), **changes}
+            try:
+                return _op._invoke_plugin(source.get("action") or settings["action"], arguments)
+            except _op.OresmeError as error:
+                if "No installed plugin" not in str(error) or not source.get("plugin"):
+                    raise
+                # Say which plugin is needed, and where it came from, to install it again.
+                commit = f" at {source['commit'][:12]}" if source.get("commit") else ""
+                raise _op.OresmeError(
+                    f"{error} This result was made by the plugin {source['plugin']} "
+                    f"{source.get('version', '')} from {source.get('origin', '?')}{commit}: "
+                    "install it (Analysis > Plugins...) to run it again."
+                ) from None
         call, settings = self._call(**changes)
         if replace:
             settings["result"] = self._name
@@ -1242,6 +1260,8 @@ class Result:
         """
         if self.kind == "global":
             raise _op.OresmeError("A fit of several waves at once cannot be applied wave by wave.")
+        if self.kind == "plugin":
+            raise _op.OresmeError("Run a plugin's action on other waves with op.invoke.")
         outcomes = []
         for wave_ in [waves] if isinstance(waves, (str, _op.Wave)) else list(waves):
             call, settings = self._call(**changes)

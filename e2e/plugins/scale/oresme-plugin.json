@@ -1,0 +1,22 @@
+{
+  "manifestVersion": 1,
+  "name": "scale",
+  "title": "Scale",
+  "version": "1.0.0",
+  "description": "Multiplies a wave by a number: a plugin for testing the plugin system.",
+  "license": "MIT",
+  "python": { "entry": "scale", "packages": [] },
+  "files": ["scale.py", "styles/paper.json"],
+  "actions": [
+    {
+      "name": "scale",
+      "title": "Scale a wave",
+      "description": "Multiplies the values of a wave by a factor.",
+      "params": {
+        "y": { "type": "wave", "title": "Wave" },
+        "factor": { "type": "number", "title": "Factor", "default": 2 }
+      }
+    }
+  ],
+  "contributes": { "styles": ["styles/paper.json"] }
+}
