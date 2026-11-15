@@ -7,6 +7,7 @@ import {
   leafName,
   type DocState,
   type ErrorSource,
+  type GraphSpec,
   type GraphTemplate,
   type SlotRole,
   type TemplateSlot,
@@ -111,41 +112,7 @@ export function captureTemplate(
       throw new DocError(`${graph.name} has no axis named ${JSON.stringify(axis)}.`);
     }
   }
-
-  const drafts = new Map<string, Draft>();
-  let zSlots = 0;
-  /** `scaling`: which of the wave's scalings the graph draws it with. */
-  const use = (name: string, role: SlotRole, place: number, scaling: "x" | "xy" | null) => {
-    const wave = state.waves[name];
-    let draft = drafts.get(name);
-    if (!draft) {
-      draft = { wave: name, role, place, unit: wave?.unit ?? "", xUnit: null, yUnit: null };
-      drafts.set(name, draft);
-      if (role === "z") zSlots += 1;
-    }
-    if (wave && scaling) draft.xUnit = wave.xUnit;
-    if (wave && scaling === "xy") draft.yUnit = wave.yUnit;
-  };
-  graph.traces.forEach((trace, place) => {
-    use(trace.y, "y", place, trace.x === null ? "x" : null);
-    if (trace.x !== null) use(trace.x, "x", place, null);
-    if (typeof trace.yError === "string") use(trace.yError, "yError", place, null);
-    if (typeof trace.xError === "string") use(trace.xError, "xError", place, null);
-    if (trace.colorWave !== null) use(trace.colorWave, "color", place, null);
-  });
-  for (const item of [...graph.images, ...graph.contours]) use(item.wave, "z", zSlots, "xy");
-
-  // A slot is named after its use, numbered by its trace when there are
-  // several of the same use: y1 and x1 belong to the first trace.
-  const byRole = new Map<SlotRole, number>();
-  for (const draft of drafts.values()) byRole.set(draft.role, (byRole.get(draft.role) ?? 0) + 1);
-  const slotOf = new Map<string, string>();
-  const slots: TemplateSlot[] = [];
-  for (const { wave, role, place, unit, xUnit, yUnit } of drafts.values()) {
-    const name = byRole.get(role) === 1 ? SLOT_BASE[role] : `${SLOT_BASE[role]}${place + 1}`;
-    slotOf.set(wave, name);
-    slots.push({ name, role, unit, xUnit, yUnit });
-  }
+  const { slots, slotOf } = slotsOf(state, graph);
   const slot = (wave: string) => slotOf.get(wave)!;
 
   // The name of a wave in text is taken for that wave only when no other
@@ -236,6 +203,57 @@ export function captureTemplate(
       ];
     }),
   };
+}
+
+/**
+ * The slots of a graph's waves, in the order the graph uses them: each wave
+ * once, named after its first use, and numbered by its trace when there are
+ * several of the same use, so that y1 and x1 belong to the first trace.
+ */
+function slotsOf(
+  state: DocState,
+  graph: GraphSpec,
+): { slots: TemplateSlot[]; slotOf: Map<string, string> } {
+  const drafts = new Map<string, Draft>();
+  let zSlots = 0;
+  /** `scaling`: which of the wave's scalings the graph draws it with. */
+  const use = (name: string, role: SlotRole, place: number, scaling: "x" | "xy" | null) => {
+    const wave = state.waves[name];
+    let draft = drafts.get(name);
+    if (!draft) {
+      draft = { wave: name, role, place, unit: wave?.unit ?? "", xUnit: null, yUnit: null };
+      drafts.set(name, draft);
+      if (role === "z") zSlots += 1;
+    }
+    if (wave && scaling) draft.xUnit = wave.xUnit;
+    if (wave && scaling === "xy") draft.yUnit = wave.yUnit;
+  };
+  graph.traces.forEach((trace, place) => {
+    use(trace.y, "y", place, trace.x === null ? "x" : null);
+    if (trace.x !== null) use(trace.x, "x", place, null);
+    if (typeof trace.yError === "string") use(trace.yError, "yError", place, null);
+    if (typeof trace.xError === "string") use(trace.xError, "xError", place, null);
+    if (trace.colorWave !== null) use(trace.colorWave, "color", place, null);
+  });
+  for (const item of [...graph.images, ...graph.contours]) use(item.wave, "z", zSlots, "xy");
+
+  const byRole = new Map<SlotRole, number>();
+  for (const draft of drafts.values()) byRole.set(draft.role, (byRole.get(draft.role) ?? 0) + 1);
+  const slotOf = new Map<string, string>();
+  const slots: TemplateSlot[] = [];
+  for (const { wave, role, place, unit, xUnit, yUnit } of drafts.values()) {
+    const name = byRole.get(role) === 1 ? SLOT_BASE[role] : `${SLOT_BASE[role]}${place + 1}`;
+    slotOf.set(wave, name);
+    slots.push({ name, role, unit, xUnit, yUnit });
+  }
+  return { slots, slotOf };
+}
+
+/** The wave of a graph that each slot of a template made from it would hold, by slot. */
+export function templateSources(state: DocState, graphName: string): Map<string, string> {
+  const graph = state.graphs[graphName];
+  if (!graph) return new Map();
+  return new Map([...slotsOf(state, graph).slotOf].map(([wave, slot]) => [slot, wave]));
 }
 
 /** The slots a graph cannot be made without: those of the waves it plots. */
