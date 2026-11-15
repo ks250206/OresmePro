@@ -1,0 +1,29 @@
+name: Set up
+description: Node, pnpm, Python, the packages, and Pyodide with the Python packages the app starts with.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+        cache: pnpm
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.14"
+
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+
+    # See scripts/fetch-pyodide.mjs.
+    - name: Cache Pyodide packages
+      uses: actions/cache@v4
+      with:
+        path: public/pyodide
+        key: pyodide-${{ hashFiles('pnpm-lock.yaml', 'scripts/fetch-pyodide.mjs') }}
+
+    - run: pnpm pyodide
+      shell: bash

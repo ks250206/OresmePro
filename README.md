@@ -1043,7 +1043,8 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 - **E2E テスト**(`pnpm e2e`、Playwright): ビルドしたアプリを Chromium で操作します。コマンドウィンドウのキー操作、
   グラフのマウス操作、表、ファイルの読み込みと保存、Python の中断などを、テストごとに新しいブラウザ(と Python)で確認します。
   既にインストール済みの Chromium を使うときは `PLAYWRIGHT_CHROMIUM_PATH` にそのパスを指定します。
-- **CI**(`.github/workflows/ci.yml`): push のたびに、チェック、単体テスト、ビルド、E2E テストを順に実行します。
+- **CI**(`.github/workflows/ci.yml`): push のたびに、チェック・単体テスト・ドキュメント、E2E テスト(4 台に分けて実行)、
+  Firefox と WebKit でのサンドボックスの試験を、別々のマシンで同時に実行します。ブランチの保護が求める「Check, test and build」は、これらがすべて通ったときに通ります。
 
 ## 制限
 
