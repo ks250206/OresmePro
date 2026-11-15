@@ -1,4 +1,5 @@
 import { dict, type Dict } from "./dict";
+import type { AnalysisTemplate, TemplateRun } from "./analysisTemplates";
 import type { AnalysisResult } from "./results";
 
 /** The number types a wave can hold, named as NumPy names them. */
@@ -698,6 +699,10 @@ export interface DocState {
   readonly graphTemplates: Dict<GraphTemplate>;
   /** Analysis results (fits), by name, with what was asked for. */
   readonly results: Dict<AnalysisResult>;
+  /** Analysis templates, by name: steps of actions to do to one sample after another. */
+  readonly templates: Dict<AnalysisTemplate>;
+  /** Records of templates run on lists of samples, by name, each with a copy of its template. */
+  readonly runs: Dict<TemplateRun>;
   /**
    * The time zone dates are shown and typed in: "UTC", "local" (the zone of
    * the computer the experiment is open on) or an IANA name.
@@ -719,6 +724,8 @@ export const emptyDoc = (): DocState => ({
   defaultStyle: null,
   graphTemplates: dict(),
   results: dict(),
+  templates: dict(),
+  runs: dict(),
   timeZone: "UTC",
   windows: [],
 });
