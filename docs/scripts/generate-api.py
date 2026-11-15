@@ -33,7 +33,7 @@ SECTIONS = {
     "global": (
         "Global Functions",
         (
-            "OresmeError load_text load_excel load_igor kill_window "
+            "OresmeError load_text load_excel load_igor load_parquet load_hdf5 kill_window "
             "Procedure new_procedure procedure procedures time_zone set_time_zone "
             "Layout LayoutItem new_layout layout layouts"
         ),

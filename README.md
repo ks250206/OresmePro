@@ -126,6 +126,28 @@ op.load_igor("scan.ibw")        # [wave]
 op.load_igor("session.pxp")     # すべての wave のリスト。w.name はフォルダ付き("raw_data:signal")
 ```
 
+**Parquet**(`.parquet`)と **HDF5**(`.h5`、`.hdf5`)のファイルは、Pyodide のパッケージ(pyarrow、h5py)を使って Python で読み込みます。
+ウィンドウにドロップするか **File › Load Parquet or HDF5 Files…** で、ファイルを実験のファイルに入れてから `op.load_parquet("run.parquet")` / `op.load_hdf5("scan.h5")` を実行します。
+履歴にはその行が残り、1 回の Undo で取り消せます。pyarrow・h5py は初めて読み込むときに取り込まれます(数秒かかります)。
+
+- Parquet は列ごとに 1 つの wave になり、表が開きます。整数・浮動小数点数・decimal は数値 wave(64 ビット整数と decimal は `float64`、float16 は `float32`)、
+  真偽値は 0 と 1 の `uint8`、日時と日付は日付 wave(1970-01-01 UTC からの秒、単位 `dat`)、時刻と経過時間は秒(単位 `s`)、文字列とカテゴリ(辞書型の列)はテキスト wave です。
+  リスト・構造体・バイナリの列は読み込まず、警告に名前が出ます。
+- null は NaN(テキストでは空文字列)にして、その件数をノートに書きます。null を含む整数・真偽値の列は、NaN を持てるように `float64` になります。
+- HDF5 はデータセットごとに 1 つの wave になり、グループはデータフォルダになります(`/run1/signal` → `run1:signal`)。
+  形(1〜4 次元)と型を引き継ぎ、`w[i, j]` はデータセットの `[i, j]` です。文字列はテキスト wave(2 次元以上は行優先で 1 次元に並べ、元の形をノートに書きます)、
+  複合型(compound)はフィールドごとの wave(`<データセット>_<フィールド>`)、h5py が保存した NumPy の日時は日付 wave になります。
+  属性はノートに書き(上位のグループの属性も)、文字列の属性 `units`(または `unit`)は値の単位になります。
+  5 次元以上・空・参照型などのデータセットは読み込まず、警告に名前が出ます。
+- どちらも、wave のノートの先頭に元のファイル名とその SHA-256、列やデータセットの名前と型が入ります。
+  2⁵³ を超えて丸められた 64 ビット整数があれば、その数も書かれます(Igor の読み込みと同じ)。
+  名前は使える形に直し(`Voltage (V)` → `Voltage_V`)、すでにある名前には `_1` などを付けます。
+
+```python
+op.load_parquet("run.parquet", columns=["t", "voltage"])   # [wave, …]。table=False なら表を開かない
+op.load_hdf5("scan.h5", datasets="/run1")                   # グループ /run1 の中のすべてのデータセット
+```
+
 Python 本体(Pyodide)と NumPy・IPython はアプリと一緒に配信され、起動に数秒かかります。
 グラフや表の操作は Python の起動を待たずに使えます。
 
@@ -492,8 +514,8 @@ OresmePro はインストールできる Web アプリ(PWA)です。
 
 - Chrome / Edge ではアドレスバーの「インストール」から、Safari では「Dock に追加」から、独立したウィンドウのアプリになります。
 - **オフラインでも動きます。** 一度開くと、アプリ本体と Python(Pyodide、NumPy、IPython)一式がブラウザに保存され、次からはネットワークなしで起動します。
-  SciPy・pandas・scikit-learn・lmfit は、最初に `import` したときに保存されます。使う前にオフライン用に入れておくには
-  **Python › Keep SciPy, pandas, scikit-learn and lmfit for Offline Use** を選びます。
+  SciPy・pandas・scikit-learn・lmfit は最初に `import` したとき、pyarrow・h5py は最初に Parquet・HDF5 を読み込んだときに保存されます。
+  使う前にオフライン用に入れておくには **Python › Keep Optional Packages for Offline Use** を選びます。
 - インストールすると、`.oresme` ファイルを OresmePro で開けるようになります(対応ブラウザのみ)。
 - データはブラウザの中(OPFS)に置かれます。別の PC やブラウザへは `.oresme` ファイルで持ち運びます。
 
@@ -684,17 +706,17 @@ r.lmfit                                                # lmfit 自身の結果(M
 
 ### ディレクトリ
 
-| 場所                | 内容                                                                                         |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| `src/core/doc/`     | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                             |
-| `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算              |
-| `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                  |
-| `src/core/io/`      | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、実験ファイル(`.oresme`) |
-| `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                      |
-| `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                             |
-| `src/app/`          | アプリの状態、自動保存、書き出し、スタイルのライブラリ                                       |
-| `src/editor/`       | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行          |
-| `src/ui/`           | React コンポーネント                                                                         |
+| 場所                | 内容                                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/core/doc/`     | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                                                                         |
+| `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算                                                          |
+| `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                                                              |
+| `src/core/io/`      | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、Python で読む形式(Parquet・HDF5)の振り分け、実験ファイル(`.oresme`) |
+| `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                                                                  |
+| `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                                                                         |
+| `src/app/`          | アプリの状態、自動保存、書き出し、スタイルのライブラリ                                                                                   |
+| `src/editor/`       | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行                                                      |
+| `src/ui/`           | React コンポーネント                                                                                                                     |
 
 `src/core/` は DOM にも React にも依存しません。
 
@@ -731,8 +753,9 @@ Python(Pyodide)本体と、起動時に使う NumPy・IPython とその依存パ
 (本体は npm パッケージから、パッケージは初回だけダウンロードしてハッシュを検証。このディレクトリはリポジトリには入れません)。
 これにより、ビルドしたアプリは起動に外部への接続を必要としません。
 
-SciPy・pandas・scikit-learn・lmfit とその依存パッケージも同じ場所に置き、アプリと一緒に配信します(合わせて約 23 MB)。
-起動時には読み込まず、最初に `import` されたときにブラウザが取りに行きます。
+SciPy・pandas・scikit-learn・lmfit、Parquet・HDF5 を読む pyarrow・h5py とその依存パッケージも同じ場所に置き、アプリと一緒に配信します(合わせて約 35 MB。うち pyarrow が約 10 MB)。
+起動時には読み込まず、最初に `import` されたとき(pyarrow・h5py は `op.load_parquet` / `op.load_hdf5` が最初に呼ばれたとき)にブラウザが取りに行きます。
+同梱しているので、CDN に出られないネットワークでも使え、テストもネットワークなしで走ります。
 lmfit と、それが必要とする asteval・dill は Pyodide の配布物に含まれないので、PyPI の純 Python の wheel をバージョンとハッシュを固定して取得し、Pyodide のロックファイルに加えています。
 それ以外の Pyodide のパッケージは同梱せず、`import` した時点で CDN(jsDelivr)から取得します。
 Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できます。
@@ -755,6 +778,8 @@ Pyodide 一式の取得元は環境変数 `VITE_PYODIDE_URL` で変更できま�
 - Undo は 100 手前まで、かつ過去の手順だけが抱えている wave データが 512 MB を超えない範囲までです(大きな wave を何度も書き換えると、古い手順から忘れます)。
 - 64 ビット整数の wave はありません(`float64` になります。2⁵³ までの整数は正確に入ります)。
 - Excel は `.xlsx` / `.xlsm` の読み込みだけです。書き出しと、古い `.xls` は対応していません。
+- Parquet と HDF5 は読み込みだけです(書き出すときは Python から pyarrow・h5py を直接使います)。Parquet のリスト・構造体の列、HDF5 の 5 次元以上や参照型のデータセットは読み込みません。
+  ドロップやメニューで読み込むファイルは実験のファイルに入れるので、64 MB までです。NetCDF の読み込みはまだありません。
 - 同時フィット(`op.fit_global`)、一括フィット(`op.fit_batch`)、ピーク間の拘束(`op.fit_peaks(..., spacing=…)`)は Python から使います(ダイアログはありません)。
   保存された結果を別の wave に適用する操作は **Analysis › Results…** からもできます。
 - 解析結果が覚えているのは入力 wave の内容の指紋で、データそのものの写しではありません。元データが変わったことは分かりますが、変わる前のデータには戻せません(Undo か **Go Back to Opening State…** を使います)。
