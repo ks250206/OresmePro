@@ -77,6 +77,7 @@ import { ExperimentsDialog } from "./ExperimentsDialog";
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
 import { ResultsDialog } from "./ResultsDialog";
+import { SetWaveValuesDialog } from "./SetWaveValuesDialog";
 
 const close = () => ui.set({ dialog: null });
 
@@ -3020,6 +3021,8 @@ function renderDialog(dialog: DialogRequest) {
       return <WaveScalingDialog wave={dialog.wave} />;
     case "waveType":
       return <WaveTypeDialog wave={dialog.wave} />;
+    case "setWaveValues":
+      return <SetWaveValuesDialog wave={dialog.wave} />;
     case "curveFit":
       return <CurveFitDialog wave={dialog.wave} />;
     case "analysis":
