@@ -1,6 +1,7 @@
 import { loadPyodide } from "pyodide";
 import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "../../core/doc/doc";
+import { layoutGraph } from "../../core/plot/layout";
 import sdk from "../../sandbox/python/oresme_plugin.py?raw";
 import { contributionCommands } from "./contributions";
 import { readLocalPackage } from "./sources";
@@ -47,8 +48,15 @@ describe("the example plugin electrochem", () => {
     for (const command of contributionCommands("graphTemplates", path!, pkg.files.get(path!)!)) {
       doc.dispatch(command);
     }
-    for (const name of ["zre", "zim", "zre_fit", "zim_fit"]) {
-      doc.dispatch({ op: "makeWave", name, data: Float64Array.from([1, 2, 3]), unit: "Ω" });
+    // Z′ spans 3× the range of −Z″, as a spectrum's arc does.
+    const values: Record<string, number[]> = {
+      zre: [10, 20, 40],
+      zim: [0, 5, 10],
+      zre_fit: [10, 20, 40],
+      zim_fit: [0, 5, 10],
+    };
+    for (const [name, data] of Object.entries(values)) {
+      doc.dispatch({ op: "makeWave", name, data: Float64Array.from(data), unit: "Ω" });
     }
     doc.dispatch({
       op: "makeGraphs",
@@ -63,6 +71,21 @@ describe("the example plugin electrochem", () => {
     ]);
     expect(graph.axes.left!.label).toBe("−Z″ (Ω)");
     expect(graph.axes.bottom!.label).toBe("Z′ (Ω)");
+    // An ohm is as long along Z′ as along −Z″ (Plan 1), and the plot is 7 cm tall.
+    expect(graph.width).toEqual({ mode: "plan", factor: 1, hAxis: "bottom", vAxis: "left" });
+    const layout = layoutGraph(
+      graph,
+      doc.getState().waves,
+      440,
+      440,
+      (text, size) => text.length * size * 0.55,
+    );
+    const perOhm = (name: string) => {
+      const scale = layout.axes[name]!.scale;
+      return Math.abs(scale.p1 - scale.p0) / (scale.max - scale.min);
+    };
+    expect(perOhm("bottom") / perOhm("left")).toBeCloseTo(1, 2);
+    expect(layout.plot.h).toBe(Math.round((7 / 2.54) * 72 * (4 / 3)));
   });
 
   it("passes its numerical checks on synthetic data in Pyodide", { timeout: 300_000 }, async () => {

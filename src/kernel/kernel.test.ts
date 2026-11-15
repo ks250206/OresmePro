@@ -2129,6 +2129,60 @@ describe("oresme Python API", () => {
     expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
   });
 
+  it("sizes a graph's plot area in lengths, aspects, plans and lengths per unit", async () => {
+    const ok = await run(
+      [
+        'ps = op.display(op.make("ps_y", [0.0, 2.0, 1.0]), name="PlotSize")',
+        "ps.set(width=op.cm(8), height=('aspect', 0.75))",
+        "print(repr(ps.width), ps.height, float(ps.width) == 8 * 72 / 2.54, op.inch(1) == 72)",
+        "ps.height = 200",
+        'ps.width = ("plan", 1)',
+        "print(ps.width, repr(ps.height))",
+        'ps.set(width=("per_unit", 2, "cm", "bottom"), height=("per_unit", op.inch(1), "left"))',
+        "print(ps.width, ps.height)",
+        'ps.set(width="auto", height=("absolute", 3, "inch"))',
+        "print(ps.width, repr(ps.height))",
+        "for bad in (('aspect', 2), ('plan', 1, 'left', 'bottom'), ('per_unit', 1, 'cm', 'nowhere'), -3, 'big', ('wide', 2)):",
+        "    try:",
+        "        ps.set(width=bad, height=('aspect', 1)) if bad == ('aspect', 2) else ps.set(width=bad)",
+        "    except (op.OresmeError, ValueError, TypeError) as error:",
+        "        print(type(error).__name__, str(error).split('.')[0][:60])",
+        "print(ps.width)",
+        "print(ps.script().splitlines()[-1])",
+      ].join("\n"),
+    );
+    expect(ok).toBe(true);
+    expect(stdout).toBe(
+      [
+        "op.cm(8) ('aspect', 0.75) True True",
+        "('plan', 1, 'bottom', 'left') op.pt(200)",
+        "('per_unit', 2, 'cm', 'bottom') ('per_unit', 1, 'inch', 'left')",
+        "auto op.inch(3)",
+        "OresmeError The width and the height of the plot area cannot both be siz",
+        "OresmeError The plan of the width needs a horizontal axis; left is verti",
+        'OresmeError PlotSize has no axis named "nowhere" for the per unit size o',
+        "OresmeError width's value must be greater than 0",
+        "ValueError width must be \"auto\", a length or a tuple, not 'big'",
+        "ValueError width has no mode 'wide': \"auto\", a length (op",
+        "auto",
+        "g.set(height=op.inch(3))",
+        "",
+      ].join("\n"),
+    );
+    expect(doc.getState().graphs.PlotSize!.height).toEqual({
+      mode: "absolute",
+      value: 3,
+      unit: "inch",
+    });
+    // What the dialog writes into the history does the same when it is run.
+    const props = {
+      width: { mode: "plan", factor: 1, hAxis: "bottom", vAxis: "left" },
+      height: { mode: "absolute", value: 6, unit: "cm" },
+    };
+    expect(await run(echoPython({ op: "modifyGraph", graph: "PlotSize", props })!)).toBe(true);
+    expect(doc.getState().graphs.PlotSize).toMatchObject(props);
+  });
+
   it("keeps a graph as a template and makes graphs of other samples from it", async () => {
     const ok = await run(
       [

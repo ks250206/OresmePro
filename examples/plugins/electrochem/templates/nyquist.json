@@ -202,7 +202,20 @@
           "trace": null,
           "point": 0
         }
-      ]
+      ],
+      "plot": {
+        "width": {
+          "mode": "plan",
+          "factor": 1,
+          "hAxis": "bottom",
+          "vAxis": "left"
+        },
+        "height": {
+          "mode": "absolute",
+          "value": 7,
+          "unit": "cm"
+        }
+      }
     }
   }
 }
