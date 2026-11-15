@@ -39,6 +39,7 @@ import {
   type GraphLayout,
 } from "../core/plot/layout";
 import { formatDate, formatNumber, timeZone, type TimeZone } from "../core/plot/ticks";
+import { graphWaveKey } from "../core/plot/windowFit";
 import { marqueeZoom, panBy, tidy, zoomAbout } from "../core/plot/zoom";
 import { openContextMenu } from "./Menu";
 
@@ -230,21 +231,7 @@ export function GraphWindow({ name }: { name: string }) {
   }, []);
 
   // Re-layout only when this graph's own waves change, not on every edit elsewhere.
-  const waveKey = graph
-    ? [
-        ...graph.traces.flatMap((trace) => [
-          trace.y,
-          trace.x,
-          trace.yError,
-          trace.xError,
-          trace.colorWave,
-        ]),
-        ...graph.images.map((image) => image.wave),
-        ...graph.contours.map((contour) => contour.wave),
-      ]
-        .map((wave) => (typeof wave === "string" ? waves[wave]?.rev : ""))
-        .join(",")
-    : "";
+  const waveKey = graph ? graphWaveKey(graph, waves) : "";
   const layout = useMemo(
     () =>
       graph && size.w > 0 && size.h > 0
@@ -672,7 +659,8 @@ export function GraphWindow({ name }: { name: string }) {
               .map((item) => item.name)
               .join(", ") || "empty graph"
           }`}
-          style={{ width: size.w, height: size.h }}
+          // A fixed plot area draws the figure at its own size, whatever the window's.
+          style={{ width: layout?.width ?? size.w, height: layout?.height ?? size.h }}
           className="block"
         />
         {marquee ? (

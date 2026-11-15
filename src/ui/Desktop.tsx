@@ -2,6 +2,7 @@ import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "
 import { setEditing, usePanelRuntime } from "../app/panels";
 import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
 import type { WindowState } from "../core/doc/types";
+import { fixedSides } from "../core/plot/windowFit";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
 import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
@@ -64,6 +65,7 @@ function ResizeHandle({
   className,
 }: {
   window: WindowState;
+  /** The edges it moves, less those whose side is fixed (see {@link Locked}). */
   edges: Edges;
   className: string;
 }) {
@@ -85,6 +87,27 @@ function ResizeHandle({
     doc.dispatch({ op: "moveWindow", name: window.name, x, y, w, h });
   }, window);
   return <div className={`absolute z-10 ${className}`} {...drag} />;
+}
+
+/**
+ * The sides of a window that cannot be resized by hand: those of a graph
+ * whose plot area has a size of its own there, as the window always fits
+ * its figure in that side (see ../core/plot/windowFit).
+ */
+interface Locked {
+  width: boolean;
+  height: boolean;
+}
+
+/** A handle's edges, less those of locked sides; null if none is left. */
+function freeEdges(edges: Edges, locked: Locked): Edges | null {
+  const free: Edges = {
+    left: edges.left && !locked.width,
+    right: edges.right && !locked.width,
+    top: edges.top && !locked.height,
+    bottom: edges.bottom && !locked.height,
+  };
+  return free.left || free.right || free.top || free.bottom ? free : null;
 }
 
 /** The Edit / Done toggle in the title bar of a panel. */
@@ -113,12 +136,14 @@ function WindowFrame({
   title,
   z,
   accessory,
+  locked = { width: false, height: false },
   children,
 }: {
   window: WindowState;
   active: boolean;
   title: string;
   z: number;
+  locked?: Locked;
   /** Shown at the right end of the title bar. */
   accessory?: ReactNode;
   children: ReactNode;
@@ -169,9 +194,27 @@ function WindowFrame({
         {accessory ?? <span className="w-3" />}
       </header>
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-md">{children}</div>
-      {HANDLES.map((handle, index) => (
-        <ResizeHandle key={index} window={window} {...handle} />
-      ))}
+      {HANDLES.map((handle, index) => {
+        const edges = freeEdges(handle.edges, locked);
+        if (!edges) return null;
+        // A corner left with one side to move resizes only that way.
+        const corner =
+          (handle.edges.left || handle.edges.right) && (handle.edges.top || handle.edges.bottom);
+        const cursor =
+          corner && locked.width
+            ? "!cursor-ns-resize"
+            : corner && locked.height
+              ? "!cursor-ew-resize"
+              : "";
+        return (
+          <ResizeHandle
+            key={index}
+            window={window}
+            edges={edges}
+            className={`${handle.className} ${cursor}`}
+          />
+        );
+      })}
     </section>
   );
 }
@@ -251,6 +294,7 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
             }
             z={windows.indexOf(window) + 1}
             accessory={window.kind === "panel" ? <PanelEditToggle name={window.name} /> : undefined}
+            locked={graph ? fixedSides(graph) : undefined}
           >
             {window.kind === "graph" ? (
               <GraphWindow name={window.name} />

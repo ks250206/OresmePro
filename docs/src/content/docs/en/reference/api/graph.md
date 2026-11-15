@@ -17,6 +17,9 @@ op.Graph(name)
 
 A graph window.
 
+``width`` and ``height`` size its plot area, the rectangle the axes
+enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
+
 Create a graph with `op.display(...)` and retrieve an existing graph with `op.graph(name)`. The `display` default `style=_DEFAULT` uses the saved default style. Pass `style=None` to create a graph without a style.
 
 **Properties**
@@ -33,7 +36,36 @@ Create a graph with `op.display(...)` and retrieve an existing graph with `op.gr
 - `right` (read-only)
 - `top` (read-only)
 
-**Configurable properties** · `font_size`, `font_family`, `show_info`
+**Configurable properties** · `font_size`, `font_family`, `show_info`, `width`, `height`
+
+### `Graph.set`
+
+```python
+set(**props)
+```
+
+Change several properties at once. Returns self.
+
+``font_size``, ``font_family`` and ``show_info`` (the cursor bar);
+``width`` and ``height`` size the plot area, each one of:
+
+- ``"auto"``: what the window leaves after the margins (the default).
+- a length: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)`` or a
+  number of points.
+- ``("aspect", f)``: f times the other side.
+- ``("plan", f, haxis, vaxis)``: one unit of the horizontal axis
+  ``haxis`` is f times as long as one unit of the vertical axis
+  ``vaxis`` (the axes default to ``"bottom"`` and ``"left"``); for
+  the height, one unit of ``vaxis`` is f times one of ``haxis``.
+  ``("plan", 1)`` scales X and Y alike, as a Nyquist plot needs.
+- ``("per_unit", n, unit, axis)``: n of ``unit`` ("pt", "cm",
+  "inch") for each unit of the axis; ``("per_unit", op.cm(2),
+  "bottom")`` says the same. A unit of a log axis is a decade.
+
+The margins stay automatic: a side that is not auto makes the
+figure the plot area plus the margins, and the window fits it.
+The two sides cannot both use aspect or plan. Reading ``width`` or
+``height`` gives the same forms back.
 
 ### `Graph.append`
 
@@ -213,8 +245,11 @@ Keep this graph's look as a style named ``name`` and return it.
 
 The style holds the fonts, the look of the axes (ticks, mirror, grid)
 and of the traces in order (color, line, markers), not the data; with
-``size=True`` also the size the graph is drawn at. A style of that
-name is replaced.
+``size=True`` also the size the graph is drawn at, and how its plot
+area is sized where that is look (``"auto"``, a length or
+``("aspect", f)``; a plan or a per unit size follows the data, so the
+style keeps the size it gave instead). A style of that name is
+replaced.
 
 ### `Graph.save_template`
 
@@ -225,7 +260,9 @@ save_template(name, fixed=())
 Keep this graph as a graph template named ``name`` and return it.
 
 Each wave the graph plots becomes a slot of the template (see
-``GraphTemplate``); the traces, axes, look, text and size are kept.
+``GraphTemplate``); the traces, axes, look, text and size are kept,
+with how the plot area is sized (``width`` and ``height``, plan and
+per unit too).
 An axis keeps its range only if it is named in ``fixed`` (a name or
 a list of names; ``True`` for every axis): the others follow the
 data of each graph made from the template. A template of that name
@@ -247,21 +284,47 @@ svg(width=None, height=None, cursors=False)
 
 The graph as an SVG document; by default at its window's size.
 
+A side of the plot area sized other than ``"auto"`` keeps its own size
+whatever ``width`` and ``height`` say.
+
 ### `Graph.kill`
 
 ```python
 kill()
 ```
 
-### `Graph.set`
+## `Length`
+
+A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.
+
+As a number it is the length in points (1/72 inch), so it goes wherever
+points do (the places of a page layout's items, say); it also keeps the
+unit it was given in, as ``value`` and ``unit``, which a graph's plot
+area keeps to show it so again.
+
+## `pt`
 
 ```python
-set(**props)
+op.pt(value)
 ```
 
-Change several properties at once. Returns self.
+A length of ``value`` points (1/72 inch).
 
-**Explicit exceptions** · `AttributeError`
+## `cm`
+
+```python
+op.cm(value)
+```
+
+A length of ``value`` centimetres.
+
+## `inch`
+
+```python
+op.inch(value)
+```
+
+A length of ``value`` inches (72 points).
 
 ## `Annotation`
 
@@ -306,9 +369,13 @@ A graph style: the look of a graph kept in the experiment under a name.
 
 ``data`` is what it holds, as a plain dict with any of ``"graph"``
 (``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
-the drawn graph, in pixels), ``"axes"`` (by ``"left"``, ``"bottom"``,
-``"right"``, ``"top"`` and ``"other"`` for added axes: ``mirror``,
-``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of trace looks
+the drawn graph, in pixels), ``"plot"`` (``width`` and ``height`` of the
+plot area as the document holds them: ``{"mode": "auto"}``,
+``{"mode": "absolute", "value": 8, "unit": "cm"}`` or
+``{"mode": "aspect", "factor": 0.75}``), ``"axes"`` (by ``"left"``,
+``"bottom"``, ``"right"``, ``"top"`` and ``"other"`` for added axes:
+``mirror``, ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of
+trace looks
 (``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
 ``marker_size``, ``marker_fill``) that the traces of a graph take in
 turn, starting again from the first when there are more traces. A style

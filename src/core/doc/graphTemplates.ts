@@ -157,8 +157,13 @@ export function captureTemplate(
 
   const sides = AXIS_SIDES as readonly string[];
   const axisNames = [...sides, ...Object.keys(graph.axes).filter((name) => !sides.includes(name))];
+  // The template keeps every mode of the plot area, plan and per unit too,
+  // since it keeps the axes they name; its style then needs none.
+  const { plot: _, ...style } = captureStyle(state, graph.name, true);
+  const sized = graph.width.mode !== "auto" || graph.height.mode !== "auto";
   return {
-    style: captureStyle(state, graph.name, true),
+    style,
+    ...(sized ? { plot: { width: graph.width, height: graph.height } } : {}),
     slots,
     traces: graph.traces.map((trace) => ({
       y: slot(trace.y),
@@ -462,7 +467,11 @@ export function makeFromTemplate(
   const graph = next.graphs[name]!;
   // The template's look is not a style of the experiment, so the graph
   // remembers none, as it would after having its properties set one by one.
-  const styled = { ...styledGraph(graph, template.style, name), style: null };
+  const styled = {
+    ...styledGraph(graph, template.style, name),
+    ...template.plot,
+    style: null,
+  };
   return {
     ...next,
     graphs: withEntry(next.graphs, name, styled),

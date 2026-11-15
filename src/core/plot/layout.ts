@@ -32,6 +32,12 @@ import { DASHES, type FontStyle, type MeasureText, type Prim, type Rect } from "
 import { emitText, layoutText, CAP_HEIGHT, type TextBlock } from "./richText";
 import { makeScale, shiftScale, type Scale } from "./scale";
 import {
+  plotAreaSize,
+  SCREEN_UNITS_PER_POINT,
+  type AxisExtent,
+  type PlotSizeResult,
+} from "./plotSize";
+import {
   axisLabelText,
   categoryTicks,
   dateTicks,
@@ -61,6 +67,8 @@ const LANE_GAP = 10;
 const ERROR_CAP = 3;
 /** Images are resampled to at most this many pixels per side. */
 const IMAGE_LIMIT = 2048;
+/** The extent of no data, for an axis nothing is drawn against. */
+const NO_EXTENT: Extent = { min: Infinity, max: -Infinity, minPositive: Infinity };
 
 export type AxisKind = "number" | "date" | "category";
 
@@ -117,6 +125,13 @@ export interface GraphLayout {
 export interface LayoutOptions {
   /** Draw cursors. Off for exported files, as in Igor. */
   cursors?: boolean;
+  /**
+   * Layout units in a point, for plot areas given in lengths on paper:
+   * {@link SCREEN_UNITS_PER_POINT} (one unit is a CSS pixel) unless told.
+   */
+  unitsPerPoint?: number;
+  /** Stop once the size of the figure and the plot area are known: nothing is drawn. */
+  sizeOnly?: boolean;
   /** The time zone date axes are labelled in (see DocState.timeZone); UTC if left out. */
   timeZone?: string;
 }
@@ -966,17 +981,24 @@ export const traceX = (y: Wave, x: Wave | null, index: number): number =>
  * Lays a graph out at a given size and returns the instructions to draw it,
  * plus the geometry the UI needs for hit-testing and zooming.
  *
+ * The size given is the figure's for a plot area that follows the window.
+ * A side of the plot area with another mode (see PlotDimension in ../doc/types) has
+ * exactly the size that mode gives, and the figure is that plus the margins:
+ * the layout's `width` and `height` say how big it came out.
+ *
  * Pure: the result depends only on the arguments, so the same call serves the
  * screen, exported files and tests.
  */
 export function layoutGraph(
   graph: GraphSpec,
   waves: Readonly<Record<string, Wave>>,
-  width: number,
-  height: number,
+  availableWidth: number,
+  availableHeight: number,
   measure: MeasureText,
   options: LayoutOptions = {},
 ): GraphLayout {
+  let width = availableWidth;
+  let height = availableHeight;
   const size = graph.fontSize;
   const family = graph.fontFamily;
   const zone = isTimeZone(options.timeZone) ? timeZone(options.timeZone) : UTC;
@@ -1156,14 +1178,35 @@ export function layoutGraph(
   let plot: Rect = { x: 0, y: 0, w: 0, h: 0 };
   const laneOffsets = new Map<AxisSide, number[]>();
 
+  // Plan and per unit sizes need the axes' ranges, which do not depend on the size.
+  const extentOfAxis = (name: string): AxisExtent | null => {
+    const spec = graph.axes[name];
+    if (!spec) return null;
+    const [lo, hi] =
+      axisList.find((axis) => axis.name === name)?.range ?? axisRange(spec, NO_EXTENT);
+    return {
+      units: spec.log ? Math.abs(Math.log10(hi / lo)) : Math.abs(hi - lo),
+      span: spec.span[1] - spec.span[0],
+    };
+  };
+  let sized: PlotSizeResult | null = null;
+
   // Margins depend on the tick labels, which depend on the axis lengths, which
   // depend on the margins. Two passes settle it.
   for (let pass = 0; pass < 2; pass += 1) {
+    sized = plotAreaSize({
+      width: graph.width,
+      height: graph.height,
+      available: { width: availableWidth, height: availableHeight },
+      margins,
+      axis: extentOfAxis,
+      unitsPerPoint: options.unitsPerPoint ?? SCREEN_UNITS_PER_POINT,
+    });
     plot = {
       x: Math.round(margins.left),
       y: Math.round(margins.top),
-      w: Math.max(16, Math.round(width - margins.left - margins.right)),
-      h: Math.max(16, Math.round(height - margins.top - margins.bottom)),
+      w: sized.plotWidth,
+      h: sized.plotHeight,
     };
     for (const axis of axisList) {
       const [lo, hi] = axis.spec.span;
@@ -1264,6 +1307,23 @@ export function layoutGraph(
         }
       });
     }
+  }
+
+  // A fixed side makes the figure the plot area and the margins as they ended up.
+  if (sized?.fixedWidth) width = plot.x + plot.w + Math.ceil(margins.right);
+  if (sized?.fixedHeight) height = plot.y + plot.h + Math.ceil(margins.bottom);
+  if (options.sizeOnly) {
+    return {
+      width,
+      height,
+      prims: [],
+      annotations: [],
+      plot,
+      axes: {},
+      traces: [],
+      cursors: [],
+      missing: [...missing],
+    };
   }
 
   const prims: Prim[] = [{ kind: "rect", x: 0, y: 0, w: width, h: height, fill: PAPER }];

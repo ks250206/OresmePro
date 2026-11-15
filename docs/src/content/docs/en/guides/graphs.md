@@ -16,6 +16,30 @@ g = op.display(y, name="Response")
 g.trace().set(mode="lines+markers", color="#ab1831")
 ```
 
+## Plot area size
+
+By default the plot area (the rectangle the axes enclose) is what the window leaves after the margins. To give it a length, as a figure for a paper needs, choose a mode for its width and its height under **Plot area** in **Modify Graph**. The modes follow Igor Pro's ModifyGraph `width` and `height`.
+
+| Mode     | Meaning                                                                                                                                                                    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auto     | Follow the window (the default)                                                                                                                                            |
+| Absolute | A fixed length (pt, cm or inch; 1 inch = 72 pt)                                                                                                                            |
+| Aspect   | f times the other side                                                                                                                                                     |
+| Plan     | One unit of the horizontal axis is f times as long as one unit of the vertical axis (the other way round for the height); f = 1 scales both alike, as a Nyquist plot needs |
+| Per unit | A length for each unit of an axis (2 cm per volt, say)                                                                                                                     |
+
+The margins stay automatic. In a side that is not Auto, the figure is the plot area plus the margins and the window is resized to fit it; resizing the window by hand does not change that side. Plan and Per unit follow the axes' ranges, so the size changes when a range or the autoscale does. A unit of a log axis is a decade. The width and the height cannot both be Aspect or Plan.
+
+One layout unit is a CSS pixel (1/96 inch) on screen and in SVG and PNG files, and a graph's PDF is written at 0.75 pt to the unit, so 8 cm is 8 cm on screen and in the PDF (rounded to whole pixels, within 0.13 mm). Absolute lengths go from 12 to 3000 pt, and computed sizes are held between 16 and 4000 pixels. In a page layout the plot area has the same length on paper, drawn from the top left of the graph's box. A style saved with its size keeps Auto, Absolute and Aspect; graph templates and `g.script()` keep every mode.
+
+```python
+g.set(width=op.cm(8), height=("aspect", 0.75))
+g.set(width=("plan", 1, "bottom", "left"), height=op.cm(6))
+g.set(width=("per_unit", 2, "cm", "bottom"))
+g.set(width="auto")
+g.width   # read back in the same form: op.cm(8), ('aspect', 0.75), ...
+```
+
 ## Reuse and export
 
 Apply a saved graph style to another graph in the experiment. `g.script()` returns Python code to recreate the graph in an experiment containing the required waves. Use `g.save("response.svg")` or **File → Save Graph as PDF / SVG / PNG** to share the figure.
