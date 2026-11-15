@@ -1,4 +1,3 @@
-import type { JsonValue } from "../actions";
 import { dict, type Dict } from "./dict";
 import type { AnalysisResult } from "./results";
 
@@ -701,8 +700,20 @@ export interface ControlRef {
   readonly $control: string;
 }
 
-/** An argument of a button's action: a plain value, or the value of a control of the panel. */
-export type ControlArg = JsonValue | ControlRef;
+/**
+ * An argument of a button's action: plain data (JSON) in which a reference
+ * to a control stands for the control's value. Mostly the argument is a
+ * plain value or a reference itself; a reference deep inside (in a list of
+ * dicts, say) is the value there.
+ */
+export type ControlArg =
+  | null
+  | boolean
+  | number
+  | string
+  | ControlRef
+  | readonly ControlArg[]
+  | { readonly [key: string]: ControlArg };
 
 interface ControlBase {
   /** Unique in its panel; what buttons and Python name it by. */

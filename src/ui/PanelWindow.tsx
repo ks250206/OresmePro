@@ -8,7 +8,7 @@ import {
   useCatalog,
   usePanelRuntime,
 } from "../app/panels";
-import { doc, runGui, runGuiCoalesced, useDoc, type MenuItem } from "../app/session";
+import { doc, runGui, runGuiCoalesced, showError, useDoc, type MenuItem } from "../app/session";
 import { findAction, type JsonValue, type ParamSpec } from "../core/actions";
 import { uniqueName, type Command } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
@@ -458,6 +458,18 @@ function startingValue(param: ParamSpec, waves: readonly string[]): JsonValue {
   }
 }
 
+/** The types of argument {@link ArgValue} has an editor of its own for. */
+const EDITED_TYPES = [
+  "boolean",
+  "choice",
+  "wave",
+  "string",
+  "number",
+  "integer",
+  "waves",
+  "numbers",
+] as const;
+
 /** An editor for the fixed value of an argument, as its type wants it. */
 function ArgValue({
   name,
@@ -467,11 +479,35 @@ function ArgValue({
 }: {
   name: string;
   param: ParamSpec;
-  value: JsonValue;
-  onChange: (value: JsonValue) => void;
+  value: ControlArg;
+  onChange: (value: ControlArg) => void;
 }) {
   const waveOrder = useDoc((state) => state.waveOrder);
   const label = `${name} value`;
+  const flat = (item: ControlArg) => item === null || typeof item !== "object";
+  // A type this form does not know (one added since), or a value with lists or dicts
+  // inside, is written as JSON.
+  if (
+    !(EDITED_TYPES as readonly string[]).includes(param.type) ||
+    !(flat(value) || (Array.isArray(value) && value.every(flat)))
+  ) {
+    return (
+      <InlineCommit
+        label={label}
+        value={JSON.stringify(value)}
+        onCommit={(typed) => {
+          try {
+            onChange(JSON.parse(typed) as ControlArg);
+          } catch {
+            showError(
+              "That is not JSON",
+              `${name} is written as JSON here, such as [1, 2] or {"a": 1}.`,
+            );
+          }
+        }}
+      />
+    );
+  }
   switch (param.type) {
     case "boolean":
       return (
@@ -519,8 +555,8 @@ function ArgValue({
     default: {
       const list = param.type === "waves" || param.type === "numbers";
       const numeric = param.type !== "string" && param.type !== "waves";
-      const show = (item: JsonValue) =>
-        typeof item === "object" ? JSON.stringify(item) : String(item);
+      // Only flat values reach here (see above).
+      const show = (item: ControlArg) => (typeof item === "object" ? "" : String(item));
       const text = Array.isArray(value) ? value.map(show).join(", ") : show(value);
       return (
         <InlineCommit
@@ -646,7 +682,7 @@ function ArgRow({
           <ArgValue
             name={name}
             param={param}
-            value={current as JsonValue}
+            value={current!}
             onChange={(value) => setArg(value)}
           />
         </div>

@@ -219,6 +219,49 @@ describe("panels", () => {
     ]);
   });
 
+  it("resolve controls deep inside an argument, as a template's inputs take them", () => {
+    const doc = quickFit();
+    const waveExists = (name: string) => name in doc.getState().waves;
+    doc.dispatch({
+      op: "addControl",
+      panel: "quick_fit",
+      kind: "button",
+      name: "batch",
+      props: {
+        action: "core.run_template",
+        args: {
+          template: "peak",
+          inputs: [{ y: { $control: "target" }, x: null }],
+          options: { width: { $control: "width" } },
+        },
+      },
+    });
+    expect(resolveButton(panelOf(doc), "batch", { waveExists }).call?.args).toEqual({
+      template: "peak",
+      inputs: [{ y: "sig", x: null }],
+      options: { width: 5 },
+    });
+    doc.dispatch({
+      op: "modifyControl",
+      panel: "quick_fit",
+      control: "target",
+      props: { name: "spectrum" },
+    });
+    expect(controlOf(doc, "batch")).toMatchObject({
+      args: { inputs: [{ y: { $control: "spectrum" } }] },
+    });
+    doc.dispatch({ op: "killWaves", names: ["sig"] });
+    expect(resolveButton(panelOf(doc), "batch", { waveExists }).problems).toEqual([
+      "Spectrum is missing: there is no wave sig.",
+    ]);
+    const modify = (args: unknown) =>
+      doc.dispatch({ op: "modifyControl", panel: "quick_fit", control: "batch", props: { args } });
+    expect(() => modify({ inputs: [{ y: { $control: "target", also: 1 } }] })).toThrow(
+      /\{"\$control": name\} and nothing else/,
+    );
+    expect(() => modify({ inputs: [[[[[[[[[1]]]]]]]]] })).toThrow(/nested too deeply/);
+  });
+
   it("are data unless a button calls the user's own actions", () => {
     const doc = quickFit();
     expect(panelTrust(panelOf(doc))).toBe("data");

@@ -145,9 +145,10 @@ button(name, label=None, *, action, args=None, version=None, inline=None)
 A button that calls the action ``action`` with ``args`` when pressed.
 
 Each argument is a plain value (text, a number, True or False, a
-list) or ``op.control(name)``, the value of a control of the panel
-at the time of the press. ``version`` calls that version of the
-action rather than the highest.
+list or a dict of them) or ``op.control(name)``, the value of a
+control of the panel at the time of the press; ``op.control`` may
+also sit inside a list or dict, as in a template's inputs.
+``version`` calls that version of the action rather than the highest.
 
 ### `Panel.row`
 

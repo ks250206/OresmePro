@@ -3,6 +3,7 @@ import {
   validateArgs,
   type ActionArgs,
   type ActionSpec,
+  type JsonValue,
   type ParamSpec,
 } from "../actions";
 import {
@@ -42,6 +43,8 @@ const ACTION_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 const ARG_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 const MAX_TEXT = 10_000;
 const MAX_ITEMS = 1000;
+/** How deep lists and dicts may be nested in an argument. */
+const MAX_DEPTH = 8;
 
 export const isControlRef = (value: unknown): value is ControlRef =>
   typeof value === "object" &&
@@ -111,27 +114,38 @@ function actionId(value: unknown, what: string): string {
 }
 
 /** A plain value an action takes: text, a number, true or false, or a list of texts and numbers. */
-function literal(value: unknown, what: string): ControlArg {
+/**
+ * An argument as data: text, finite numbers, true or false, and lists and
+ * dicts of them (an action such as core.run_template takes a list of dicts),
+ * where `{"$control": name}` and nothing else besides stands for a control.
+ * Dicts are made without a prototype (see ./dict), whatever their keys.
+ */
+function arg(value: unknown, what: string, depth = 0): ControlArg {
   if (typeof value === "string") return text(value, what);
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return finite(value, what);
-  if (Array.isArray(value) && value.length <= MAX_ITEMS) {
-    return value.map((item: unknown, index) => option(item, `${what}[${index}]`));
+  if (value === null) {
+    // An action is never passed null for an argument; within a value, null may mean something.
+    if (depth === 0) throw new DocError(`${what} cannot be null: leave it out instead.`);
+    return null;
   }
-  if (value === null) throw new DocError(`${what} cannot be null: leave it out instead.`);
-  throw new DocError(
-    `${what} must be text, a number, true or false, a list, or a control as {"$control": name}.`,
-  );
-}
-
-function arg(value: unknown, what: string): ControlArg {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    if (!isControlRef(value)) {
-      throw new DocError(`${what}: a control is given as {"$control": name} and nothing else.`);
+  if (depth >= MAX_DEPTH) throw new DocError(`${what} is nested too deeply.`);
+  if (Array.isArray(value)) {
+    if (value.length > MAX_ITEMS) throw new DocError(`${what} has too many items.`);
+    return value.map((item: unknown, index) => arg(item, `${what}[${index}]`, depth + 1));
+  }
+  if (typeof value === "object") {
+    if (Object.hasOwn(value, "$control")) {
+      if (!isControlRef(value)) {
+        throw new DocError(`${what}: a control is given as {"$control": name} and nothing else.`);
+      }
+      return { $control: checkName(value.$control, "control") };
     }
-    return { $control: checkName(value.$control, "control") };
+    const entries = Object.entries(value);
+    if (entries.length > MAX_ITEMS) throw new DocError(`${what} has too many items.`);
+    return dict(entries.map(([key, item]) => [key, arg(item, `${what}.${key}`, depth + 1)]));
   }
-  return literal(value, what);
+  throw new DocError(`${what} must be text, a number, true or false, a list or a dict.`);
 }
 
 function args(value: unknown, what: string): Dict<ControlArg> {
@@ -362,20 +376,24 @@ function withNewPanel(state: DocState, panel: PanelSpec): DocState {
   };
 }
 
-/** The arguments of a button with references to one control renamed. */
+/** An argument with the references to one control renamed; the same argument if it has none. */
+function renameRefs(value: ControlArg, from: string, to: string): ControlArg {
+  if (isControlRef(value)) return value.$control === from ? { $control: to } : value;
+  if (Array.isArray(value)) {
+    const items = value.map((item: ControlArg) => renameRefs(item, from, to));
+    return items.some((item, index) => item !== value[index]) ? items : value;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value as Dict<ControlArg>);
+  const renamed = entries.map(([key, item]) => [key, renameRefs(item, from, to)] as const);
+  return renamed.some(([, item], index) => item !== entries[index]![1]) ? dict(renamed) : value;
+}
+
+/** A button with the references to one control in its arguments renamed. */
 function renameArgs(control: PanelControl, from: string, to: string): PanelControl {
   if (control.kind !== "button") return control;
-  const entries = Object.entries(control.args);
-  if (!entries.some(([, value]) => isControlRef(value) && value.$control === from)) return control;
-  return {
-    ...control,
-    args: dict(
-      entries.map(([key, value]) => [
-        key,
-        isControlRef(value) && value.$control === from ? { $control: to } : value,
-      ]),
-    ),
-  };
+  const args = renameRefs(control.args, from, to);
+  return args === control.args ? control : { ...control, args: args as Dict<ControlArg> };
 }
 
 export type PanelCommand = Extract<
@@ -593,38 +611,58 @@ export function resolveButton(
   /** The control each argument is bound to, to name it in what is wrong. */
   const bound = new Map<string, PanelControl>();
   const failed = new Set<string>();
-  for (const [name, value] of Object.entries(control.args)) {
-    if (!isControlRef(value)) {
-      args[name] = value;
-      continue;
-    }
-    const source = panel.controls.find((item) => item.name === value.$control);
-    failed.add(name);
+  /** The value of a control a reference names, or undefined (and why, in problems). */
+  const valueOf = (ref: ControlRef, name: string): JsonValue | undefined => {
+    const source = panel.controls.find((item) => item.name === ref.$control);
     if (!source) {
-      problems.push(`${name}: there is no control named ${JSON.stringify(value.$control)}.`);
-      continue;
+      problems.push(`${name}: there is no control named ${JSON.stringify(ref.$control)}.`);
+      return undefined;
     }
     if (!hasValue(source)) {
       problems.push(`${name}: ${shown(source)} is a ${source.kind}, which has no value.`);
-      continue;
+      return undefined;
     }
     if (source.kind === "wave") {
       if (source.value === null) {
         problems.push(`Choose a wave for ${shown(source)}.`);
-        continue;
+        return undefined;
       }
       if (!options.waveExists(source.value)) {
         problems.push(`${shown(source)} is missing: there is no wave ${source.value}.`);
-        continue;
+        return undefined;
       }
     }
     if (source.value === null) {
       problems.push(`${shown(source)} has no options to choose from.`);
+      return undefined;
+    }
+    return source.value;
+  };
+  /** An argument with each reference replaced by its control's value; undefined if one has none. */
+  const resolve = (value: ControlArg, name: string): JsonValue | undefined => {
+    if (isControlRef(value)) return valueOf(value, name);
+    if (Array.isArray(value)) {
+      const items = value.map((item: ControlArg) => resolve(item, name));
+      return items.includes(undefined) ? undefined : (items as JsonValue[]);
+    }
+    if (typeof value !== "object" || value === null) return value;
+    const entries = Object.entries(value as Dict<ControlArg>).map(
+      ([key, item]) => [key, resolve(item, name)] as const,
+    );
+    if (entries.some(([, item]) => item === undefined)) return undefined;
+    return Object.fromEntries(entries) as JsonValue;
+  };
+  for (const [name, value] of Object.entries(control.args)) {
+    const resolved = resolve(value, name);
+    if (resolved === undefined) {
+      failed.add(name);
       continue;
     }
-    failed.delete(name);
-    bound.set(name, source);
-    args[name] = source.value;
+    args[name] = resolved;
+    if (isControlRef(value)) {
+      const source = panel.controls.find((item) => item.name === value.$control);
+      if (source) bound.set(name, source);
+    }
   }
   const catalog = options.catalog;
   if (catalog && catalog.length > 0) {
