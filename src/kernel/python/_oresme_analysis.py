@@ -1227,7 +1227,18 @@ class Result:
             settings = info["settings"]
             source = info.get("source") or {}
             arguments = {**settings.get("inputs", {}), **settings.get("params", {}), **changes}
-            return _op._invoke_plugin(source.get("action") or settings["action"], arguments)
+            try:
+                return _op._invoke_plugin(source.get("action") or settings["action"], arguments)
+            except _op.OresmeError as error:
+                if "No installed plugin" not in str(error) or not source.get("plugin"):
+                    raise
+                # Say which plugin is needed, and where it came from, to install it again.
+                commit = f" at {source['commit'][:12]}" if source.get("commit") else ""
+                raise _op.OresmeError(
+                    f"{error} This result was made by the plugin {source['plugin']} "
+                    f"{source.get('version', '')} from {source.get('origin', '?')}{commit}: "
+                    "install it (Analysis > Plugins...) to run it again."
+                ) from None
         call, settings = self._call(**changes)
         if replace:
             settings["result"] = self._name
