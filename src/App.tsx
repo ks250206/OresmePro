@@ -36,6 +36,7 @@ import {
   type MenuItem,
   MOD,
   note,
+  pluginStore,
   PYODIDE_URL,
   requestCommandLine,
   runGui,
@@ -524,5 +525,14 @@ export function App() {
 const sandbox = {
   create: (packages: string[] = []) => Sandbox.create({ pyodideURL: PYODIDE_URL, packages }),
 };
-const debug = { doc, history, kernel, files, activeWindow, experiment, sandbox };
+const debug = {
+  doc,
+  history,
+  kernel,
+  files,
+  activeWindow,
+  experiment,
+  sandbox,
+  plugins: pluginStore,
+};
 Object.assign(globalThis, { oresme: debug });

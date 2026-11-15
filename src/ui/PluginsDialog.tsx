@@ -127,7 +127,12 @@ function initialValue(spec: ParamSpec): JsonValue | undefined {
 
 /** A form for an action's arguments, made from their descriptions. */
 function ActionForm({ manifest, action }: { manifest: PluginManifest; action: PluginAction }) {
-  const waves = useDoc((state) => state.waveOrder.filter((name) => !state.waves[name]?.text));
+  // The selector must return what the document holds, not a new list each time it is asked.
+  const state = useDoc((current) => current);
+  const waves = useMemo(
+    () => state.waveOrder.filter((name) => !state.waves[name]?.text),
+    [state.waveOrder, state.waves],
+  );
   const [values, setValues] = useState<Record<string, JsonValue | undefined>>(() =>
     Object.fromEntries(
       Object.entries(action.params).map(([name, spec]) => [name, initialValue(spec)]),
