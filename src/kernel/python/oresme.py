@@ -1515,7 +1515,11 @@ class Graph(_Props):
         return None if name is None else Style(name)
 
     def svg(self, width=None, height=None, cursors=False):
-        """The graph as an SVG document; by default at its window's size."""
+        """The graph as an SVG document; by default at its window's size.
+
+        A side of the plot area sized other than ``"auto"`` keeps its own size
+        whatever ``width`` and ``height`` say.
+        """
         return _call(
             "graphSvg",
             {"name": self._name, "width": width, "height": height, "cursors": bool(cursors)},

@@ -284,6 +284,9 @@ svg(width=None, height=None, cursors=False)
 
 The graph as an SVG document; by default at its window's size.
 
+A side of the plot area sized other than ``"auto"`` keeps its own size
+whatever ``width`` and ``height`` say.
+
 ### `Graph.kill`
 
 ```python
