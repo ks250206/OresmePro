@@ -445,9 +445,9 @@ contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
 
 Text in annotations and axis labels can name what fills a slot:
 ``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
-slot ``y``. Where the graph's text named one of its waves, the template
-has such a reference instead, so a graph of another sample shows that
-sample's name.
+slot ``y``. Where the graph's text named one of its waves, or a unit
+in parentheses (``"Current (A)"``), the template has such a reference
+instead, so a graph of another sample shows that sample's name and unit.
 
 ``data`` is what the template holds, as a dict: ``"style"`` (the look
 and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``

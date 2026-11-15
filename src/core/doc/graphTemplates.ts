@@ -89,6 +89,12 @@ interface Draft extends Omit<TemplateSlot, "name"> {
 const TEXT_TOKEN =
   /\\s\(([^)]*)\)|\\(?:\\|[SBMu]|f\d\d|Zr\d{3}|Z\d\d|F'[^']*'|K\([^)]*\)|[[\]]\d)|\{(?:x|y|point|(?:trace|image)\d+|\p{L}[\p{L}\p{N}_]*\.(?:name|unit))\}|[\p{L}\p{N}_]+/gu;
 
+/**
+ * A unit as labels write it: alone in parentheses or brackets, "Current (A)".
+ * Not the parentheses of a code (`\s(trace)`, `\K(r,g,b)`).
+ */
+const UNIT_TEXT = /(?<!\\[sK])([([])([^()[\]{}\\]+)([)\]])/g;
+
 /** A reference to what fills a template, as it is written in text. */
 const TEXT_REFERENCE = /\{(?:(trace|image)(\d+)|(\p{L}[\p{L}\p{N}_]*)\.(name|unit))\}/gu;
 
@@ -98,7 +104,8 @@ const TEXT_REFERENCE = /\{(?:(trace|image)(\d+)|(\p{L}[\p{L}\p{N}_]*)\.(name|uni
  * the axes in `fixed` and are otherwise worked out from the new data. Text
  * that names a wave of the graph (or one of its traces, in a legend) is made
  * to name what fills that slot instead, where there is no doubt which slot
- * it means: so a graph made of another sample shows that sample's name.
+ * it means, and so is a slot's unit written in parentheses: so a graph made
+ * of another sample shows that sample's name and unit.
  */
 export function captureTemplate(
   state: DocState,
@@ -122,18 +129,29 @@ export function captureTemplate(
     const leaf = leafName(wave);
     leafSlots.set(leaf, leafSlots.has(leaf) ? null : name);
   }
+  // So is a unit, when it is the unit of one slot only: (A) of a current
+  // against a voltage, but not when two currents are plotted.
+  const unitSlots = new Map<string, string | null>();
+  for (const { name, unit } of slots) {
+    if (unit !== "") unitSlots.set(unit, unitSlots.has(unit) ? null : name);
+  }
   const traceNames = graph.traces.map((trace) => trace.name);
   const imageNames = graph.images.map((image) => image.name);
   const text = (source: string) =>
-    source.replace(TEXT_TOKEN, (token, trace: string | undefined) => {
-      if (trace !== undefined) {
-        const at = traceNames.indexOf(trace);
-        return at === -1 ? token : `\\s({trace${at + 1}})`;
-      }
-      if (token.startsWith("\\") || token.startsWith("{")) return token;
-      const name = leafSlots.get(token);
-      return name ? `{${name}.name}` : token;
-    });
+    source
+      .replace(UNIT_TEXT, (whole, open: string, unit: string, shut: string) => {
+        const name = unitSlots.get(unit.trim());
+        return name ? `${open}{${name}.unit}${shut}` : whole;
+      })
+      .replace(TEXT_TOKEN, (token, trace: string | undefined) => {
+        if (trace !== undefined) {
+          const at = traceNames.indexOf(trace);
+          return at === -1 ? token : `\\s({trace${at + 1}})`;
+        }
+        if (token.startsWith("\\") || token.startsWith("{")) return token;
+        const name = leafSlots.get(token);
+        return name ? `{${name}.name}` : token;
+      });
   const source = (value: ErrorSource): ErrorSource =>
     typeof value === "string" ? slot(value) : value;
 

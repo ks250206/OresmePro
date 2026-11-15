@@ -2,8 +2,8 @@ import { expect, test, type App } from "./fixtures";
 
 /**
  * Three samples, each a current against a voltage (the third in mA), and a
- * graph of the first with a legend, a text box naming the sample and a range
- * set on the bottom axis.
+ * graph of the first with a legend, a text box naming the sample and its
+ * unit, and a range set on the bottom axis.
  */
 async function samples(app: App): Promise<void> {
   await app.run(`for s in ("s1", "s2", "s3"):
@@ -12,7 +12,7 @@ async function samples(app: App): Promise<void> {
 g = op.display("s1_I", x="s1_V")
 g.trace().set(color="green", line_size=2)
 g.legend()
-g.textbox("Sample s1_I")
+g.textbox("Sample s1_I (A)")
 g.bottom.range = (-1, 1)`);
   await app.place("Graph0", 20, 16, 460, 320);
 }
@@ -94,7 +94,7 @@ test.describe("graph templates", () => {
       ["s2", "s3", "s1"].map((sample, index) => ({
         name: `Graph${index + 1}`,
         trace: [`${sample}_I`, `${sample}_V`, "#009900"],
-        text: ["", `Sample ${sample}_I`],
+        text: ["", `Sample ${sample}_I (${sample === "s3" ? "mA" : "A"})`],
         bottom: [-1, 1],
       })),
     );
@@ -145,7 +145,7 @@ test.describe("graph templates", () => {
       {
         name: "Graph1",
         trace: ["s2_I", null, "#009900"],
-        text: ["", "Sample s2_I"],
+        text: ["", "Sample s2_I (A)"],
         bottom: [null, null],
       },
     ]);

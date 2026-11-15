@@ -53,7 +53,7 @@ function setup(): Doc {
     op: "modifyAxis",
     graph: "IV",
     axis: "left",
-    props: { label: "Current of s1_I (\\u)" },
+    props: { label: "Current of s1_I (A), \\K(1,2,3)\\s(A)" },
   });
   doc.dispatch({ op: "addAnnotation", graph: "IV", kind: "legend", text: "\\s(s1_I) s1_I" });
   doc.dispatch({ op: "addAnnotation", graph: "IV", kind: "text", text: "Sample s1_I, \\f01s1_V" });
@@ -88,7 +88,7 @@ describe("saving a graph as a template", () => {
     ]);
     expect(template.annotations[2]).toMatchObject({ kind: "tag", trace: 0, point: 2 });
     expect(template.axes.find((axis) => axis.name === "left")!.label).toBe(
-      "Current of {y.name} (\\u)",
+      "Current of {y.name} ({y.unit}), \\K(1,2,3)\\s(A)",
     );
   });
 
@@ -127,6 +127,19 @@ describe("saving a graph as a template", () => {
       ["y1", "x", "yerr", null],
       ["y2", "x", null, 0.5],
     ]);
+  });
+
+  it("leaves a unit in text alone when two slots have it", () => {
+    const doc = new Doc();
+    doc.dispatch(wave("a", [1, 2], "A"));
+    doc.dispatch(wave("b", [2, 1], "A"));
+    doc.dispatch(wave("t", [0, 1], "s"));
+    doc.dispatch({ op: "display", y: ["a", "b"], x: "t", name: "G" });
+    doc.dispatch({ op: "modifyAxis", graph: "G", axis: "left", props: { label: "I [A]" } });
+    doc.dispatch({ op: "modifyAxis", graph: "G", axis: "bottom", props: { label: "Time (s)" } });
+    doc.dispatch({ op: "saveGraphTemplate", name: "T", graph: "G" });
+    const axes = doc.getState().graphTemplates.T!.axes;
+    expect(axes.map((axis) => axis.label)).toEqual(["I [A]", "Time ({x.unit})", null, null]);
   });
 
   it("leaves a name in text alone when two waves of the graph have it", () => {
@@ -197,7 +210,8 @@ describe("making graphs from a template", () => {
         `Sample ${sample}_I, \\f01${sample}_V`,
         "",
       ]);
-      expect(graph.axes.left!.label).toBe(`Current of ${sample}_I (\\u)`);
+      const unit = sample === "s3" ? "mA" : "A";
+      expect(graph.axes.left!.label).toBe(`Current of ${sample}_I (${unit}), \\K(1,2,3)\\s(A)`);
       expect(graph.axes.bottom).toMatchObject({ min: -1, max: 3 });
       expect(graph.axes.left).toMatchObject({ min: null, max: null });
       expect(graph.traces[0]).toMatchObject({

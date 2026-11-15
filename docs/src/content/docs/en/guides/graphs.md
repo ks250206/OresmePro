@@ -24,7 +24,7 @@ Apply a saved graph style to another graph in the experiment. `g.script()` retur
 
 To make the same figure from another sample's data, save the graph as a template. Choose **Save as Template…** from the graph's context menu. Each wave the graph plots becomes a slot (`y`, `x`, `yerr` and `xerr` for error bars, `color` for a color wave, `z` for an image or contours); the traces, axes, look, annotations, and figure size are kept. With several traces, slots are numbered: `y1`, `y2`. For each axis, choose when saving whether its range stays fixed or follows the new data.
 
-In annotations and axis labels, `{y.name}` and `{y.unit}` become the name and unit of the wave in slot `y`. Text that names a wave of the original graph is turned into such a reference when the template is saved, so a figure of another sample does not keep the old sample's name.
+In annotations and axis labels, `{y.name}` and `{y.unit}` become the name and unit of the wave in slot `y`. Text that names a wave of the original graph, or a unit in parentheses such as `(A)`, is turned into such a reference when the template is saved, so a figure of another sample does not keep the old sample's name.
 
 Choose **Graph → Make Graphs from Template…**, select a template, and choose a wave for each slot in each row. Each row makes one graph, and one undo removes them all. A warning appears when a wave's unit differs from the one the template was made with. Templates are saved in the experiment and, like styles, can be kept in the browser's library or in JSON files.
 
