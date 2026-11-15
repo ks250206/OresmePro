@@ -1,6 +1,6 @@
 import { applyCommand, isTransient, type Command } from "./commands";
 import { dictFrom, filterDict, type Dict } from "./dict";
-import { emptyDoc, type DocState, type WindowState } from "./types";
+import { DocError, emptyDoc, type DocState, type WindowState } from "./types";
 
 interface UndoEntry {
   state: DocState;
@@ -70,6 +70,159 @@ export interface DispatchOptions {
   group?: string;
 }
 
+/** What a transaction is given: the document as its changes so far left it, and a way to change it further. */
+export interface DocWriter {
+  getState(): DocState;
+  dispatch(command: Command): string | null;
+}
+
+/**
+ * A document state with commands applied to it, kept apart from the document.
+ * `durable` tells whether any of them is undoable (not just view state).
+ */
+class Working implements DocWriter {
+  state: DocState;
+  durable = false;
+
+  constructor(state: DocState) {
+    this.state = state;
+  }
+
+  readonly getState = (): DocState => this.state;
+
+  dispatch(command: Command): string | null {
+    const applied = applyCommand(this.state, command);
+    if (applied.state !== this.state) {
+      this.state = withDicts(applied.state);
+      if (!isTransient(command)) this.durable = true;
+    }
+    return applied.result;
+  }
+}
+
+/**
+ * Changes that build up over many calls and reach the document together or
+ * not at all: what one `with op.atomic():` block of Python makes. Python
+ * reads its own changes as it goes, while the document (and so the GUI)
+ * sees none of them until {@link Stage.commit}.
+ *
+ * The document may change meanwhile (the GUI does not wait for Python). The
+ * stage then replays its commands on the document as it is, which succeeds
+ * when the changes do not meet: a moved window or an edit of another wave
+ * stops nothing. It refuses when a wave it read has changed since, since
+ * what it computed from it is out of date, and when a command does not come
+ * out as it did (a name made unique differently, a wave since deleted).
+ * Revisions are never reused, so an unchanged revision is unchanged content.
+ */
+export class Stage implements DocWriter {
+  private readonly base: DocState;
+  private readonly working: Working;
+  private readonly applied: { command: Command; result: string | null }[] = [];
+  /** The revision each wave had when first read, for waves read before the stage changed them. */
+  private readonly reads = new Map<string, number>();
+  /** Points to go back to, for blocks within blocks. */
+  private readonly marks: { state: DocState; durable: boolean; count: number }[] = [];
+  private closed = false;
+
+  private readonly commitTo: (stage: Stage, options: DispatchOptions) => void;
+
+  constructor(base: DocState, commitTo: (stage: Stage, options: DispatchOptions) => void) {
+    this.base = base;
+    this.working = new Working(base);
+    this.commitTo = commitTo;
+  }
+
+  readonly getState = (): DocState => this.working.state;
+
+  /** The document state the stage began from. */
+  get origin(): DocState {
+    return this.base;
+  }
+
+  /** Whether the stage changed anything that undo would restore. */
+  get durable(): boolean {
+    return this.working.durable;
+  }
+
+  /** The commands applied, with what each returned. */
+  get commands(): readonly { command: Command; result: string | null }[] {
+    return this.applied;
+  }
+
+  /** The waves read from the document as it was, with their revisions then. */
+  get waveReads(): ReadonlyMap<string, number> {
+    return this.reads;
+  }
+
+  get isOpen(): boolean {
+    return !this.closed;
+  }
+
+  dispatch(command: Command): string | null {
+    this.checkOpen();
+    const result = this.working.dispatch(command);
+    this.applied.push({ command, result });
+    return result;
+  }
+
+  /**
+   * Notes that a wave was read: the commit fails if it changes in the
+   * document meanwhile. A wave the stage made or changed itself is its own.
+   */
+  read(name: string): void {
+    const wave = this.working.state.waves[name];
+    if (!wave || this.base.waves[name] !== wave || this.reads.has(name)) return;
+    this.reads.set(name, wave.rev);
+  }
+
+  /** Remembers this point, for {@link rollback}: the start of a block within the block. */
+  mark(): void {
+    this.checkOpen();
+    this.marks.push({
+      state: this.working.state,
+      durable: this.working.durable,
+      count: this.applied.length,
+    });
+  }
+
+  /** Forgets the last point marked, keeping what was done since. */
+  release(): void {
+    this.checkOpen();
+    this.marks.pop();
+  }
+
+  /** Undoes what was done since the last point marked, and forgets the point. */
+  rollback(): void {
+    this.checkOpen();
+    const mark = this.marks.pop();
+    if (!mark) return;
+    this.working.state = mark.state;
+    this.working.durable = mark.durable;
+    this.applied.length = mark.count;
+  }
+
+  /** How many blocks within the block are open. */
+  get depth(): number {
+    return this.marks.length;
+  }
+
+  /** Puts the changes into the document as one undo step, or throws and changes nothing. */
+  commit(options: DispatchOptions = {}): void {
+    this.checkOpen();
+    this.closed = true;
+    this.commitTo(this, options);
+  }
+
+  /** Drops the changes. */
+  discard(): void {
+    this.closed = true;
+  }
+
+  private checkOpen(): void {
+    if (this.closed) throw new DocError("The changes were already put in or dropped.");
+  }
+}
+
 /**
  * Holds the document and is the only way to change it. Snapshots are
  * immutable, so undo is a stack of earlier states; unchanged waves are shared
@@ -86,6 +239,8 @@ export class Doc {
   private readonly listeners = new Set<() => void>();
   private undoStack: UndoEntry[] = [];
   private redoStack: RedoEntry[] = [];
+  /** True while a transaction's function runs: the document must not change under it. */
+  private transacting = false;
 
   readonly getState = (): DocState => this.state;
 
@@ -96,14 +251,74 @@ export class Doc {
 
   /** Applies a command and returns the name of what it created, if anything. */
   dispatch(command: Command, options: DispatchOptions = {}): string | null {
+    this.checkNotTransacting();
+    const working = new Working(this.state);
+    const result = working.dispatch(command);
+    this.adopt(working, options);
+    return result;
+  }
+
+  /**
+   * Applies several commands as one change: `fn` changes the document through
+   * the writer it is given, and only if it returns without throwing does the
+   * document take on the result, as one undo step and one notification. If it
+   * throws, nothing has changed. The writer reads the changes made so far.
+   */
+  transact<T>(fn: (writer: DocWriter) => T, options: DispatchOptions = {}): T {
+    this.checkNotTransacting();
+    const working = new Working(this.state);
+    this.transacting = true;
+    let outcome: T;
+    try {
+      outcome = fn(working);
+    } finally {
+      this.transacting = false;
+    }
+    this.adopt(working, options);
+    return outcome;
+  }
+
+  /** Starts changes kept apart from the document until committed (see {@link Stage}). */
+  stage(): Stage {
+    return new Stage(this.state, (stage, options) => this.commitStage(stage, options));
+  }
+
+  private commitStage(stage: Stage, options: DispatchOptions): void {
+    // A block that only read has nothing to put in, however much changed meanwhile.
+    if (stage.commands.length === 0) return;
+    const current = this.state;
+    if (current === stage.origin) {
+      // Nothing happened meanwhile: the stage's state is the document's next state as it is.
+      const working = new Working(current);
+      working.state = stage.getState();
+      working.durable = stage.durable;
+      this.adopt(working, options);
+      return;
+    }
+    for (const [name, rev] of stage.waveReads) {
+      if (current.waves[name]?.rev !== rev) {
+        throw new DocError(
+          `${name} changed while this was running, so nothing it did was kept. Run it again.`,
+        );
+      }
+    }
+    this.transact((writer) => {
+      for (const { command, result } of stage.commands) {
+        if (writer.dispatch(command) !== result) {
+          throw new DocError(
+            "The experiment changed while this was running, so nothing it did was kept. Run it again.",
+          );
+        }
+      }
+    }, options);
+  }
+
+  /** Makes a working state the document's, as one step; nothing happens if it is unchanged. */
+  private adopt(working: Working, options: DispatchOptions): void {
     const before = this.state;
-    const applied = applyCommand(before, command);
-    const { result } = applied;
-    if (applied.state === before) return result;
-    const state = withDicts(applied.state);
-    if (isTransient(command)) {
-      this.state = state;
-    } else {
+    const state = working.state;
+    if (state === before) return;
+    if (working.durable) {
       const group = options.group ?? null;
       const last = this.undoStack.at(-1);
       if (group !== null && last?.group === group) {
@@ -114,10 +329,15 @@ export class Doc {
         this.trimUndo(state);
       }
       this.redoStack = [];
-      this.state = state;
     }
+    this.state = state;
     this.emit();
-    return result;
+  }
+
+  private checkNotTransacting(): void {
+    if (this.transacting) {
+      throw new Error("The document cannot change on its own while a transaction is running.");
+    }
   }
 
   get canUndo(): boolean {
@@ -129,6 +349,7 @@ export class Doc {
   }
 
   undo(): boolean {
+    this.checkNotTransacting();
     const entry = this.undoStack.pop();
     if (!entry) return false;
     const now = this.state;
@@ -139,6 +360,7 @@ export class Doc {
   }
 
   redo(): boolean {
+    this.checkNotTransacting();
     const entry = this.redoStack.pop();
     if (!entry) return false;
     const now = this.state;
@@ -150,6 +372,7 @@ export class Doc {
 
   /** Replaces the whole document, for opening an experiment. */
   load(state: DocState): void {
+    this.checkNotTransacting();
     this.state = withDicts(state);
     this.undoStack = [];
     this.redoStack = [];

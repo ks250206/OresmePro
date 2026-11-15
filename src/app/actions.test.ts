@@ -226,3 +226,31 @@ describe("echoes of gestures", () => {
     ]);
   });
 });
+
+describe("GUI actions", () => {
+  it("change nothing and record nothing when one of their commands fails", () => {
+    const before = doc.getState();
+    const entries = history.getEntries().length;
+    const result = runGui([
+      { op: "makeWave", name: "guiFirst", data: Float64Array.of(1) },
+      { op: "makeWave", name: "guiSecond", data: Float64Array.of(2) },
+      { op: "display", y: ["guiMissing"] },
+    ]);
+    expect(result).toBeUndefined();
+    expect(doc.getState()).toBe(before);
+    expect(history.getEntries().length).toBe(entries);
+    expect(ui.get().alert?.message).toMatch(/guiMissing/);
+    ui.set({ alert: null });
+  });
+
+  it("go in as one undo step when all their commands succeed", () => {
+    runGui([
+      { op: "makeWave", name: "guiA", data: Float64Array.of(1) },
+      { op: "display", y: ["guiA"], name: "GuiGraph" },
+    ]);
+    expect(doc.getState().graphs.GuiGraph).toBeDefined();
+    doc.undo();
+    expect(doc.getState().waves.guiA).toBeUndefined();
+    expect(doc.getState().graphs.GuiGraph).toBeUndefined();
+  });
+});
