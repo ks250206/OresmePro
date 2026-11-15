@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = 4173;
+/** Another port lets end-to-end tests run in several checkouts at once. */
+const PORT = Number(process.env.E2E_PORT ?? 4173);
 
 /**
  * End-to-end tests drive the built app in Chromium. Build first

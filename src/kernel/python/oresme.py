@@ -19,8 +19,12 @@ Waves can be kept in data folders: ``"run1:signal"`` is the wave ``signal`` in
 the folder ``run1``. A 2-D wave is indexed ``w[i, j]`` with ``i`` along X.
 """
 
+import contextlib
 import hashlib
+import inspect
 import json
+import math
+import numbers
 import os
 import re
 import warnings
@@ -31,6 +35,10 @@ import _oresme_js
 
 __all__ = [
     "OresmeError",
+    "atomic",
+    "action",
+    "actions",
+    "invoke",
     "Wave",
     "Graph",
     "Trace",
@@ -113,6 +121,47 @@ def _call(method, params=None, data=None):
 
 def _dispatch(command, data=None):
     return _call("dispatch", command, data)[0]
+
+
+class atomic(contextlib.ContextDecorator):
+    """Make the changes of a block go into the experiment together, or not at all.
+
+    ::
+
+        with op.atomic():
+            corrected = op.make("corrected", raw.data - background.data)
+            op.display(corrected)
+
+    Inside the block Python sees its own changes, but the experiment (and so
+    the GUI) sees none of them until the block ends. If the block raises,
+    nothing it did is kept; if it ends normally, all of it goes in as one undo
+    step. The analyses that make waves and results (``op.fit``,
+    ``op.fit_peaks``, ``op.background``, ...) each run in a block of their
+    own, so one that fails half way leaves nothing behind.
+
+    The experiment may change while the block runs, since the GUI does not
+    wait for Python. Such changes do not stop the block when they do not meet
+    its own (a window moved, another wave edited). But if a wave the block
+    read has changed meanwhile, nothing is kept and ``OresmeError`` is raised:
+    what was computed from it is out of date.
+
+    Blocks may be nested; an inner block that raises takes back only its own
+    changes. Graphs and page layouts cannot be drawn or saved inside a block.
+    ``@op.atomic()`` on a function makes each call of it a block.
+    """
+
+    def __enter__(self):
+        _call("beginAtomic")
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        if kind is None:
+            _call("commitAtomic")
+        else:
+            # The block's own exception is the one to report.
+            with contextlib.suppress(OresmeError):
+                _call("abortAtomic")
+        return False
 
 
 def _camel(name):
@@ -2098,6 +2147,481 @@ def default_style():
     """The Style new graphs are given, or None."""
     name = _call("listStyles")[0]["default"]
     return None if name is None else Style(name)
+
+
+# --- Actions ---------------------------------------------------------------
+#
+# An action is a function registered under a name, with a description of its
+# arguments. Panels, templates and plugins call analyses this way: they send
+# the name and plain values (JSON), which are checked here against the
+# description before the function is called. No Python is written from what
+# they send and run.
+
+#: The kinds of value a parameter of an action takes.
+_PARAM_TYPES = ("wave", "waves", "number", "integer", "string", "boolean", "choice", "numbers")
+_PARAM_KEYS = frozenset(
+    ("type", "title", "description", "optional", "default", "choices", "min", "max", "length", "arg")
+)
+_ACTION_ID = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
+#: Namespaces of action ids that only the application registers in.
+_RESERVED_NAMESPACES = ("core", "plugin")
+
+# id -> {version: _Action}
+_actions = {}
+# Goes up on every registration, so that the kernel can tell the GUI the list changed.
+_actions_revision = 0
+# The reserved namespace the application is registering in at the moment.
+_registering_in = None
+
+
+@contextlib.contextmanager
+def _registering(namespace):
+    """Let the code in the block register actions in a reserved namespace (``core``, ``plugin``).
+
+    The reservation keeps procedures from taking the application's names by
+    accident. It is no security boundary: procedures are trusted code.
+    """
+    global _registering_in
+    before = _registering_in
+    _registering_in = namespace
+    try:
+        yield
+    finally:
+        _registering_in = before
+
+
+class _Action:
+    def __init__(self, id, version, title, description, params, function):
+        self.id = id
+        self.version = version
+        self.title = title
+        self.description = description
+        # name -> description, as checked (with "arg" where it is passed under another name).
+        self.params = params
+        self.function = function
+
+    def spec(self):
+        return {
+            "id": self.id,
+            "version": self.version,
+            "title": self.title,
+            "description": self.description,
+            "params": {
+                name: {key: value for key, value in spec.items() if key != "arg"}
+                for name, spec in self.params.items()
+            },
+        }
+
+
+def _is_number(value):
+    return isinstance(value, numbers.Real) and not isinstance(value, (bool, np.bool_))
+
+
+def _is_integer(value):
+    return _is_number(value) and (isinstance(value, numbers.Integral) or float(value).is_integer())
+
+
+def _check_value(spec, value, where, resolve_names=True):
+    """The value of one argument as plain JSON, or OresmeError saying what is wrong with it."""
+    kind = spec["type"]
+    if value is None:
+        raise OresmeError(f"{where} cannot be None (null): leave it out instead.")
+
+    def number(item, what):
+        if not _is_number(item):
+            raise OresmeError(f"{what} must be a number, not {item!r}.")
+        if not math.isfinite(float(item)):
+            raise OresmeError(f"{what} must be a finite number, not {item!r}.")
+        if kind == "integer" and not _is_integer(item):
+            raise OresmeError(f"{what} must be a whole number, not {item!r}.")
+        plain = int(item) if kind == "integer" else float(item)
+        if "min" in spec and plain < spec["min"]:
+            raise OresmeError(f"{what} must be at least {spec['min']:g}, not {plain:g}.")
+        if "max" in spec and plain > spec["max"]:
+            raise OresmeError(f"{what} must be at most {spec['max']:g}, not {plain:g}.")
+        return plain
+
+    def wave_name(item, what):
+        if isinstance(item, Wave):
+            return item.name
+        if not isinstance(item, str) or not item:
+            raise OresmeError(f"{what} must be the name of a wave, not {item!r}.")
+        return _wave_name(item) if resolve_names else item
+
+    def items():
+        if not isinstance(value, (list, tuple)):
+            raise OresmeError(f"{where} must be a list, not {value!r}.")
+        if "length" in spec and len(value) != spec["length"]:
+            raise OresmeError(f"{where} must have {spec['length']} items, not {len(value)}.")
+        return list(value)
+
+    if kind == "wave":
+        return wave_name(value, where)
+    if kind == "waves":
+        return [wave_name(item, f"{where}[{index}]") for index, item in enumerate(items())]
+    if kind in ("number", "integer"):
+        return number(value, where)
+    if kind == "numbers":
+        return [number(item, f"{where}[{index}]") for index, item in enumerate(items())]
+    if kind == "string":
+        if not isinstance(value, str):
+            raise OresmeError(f"{where} must be a string, not {value!r}.")
+        return value
+    if kind == "boolean":
+        if not isinstance(value, (bool, np.bool_)):
+            raise OresmeError(f"{where} must be True or False, not {value!r}.")
+        return bool(value)
+    # A choice: a string matches a string, a number a number.
+    if isinstance(value, str) or _is_number(value):
+        for choice in spec["choices"]:
+            if isinstance(choice, str) == isinstance(value, str) and choice == value:
+                return choice
+    listed = ", ".join(_py_literal(choice) for choice in spec["choices"])
+    raise OresmeError(f"{where} must be one of {listed}, not {value!r}.")
+
+
+def _check_spec(action_id, name, spec):
+    """A parameter's description, checked, with ``optional`` filled in."""
+    where = f"{action_id}: parameter {name!r}"
+    if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
+        raise OresmeError(f"{action_id}: {name!r} is not a parameter name (letters, digits and _).")
+    if not isinstance(spec, dict):
+        raise OresmeError(f"{where} must be described by a dict, such as {{'type': 'wave'}}.")
+    unknown = sorted(set(spec) - _PARAM_KEYS)
+    if unknown:
+        raise OresmeError(f"{where}: unknown key {unknown[0]!r}. Keys: {', '.join(sorted(_PARAM_KEYS))}.")
+    kind = spec.get("type")
+    if kind not in _PARAM_TYPES:
+        raise OresmeError(f"{where}: type must be one of {', '.join(_PARAM_TYPES)}, not {kind!r}.")
+    checked = {"type": kind}
+    for key in ("title", "description", "arg"):
+        if key in spec:
+            if not isinstance(spec[key], str) or not spec[key]:
+                raise OresmeError(f"{where}: {key} must be a string.")
+            checked[key] = spec[key]
+    if "arg" in checked and not checked["arg"].isidentifier():
+        raise OresmeError(f"{where}: arg must be the name of a parameter of the function.")
+    if "choices" in spec or kind == "choice":
+        choices = spec.get("choices")
+        if kind != "choice":
+            raise OresmeError(f"{where}: only a choice has choices.")
+        if (
+            not isinstance(choices, (list, tuple))
+            or not choices
+            or not all(isinstance(item, str) or _is_number(item) for item in choices)
+            or len(set(choices)) != len(choices)
+        ):
+            raise OresmeError(f"{where}: choices must be a list of different strings or numbers.")
+        checked["choices"] = [_plain(item) for item in choices]
+    for key in ("min", "max"):
+        if key in spec:
+            if kind not in ("number", "integer", "numbers"):
+                raise OresmeError(f"{where}: only numbers have {key}.")
+            if not _is_number(spec[key]) or not math.isfinite(spec[key]):
+                raise OresmeError(f"{where}: {key} must be a finite number.")
+            checked[key] = _plain(spec[key])
+    if "min" in checked and "max" in checked and checked["min"] > checked["max"]:
+        raise OresmeError(f"{where}: min is above max.")
+    if "length" in spec:
+        if kind not in ("waves", "numbers"):
+            raise OresmeError(f"{where}: only lists (waves, numbers) have a length.")
+        if not _is_integer(spec["length"]) or spec["length"] < 0:
+            raise OresmeError(f"{where}: length must be a whole number.")
+        checked["length"] = int(spec["length"])
+    optional = spec.get("optional", False)
+    if not isinstance(optional, bool):
+        raise OresmeError(f"{where}: optional must be True or False.")
+    if "default" in spec:
+        checked["default"] = _check_value(checked, spec["default"], f"{where}: default", False)
+        optional = True
+    checked["optional"] = optional
+    return checked
+
+
+def _check_signature(action_id, function, params):
+    """Every argument must reach the function, and every parameter it needs must be described."""
+    signature = inspect.signature(function)
+    takes_any = any(item.kind is item.VAR_KEYWORD for item in signature.parameters.values())
+    targets = {}
+    for name, spec in params.items():
+        targets.setdefault(spec.get("arg", name), []).append(name)
+    for arg, names in targets.items():
+        item = signature.parameters.get(arg)
+        if (item is None and not takes_any) or (
+            item is not None and item.kind not in (item.POSITIONAL_OR_KEYWORD, item.KEYWORD_ONLY)
+        ):
+            raise OresmeError(f"{action_id}: the function has no keyword parameter {arg!r}.")
+        if len(names) > 1 and any(not params[name]["optional"] for name in names):
+            raise OresmeError(
+                f"{action_id}: {', '.join(names)} are all passed as {arg!r}, so each must be optional."
+            )
+        if item is None or item.default is item.empty:
+            continue
+        for name in names:
+            if "default" in params[name] and params[name]["default"] != _plain(item.default):
+                raise OresmeError(
+                    f"{action_id}: the default of {name!r} is {params[name]['default']!r}, "
+                    f"but the function's is {item.default!r}."
+                )
+    for arg, item in signature.parameters.items():
+        if item.kind in (item.VAR_POSITIONAL, item.VAR_KEYWORD) or item.default is not item.empty:
+            continue
+        names = targets.get(arg, [])
+        if not names or params[names[0]]["optional"]:
+            raise OresmeError(f"{action_id}: the function needs {arg!r}; describe it as a required parameter.")
+
+
+def action(id, *, version=1, title, params, description=None):
+    """Register a function as an action: called by name, with arguments of known types.
+
+    ::
+
+        @op.action("lab.normalize", title="Normalize", params={
+            "wave": {"type": "wave", "title": "Wave"},
+            "to": {"type": "number", "default": 1.0, "min": 0},
+        })
+        def normalize(wave, to=1.0):
+            return op.make(f"{wave.name}_norm", wave.data / np.nanmax(wave.data) * to)
+
+    Panels, templates and plugins call actions with plain values (JSON)
+    instead of Python code; from Python, ``op.invoke("lab.normalize",
+    {"wave": "signal"})`` does the same. The arguments are checked against
+    ``params`` before the function is called, and the call runs in an
+    ``op.atomic()`` block, so a call that fails changes nothing.
+
+    ``id`` is a lowercase dotted name such as ``"lab.normalize"``. Ids that
+    start with ``core.`` are the application's own analyses, and ``plugin.``
+    is kept for plugins: a procedure cannot register those. Registering the
+    same id and version again replaces it, as running a procedure again
+    does. A new ``version`` of an action can be registered beside the old
+    one: a caller that names a version gets it, others get the highest.
+
+    ``params`` maps each argument's name to a dict that describes it: its
+    ``type``, and optionally a ``title``, a ``description``,
+    ``optional=True``, and a ``default``, which makes it optional and must be
+    the function's own default. The types are:
+
+    - ``"wave"``: the name of an existing wave, passed as an ``op.Wave``;
+    - ``"waves"``: a list of names of waves, passed as a list of ``op.Wave``;
+    - ``"number"``, ``"integer"``: with ``min`` and ``max`` if wanted (inclusive);
+    - ``"numbers"``: a list of numbers, with ``min``, ``max`` and ``length`` if wanted;
+    - ``"string"``, ``"boolean"``;
+    - ``"choice"``: one of ``choices``, a list of strings or numbers.
+
+    An argument that is left out is not passed, so the function's default
+    applies. None (null) is never a value: leave the argument out instead.
+    ``arg`` passes an argument as the parameter of that name. Two optional
+    arguments may be passed as the same parameter (a number of peaks or
+    their positions, say); at most one of them can then be given.
+
+    Returns the function unchanged.
+    """
+
+    def register(function):
+        _register_action(id, version, title, params, description, function)
+        return function
+
+    return register
+
+
+def _register_action(id, version, title, params, description, function):
+    global _actions_revision
+    if not isinstance(id, str) or not _ACTION_ID.fullmatch(id):
+        raise OresmeError(
+            f"{id!r} is not an action id: use lowercase dotted names such as 'lab.normalize'."
+        )
+    namespace = id.split(".", 1)[0]
+    if namespace in _RESERVED_NAMESPACES and _registering_in != namespace:
+        owner = "plugins" if namespace == "plugin" else "the application"
+        raise OresmeError(f"Action ids starting with {namespace}. are kept for {owner}.")
+    if not _is_integer(version) or version < 1:
+        raise OresmeError(f"{id}: version must be a whole number from 1, not {version!r}.")
+    if not isinstance(title, str) or not title:
+        raise OresmeError(f"{id}: title must be a string.")
+    if description is not None and not isinstance(description, str):
+        raise OresmeError(f"{id}: description must be a string or None.")
+    if not isinstance(params, dict):
+        raise OresmeError(f"{id}: params must be a dict of name: description.")
+    if not callable(function):
+        raise OresmeError(f"{id}: only a function can be registered as an action.")
+    checked = {name: _check_spec(id, name, spec) for name, spec in params.items()}
+    _check_signature(id, function, checked)
+    _actions.setdefault(id, {})[int(version)] = _Action(
+        id, int(version), title, description, checked, function
+    )
+    _actions_revision += 1
+
+
+def actions():
+    """The registered actions, as plain dicts: id, version, title, description and params.
+
+    Every version of each action is listed, ordered by id and then version.
+    ``params`` maps each argument's name to its description (see ``op.action``),
+    with ``optional`` always given.
+    """
+    return [_actions[id][version].spec() for id in sorted(_actions) for version in sorted(_actions[id])]
+
+
+def _find_action(id, version):
+    if not isinstance(id, str) or id not in _actions:
+        raise OresmeError(f"No action named {id!r}.")
+    versions = _actions[id]
+    if version is None:
+        return versions[max(versions)]
+    if not _is_integer(version) or int(version) not in versions:
+        known = ", ".join(str(number) for number in sorted(versions))
+        raise OresmeError(f"{id} has no version {version!r} (it has {known}).")
+    return versions[int(version)]
+
+
+def _prepare_action(id, args, version=None):
+    """Check a call of an action without making it.
+
+    Returns the action, the arguments as plain JSON and the keyword arguments
+    to call its function with. Nothing in the experiment changes: waves are
+    only looked up.
+    """
+    found = _find_action(id, version)
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise OresmeError(f"The arguments of {found.id} are a dict of name: value, not {args!r}.")
+    for name in args:
+        if name not in found.params:
+            taken = ", ".join(found.params) or "nothing"
+            raise OresmeError(f"{found.id} takes no argument {name!r}. It takes: {taken}.")
+    missing = [name for name, spec in found.params.items() if not spec["optional"] and name not in args]
+    if missing:
+        raise OresmeError(f"{found.id} needs {', '.join(repr(name) for name in missing)}.")
+    given = {
+        name: _check_value(found.params[name], value, f"{found.id}: {name}")
+        for name, value in args.items()
+    }
+    passed = {}
+    for name, value in given.items():
+        arg = found.params[name].get("arg", name)
+        if arg in passed:
+            other = next(item for item in given if found.params[item].get("arg", item) == arg)
+            raise OresmeError(f"{found.id}: give {other!r} or {name!r}, not both.")
+        passed[arg] = value
+    # Only now, with every argument right, are the waves looked up.
+    for name, value in given.items():
+        kind = found.params[name]["type"]
+        if kind not in ("wave", "waves"):
+            continue
+        try:
+            resolved = wave(value) if kind == "wave" else [wave(item) for item in value]
+        except OresmeError as error:
+            raise OresmeError(f"{found.id}: {name}: {error}") from None
+        passed[found.params[name].get("arg", name)] = resolved
+    return found, given, passed
+
+
+def invoke(id, args=None, *, version=None):
+    """Call an action by its id with a dict of plain values, as the application does.
+
+    ::
+
+        r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})
+
+    The arguments are checked against the action's parameters first (see
+    ``op.action``); a call that is refused raises ``OresmeError`` and does
+    nothing. Waves may be given by name or as ``op.Wave``. ``version`` picks
+    a version of the action, the highest by default. The call runs in an
+    ``op.atomic()`` block and returns what the function returns.
+    """
+    found, _, passed = _prepare_action(id, args, version)
+    with atomic():
+        return found.function(**passed)
+
+
+def _py_literal(value):
+    """Python source for a plain (JSON) value."""
+    if value is None or isinstance(value, bool):
+        return repr(value)
+    if isinstance(value, str):
+        # A JSON string is a Python string literal too.
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_py_literal(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_py_literal(key)}: {_py_literal(item)}" for key, item in value.items()) + "}"
+    raise TypeError(f"Not a plain value: {value!r}")
+
+
+def _action_code(found, given):
+    """The Python that does what a call of an action with these checked arguments does.
+
+    An action of this module is written as a call of its function, with the
+    arguments in order as far as they go and the rest by keyword, as a person
+    would write it: ``op.fit("gauss", op.wave("signal"), quiet=True)``. Any
+    other action is written as a call of ``op.invoke``.
+    """
+    function = found.function
+    name = getattr(function, "__name__", "")
+    if name not in __all__ or globals().get(name) is not function:
+        return f"op.invoke({_py_literal(found.id)}, {_py_literal(given)}, version={found.version})"
+
+    def source(key, value):
+        kind = found.params[key]["type"]
+        if kind == "wave":
+            return f"op.wave({_py_literal(value)})"
+        if kind == "waves":
+            return "[" + ", ".join(f"op.wave({_py_literal(item)})" for item in value) + "]"
+        return _py_literal(value)
+
+    by_arg = {found.params[key].get("arg", key): source(key, value) for key, value in given.items()}
+    parts = []
+    in_order = True
+    for arg, item in inspect.signature(function).parameters.items():
+        if arg not in by_arg:
+            in_order = False
+            continue
+        if in_order and item.kind is item.POSITIONAL_OR_KEYWORD:
+            parts.append(by_arg.pop(arg))
+        else:
+            in_order = False
+            parts.append(f"{arg}={by_arg.pop(arg)}")
+    # What the function takes through **kwargs, in the order given.
+    parts.extend(f"{arg}={value}" for arg, value in by_arg.items())
+    return f"op.{name}({', '.join(parts)})"
+
+
+def _result_json(value):
+    """What an action returned, as plain JSON for the application.
+
+    Numbers, strings, lists and dicts stay as they are (NaN and infinities
+    become None) and NumPy arrays become lists. A wave becomes ``{"wave":
+    name}``, a graph ``{"graph": name}``, a table ``{"table": name}`` and a
+    page layout ``{"layout": name}``. The results of analyses say what they
+    hold through a ``_json()`` method of their own. Anything else becomes
+    ``{"repr": text}``.
+    """
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Real):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if isinstance(value, Wave):
+        return {"wave": value.name}
+    for kind, key in ((Graph, "graph"), (Table, "table"), (Layout, "layout")):
+        if isinstance(value, kind):
+            return {key: value.name}
+    if callable(getattr(value, "_json", None)):
+        return _result_json(value._json())
+    if isinstance(value, np.ndarray):
+        return _result_json(value.tolist())
+    if isinstance(value, dict):
+        return {str(key): _result_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_result_json(item) for item in value]
+    return {"repr": repr(value)}
 
 
 def _input(prompt=""):

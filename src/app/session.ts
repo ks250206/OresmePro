@@ -276,8 +276,9 @@ let batchCounter = 0;
  * user is told why).
  *
  * `echo` is the Python to write instead of a line per command, for an action
- * that Python does in one call although it takes several commands. Should a
- * command fail midway, the lines for those that ran are written instead.
+ * that Python does in one call although it takes several commands. The
+ * commands go in together: should one fail, none of them has changed anything
+ * and nothing is written.
  */
 export function runGui(
   commands: Command | readonly Command[],
@@ -291,16 +292,20 @@ export function runGui(
   const echoes: string[] = [];
   let result: string | null = null;
   try {
-    for (const command of list) {
-      result = doc.dispatch(command, { group });
-      const echo = isTransient(command)
-        ? null
-        : echoPython(command, (wave) => doc.getState().waves[wave]?.shape);
-      if (echo) echoes.push(echo);
-    }
+    doc.transact(
+      (writer) => {
+        for (const command of list) {
+          result = writer.dispatch(command);
+          const echo = isTransient(command)
+            ? null
+            : echoPython(command, (wave) => writer.getState().waves[wave]?.shape);
+          if (echo) echoes.push(echo);
+        }
+      },
+      { group },
+    );
   } catch (error) {
     showError("That did not work", error);
-    if (echoes.length > 0) history.add("gui", echoes.join("\n"));
     return undefined;
   }
   if (options.echo !== undefined) history.add("gui", options.echo);
@@ -339,7 +344,12 @@ export function runGuiCoalesced(
   echo: () => string,
 ): void {
   try {
-    for (const command of commands) doc.dispatch(command, { group: `coalesced:${key}` });
+    doc.transact(
+      (writer) => {
+        for (const command of commands) writer.dispatch(command);
+      },
+      { group: `coalesced:${key}` },
+    );
   } catch (error) {
     showError("That did not work", error);
     return;

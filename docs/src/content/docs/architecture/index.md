@@ -15,6 +15,18 @@ description: OresmePro の状態管理、Python カーネル、描画、保存�
 
 `op.make` などの呼び出しは、Worker からメインスレッドへ RPC 要求を送ります。Worker は共有バッファ上で `Atomics.wait` し、`src/kernel/rpc.ts` が Doc の読み書きを処理します。応答の JSON と必要に応じた数値データがバッファに書かれ、`Atomics.notify` で Worker が再開します。応答が収まらない場合は、バッファを拡張して応答を再送します。
 
+## まとめて反映する変更
+
+複数のコマンドから成る操作は、まとめて反映するか、何も反映しないかのどちらかです。`Doc.transact()` は作業用の状態にコマンドを順に適用し、最後に 1 回だけ Doc の状態を差し替えます。`applyCommand` が不変の状態を返す純粋関数なので、失敗したときは作業用の状態を捨てるだけです。画面の操作はこれを使います。
+
+Python の `op.atomic()` は、複数の RPC 要求にまたがる同じ仕組みです。`src/kernel/rpc.ts` はブロックが開いている間、読み書きを Doc ではなく `Stage` に向けます。ブロックが終わると、`Stage` は記録したコマンドを、その間に画面で変わった Doc の上に適用し直します。ブロックが読んだ Wave の `rev` が変わっていれば反映しません。`rev` は全 Wave を通して一意で再利用されないので、`rev` が同じなら中身も同じです。
+
+## Action: 名前と型の決まった呼び出し
+
+画面・テンプレート・プラグインから解析を呼ぶ入口は Action です。解析の定義は Python の関数だけで、`@op.action` が名前・版・引数の型をそれに付けて登録します。メインスレッドは `KernelClient.invoke()` で `{type: "invoke", action, version, argsJson}` をワーカーに送ります。この呼び出しはコードの実行と同じ列に並び、Python は登録表を引いて引数を検査してから `op.atomic()` の中で関数を呼び、結果を JSON で返します。コードの文字列を組み立てて実行することはありません。
+
+履歴には、Python が作った同じ意味の呼び出し(`op.fit("gauss", op.wave("signal"))`)が記録されます。登録表は Python の起動時と、登録が変わったときにメインスレッドへ送られます。引数の型と、送る前に使う検査は DOM に依存しない `src/core/actions.ts` にあります。
+
 ## SharedArrayBuffer とクロスオリジン分離
 
 同期 RPC と割り込みには `SharedArrayBuffer` が必要です。Vite の開発・プレビューサーバーは `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を返します。ヘッダーを設定できない静的ホストでは、アプリの Service Worker が応答に付与します。初回起動時に Service Worker の有効化後、アプリが1回再読み込みされることがあります。

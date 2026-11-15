@@ -30,10 +30,11 @@ SECTIONS = {
     "table": ("Table API", "Table edit table tables to_dataframe from_dataframe"),
     "folder": ("Folder API", "Folder new_folder folder folders"),
     "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
+    "actions": ("Actions API", "action actions invoke"),
     "global": (
         "Global Functions",
         (
-            "OresmeError load_text load_excel load_igor kill_window "
+            "OresmeError atomic load_text load_excel load_igor kill_window "
             "Procedure new_procedure procedure procedures time_zone set_time_zone "
             "Layout LayoutItem new_layout layout layouts"
         ),

@@ -1,6 +1,7 @@
 import { loadPyodide } from "pyodide";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { appendPlan, newGraphPlan, nextGraphName } from "../app/newGraph";
+import type { ActionSpec } from "../core/actions";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
 import { planMakeWaves, type MakeWavesRequest } from "../core/doc/makeWaves";
@@ -27,6 +28,10 @@ let errors: string[] = [];
 let displays: Record<string, string>[] = [];
 let runCount = 0;
 const exported: string[] = [];
+/** Runs before a request is answered: lets a test change the document as the GUI would meanwhile. */
+let beforeRpc: ((method: string) => void) | null = null;
+/** The catalogs of actions Python has sent, the latest last. */
+const catalogs: ActionSpec[][] = [];
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
@@ -44,8 +49,9 @@ beforeAll(async () => {
     lockFileURL: "public/pyodide/pyodide-lock.json",
   });
   kernel = await bootPython(pyodide, {
-    rpc: (method, paramsJson, data) =>
-      answerRpc(
+    rpc: (method, paramsJson, data) => {
+      beforeRpc?.(method);
+      return answerRpc(
         {
           doc,
           files,
@@ -81,13 +87,15 @@ beforeAll(async () => {
         // Copy out of the WebAssembly heap, as the worker does by transferring.
         data ? data.slice() : null,
         `run${runCount}`,
-      ),
+      );
+    },
     stream: (name, text) => {
       if (name === "stdout") stdout += text;
       else stderr += text;
     },
     display: (json) => displays.push(JSON.parse(json) as Record<string, string>),
     error: (name, message) => errors.push(`${name}: ${message}`),
+    actions: (json) => catalogs.push(JSON.parse(json) as ActionSpec[]),
   });
 }, 180_000);
 
@@ -2118,5 +2126,419 @@ describe("oresme Python API", () => {
       await run(echoPython({ op: "saveStyle", name: "stSized", graph: "StyleNew", size: true })!),
     ).toBe(true);
     expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
+  });
+});
+
+describe("op.atomic", () => {
+  it("keeps nothing of a block that raises", async () => {
+    const before = doc.getState();
+    expect(
+      await run(
+        [
+          "try:",
+          "    with op.atomic():",
+          '        a = op.make("atomA", [1.0, 2.0])',
+          "        a[0] = 5",
+          '        print("inside", a[0], op.exists("atomA"))',
+          '        raise ValueError("stop")',
+          "except ValueError:",
+          '    print("outside", op.exists("atomA"))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("inside 5.0 True\noutside False\n");
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("puts a block in as one undo step, after the GUI saw none of it", async () => {
+    let seen: boolean | null = null;
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") seen = "atomB" in doc.getState().waves;
+    };
+    try {
+      expect(
+        await run(
+          'with op.atomic():\n    op.make("atomB", [1.0])\n    op.make("atomC", [2.0])\n    op.display(op.wave("atomB"))',
+        ),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    expect(seen).toBe(false);
+    expect(doc.getState().waves.atomC).toBeDefined();
+    doc.undo();
+    expect(doc.getState().waves.atomB).toBeUndefined();
+    expect(doc.getState().waves.atomC).toBeUndefined();
+  });
+
+  it("takes back an inner block only", async () => {
+    expect(
+      await run(
+        [
+          "with op.atomic():",
+          '    op.make("atomOuter", [1.0])',
+          "    try:",
+          "        with op.atomic():",
+          '            op.make("atomInner", [2.0])',
+          "            raise KeyError",
+          "    except KeyError:",
+          "        pass",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(doc.getState().waves.atomOuter).toBeDefined();
+    expect(doc.getState().waves.atomInner).toBeUndefined();
+  });
+
+  it("refuses to keep what was computed from a wave the GUI changed meanwhile", async () => {
+    await run('op.make("atomSrc", [1.0, 2.0, 3.0])');
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") {
+        doc.dispatch({ op: "setWavePoints", name: "atomSrc", start: 0, values: [100] });
+      }
+    };
+    try {
+      expect(
+        await run(
+          [
+            "try:",
+            "    with op.atomic():",
+            '        op.make("atomDouble", op.wave("atomSrc").data * 2)',
+            "except op.OresmeError as error:",
+            "    print(error)",
+          ].join("\n"),
+        ),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    expect(stdout).toMatch(/atomSrc changed while this was running/);
+    expect(doc.getState().waves.atomDouble).toBeUndefined();
+  });
+
+  it("keeps a block when the GUI changed something else meanwhile", async () => {
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") {
+        doc.dispatch({ op: "makeWave", name: "atomGui", data: new Float64Array([7]) });
+      }
+    };
+    try {
+      expect(
+        await run('with op.atomic():\n    op.make("atomTwice", op.wave("atomSrc").data * 2)'),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    // atomSrc is as the GUI left it in the test before.
+    expect([...doc.getState().waves.atomTwice!.data]).toEqual([200, 4, 6]);
+    expect(doc.getState().waves.atomGui).toBeDefined();
+  });
+
+  it("leaves nothing of a fit that fails part way", async () => {
+    const before = Object.keys(doc.getState().waves).length;
+    const results = Object.keys(doc.getState().results).length;
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as _analysis",
+          "_keep = _analysis._record",
+          "def _broken(*args, **kwargs):",
+          '    raise RuntimeError("no room")',
+          "_analysis._record = _broken",
+          "x = np.linspace(-3, 3, 61)",
+          "try:",
+          '    op.fit("gauss", op.make("atomPeak", np.exp(-x ** 2), x0=-3, dx=0.1), quiet=True)',
+          "except RuntimeError as error:",
+          '    print("failed:", error)',
+          "finally:",
+          "    _analysis._record = _keep",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("failed: no room\n");
+    // The wave made before the fit is there; nothing the fit made is.
+    const state = doc.getState();
+    expect(state.waves.atomPeak).toBeDefined();
+    expect(state.waves.fit_atomPeak).toBeUndefined();
+    expect(Object.keys(state.waves).length).toBe(before + 1);
+    expect(Object.keys(state.results).length).toBe(results);
+  });
+
+  it("does not draw or save graphs inside a block", async () => {
+    expect(
+      await run(
+        [
+          'g = op.display(op.wave("atomSrc"))',
+          "try:",
+          "    with op.atomic():",
+          '        g.save("inside.svg")',
+          "except op.OresmeError as error:",
+          "    print(error)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toMatch(/waits for the end of the op.atomic\(\) block/);
+  });
+});
+
+/** Calls an action as the main thread does: by name, with JSON arguments. */
+async function invoke(
+  action: string,
+  args: unknown,
+  version: number | null = null,
+): Promise<{ code: string | null; result: unknown; ok: boolean }> {
+  stdout = "";
+  stderr = "";
+  errors = [];
+  runCount += 1;
+  let code: string | null = null;
+  const reply = await kernel.invoke(action, version, JSON.stringify(args), (text) => {
+    code = text;
+  });
+  return {
+    code,
+    ok: reply !== null,
+    result: reply === null ? undefined : (JSON.parse(reply) as { result: unknown }).result,
+  };
+}
+
+describe("actions", () => {
+  const latest = () => catalogs.at(-1)!;
+
+  it("sends the analyses as actions when Python starts", () => {
+    const ids = latest().map((spec) => spec.id);
+    for (const id of [
+      "core.fit",
+      "core.fit_peaks",
+      "core.background",
+      "core.onset",
+      "core.stats",
+      "core.differentiate",
+      "core.integrate",
+      "core.smooth",
+      "core.interpolate",
+      "core.fft",
+      "core.histogram",
+    ]) {
+      expect(ids).toContain(id);
+    }
+    const fit = latest().find((spec) => spec.id === "core.fit")!;
+    expect(fit.version).toBe(1);
+    expect(fit.title).toBe("Curve Fit");
+    expect(fit.params.y).toEqual({ type: "wave", title: "Y wave", optional: false });
+    expect(fit.params.function!.choices).toContain("gauss");
+    expect(fit.params.function!.choices).toContain("poly9");
+    expect(fit.params.band).toMatchObject({ type: "number", min: 0, max: 1, optional: true });
+    // How an argument reaches the function is Python's business.
+    const smooth = latest().find((spec) => spec.id === "core.smooth")!;
+    expect(smooth.params.wave).toEqual({ type: "wave", title: "Wave", optional: false });
+    expect(smooth.params.n).toMatchObject({ type: "integer", default: 5, optional: true });
+  });
+
+  it("lists the same actions in Python", async () => {
+    expect(await run("import json\nprint(json.dumps(op.actions()))")).toBe(true);
+    expect(JSON.parse(stdout)).toEqual(latest());
+  });
+
+  it("registers a procedure's action and sends the new list", async () => {
+    const before = catalogs.length;
+    expect(
+      await run(
+        [
+          '@op.action("lab.scale", title="Scale", params={',
+          '    "wave": {"type": "wave"},',
+          '    "factor": {"type": "number", "default": 2.0, "min": 0},',
+          '    "mode": {"type": "choice", "choices": ["copy", "replace"], "optional": True},',
+          "})",
+          'def scale(wave, factor=2.0, mode="copy"):',
+          '    print("scaling", wave.name)',
+          '    return op.make(f"{wave.name}_x", wave.data * factor)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(catalogs.length).toBe(before + 1);
+    const spec = latest().find((item) => item.id === "lab.scale")!;
+    expect(spec.title).toBe("Scale");
+    expect(Object.keys(spec.params)).toEqual(["wave", "factor", "mode"]);
+    // Running code that registers nothing sends nothing.
+    expect(await run("x = 1")).toBe(true);
+    expect(catalogs.length).toBe(before + 1);
+  });
+
+  it("calls a user's action from the main thread, written as op.invoke", async () => {
+    expect(await run('op.make("actSmall", [1.0, 2.0, 3.0])')).toBe(true);
+    const call = await invoke("lab.scale", { wave: "actSmall", factor: 3 });
+    expect(call.ok).toBe(true);
+    expect(call.code).toBe(
+      'op.invoke("lab.scale", {"wave": "actSmall", "factor": 3.0}, version=1)',
+    );
+    expect(call.result).toEqual({ wave: "actSmall_x" });
+    expect(stdout).toBe("scaling actSmall\n");
+    expect([...doc.getState().waves.actSmall_x!.data]).toEqual([3, 6, 9]);
+  });
+
+  it("refuses ids it does not own and descriptions that do not fit the function", async () => {
+    const cases: [string, RegExp][] = [
+      ['op.action("core.mine", title="T", params={})(lambda: 1)', /kept for the application/],
+      ['op.action("plugin.mine", title="T", params={})(lambda: 1)', /kept for plugins/],
+      ['op.action("Mine", title="T", params={})(lambda: 1)', /not an action id/],
+      [
+        'op.action("lab.a", title="T", params={"w": {"type": "matrix"}})(lambda w: 1)',
+        /type must be one of/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"w": {"type": "wave", "colour": 1}})(lambda w: 1)',
+        /unknown key 'colour'/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"n": {"type": "integer", "default": 3}})(lambda n=4: 1)',
+        /the function's is 4/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"n": {"type": "integer"}})(lambda m: 1)',
+        /no keyword parameter 'n'/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"n": {"type": "integer", "optional": True}})(lambda n, m: 1)',
+        /needs 'n'/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"c": {"type": "choice", "choices": []}})(lambda c: 1)',
+        /choices must be a list/,
+      ],
+      [
+        'op.action("lab.a", title="T", params={"n": {"type": "number", "min": 5, "default": 1}})(lambda n=1: 1)',
+        /at least 5/,
+      ],
+    ];
+    const before = catalogs.length;
+    for (const [code, message] of cases) {
+      expect(await run(code), code).toBe(false);
+      expect(errors.join("\n")).toMatch(message);
+    }
+    expect(catalogs.length).toBe(before);
+    expect(await run('print("lab.a" in [a["id"] for a in op.actions()])')).toBe(true);
+    expect(stdout).toBe("False\n");
+  });
+
+  it("refuses bad calls before anything changes", async () => {
+    expect(
+      await run(
+        'x = np.linspace(-5, 5, 101)\nop.make("actSig", 1 + 3 * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+      ),
+    ).toBe(true);
+    const cases: [string, unknown, number | null, RegExp][] = [
+      ["core.nothing", { y: "actSig" }, null, /No action named 'core.nothing'/],
+      ["core.fit", { function: "gauss", y: "actSig" }, 2, /core.fit has no version 2 \(it has 1\)/],
+      ["core.fit", { function: "gauss", y: "actSig", colour: "red" }, null, /no argument 'colour'/],
+      ["core.fit", { y: "actSig" }, null, /core.fit needs 'function'/],
+      ["core.fit", { function: "gauss", y: 3 }, null, /y must be the name of a wave/],
+      ["core.fit", { function: "gauss", y: "nowhere" }, null, /core.fit: y: .*nowhere/],
+      ["core.fit", { function: "spline", y: "actSig" }, null, /function must be one of "line"/],
+      ["core.fit", { function: "gauss", y: "actSig", band: 2 }, null, /band must be at most 1/],
+      ["core.fit", { function: "gauss", y: "actSig", band: "0.9" }, null, /band must be a number/],
+      [
+        "core.fit",
+        { function: "gauss", y: "actSig", quiet: 1 },
+        null,
+        /quiet must be True or False/,
+      ],
+      ["core.fit", { function: "gauss", y: "actSig", name: null }, null, /cannot be None/],
+      ["core.fit", { function: "gauss", y: "actSig", range: [1, 2, 3] }, null, /must have 2 items/],
+      [
+        "core.fit",
+        { function: "gauss", y: "actSig", guess: [1, "a"] },
+        null,
+        /guess\[1\] must be a number/,
+      ],
+      ["core.smooth", { wave: "actSig", n: 2.5 }, null, /n must be a whole number/],
+      ["core.smooth", { wave: "actSig", n: 0 }, null, /n must be at least 1/],
+      [
+        "core.fit_peaks",
+        { y: "actSig", peaks: [0.5], count: 1 },
+        null,
+        /give 'peaks' or 'count', not both/,
+      ],
+      ["core.fit", ["gauss", "actSig"], null, /are a dict/],
+    ];
+    const before = doc.getState();
+    for (const [action, args, version, message] of cases) {
+      const call = await invoke(action, args, version);
+      expect(call.ok, `${action} ${JSON.stringify(args)}`).toBe(false);
+      expect(call.code).toBeNull();
+      expect(errors.join("\n")).toMatch(message);
+    }
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("leaves nothing behind when the action itself fails", async () => {
+    const waves = Object.keys(doc.getState().waves).length;
+    // Interpolation needs n or at; the function finds that out, not the description.
+    const call = await invoke("core.interpolate", { wave: "actSig" });
+    expect(call.ok).toBe(false);
+    expect(call.code).toBe('op.interpolate(op.wave("actSig"))');
+    expect(errors.join("\n")).toMatch(/Give either n/);
+    expect(Object.keys(doc.getState().waves).length).toBe(waves);
+  });
+
+  it("gives the same fit as calling op.fit, written as that call", async () => {
+    const call = await invoke("core.fit", {
+      function: "gauss",
+      y: "actSig",
+      quiet: true,
+      result: "ActFit",
+    });
+    expect(call.ok).toBe(true);
+    expect(call.code).toBe('op.fit("gauss", op.wave("actSig"), quiet=True, result="ActFit")');
+    const result = call.result as {
+      result: string;
+      coef: Record<string, number>;
+      wave: { wave: string };
+      converged: boolean;
+    };
+    expect(result.result).toBe("ActFit");
+    expect(result.wave).toEqual({ wave: "fit_actSig" });
+    expect(result.converged).toBe(true);
+    expect(
+      await run(
+        'import json\nr = op.fit("gauss", op.wave("actSig"), quiet=True, result="ActFit2")\nprint(json.dumps(dict(zip(r.names, r.coef.tolist()))))',
+      ),
+    ).toBe(true);
+    expect(result.coef).toEqual(JSON.parse(stdout));
+    expect(result.coef.x0).toBeCloseTo(0.5, 6);
+    const { results } = doc.getState();
+    const { name: _first, ...settings } = results.ActFit!.settings as Record<string, unknown>;
+    const { name: _second, ...direct } = results.ActFit2!.settings as Record<string, unknown>;
+    expect(settings).toEqual(direct);
+  });
+
+  it("does the same through op.invoke in Python", async () => {
+    expect(
+      await run(
+        [
+          'a = op.invoke("core.smooth", {"wave": "actSig", "n": 7, "name": "actA"})',
+          'b = op.smooth(op.wave("actSig"), 7, name="actB")',
+          "print(type(a).__name__, np.array_equal(a.data, b.data))",
+          'print(op.invoke("core.stats", {"wave": op.wave("actSig"), "quiet": True})["max"])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("Wave True\n4.0\n");
+    expect(await run('op.invoke("core.smooth", {"wave": "actSig", "n": "7"})')).toBe(false);
+    expect(errors.join("\n")).toMatch(/n must be a number/);
+  });
+
+  it("writes waves, lists and numbers as Python in the call it records", async () => {
+    const call = await invoke("core.onset", {
+      wave: "actSig",
+      edge: [-1, 0],
+      level: 1,
+      quiet: true,
+    });
+    expect(call.ok).toBe(true);
+    expect(call.code).toBe(
+      'op.onset(op.wave("actSig"), edge=[-1.0, 0.0], baseline=1.0, quiet=True)',
+    );
+    expect(call.result).toMatchObject({ baseline: { level: 1 }, waves: [] });
   });
 });

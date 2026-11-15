@@ -618,6 +618,51 @@ p.code; p.auto_run = False; op.procedure("Fits"); op.procedures()
 print(g.script())                              # このグラフをもう一度描く Python
 ```
 
+### まとめて反映する(`op.atomic`)
+
+`with op.atomic():` の中の変更は、ブロックが例外なく終わったときにまとめて実験に入ります。途中で例外が起きると何も残りません。
+
+```python
+with op.atomic():
+    corrected = op.make("corrected", raw.data - background.data)
+    op.display(corrected)          # ブロックが終わるまで、GUI には corrected もグラフも出ない
+```
+
+- ブロックの中の Python には自分の変更が見えます。実験(GUI)には、ブロックが終わるまで何も見えません。終わると 1 回の Undo で戻せる 1 つの変更として入ります。
+- wave と結果を作る解析(`op.fit`、`op.fit_peaks`、`op.background` など)は、それぞれがこのブロックの中で動くので、途中で失敗しても作りかけの wave は残りません。
+- ブロックの実行中も GUI は待たずに使えます。GUI での変更がブロックの変更とぶつからなければ(ウィンドウの移動、ほかの wave の編集)、そのまま両方が残ります。
+  ブロックが読んだ wave が途中で変わっていた場合は、古いデータから計算した結果なので何も残さず、`OresmeError` を出します。
+- 入れ子にできます。内側のブロックで例外が起きると、内側の変更だけが取り消されます。`@op.atomic()` を関数に付けると、呼び出しのたびにブロックになります。
+- ブロックの中ではグラフやページレイアウトを描いたり保存したりできません(まだ実験に入っていないため)。
+
+### 解析を名前で呼ぶ(`op.action`)
+
+解析は、名前(`core.fit` など)と引数の型を付けて **Action** として登録されています。パネル・テンプレート・プラグインは、Python のコードを組み立てるのではなく、名前と JSON の値だけを渡して解析を呼びます。
+
+```python
+op.actions()                                            # 登録された Action の一覧(id、version、title、params)
+r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})   # op.fit("gauss", op.wave("signal")) と同じ
+
+@op.action("lab.normalize", title="Normalize", params={
+    "wave": {"type": "wave", "title": "Wave"},
+    "to": {"type": "number", "default": 1.0, "min": 0},
+})
+def normalize(wave, to=1.0):
+    return op.make(f"{wave.name}_norm", wave.data / np.nanmax(wave.data) * to)
+```
+
+- **引数の型**は `wave`(wave の名前。関数には `op.Wave` で渡る)、`waves`(wave の名前のリスト)、`number`・`integer`(`min`・`max` を付けられる)、`numbers`(数のリスト。`min`・`max`・`length`)、`string`、`boolean`、`choice`(`choices` のどれか)です。
+  ほかに `title`、`description`、`optional`、`default`(付けると省略可。関数の既定値と同じでなければ登録を拒否)を書けます。省略した引数は関数に渡さないので、関数の既定値が使われます。`null`(None)は値として受け付けません。
+- **呼ぶ前に検査します。** 知らない Action、知らない版、余分な引数、足りない引数、型の違う引数、選択肢にない値、範囲外の数、存在しない wave は、何もせずに `OresmeError` で拒否します。
+  通った呼び出しは `op.atomic()` の中で動くので、関数の途中で失敗しても何も残りません。引数からコードの文字列を作って実行することはしません。
+- **名前の予約**: `core.` は本体の解析、`plugin.` はプラグインのものです。プロシージャでは、それ以外の名前(`lab.normalize` など。小文字の点区切り)を登録できます。同じ名前と版を登録し直すと置き換わります(プロシージャを実行し直したとき)。
+  新しい `version` は古い版と並べて登録でき、版を指定しない呼び出しは最も新しい版を呼びます。
+- 登録してある解析は `core.fit`、`core.fit_peaks`、`core.background`、`core.onset`、`core.stats`、`core.differentiate`、`core.integrate`、`core.smooth`、`core.interpolate`、`core.fft`、`core.histogram` です。
+  JSON で渡せる引数だけを公開しています(自分の関数、`hold=` や `bounds=` のような辞書、配列は Python から)。
+- メインスレッドからは `kernel.invoke("core.fit", {function: "gauss", y: "signal"})` で呼びます。実行中のコードのあとに順番に動き、履歴には同じ意味の Python(`op.fit("gauss", op.wave("signal"))`)として、出力と一緒に残ります。
+  結果は JSON で返ります。数・文字列・リスト・辞書はそのまま(NaN は `null`)、wave は `{"wave": 名前}`、グラフは `{"graph": 名前}`、フィットの結果は保存された結果の名前(`result`)・係数(`coef`)・`chisq` などです。
+  一覧は `kernel.getActions()` と `kernel.subscribeActions()` で得られます(Python の起動時と、登録が変わるたびに届きます)。型と、送る前に引数を確かめる `validateArgs` は `src/core/actions.ts` にあります。
+
 `w.data` はコピーなので、`w.data[0] = 1` は wave を変更しません(読み取り専用なのでエラーになります)。
 変更するときは `w[0] = 1` か `w.data = ...` を使います。
 1 次元の wave は、複素数でも、末尾のすぐ先に書くと伸びます(`w[len(w)] = 1`、`z[len(z)] = 1 + 2j`)。`w.flat[a:b]` は、形によらず格納順で読み書きします。
@@ -672,6 +717,12 @@ r.lmfit                                                # lmfit 自身の結果(M
 - **すべての変更は 1 つの関数を通ります。** GUI も Python も `applyCommand(state, command)` に同じコマンドを渡します。
   コマンドは不変の状態を返す純粋関数で、Undo は以前の状態に戻すだけです(変更のない wave は共有されます)。
   Python の 1 回の実行は 1 つの Undo 単位になります。
+- **複数のコマンドは、まとめて入るか、何も入らないかです。** `doc.transact()` は作業用の状態にコマンドを順に適用し、最後に 1 回だけ差し替えます。GUI の操作はこれを使うので、途中のコマンドが失敗しても前のコマンドは残りません。
+  Python の `op.atomic()` は、複数の呼び出しにまたがる同じ仕組み(`Stage`)です。ブロックの変更は実験と別に置かれ、終わったときに、その間の GUI の変更の上に適用し直されます。
+  wave の `rev` は全 wave を通して一意で再利用されないので、ブロックが読んだ wave の `rev` が変わっていなければ、中身も変わっていません。
+- **GUI から解析を呼ぶ入口は Action です。** Python の関数に名前と引数の型を付けて登録し(`@op.action`)、メインスレッドは `{type: "invoke", action, version, argsJson}` をワーカーに送ります。
+  Python が登録表を引いて引数を検査し、`op.atomic()` の中で関数を呼んで、結果を JSON で返します。コードの文字列は組み立てません。
+  TypeScript 側に別の API を作らないので、解析の定義は Python の関数だけです。登録表は Python の起動時と、変わるたびにメインスレッドへ送られます。
 - **Python からの呼び出しは同期です。** `w.data` のような式は次の行に進む前に答えが必要ですが、
   Python を実行中のワーカーはメッセージを受け取れません。そこでワーカーは要求を送ったあと `SharedArrayBuffer` 上で
   `Atomics.wait` で待ち、メインスレッドがそこに答えを書き込んで起こします。
@@ -684,17 +735,18 @@ r.lmfit                                                # lmfit 自身の結果(M
 
 ### ディレクトリ
 
-| 場所                | 内容                                                                                         |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| `src/core/doc/`     | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                             |
-| `src/core/plot/`    | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算              |
-| `src/core/history/` | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                  |
-| `src/core/io/`      | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、実験ファイル(`.oresme`) |
-| `src/core/files/`   | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                      |
-| `src/kernel/`       | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                             |
-| `src/app/`          | アプリの状態、自動保存、書き出し、スタイルのライブラリ                                       |
-| `src/editor/`       | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行          |
-| `src/ui/`           | React コンポーネント                                                                         |
+| 場所                  | 内容                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `src/core/doc/`       | ドキュメントの型、コマンド、Undo、GUI 操作の Python への書き出し                             |
+| `src/core/plot/`      | 目盛り、間引き、等高線、レイアウト、Canvas / SVG / PDF バックエンド、ズーム計算              |
+| `src/core/history/`   | 履歴、履歴検索、ANSI 出力の解釈、入力が完結しているかの判定                                  |
+| `src/core/io/`        | `.npy` の読み書き、区切りテキスト・Excel・Igor のファイルの読み込み、実験ファイル(`.oresme`) |
+| `src/core/files/`     | 実験に含まれるファイル(Python の作業ディレクトリの写し)                                      |
+| `src/core/actions.ts` | Action の一覧と引数の型、送る前の引数の検査                                                  |
+| `src/kernel/`         | Python ワーカー、同期ブリッジ、`python/`(Python 側の API と解析)                             |
+| `src/app/`            | アプリの状態、自動保存、書き出し、スタイルのライブラリ                                       |
+| `src/editor/`         | プロシージャのエディタ: Ruff による検査と整形、右クリックのメニュー、選択範囲の実行          |
+| `src/ui/`             | React コンポーネント                                                                         |
 
 `src/core/` は DOM にも React にも依存しません。
 

@@ -716,3 +716,186 @@ describe("memory held by undo", () => {
     expect(doc.undo()).toBe(false);
   });
 });
+
+describe("transactions", () => {
+  it("applies several commands as one undo step and one notification", () => {
+    const doc = sample();
+    let notified = 0;
+    doc.subscribe(() => (notified += 1));
+    const made = doc.transact((writer) => {
+      writer.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+      // The writer reads its own changes.
+      expect(writer.getState().waves.a).toBeDefined();
+      expect(doc.getState().waves.a).toBeUndefined();
+      writer.dispatch({ op: "makeWave", name: "b", data: wave(2) });
+      return writer.dispatch({ op: "display", y: ["a"] });
+    });
+    expect(made).toBe("Graph0");
+    expect(notified).toBe(1);
+    expect(Object.keys(doc.getState().waves).sort()).toEqual(["a", "b", "signal", "time"]);
+    doc.undo();
+    expect(doc.getState().waves.a).toBeUndefined();
+    expect(doc.getState().graphs.Graph0).toBeUndefined();
+    expect(doc.getState().waves.signal).toBeDefined();
+  });
+
+  it("changes nothing when a command fails part way", () => {
+    const doc = sample();
+    const before = doc.getState();
+    let notified = 0;
+    doc.subscribe(() => (notified += 1));
+    expect(() =>
+      doc.transact((writer) => {
+        writer.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+        writer.dispatch({ op: "makeWave", name: "b", data: wave(2) });
+        writer.dispatch({ op: "display", y: ["missing"] });
+      }),
+    ).toThrow(DocError);
+    expect(doc.getState()).toBe(before);
+    expect(notified).toBe(0);
+    // Nothing to undo but what the sample did.
+    doc.undo();
+    expect(doc.getState().waves.time).toBeUndefined();
+  });
+
+  it("keeps a transaction of view changes out of the undo history", () => {
+    const doc = sample();
+    doc.dispatch({ op: "display", y: ["signal"] });
+    doc.transact((writer) => {
+      writer.dispatch({ op: "moveWindow", name: "Graph0", x: 10, y: 20 });
+      writer.dispatch({ op: "moveWindow", name: "Graph0", w: 300 });
+    });
+    expect(doc.getState().windows[0]).toMatchObject({ x: 10, y: 20, w: 300 });
+    doc.undo();
+    expect(doc.getState().graphs.Graph0).toBeUndefined();
+  });
+
+  it("joins the undo step of its group", () => {
+    const doc = sample();
+    doc.dispatch({ op: "makeWave", name: "a", data: wave(1) }, { group: "run1" });
+    doc.transact((writer) => writer.dispatch({ op: "makeWave", name: "b", data: wave(2) }), {
+      group: "run1",
+    });
+    doc.undo();
+    expect(doc.getState().waves.a).toBeUndefined();
+    expect(doc.getState().waves.b).toBeUndefined();
+  });
+
+  it("does not let the document change under a running transaction", () => {
+    const doc = sample();
+    expect(() =>
+      doc.transact(() => doc.dispatch({ op: "makeWave", name: "a", data: wave(1) })),
+    ).toThrow(/transaction/);
+    expect(() => doc.transact(() => doc.undo())).toThrow(/transaction/);
+    expect(() => doc.transact(() => doc.transact(() => null))).toThrow(/transaction/);
+    expect(doc.getState().waves.a).toBeUndefined();
+    // And the document is usable afterwards.
+    doc.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    expect(doc.getState().waves.a).toBeDefined();
+  });
+});
+
+describe("stages", () => {
+  it("keeps changes apart until committed, then puts them in as one step", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    stage.dispatch({ op: "display", y: ["a"] });
+    expect(stage.getState().graphs.Graph0).toBeDefined();
+    expect(doc.getState().waves.a).toBeUndefined();
+    stage.commit();
+    expect(doc.getState().graphs.Graph0).toBeDefined();
+    doc.undo();
+    expect(doc.getState().waves.a).toBeUndefined();
+    expect(() => stage.dispatch({ op: "makeWave", name: "b", data: wave(1) })).toThrow(DocError);
+  });
+
+  it("puts in nothing when discarded", () => {
+    const doc = sample();
+    const before = doc.getState();
+    const stage = doc.stage();
+    stage.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    stage.discard();
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("replays on a document that changed in ways the stage did not touch", () => {
+    const doc = sample();
+    doc.dispatch({ op: "display", y: ["time"] });
+    const stage = doc.stage();
+    stage.read("signal");
+    const value = stage.getState().waves.signal!.data[0]!;
+    stage.dispatch({ op: "makeWave", name: "double", data: wave(value * 2) });
+    // Meanwhile, in the GUI: a window moves and another wave is edited.
+    doc.dispatch({ op: "moveWindow", name: "Graph0", x: 50 });
+    doc.dispatch({ op: "setWavePoints", name: "time", start: 0, values: [5] });
+    stage.commit();
+    const state = doc.getState();
+    expect([...state.waves.double!.data]).toEqual([2]);
+    expect(state.waves.time!.data[0]).toBe(5);
+    expect(state.windows[0]!.x).toBe(50);
+  });
+
+  it("refuses to commit when a wave it read changed meanwhile", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.read("signal");
+    stage.dispatch({ op: "makeWave", name: "double", data: wave(2, 4, 6) });
+    doc.dispatch({ op: "setWavePoints", name: "signal", start: 0, values: [10] });
+    const before = doc.getState();
+    expect(() => stage.commit()).toThrow(/signal changed/);
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("refuses when a wave it read was deleted meanwhile", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.read("time");
+    stage.dispatch({ op: "makeWave", name: "copy", data: wave(0, 1, 2) });
+    doc.dispatch({ op: "killWaves", names: ["time"] });
+    expect(() => stage.commit()).toThrow(/time changed/);
+  });
+
+  it("does not count a wave it changed itself as read from the document", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.dispatch({ op: "setWavePoints", name: "signal", start: 0, values: [9] });
+    stage.read("signal");
+    expect(stage.waveReads.size).toBe(0);
+  });
+
+  it("refuses when a command comes out differently on the changed document", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    // The stage's graph is Graph0; the GUI makes a Graph0 first.
+    expect(stage.dispatch({ op: "display", y: ["signal"] })).toBe("Graph0");
+    doc.dispatch({ op: "display", y: ["time"] });
+    expect(() => stage.commit()).toThrow(/changed while/);
+    expect(Object.keys(doc.getState().graphs)).toEqual(["Graph0"]);
+    expect(doc.getState().graphs.Graph0!.traces[0]!.y).toBe("time");
+  });
+
+  it("commits a stage that only read whatever changed meanwhile", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.read("signal");
+    doc.dispatch({ op: "setWavePoints", name: "signal", start: 0, values: [10] });
+    expect(() => stage.commit()).not.toThrow();
+  });
+
+  it("takes back an inner block without the outer one", () => {
+    const doc = sample();
+    const stage = doc.stage();
+    stage.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    stage.mark();
+    stage.dispatch({ op: "makeWave", name: "b", data: wave(2) });
+    expect(stage.depth).toBe(1);
+    stage.rollback();
+    expect(stage.depth).toBe(0);
+    stage.mark();
+    stage.dispatch({ op: "makeWave", name: "c", data: wave(3) });
+    stage.release();
+    stage.commit();
+    expect(Object.keys(doc.getState().waves).sort()).toEqual(["a", "c", "signal", "time"]);
+  });
+});

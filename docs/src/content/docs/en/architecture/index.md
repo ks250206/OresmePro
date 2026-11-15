@@ -15,6 +15,18 @@ description: How OresmePro stores state, executes Python, renders graphs, and sa
 
 A call such as `op.make` sends an RPC request from the worker to the main thread. The worker waits on a shared buffer using `Atomics.wait`. The handler in `src/kernel/rpc.ts` reads or updates the Doc. The response contains JSON and optional numeric data. The main thread writes it to the buffer and wakes the worker with `Atomics.notify`. If the response is too large, the worker grows the buffer and requests the same response again.
 
+## Changes that go in together
+
+An operation made of several commands is applied entirely or not at all. `Doc.transact()` applies the commands to a working state and replaces the document's state once at the end. Because `applyCommand` is a pure function returning immutable state, a failure only discards the working state. Interface actions use it.
+
+Python's `op.atomic()` is the same mechanism spread over many RPC requests. While a block is open, `src/kernel/rpc.ts` directs reads and writes to a `Stage` instead of the document. When the block ends, the stage replays its commands on the document as the interface left it meanwhile. It refuses if a wave the block read has a different `rev`: revisions are unique across all waves and never reused, so an unchanged `rev` means unchanged content.
+
+## Actions: calls by name with typed arguments
+
+The interface, templates, and plugins call analyses through actions. An analysis is defined only by its Python function; `@op.action` registers it with a name, a version, and the types of its arguments. The main thread sends `{type: "invoke", action, version, argsJson}` to the worker with `KernelClient.invoke()`. The call is queued like an execution: Python looks the action up, checks the arguments, calls the function inside `op.atomic()`, and returns the result as JSON. No code string is built or run.
+
+The history records the equivalent call that Python writes, such as `op.fit("gauss", op.wave("signal"))`. Python sends the list of actions to the main thread when it starts and whenever it changes. The argument types, and the check a GUI runs before sending, are in the DOM-free `src/core/actions.ts`.
+
 ## SharedArrayBuffer and cross-origin isolation
 
 Synchronous RPC and interruption require `SharedArrayBuffer`. The Vite development and preview servers return `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. On static hosts without configurable headers, the app's service worker adds them to responses. The app can reload once on first launch after the service worker activates.
