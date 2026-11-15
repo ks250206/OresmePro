@@ -126,7 +126,12 @@ function initialValue(spec: ParamSpec): JsonValue | undefined {
 
 /** A form for an action's arguments, made from their descriptions. */
 function ActionForm({ manifest, action }: { manifest: PluginManifest; action: PluginAction }) {
-  const waves = useDoc((state) => state.waveOrder.filter((name) => !state.waves[name]?.text));
+  // The selector must return what the document holds, not a new list each time it is asked.
+  const state = useDoc((current) => current);
+  const waves = useMemo(
+    () => state.waveOrder.filter((name) => !state.waves[name]?.text),
+    [state.waveOrder, state.waves],
+  );
   const [values, setValues] = useState<Record<string, JsonValue | undefined>>(() =>
     Object.fromEntries(
       Object.entries(action.params).map(([name, spec]) => [name, initialValue(spec)]),
@@ -274,11 +279,12 @@ function Contributions({ plugin }: { plugin: InstalledPlugin }) {
     try {
       const files = await pluginStore.files(plugin);
       for (const path of contributes[kind]) {
-        const data = JSON.parse(new TextDecoder().decode(files.get(path)!)) as { name?: unknown };
+        // A file may name what it holds; the name is not part of the style or template itself.
+        const { name: given, ...data } = JSON.parse(
+          new TextDecoder().decode(files.get(path)!),
+        ) as Record<string, unknown>;
         const name =
-          typeof data.name === "string"
-            ? data.name
-            : path.replace(/^.*\//, "").replace(/\.json$/, "");
+          typeof given === "string" ? given : path.replace(/^.*\//, "").replace(/\.json$/, "");
         runGui(
           kind === "styles"
             ? { op: "setStyle", name, style: data }
