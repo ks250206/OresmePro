@@ -45,6 +45,7 @@ function withDicts(state: DocState): DocState {
   const waves = asDict(state.waves);
   const procedures = asDict(state.procedures);
   const pages = asDict(state.pages);
+  const panels = asDict(state.panels);
   const styles = asDict(state.styles);
   const graphTemplates = asDict(state.graphTemplates);
   const results = asDict(state.results);
@@ -54,12 +55,24 @@ function withDicts(state: DocState): DocState {
     waves === state.waves &&
     procedures === state.procedures &&
     pages === state.pages &&
+    panels === state.panels &&
     styles === state.styles &&
     graphTemplates === state.graphTemplates &&
     results === state.results;
   return same
     ? state
-    : { ...state, waves, graphs, tables, procedures, pages, styles, graphTemplates, results };
+    : {
+        ...state,
+        waves,
+        graphs,
+        tables,
+        procedures,
+        pages,
+        panels,
+        styles,
+        graphTemplates,
+        results,
+      };
 }
 
 const UNDO_LIMIT = 100;

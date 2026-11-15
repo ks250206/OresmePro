@@ -2,6 +2,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { applyCommand, checkGraphTemplate, checkName, checkStyle } from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
 import { formulaCurrent, parseFormula } from "../doc/formula";
+import { checkPanel } from "../doc/panels";
 import { checkResult, type AnalysisResult } from "../doc/results";
 import {
   AXIS_SIDES,
@@ -15,6 +16,7 @@ import {
   type DocState,
   type GraphSpec,
   type PageSpec,
+  type PanelSpec,
   type ProcedureSpec,
   type GraphTemplate,
   type StyleSpec,
@@ -71,6 +73,7 @@ export interface SavedExperiment {
   tables: Record<string, TableSpec>;
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
+  panels?: Record<string, PanelSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
   graphTemplates?: Record<string, GraphTemplate>;
@@ -112,6 +115,7 @@ export function describeExperiment(
     tables: dictFrom(state.tables),
     procedures: dictFrom(state.procedures),
     pages: dictFrom(state.pages),
+    panels: dictFrom(state.panels),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
     graphTemplates: dictFrom(state.graphTemplates),
@@ -294,12 +298,23 @@ export function buildState(
     const items = (page.items ?? []).filter((item) => item.graph === null || item.graph in graphs);
     pages[name] = { ...page, name, items };
   }
+  const panels = dict<PanelSpec>();
+  for (const [name, panel] of Object.entries(saved.panels ?? {})) {
+    checkName(name, "panel");
+    // As with styles: one that cannot be read does not keep the data from opening.
+    try {
+      panels[name] = { name, ...checkPanel({ title: panel.title, controls: panel.controls }) };
+    } catch {
+      continue;
+    }
+  }
   const windows = saved.windows.filter(
     (window) =>
       window.name in graphs ||
       window.name in tables ||
       window.name in procedures ||
-      window.name in pages,
+      window.name in pages ||
+      window.name in panels,
   );
   const results = dict<AnalysisResult>();
   for (const [name, result] of Object.entries(saved.results ?? {})) {
@@ -318,6 +333,7 @@ export function buildState(
     tables,
     procedures,
     pages,
+    panels,
     styles,
     defaultStyle,
     graphTemplates,

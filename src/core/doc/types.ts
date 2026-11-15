@@ -1,3 +1,4 @@
+import type { JsonValue } from "../actions";
 import { dict, type Dict } from "./dict";
 import type { AnalysisResult } from "./results";
 
@@ -669,10 +670,108 @@ export const PAGE_SIZES = {
   Letter: [612, 792],
 } as const;
 
-export interface WindowState {
-  /** Same as the name of the graph, table, procedure or page layout it shows. */
+/*
+ * A panel is a window of controls that runs analyses: fields and pickers
+ * that hold values, and buttons that call registered actions with them
+ * (Igor's control panel). The values are part of the document, so they are
+ * saved, undone and recorded like any other change.
+ *
+ * A button calls an action by its id with arguments that are plain values
+ * or the value of a control of the panel (see ControlArg). It never holds
+ * code: a panel whose buttons call only the application's own actions is
+ * data, while one that calls an action a procedure registered runs the
+ * user's Python (see panelTrust in ./panels).
+ */
+
+/** The kinds of control a panel can hold. */
+export const CONTROL_KINDS = [
+  "heading",
+  "text",
+  "number",
+  "string",
+  "checkbox",
+  "choice",
+  "wave",
+  "button",
+] as const;
+export type ControlKind = (typeof CONTROL_KINDS)[number];
+
+/** A reference to a control of the panel, as a button's argument. */
+export interface ControlRef {
+  readonly $control: string;
+}
+
+/** An argument of a button's action: a plain value, or the value of a control of the panel. */
+export type ControlArg = JsonValue | ControlRef;
+
+interface ControlBase {
+  /** Unique in its panel; what buttons and Python name it by. */
+  readonly name: string;
+  /** The words shown: a heading or paragraph itself, a button's caption, or a field's label. */
+  readonly label: string;
+  /** Sits on the same line as the control before it, instead of a line of its own. */
+  readonly inline: boolean;
+}
+
+export type PanelControl =
+  | (ControlBase & { readonly kind: "heading" })
+  | (ControlBase & { readonly kind: "text" })
+  | (ControlBase & {
+      readonly kind: "number";
+      readonly value: number;
+      /** Inclusive limits, or null for none. */
+      readonly min: number | null;
+      readonly max: number | null;
+      /** How much the arrows change the value; null for 1. */
+      readonly step: number | null;
+    })
+  | (ControlBase & { readonly kind: "string"; readonly value: string })
+  | (ControlBase & { readonly kind: "checkbox"; readonly value: boolean })
+  | (ControlBase & {
+      readonly kind: "choice";
+      /** One of the options, or null while there are none. */
+      readonly value: string | number | null;
+      readonly options: readonly (string | number)[];
+    })
+  | (ControlBase & {
+      readonly kind: "wave";
+      /**
+       * The wave chosen, or null. It follows the wave when it is renamed; when
+       * the wave is killed the name stays, and the control shows it as missing.
+       */
+      readonly value: string | null;
+      /** Lists only waves of this many dimensions; null lists all numeric waves. */
+      readonly dims: number | null;
+      /** Lists only waves whose names match: text they contain, or a pattern with "*". */
+      readonly filter: string;
+    })
+  | (ControlBase & {
+      readonly kind: "button";
+      /** The id of the action it calls; "" for none yet. */
+      readonly action: string;
+      /** The version of the action; null for the highest there is. */
+      readonly version: number | null;
+      /** The action's arguments by name. */
+      readonly args: Dict<ControlArg>;
+    });
+
+/** The controls that hold a value a button can pass on. */
+export type ValueControl = Extract<PanelControl, { value: unknown }>;
+
+export const hasValue = (control: PanelControl): control is ValueControl => "value" in control;
+
+export interface PanelSpec {
   name: string;
-  kind: "graph" | "table" | "procedure" | "page";
+  /** What the window's title bar says; the name when empty. */
+  title: string;
+  /** In the order they are shown. */
+  controls: readonly PanelControl[];
+}
+
+export interface WindowState {
+  /** Same as the name of the graph, table, procedure, page layout or panel it shows. */
+  name: string;
+  kind: "graph" | "table" | "procedure" | "page" | "panel";
   x: number;
   y: number;
   w: number;
@@ -690,6 +789,7 @@ export interface DocState {
   readonly tables: Dict<TableSpec>;
   readonly procedures: Dict<ProcedureSpec>;
   readonly pages: Dict<PageSpec>;
+  readonly panels: Dict<PanelSpec>;
   /** Graph styles, by name. */
   readonly styles: Dict<StyleSpec>;
   /** The style new graphs are given, or null. Always one of `styles`. */
@@ -715,6 +815,7 @@ export const emptyDoc = (): DocState => ({
   tables: dict(),
   procedures: dict(),
   pages: dict(),
+  panels: dict(),
   styles: dict(),
   defaultStyle: null,
   graphTemplates: dict(),

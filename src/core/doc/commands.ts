@@ -19,6 +19,7 @@ import {
   type AnalysisResult,
 } from "./results";
 import { captureTemplate, makeFromTemplate, RESERVED_SLOT_NAMES } from "./graphTemplates";
+import { applyPanelCommand, renameInPanels } from "./panels";
 import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from "./styles";
 import {
   ANCHORS,
@@ -255,6 +256,22 @@ export type Command =
     }
   | { op: "modifyLayoutItem"; layout: string; item: string; props: Props }
   | { op: "removeLayoutItem"; layout: string; item: string }
+  /** Makes an empty panel (see PanelSpec) with its window. */
+  | { op: "newPanel"; name?: string; title?: string }
+  /**
+   * Gives a panel its title and controls, as data (see checkPanel): an
+   * imported panel, say. Makes the panel and its window if there is none.
+   */
+  | { op: "setPanel"; name: string; panel: unknown }
+  | { op: "modifyPanel"; panel: string; props: Props }
+  /** Adds a control at the end. Left out, the name is chosen from its kind. */
+  | { op: "addControl"; panel: string; kind: string; name?: string; props?: Props }
+  /** Changes a control's properties; `name` among them renames it, and buttons follow. */
+  | { op: "modifyControl"; panel: string; control: string; props: Props }
+  | { op: "removeControl"; panel: string; control: string }
+  /** Puts a control at a place in the panel's order, counted from 0. */
+  | { op: "moveControl"; panel: string; control: string; to: number }
+  | { op: "setControlValue"; panel: string; control: string; value: unknown }
   | { op: "newProcedure"; name?: string; code?: string }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
@@ -506,11 +523,15 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-/** Whether a window (graph, table, procedure or page layout) already has this name. */
+/** Whether a window (graph, table, procedure, page layout or panel) already has this name. */
 export const windowTaken = (state: DocState) => (name: string) =>
-  name in state.graphs || name in state.tables || name in state.procedures || name in state.pages;
+  name in state.graphs ||
+  name in state.tables ||
+  name in state.procedures ||
+  name in state.pages ||
+  name in state.panels;
 
-function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
+export function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
   const size =
     kind === "graph"
@@ -519,7 +540,9 @@ function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): 
         ? { w: 360, h: 300 }
         : kind === "page"
           ? { w: 440, h: 560 }
-          : { w: 520, h: 340 };
+          : kind === "panel"
+            ? { w: 340, h: 280 }
+            : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -1302,7 +1325,8 @@ function renameReferences(
     // Only where the values come from has changed, not the values: no new revision.
     waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
   }
-  return { ...state, waves, graphs, tables, results };
+  const panels = renameInPanels(state.panels, rename);
+  return { ...state, waves, graphs, tables, results, panels };
 }
 
 /** A wave under a new name; a formula that was up to date with it stays so. */
@@ -2221,6 +2245,15 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "newPanel":
+    case "setPanel":
+    case "modifyPanel":
+    case "addControl":
+    case "modifyControl":
+    case "removeControl":
+    case "moveControl":
+    case "setControlValue":
+      return applyPanelCommand(state, command);
     case "newProcedure": {
       let name = "Procedure";
       if (command.name !== undefined) {
@@ -2467,6 +2500,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           tables: withoutEntries(state.tables, gone),
           procedures: withoutEntries(state.procedures, gone),
           pages,
+          panels: withoutEntries(state.panels, gone),
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,

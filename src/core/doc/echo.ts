@@ -102,6 +102,36 @@ function makeArguments(command: Extract<Command, { op: "makeGraphs" }>): string 
   return args.join(", ");
 }
 
+/** A panel's data with references to its controls written as `op.control(name)`. */
+function withControlCalls(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withControlCalls);
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value);
+  if (entries.length === 1 && entries[0]![0] === "$control" && typeof entries[0]![1] === "string") {
+    return new PyExpression(`op.control(${pyLiteral(entries[0]![1])})`);
+  }
+  return Object.fromEntries(entries.map(([key, item]) => [key, withControlCalls(item)]));
+}
+
+/** The call of a panel's method that adds a control of a kind, as `op.panel` takes it. */
+function addControlCall(command: Extract<Command, { op: "addControl" }>): string {
+  const { label, options, ...rest } = command.props ?? {};
+  const props = withControlCalls(rest) as Record<string, unknown>;
+  const name = pyLiteral(command.name);
+  const panel = `op.panel(${pyLiteral(command.panel)})`;
+  // The words a heading, a paragraph and a button show come second; a choice's options do.
+  const words = command.kind === "heading" || command.kind === "text" || command.kind === "button";
+  const positional = words
+    ? label === undefined
+      ? ""
+      : pyLiteral(label)
+    : command.kind === "choice"
+      ? pyLiteral(options ?? [])
+      : "";
+  const named = words ? props : { label, ...props };
+  return `${panel}.${command.kind}(${joinArgs(name, positional, keywords(named))})`;
+}
+
 /**
  * The Python statement that has the same effect as a command, for writing GUI
  * actions into the command history. Returns null for commands that cannot be
@@ -141,6 +171,24 @@ export function echoPython(
       return `op.layout(${pyLiteral(command.layout)}).item(${pyLiteral(command.item)}).remove()`;
     case "setTimeZone":
       return `op.set_time_zone(${pyLiteral(command.zone)})`;
+    case "newPanel":
+      return `op.new_panel(${keywords({ name: command.name, title: command.title })})`;
+    case "setPanel":
+      return `op.set_panel(${pyLiteral(command.name)}, ${pyLiteral(withControlCalls(command.panel))})`;
+    case "modifyPanel":
+      return `op.panel(${pyLiteral(command.panel)}).set(${keywords(command.props)})`;
+    case "addControl":
+      return addControlCall(command);
+    case "modifyControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).set(${keywords(
+        withControlCalls(command.props) as Record<string, unknown>,
+      )})`;
+    case "removeControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).remove()`;
+    case "moveControl":
+      return `op.panel(${pyLiteral(command.panel)}).control(${pyLiteral(command.control)}).move(${command.to})`;
+    case "setControlValue":
+      return `op.panel(${pyLiteral(command.panel)})[${pyLiteral(command.control)}] = ${pyLiteral(command.value)}`;
     case "newProcedure":
       return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
     case "modifyTable":
