@@ -883,6 +883,35 @@ describe("stages", () => {
     expect(() => stage.commit()).not.toThrow();
   });
 
+  it("refuses to commit what was read from its own formula when the formula's input changed", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    const stage = doc.stage();
+    stage.dispatch({ op: "setFormula", name: "b", expr: "a * 2", auto: true });
+    // Python reads b, the stage's own wave, and copies its values into c.
+    stage.read("b");
+    const copied = [...stage.getState().waves.b!.data];
+    stage.dispatch({ op: "makeWave", name: "c", data: new Float64Array(copied) });
+    // Meanwhile a changes in the document: c would be out of date with b.
+    doc.dispatch({ op: "setWavePoints", name: "a", start: 0, values: [3] });
+    expect(() => stage.commit()).toThrow(/a changed/);
+    expect(doc.getState().waves.c).toBeUndefined();
+  });
+
+  it("commits a formula's block when what changed meanwhile is not among its inputs", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: wave(1) });
+    doc.dispatch({ op: "makeWave", name: "other", data: wave(5) });
+    const stage = doc.stage();
+    stage.dispatch({ op: "setFormula", name: "b", expr: "a * 2", auto: true });
+    stage.read("b");
+    stage.dispatch({ op: "makeWave", name: "c", data: new Float64Array([2]) });
+    doc.dispatch({ op: "setWavePoints", name: "other", start: 0, values: [6] });
+    stage.commit();
+    expect([...doc.getState().waves.c!.data]).toEqual([2]);
+    expect([...doc.getState().waves.b!.data]).toEqual([2]);
+  });
+
   it("takes back an inner block without the outer one", () => {
     const doc = sample();
     const stage = doc.stage();

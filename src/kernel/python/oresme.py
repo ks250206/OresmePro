@@ -3359,7 +3359,9 @@ class Run:
         the standard deviation if ``sigma``) and ``<name>_chisq``. A sample
         that did not succeed has NaN for numbers. Where a sample kept more
         than one result with a parameter of the same name, the last step's
-        is shown. ``name`` is the run's name by default.
+        is shown. An input or parameter whose column would have the name of
+        another (an input called ``state``, say) gets ``_2``, ``_3``, ...
+        ``name`` is the run's name by default.
         """
         return _run_table(self._name, name, sigma)
 
@@ -3640,18 +3642,38 @@ def _run_table(run_name, name=None, sigma=True):
     def number(value):
         return np.nan if value is None else value
 
+    # The fixed columns keep their names. An input or parameter whose column
+    # would have one of them, or another's (an input called "state", a
+    # parameter "x" next to one "x_sd"), gets _2, _3, ...: no column of the
+    # table overwrites another.
+    used = {f"{name}_{label}" for label in ("sample", "state", "error", "result", "chisq")}
+
+    def free(wanted):
+        found, count = wanted, 2
+        while found in used:
+            found, count = f"{wanted}_{count}", count + 1
+        used.add(found)
+        return found
+
+    slot_columns = {slot: free(f"{name}_{_clean(slot)}") for slot in slots}
+    parameter_columns = {}
+    for key in parameters:
+        parameter_columns[key] = free(f"{name}_{_clean(key)}")
+        if sigma:
+            parameter_columns[key, "sd"] = free(f"{name}_{_clean(key)}_sd")
+
     columns = [
         make(f"{name}_sample", np.arange(1, len(samples) + 1, dtype=float)),
-        *(make(f"{name}_{_clean(slot)}", [sample["inputs"][slot] for sample in samples]) for slot in slots),
+        *(make(slot_columns[slot], [sample["inputs"][slot] for sample in samples]) for slot in slots),
         make(f"{name}_state", [sample["state"] for sample in samples]),
         make(f"{name}_error", [sample["error"] for sample in samples]),
         make(f"{name}_result", [", ".join(sample["results"]) for sample in samples]),
     ]
     for key in parameters:
-        columns.append(make(f"{name}_{_clean(key)}", [number(found.get(key, (None,))[0]) for found in values]))
+        columns.append(make(parameter_columns[key], [number(found.get(key, (None,))[0]) for found in values]))
         if sigma:
             columns.append(
-                make(f"{name}_{_clean(key)}_sd", [number(found.get(key, (None, None))[1]) for found in values])
+                make(parameter_columns[key, "sd"], [number(found.get(key, (None, None))[1]) for found in values])
             )
     columns.append(make(f"{name}_chisq", [number(found.get("\0chisq", (None,))[0]) for found in values]))
     existing = {table_.name: table_ for table_ in tables()}

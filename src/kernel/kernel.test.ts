@@ -2864,6 +2864,32 @@ describe("analysis templates", () => {
   const runs = () => doc.getState().runs;
   const lines = (...code: string[]) => code.join("\n");
 
+  it("gives the columns of a run's table names of their own, whatever its inputs are called", async () => {
+    expect(
+      await run(
+        lines(
+          "x = np.linspace(-5, 5, 101)",
+          'op.make("colA", 1 + 2 * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+          'op.make("colB", 1 + 3 * np.exp(-(((x - 0.5) / 1.2) ** 2)), x0=-5, dx=0.1)',
+          'op.set_template("Clash", {"inputs": ["sample", "state"], "steps": [{"id": "fit", "action": "core.fit",',
+          '    "args": {"function": "gauss", "y": {"$input": "sample"}, "quiet": True}}]})',
+          'r = op.template("Clash").run([{"sample": "colA", "state": "colB"}], name="Clash0", quiet=True)',
+          "t = r.table()",
+          "print([w.name for w in t.columns][:7])",
+          "texts = lambda name: [str(v) for v in op.wave(name).data]",
+          'print(op.wave("Clash0_sample").data.tolist(), texts("Clash0_sample_2"))',
+          'print(texts("Clash0_state"), texts("Clash0_state_2"))',
+        ),
+      ),
+      errors.join("\n"),
+    ).toBe(true);
+    expect(stdout.split("\n").slice(0, 3)).toEqual([
+      "['Clash0_sample', 'Clash0_sample_2', 'Clash0_state_2', 'Clash0_state', 'Clash0_error', 'Clash0_result', 'Clash0_y0']",
+      "[1.0] ['colA']",
+      "['succeeded'] ['colB']",
+    ]);
+  });
+
   it("makes twenty samples and keeps a template of a Gaussian fit", async () => {
     expect(
       await run(
