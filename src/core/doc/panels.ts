@@ -1,4 +1,10 @@
-import { findAction, validateArgs, type ActionArgs, type ActionSpec } from "../actions";
+import {
+  findAction,
+  validateArgs,
+  type ActionArgs,
+  type ActionSpec,
+  type ParamSpec,
+} from "../actions";
 import {
   checkName,
   checkPath,
@@ -648,4 +654,81 @@ export function resolveButton(
   }
   if (problems.length > 0) return { call: null, problems };
   return { call: { action: control.action, version: control.version, args }, problems };
+}
+
+/**
+ * Whether a wave's name passes a picker's filter: it contains the text, or,
+ * when the filter has a "*", matches it as a pattern ("*_I"). Either way
+ * without regard to case.
+ */
+export function matchesFilter(name: string, filter: string): boolean {
+  if (!filter) return true;
+  if (!filter.includes("*")) return name.toLowerCase().includes(filter.toLowerCase());
+  const pattern = filter
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${pattern}$`, "i").test(name);
+}
+
+/** The waves a wave picker offers: numeric ones of its dimensions that pass its filter. */
+export function pickerWaves(
+  state: Pick<DocState, "waves" | "waveOrder">,
+  control: Extract<PanelControl, { kind: "wave" }>,
+): string[] {
+  return state.waveOrder.filter((name) => {
+    const wave = state.waves[name];
+    if (!wave || wave.text) return false;
+    if (control.dims !== null && wave.shape.length !== control.dims) return false;
+    return matchesFilter(name, control.filter);
+  });
+}
+
+/**
+ * A control made for an argument of an action, to bind a button's argument
+ * to: a wave picker for a wave, a menu of the choices for a choice, and so on,
+ * labelled and limited as the argument is. Null for an argument no control
+ * holds (a list).
+ */
+export function controlForParam(
+  name: string,
+  param: ParamSpec,
+): { kind: ControlKind; props: Record<string, unknown> } | null {
+  const label = param.title ?? name;
+  const given = param.default;
+  switch (param.type) {
+    case "wave":
+      return { kind: "wave", props: { label } };
+    case "number":
+    case "integer": {
+      const props: Record<string, unknown> = { label };
+      if (param.min !== undefined) props.min = param.min;
+      if (param.max !== undefined) props.max = param.max;
+      if (param.type === "integer") props.step = 1;
+      if (typeof given === "number") props.value = given;
+      else if (param.min !== undefined && param.min > 0) props.value = param.min;
+      return { kind: "number", props };
+    }
+    case "string":
+      return {
+        kind: "string",
+        props: typeof given === "string" ? { label, value: given } : { label },
+      };
+    case "boolean":
+      return {
+        kind: "checkbox",
+        props: typeof given === "boolean" ? { label, value: given } : { label },
+      };
+    case "choice": {
+      const options = param.choices ?? [];
+      const props: Record<string, unknown> = { label, options };
+      if ((typeof given === "string" || typeof given === "number") && options.includes(given)) {
+        props.value = given;
+      }
+      return { kind: "choice", props };
+    }
+    case "waves":
+    case "numbers":
+      return null;
+  }
 }

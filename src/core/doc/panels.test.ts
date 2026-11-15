@@ -6,8 +6,11 @@ import { echoPython } from "./echo";
 import {
   checkPanel,
   codeActions,
+  controlForParam,
+  matchesFilter,
   panelFile,
   panelTrust,
+  pickerWaves,
   readPanelFile,
   resolveButton,
 } from "./panels";
@@ -329,5 +332,68 @@ describe("panels", () => {
     ).toBe(
       'op.set_panel("p", {"title": "", "controls": [{"kind": "button", "name": "b", "args": {"y": op.control("w")}}]})',
     );
+  });
+});
+
+describe("wave pickers", () => {
+  it("offer the numeric waves of their dimensions whose names pass the filter", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "s1_I", data: wave(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "run1:s2_I", data: wave(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "s1_V", data: wave(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "map", data: wave(1, 2, 3, 4), shape: [2, 2] });
+    doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });
+    const picker = (dims: number | null, filter: string) =>
+      pickerWaves(doc.getState(), {
+        kind: "wave",
+        name: "w",
+        label: "",
+        inline: false,
+        value: null,
+        dims,
+        filter,
+      });
+    expect(picker(null, "")).toEqual(["s1_I", "run1:s2_I", "s1_V", "map"]);
+    expect(picker(1, "")).toEqual(["s1_I", "run1:s2_I", "s1_V"]);
+    expect(picker(2, "")).toEqual(["map"]);
+    expect(picker(null, "*_i")).toEqual(["s1_I", "run1:s2_I"]);
+    expect(picker(null, "s1")).toEqual(["s1_I", "s1_V"]);
+    expect(matchesFilter("a.b", "a.*")).toBe(true);
+    expect(matchesFilter("axb", "a.b")).toBe(false);
+  });
+});
+
+describe("controls made for an argument", () => {
+  it("take the argument's kind, limits, choices and default", () => {
+    expect(controlForParam("y", { type: "wave", title: "Y wave", optional: false })).toEqual({
+      kind: "wave",
+      props: { label: "Y wave" },
+    });
+    expect(controlForParam("n", { type: "integer", optional: true, min: 1, default: 5 })).toEqual({
+      kind: "number",
+      props: { label: "n", min: 1, step: 1, value: 5 },
+    });
+    expect(
+      controlForParam("kind", {
+        type: "choice",
+        optional: true,
+        choices: ["linear", "cubic"],
+        default: "cubic",
+      }),
+    ).toEqual({
+      kind: "choice",
+      props: { label: "kind", options: ["linear", "cubic"], value: "cubic" },
+    });
+    expect(controlForParam("quiet", { type: "boolean", optional: true, default: false })).toEqual({
+      kind: "checkbox",
+      props: { label: "quiet", value: false },
+    });
+    expect(controlForParam("guess", { type: "numbers", optional: true })).toBeNull();
+    // What it makes is a control the panel takes.
+    const doc = new Doc();
+    doc.dispatch({ op: "newPanel", name: "p" });
+    const made = controlForParam("n", { type: "integer", optional: true, min: 1, default: 5 })!;
+    doc.dispatch({ op: "addControl", panel: "p", kind: made.kind, name: "n", props: made.props });
+    expect(doc.getState().panels.p!.controls[0]).toMatchObject({ value: 5, min: 1, step: 1 });
   });
 });

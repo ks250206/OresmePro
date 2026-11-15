@@ -1,9 +1,11 @@
 import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { setEditing, usePanelRuntime } from "../app/panels";
 import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
 import type { WindowState } from "../core/doc/types";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
 import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
+import { PanelWindow } from "./PanelWindow";
 import { ProcedureWindow } from "./ProcedureWindow";
 import { TableWindow } from "./TableWindow";
 
@@ -85,17 +87,40 @@ function ResizeHandle({
   return <div className={`absolute z-10 ${className}`} {...drag} />;
 }
 
+/** The Edit / Done toggle in the title bar of a panel. */
+function PanelEditToggle({ name }: { name: string }) {
+  const editing = usePanelRuntime((state) => state.editing[name] === true);
+  return (
+    <button
+      type="button"
+      aria-label={`Edit ${name}`}
+      aria-pressed={editing}
+      title={
+        editing ? "Stop editing the panel" : "Edit the panel: add, change and arrange controls"
+      }
+      className="rounded px-1 text-[10.5px] text-muted hover:bg-chrome hover:text-ink aria-pressed:text-accent"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={() => setEditing(name, !editing)}
+    >
+      {editing ? "Done" : "Edit"}
+    </button>
+  );
+}
+
 function WindowFrame({
   window,
   active,
   title,
   z,
+  accessory,
   children,
 }: {
   window: WindowState;
   active: boolean;
   title: string;
   z: number;
+  /** Shown at the right end of the title bar. */
+  accessory?: ReactNode;
   children: ReactNode;
 }) {
   const drag = useDrag((dx, dy, start) => {
@@ -141,7 +166,7 @@ function WindowFrame({
         <span className="min-w-0 flex-1 truncate text-center text-[11.5px] font-medium">
           {title}
         </span>
-        <span className="w-3" />
+        {accessory ?? <span className="w-3" />}
       </header>
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-md">{children}</div>
       {HANDLES.map((handle, index) => (
@@ -174,6 +199,7 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
   const windows = useDoc((state) => state.windows);
   const graphs = useDoc((state) => state.graphs);
   const tables = useDoc((state) => state.tables);
+  const panels = useDoc((state) => state.panels);
   const top = windows.at(-1);
   // Render in a stable order so a window's DOM (and canvas) survives re-stacking;
   // z-order is expressed with z-index instead.
@@ -210,13 +236,21 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
         const names = graph
           ? [...graph.traces, ...graph.images, ...graph.contours].map((item) => item.name)
           : (table?.columns ?? []);
+        const panel = Object.hasOwn(panels, window.name) ? panels[window.name] : undefined;
         return (
           <WindowFrame
             key={window.name}
             window={window}
             active={window === top}
-            title={window.kind === "procedure" ? `${window.name}.py` : windowTitle(window, names)}
+            title={
+              window.kind === "procedure"
+                ? `${window.name}.py`
+                : panel
+                  ? panel.title || window.name
+                  : windowTitle(window, names)
+            }
             z={windows.indexOf(window) + 1}
+            accessory={window.kind === "panel" ? <PanelEditToggle name={window.name} /> : undefined}
           >
             {window.kind === "graph" ? (
               <GraphWindow name={window.name} />
@@ -224,6 +258,8 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
               <TableWindow name={window.name} />
             ) : window.kind === "page" ? (
               <LayoutWindow name={window.name} />
+            ) : window.kind === "panel" ? (
+              <PanelWindow name={window.name} />
             ) : (
               <ProcedureWindow name={window.name} />
             )}

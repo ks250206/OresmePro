@@ -58,7 +58,8 @@ import {
   type UiState,
 } from "./session";
 
-function download(blob: Blob, filename: string): void {
+/** Hands the user a file to save. */
+export function download(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
