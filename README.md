@@ -442,6 +442,17 @@ wave に式を持たせ、ほかの wave から値を計算します(Igor の Se
   単位は、両方わかっていれば微分が `Y/X`、積分が `Y·X` です(X のスケーリングを使うときも同じ。日付の X は秒として扱います)。
 - 画像: **フィルタ**(ガウス・平均・メディアン・シャープ化)、任意の直線に沿った**ラインプロファイル**。
 
+### プラグインの見本: 電気化学
+
+[`examples/plugins/electrochem`](examples/plugins/electrochem/) は、隔離された環境(サンドボックス)の Python で動くプラグインの見本です。CV の酸化・還元ピーク(`cv_peaks`: Epa、Epc、ΔEp、E1/2、ipa/ipc)、Tafel 勾配と交換電流密度(`tafel`)、インピーダンスの等価回路フィット(`eis_fit`: R(RC)、R(RQ)、Randles。Nyquist 図用のフィット曲線と、係数・不確かさ・χ²)と、Nyquist 図のグラフテンプレートが入っています。数値計算は合成データで検算してあります。
+
+**Analysis › Plugins…** から入れます。
+
+- **Install from GitHub…** に `https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem` を入れる(その時点のコミットに固定されます)
+- **Install from Folder…** でこのリポジトリの `examples/plugins/electrochem` フォルダを選ぶ
+
+入れたあとはダイアログで action を選んで実行するか、Python から `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})` のように呼びます。結果は Analysis › Results に残り、プラグインを削除しても wave と結果は残ります(再実行だけが、必要なプラグインを示して止まります)。各 action の入力・モデル・符号の約束・限界は [examples/plugins/electrochem/README.md](examples/plugins/electrochem/README.md) にあります。
+
 ### プロシージャウィンドウ
 
 Igor のプロシージャウィンドウに当たる、実験に保存される Python ファイルです(**Windows › New Procedure**)。

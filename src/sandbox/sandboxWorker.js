@@ -164,7 +164,7 @@ function run(message) {
       runId: message.runId,
       ok: true,
       waves: result.waves,
-      values: result.values,
+      values: JSON.parse(result.values),
       log,
     },
     transfer,

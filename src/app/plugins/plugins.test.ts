@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { Doc } from "../../core/doc/doc";
 import { verifyPackage } from "../../core/plugins/package";
 import type { RunRequest, Sandbox } from "../../sandbox/host";
+import { contributionCommands } from "./contributions";
 import { PluginHost } from "./host";
 import { fetchFromGitHub, readLocalPackage, unzipPackage } from "./sources";
 import { MemoryPluginStorage, PluginStore } from "./store";
@@ -335,5 +336,43 @@ describe("running a plugin's action", () => {
     expect(doc.getState().waves.staged_scaled).toBeUndefined();
     stage.commit();
     expect([...doc.getState().waves.staged_scaled!.data]).toEqual([10]);
+  });
+});
+
+describe("what a plugin brings as data", () => {
+  const template = { slots: [{ name: "y", role: "y" }], traces: [{ y: "y" }] };
+
+  it("reads a file of graph templates as the app exports it, by their names", () => {
+    const exported = {
+      format: "oresme-graph-templates",
+      version: 1,
+      templates: { Bode: template },
+    };
+    const commands = contributionCommands("graphTemplates", "t/bode.json", encode(exported));
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toMatchObject({ op: "setGraphTemplate", name: "Bode" });
+    const doc = new Doc();
+    doc.dispatch(commands[0]!);
+    expect(doc.getState().graphTemplates.Bode!.slots[0]).toMatchObject({ name: "y", role: "y" });
+  });
+
+  it("reads one entry, named by its name (which is not part of it) or by its file", () => {
+    const doc = new Doc();
+    for (const command of [
+      ...contributionCommands("graphTemplates", "t/a.json", encode({ name: "Named", ...template })),
+      ...contributionCommands("graphTemplates", "t/plain.json", encode(template)),
+      ...contributionCommands("styles", "s/paper.json", encode({ graph: { fontSize: 12 } })),
+    ]) {
+      doc.dispatch(command);
+    }
+    expect(Object.keys(doc.getState().graphTemplates)).toEqual(["Named", "plain"]);
+    expect(doc.getState().styles.paper).toMatchObject({ graph: { fontSize: 12 } });
+  });
+
+  it("refuses a file of templates with one that is not valid", () => {
+    const exported = { format: "oresme-graph-templates", templates: { Bad: { traces: [{}] } } };
+    expect(() => contributionCommands("graphTemplates", "bad.json", encode(exported))).toThrow(
+      /bad.json: Bad/,
+    );
   });
 });

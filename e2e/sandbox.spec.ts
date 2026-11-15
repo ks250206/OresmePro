@@ -146,7 +146,8 @@ test.describe("the sandbox for plugin code", () => {
         "def area(y, scale=1.0):",
         '    print("integrating", y.name)',
         "    total = cumulative_trapezoid(y.data, dx=y.dx, initial=0) * scale",
-        '    return {"waves": {"area": wave(total, like=y, unit="V*s")}, "values": {"total": total[-1]}}',
+        '    values = {"total": total[-1], "unknown": float("nan"), "sigma": [None, 1.0]}',
+        '    return {"waves": {"area": wave(total, like=y, unit="V*s")}, "values": values}',
       ].join("\n"),
       ["area"],
       ["numpy", "scipy"],
@@ -166,7 +167,8 @@ test.describe("the sandbox for plugin code", () => {
           unit: "V*s",
         },
       ],
-      values: { total: 9 },
+      // A number that is not finite, and None, come back as null.
+      values: { total: 9, unknown: null, sigma: [null, 1] },
       log: "integrating input\n",
     });
   });

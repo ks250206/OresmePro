@@ -1,12 +1,15 @@
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { contributionCommands } from "../app/plugins/contributions";
 import { fetchFromGitHub, readLocalPackage } from "../app/plugins/sources";
 import type { InstalledPlugin } from "../app/plugins/store";
-import { invokeAction, pluginStore, runGui, showError, ui, useDoc } from "../app/session";
+import { doc, invokeAction, pluginStore, runGui, showError, ui, useDoc } from "../app/session";
 import type { ActionArgs, JsonValue, ParamSpec } from "../core/actions";
 import {
+  CONTRIBUTION_KINDS,
   describeSource,
   parseGitHubSource,
   pluginActionId,
+  type ContributionKind,
   type PluginAction,
   type PluginManifest,
 } from "../core/plugins/manifest";
@@ -275,38 +278,35 @@ function ActionForm({ manifest, action }: { manifest: PluginManifest; action: Pl
 /** What a plugin brings as data, put into the experiment on request. */
 function Contributions({ plugin }: { plugin: InstalledPlugin }) {
   const { contributes } = plugin.manifest;
-  const add = async (kind: "graphTemplates" | "styles") => {
+  const add = async (kind: ContributionKind) => {
     try {
       const files = await pluginStore.files(plugin);
-      for (const path of contributes[kind]) {
-        // A file may name what it holds; the name is not part of the style or template itself.
-        const { name: given, ...data } = JSON.parse(
-          new TextDecoder().decode(files.get(path)!),
-        ) as Record<string, unknown>;
-        const name =
-          typeof given === "string" ? given : path.replace(/^.*\//, "").replace(/\.json$/, "");
-        runGui(
-          kind === "styles"
-            ? { op: "setStyle", name, style: data }
-            : { op: "setGraphTemplate", name, template: data },
-        );
-      }
+      const state = doc.getState();
+      // Names given to earlier files of this batch count as taken too.
+      const chosen = new Set<string>();
+      const commands = contributes[kind].flatMap((path) =>
+        contributionCommands(kind, path, files.get(path)!, state, chosen),
+      );
+      runGui(commands);
     } catch (error) {
       showError("Could not add it", error);
     }
   };
-  const any = contributes.graphTemplates.length + contributes.styles.length;
-  if (any === 0) return null;
+  const labels: Record<ContributionKind, string> = {
+    panels: "Add Panels to Experiment",
+    templates: "Add Templates to Experiment",
+    graphTemplates: "Add Graph Templates to Experiment",
+    styles: "Add Styles to Experiment",
+  };
+  const kinds = CONTRIBUTION_KINDS.filter((kind) => contributes[kind].length > 0);
+  if (kinds.length === 0) return null;
   return (
-    <div className="flex gap-2">
-      {contributes.graphTemplates.length > 0 ? (
-        <Button onClick={() => void add("graphTemplates")}>
-          Add Graph Templates to Experiment
+    <div className="flex flex-wrap gap-2">
+      {kinds.map((kind) => (
+        <Button key={kind} onClick={() => void add(kind)}>
+          {labels[kind]}
         </Button>
-      ) : null}
-      {contributes.styles.length > 0 ? (
-        <Button onClick={() => void add("styles")}>Add Styles to Experiment</Button>
-      ) : null}
+      ))}
     </div>
   );
 }
