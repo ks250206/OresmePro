@@ -12,6 +12,7 @@ import {
 import { parseConstraints, parseHold, parseSpans } from "../app/fitOptions";
 import {
   doc,
+  exportLayout,
   graphSize,
   requestCommandLine,
   runGui,
@@ -81,6 +82,13 @@ import { ResultsDialog } from "./ResultsDialog";
 import { PluginsDialog } from "./PluginsDialog";
 import { TemplatesDialog } from "./TemplatesDialog";
 import { SetWaveValuesDialog } from "./SetWaveValuesDialog";
+import {
+  PLOT_SIZE_HINT,
+  PlotSideFields,
+  plotSideDraft,
+  plotSideOf,
+  plotSizeProblem,
+} from "./PlotSizeFields";
 
 const close = () => ui.set({ dialog: null });
 
@@ -1347,16 +1355,31 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
   const graph = useDoc((state) => state.graphs[graphName]);
   const [size, setSize] = useState(() => String(graph?.fontSize ?? 12));
   const [family, setFamily] = useState(() => graph?.fontFamily ?? DEFAULT_FONT_FAMILY);
-  if (!graph) return null;
+  // The plot area as it is now, to start an Absolute size from.
+  const [sides, setSides] = useState(() => {
+    if (!graph) return null;
+    const plot = exportLayout(graphName, null, null).plot;
+    return {
+      width: plotSideDraft(graph, "width", plot.w),
+      height: plotSideDraft(graph, "height", plot.h),
+    };
+  });
+  if (!graph || !sides) return null;
   const fontSize = parseNumber(size);
   const props: Record<string, unknown> = {};
   if (fontSize !== null && fontSize !== graph.fontSize) props.fontSize = fontSize;
   if (family !== graph.fontFamily) props.fontFamily = family;
+  const width = plotSideOf(sides.width);
+  const height = plotSideOf(sides.height);
+  const sizeProblem = plotSizeProblem(width, height);
+  if (width && JSON.stringify(width) !== JSON.stringify(graph.width)) props.width = width;
+  if (height && JSON.stringify(height) !== JSON.stringify(graph.height)) props.height = height;
   return (
     <Dialog
       title={`Modify Graph — ${graphName}`}
       onClose={close}
-      submitDisabled={fontSize === null || Object.keys(props).length === 0}
+      width={520}
+      submitDisabled={fontSize === null || sizeProblem !== null || Object.keys(props).length === 0}
       onSubmit={() => submit({ op: "modifyGraph", graph: graphName, props })}
     >
       <Field label="Font">
@@ -1386,6 +1409,24 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
         />
         <span className="text-muted">px</span>
       </Field>
+      <div role="group" aria-label="Plot area" className="flex flex-col gap-2">
+        <div className="mt-1 border-t border-line pt-2 font-medium">Plot area</div>
+        <PlotSideFields
+          graph={graph}
+          side="width"
+          draft={sides.width}
+          onChange={(draft) => setSides({ ...sides, width: draft })}
+        />
+        <PlotSideFields
+          graph={graph}
+          side="height"
+          draft={sides.height}
+          onChange={(draft) => setSides({ ...sides, height: draft })}
+        />
+        <div className={`text-[11px] ${sizeProblem ? "text-danger" : "text-muted"}`}>
+          {sizeProblem ?? PLOT_SIZE_HINT}
+        </div>
+      </div>
     </Dialog>
   );
 }
