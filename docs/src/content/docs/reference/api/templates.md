@@ -197,7 +197,9 @@ parameter of the results (``<name>_<parameter>``, with ``_sd`` for
 the standard deviation if ``sigma``) and ``<name>_chisq``. A sample
 that did not succeed has NaN for numbers. Where a sample kept more
 than one result with a parameter of the same name, the last step's
-is shown. ``name`` is the run's name by default.
+is shown. An input or parameter whose column would have the name of
+another (an input called ``state``, say) gets ``_2``, ``_3``, ...
+``name`` is the run's name by default.
 
 ### `Run.remove`
 
