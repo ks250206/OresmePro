@@ -1,3 +1,4 @@
+import { MAX_PLOT_SIZE, MIN_PLOT_SIZE, SCREEN_UNITS_PER_POINT, toPoints } from "../plot/plotSize";
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
 import { dict, filterDict, withEntry, withoutEntries } from "./dict";
@@ -49,10 +50,12 @@ import {
   GRAPH_LOOK,
   GRID_MODES,
   LABEL_STYLES,
+  LENGTH_UNITS,
   LINE_STYLES,
   MARKER_SHAPES,
   MIRROR_MODES,
   PAGE_SIZES,
+  PLOT_SIZE_MODES,
   SLOT_ROLES,
   TAG_OFFSET,
   TICK_MODES,
@@ -68,12 +71,16 @@ import {
   type WaveData,
   defaultAxis,
   defaultTraceStyle,
+  dependsOnOther,
+  sizeAxes,
+  AUTO_SIZE,
   isVerticalSide,
   leafName,
   parentFolder,
   type AnnotationSpec,
   type AxisLook,
   type AxisRole,
+  type AxisSide,
   type AxisSpec,
   type ContourSpec,
   type CursorName,
@@ -86,6 +93,7 @@ import {
   type GraphStyle,
   type GraphTemplate,
   type ImageSpec,
+  type PlotDimension,
   type TableSpec,
   type StyleSpec,
   type TemplateAnnotation,
@@ -99,6 +107,8 @@ import {
   type TraceStyle,
   type Wave,
   type WindowState,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
   type PageItem,
   type PageSpec,
   type ProcedureSpec,
@@ -757,6 +767,181 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
   showInfo: (value) => bool(value, "showInfo"),
 };
 
+/** The longest and the shortest a plot area can be given, in points. */
+const MIN_PLOT_POINTS = MIN_PLOT_SIZE / SCREEN_UNITS_PER_POINT;
+const MAX_PLOT_POINTS = MAX_PLOT_SIZE / SCREEN_UNITS_PER_POINT;
+
+/** A factor of an aspect or a plan: from 1/100 to 100. */
+function sizeFactor(value: unknown, what: string): number {
+  const factor = positive(value, what);
+  if (factor < 0.01 || factor > 100) throw new DocError(`${what} must be between 0.01 and 100.`);
+  return factor;
+}
+
+/**
+ * Checks how a side of the plot area is sized, given as data. The axes it
+ * names are checked against the graph by {@link checkPlotSize}.
+ */
+export function checkPlotDimension(value: unknown, what: string): PlotDimension {
+  const props = propsOf(value, what);
+  const mode = oneOf(props.mode, PLOT_SIZE_MODES, `${what}'s mode`);
+  const keys: Record<(typeof PLOT_SIZE_MODES)[number], readonly string[]> = {
+    auto: [],
+    absolute: ["value", "unit"],
+    aspect: ["factor"],
+    plan: ["factor", "hAxis", "vAxis"],
+    perUnit: ["value", "unit", "axis"],
+  };
+  for (const key of Object.keys(props)) {
+    if (key !== "mode" && !keys[mode].includes(key)) {
+      throw new DocError(
+        `A ${mode} ${what} has no property ${JSON.stringify(key)}. It takes: ${["mode", ...keys[mode]].join(", ")}.`,
+      );
+    }
+  }
+  const axisName = (key: string) => {
+    if (typeof props[key] !== "string")
+      throw new DocError(`A ${mode} ${what} needs ${key}, an axis name.`);
+    return props[key];
+  };
+  switch (mode) {
+    case "auto":
+      return { mode };
+    case "absolute": {
+      const length = positive(props.value, `${what}'s value`);
+      const unit = oneOf(props.unit ?? "pt", LENGTH_UNITS, `${what}'s unit`);
+      const points = toPoints(length, unit);
+      if (points < MIN_PLOT_POINTS - 1e-9 || points > MAX_PLOT_POINTS + 1e-9) {
+        throw new DocError(
+          `${what} must be between ${MIN_PLOT_POINTS} and ${MAX_PLOT_POINTS} points (${(MAX_PLOT_POINTS / 72).toFixed(1)} inches).`,
+        );
+      }
+      return { mode, value: length, unit };
+    }
+    case "aspect":
+      return { mode, factor: sizeFactor(props.factor, `${what}'s factor`) };
+    case "plan":
+      return {
+        mode,
+        factor: sizeFactor(props.factor, `${what}'s factor`),
+        hAxis: axisName("hAxis"),
+        vAxis: axisName("vAxis"),
+      };
+    case "perUnit":
+      return {
+        mode,
+        value: positive(props.value, `${what}'s value`),
+        unit: oneOf(props.unit ?? "pt", LENGTH_UNITS, `${what}'s unit`),
+        axis: axisName("axis"),
+      };
+  }
+}
+
+/**
+ * Checks the two sides of a plot area together, against the axes there are
+ * (`sideOf` gives the side of an axis, or undefined if there is none):
+ * plan takes a horizontal and a vertical axis, per unit an axis along its
+ * own side, and the two sides cannot both be sized from each other.
+ */
+function checkPlotSize(
+  width: PlotDimension,
+  height: PlotDimension,
+  sideOf: (axis: string) => AxisSide | undefined,
+  owner: string,
+): void {
+  if (dependsOnOther(width) && dependsOnOther(height)) {
+    throw new DocError(
+      "The width and the height of the plot area cannot both be sized from each other (aspect or plan). Make one of them auto, absolute or per unit.",
+    );
+  }
+  const axisOn = (axis: string, vertical: boolean, use: string) => {
+    const side = sideOf(axis);
+    if (side === undefined) {
+      throw new DocError(`${owner} has no axis named ${JSON.stringify(axis)} for ${use}.`);
+    }
+    if (isVerticalSide(side) !== vertical) {
+      throw new DocError(
+        `${use} needs a ${vertical ? "vertical" : "horizontal"} axis; ${axis} is ${vertical ? "horizontal" : "vertical"}.`,
+      );
+    }
+  };
+  for (const [dimension, what, vertical] of [
+    [width, "the width", false],
+    [height, "the height", true],
+  ] as const) {
+    if (dimension.mode === "plan") {
+      axisOn(dimension.hAxis, false, `The plan of ${what}`);
+      axisOn(dimension.vAxis, true, `The plan of ${what}`);
+    } else if (dimension.mode === "perUnit") {
+      axisOn(dimension.axis, vertical, `The per unit size of ${what}`);
+    }
+  }
+}
+
+/**
+ * The plot size modes of a graph read from a file, checked against its
+ * axes: a side that is missing (a file from before they existed) or that
+ * cannot be used is auto.
+ */
+export function savedPlotSize(
+  width: unknown,
+  height: unknown,
+  axes: Readonly<Record<string, AxisSpec>>,
+): Pick<GraphSpec, "width" | "height"> {
+  const read = (value: unknown, what: string): PlotDimension => {
+    if (value === undefined || value === null) return AUTO_SIZE;
+    try {
+      return checkPlotDimension(value, what);
+    } catch {
+      return AUTO_SIZE;
+    }
+  };
+  const sideOf = (axis: string) => (Object.hasOwn(axes, axis) ? axes[axis]!.side : undefined);
+  let result = { width: read(width, "width"), height: read(height, "height") };
+  for (const side of ["height", "width"] as const) {
+    try {
+      checkPlotSize(result.width, result.height, sideOf, "The graph");
+    } catch {
+      result = { ...result, [side]: AUTO_SIZE };
+    }
+  }
+  return result;
+}
+
+type GraphProps = GraphStyle & Pick<GraphSpec, "width" | "height">;
+const GRAPH_PROP_VALIDATORS: { [K in keyof GraphProps]: (value: unknown) => GraphProps[K] } = {
+  ...GRAPH_VALIDATORS,
+  width: (value) => checkPlotDimension(value, "width"),
+  height: (value) => checkPlotDimension(value, "height"),
+};
+
+/** The axes a style's plot sizes may hold: none, since it holds no plan or per unit. */
+function checkStylePlot(value: unknown): { width?: PlotDimension; height?: PlotDimension } {
+  const parts = validateProps<{ width: PlotDimension; height: PlotDimension }>(
+    propsOf(value, "plot"),
+    {
+      width: (item) => checkPlotDimension(item, "width"),
+      height: (item) => checkPlotDimension(item, "height"),
+    },
+    "plot size",
+  );
+  for (const dimension of [parts.width, parts.height]) {
+    if (
+      dimension &&
+      dimension.mode !== "auto" &&
+      dimension.mode !== "absolute" &&
+      dimension.mode !== "aspect"
+    ) {
+      throw new DocError(
+        "A style sizes the plot area as auto, absolute or aspect only: plan and per unit follow the data.",
+      );
+    }
+  }
+  if (parts.width && parts.height)
+    checkPlotSize(parts.width, parts.height, () => undefined, "A style");
+  return ordered(parts, ["width", "height"]);
+}
+
 type Validators<T> = { [K in keyof T]: (value: unknown) => T[K] };
 
 /** The validators of some properties, for the part of an object a style can hold. */
@@ -797,7 +982,7 @@ function ordered<T, K extends keyof T>(props: Partial<T>, keys: readonly K[]): P
   return result;
 }
 
-const STYLE_PARTS = ["graph", "size", "axes", "traces"] as const;
+const STYLE_PARTS = ["graph", "size", "plot", "axes", "traces"] as const;
 
 /**
  * Checks a style given as data (from Python, a file or the browser's
@@ -820,6 +1005,7 @@ export function checkStyle(value: unknown): StyleSpec {
         }
         return { width: size.width, height: size.height };
       },
+      plot: checkStylePlot,
       axes: (item) => {
         const roles = validateProps<Record<AxisRole, unknown>>(
           propsOf(item, "axes"),
@@ -1009,6 +1195,7 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
       contours: anything,
       axes: anything,
       annotations: anything,
+      plot: anything,
     },
     "graph template",
   );
@@ -1220,6 +1407,27 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
     },
   );
 
+  let plot: GraphTemplate["plot"];
+  if (parts.plot !== undefined && parts.plot !== null) {
+    const given = validateProps<{ width: PlotDimension; height: PlotDimension }>(
+      propsOf(parts.plot, "plot"),
+      {
+        width: (item) => checkPlotDimension(item, "width"),
+        height: (item) => checkPlotDimension(item, "height"),
+      },
+      "plot size",
+    );
+    const width = given.width ?? AUTO_SIZE;
+    const height = given.height ?? AUTO_SIZE;
+    checkPlotSize(
+      width,
+      height,
+      (name) => axes.find((axis) => axis.name === name)?.side,
+      "The template",
+    );
+    if (width.mode !== "auto" || height.mode !== "auto") plot = { width, height };
+  }
+
   return {
     style: checkStyle(parts.style ?? {}),
     slots,
@@ -1228,6 +1436,7 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
     contours,
     axes,
     annotations,
+    ...(plot ? { plot } : {}),
   };
 }
 
@@ -1524,6 +1733,8 @@ function emptyGraph(name: string): GraphSpec {
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
     showInfo: false,
+    width: AUTO_SIZE,
+    height: AUTO_SIZE,
     style: null,
   };
 }
@@ -1944,6 +2155,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
         );
       }
+      const sizing = (["width", "height"] as const).filter((side) =>
+        sizeAxes(graph[side]).includes(command.axis),
+      );
+      if (sizing.length > 0) {
+        throw new DocError(
+          `Axis ${command.axis} sizes the ${sizing.join(" and the ")} of the plot area. Size it another way first.`,
+        );
+      }
       const axes = withoutEntries(graph.axes, [command.axis]);
       return { state: putGraph(state, { ...graph, axes }), result: null };
     }
@@ -1972,8 +2191,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "modifyGraph": {
       const graph = requireGraph(state, command.graph);
-      const props = validateProps<GraphStyle>(command.props, GRAPH_VALIDATORS, "graph");
-      return { state: putGraph(state, { ...graph, ...props }), result: null };
+      const props = validateProps<GraphProps>(command.props, GRAPH_PROP_VALIDATORS, "graph");
+      const next = { ...graph, ...props };
+      if (props.width !== undefined || props.height !== undefined) {
+        checkPlotSize(next.width, next.height, (axis) => next.axes[axis]?.side, graph.name);
+      }
+      return { state: putGraph(state, next), result: null };
     }
     case "appendImage": {
       const graph = requireGraph(state, command.graph);
@@ -2605,8 +2828,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
               ...window,
               x: command.x ?? window.x,
               y: command.y ?? window.y,
-              w: Math.max(160, command.w ?? window.w),
-              h: Math.max(120, command.h ?? window.h),
+              w: Math.max(MIN_WINDOW_WIDTH, command.w ?? window.w),
+              h: Math.max(MIN_WINDOW_HEIGHT, command.h ?? window.h),
             }
           : window,
       );

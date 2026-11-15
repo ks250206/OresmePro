@@ -424,8 +424,54 @@ export interface GraphStyle {
   showInfo: boolean;
 }
 
+/** The units a length on paper is given in: points (1/72 inch), centimetres and inches. */
+export const LENGTH_UNITS = ["pt", "cm", "inch"] as const;
+export type LengthUnit = (typeof LENGTH_UNITS)[number];
+
+export const PLOT_SIZE_MODES = ["auto", "absolute", "aspect", "plan", "perUnit"] as const;
+export type PlotSizeMode = (typeof PLOT_SIZE_MODES)[number];
+
+/**
+ * How one side of the plot area (the rectangle the axes enclose) is sized,
+ * as Igor's ModifyGraph width and height:
+ *
+ * - auto: what the window leaves after the margins (width=0).
+ * - absolute: a length on paper (width=n).
+ * - aspect: `factor` times the other side (width={Aspect, f}).
+ * - plan: one unit of the horizontal axis `hAxis` is `factor` times as long
+ *   as one unit of the vertical axis `vAxis` for the width, and the other
+ *   way round for the height; 1 scales both alike (width={Plan, f, h, v}).
+ * - perUnit: `value` `unit`s for each unit of `axis` (width={perUnit, n, axis}).
+ *
+ * A unit of a log axis is a decade. Aspect and plan depend on the other
+ * side, so the two sides cannot both use them.
+ */
+export type PlotDimension =
+  | { mode: "auto" }
+  | { mode: "absolute"; value: number; unit: LengthUnit }
+  | { mode: "aspect"; factor: number }
+  | { mode: "plan"; factor: number; hAxis: string; vAxis: string }
+  | { mode: "perUnit"; value: number; unit: LengthUnit; axis: string };
+
+export const AUTO_SIZE: PlotDimension = { mode: "auto" };
+
+/** Whether a side of the plot area is sized from the other side. */
+export const dependsOnOther = (dimension: PlotDimension): boolean =>
+  dimension.mode === "aspect" || dimension.mode === "plan";
+
+/** The axes a side of the plot area is sized by. */
+export function sizeAxes(dimension: PlotDimension): string[] {
+  if (dimension.mode === "plan") return [dimension.hAxis, dimension.vAxis];
+  if (dimension.mode === "perUnit") return [dimension.axis];
+  return [];
+}
+
 export interface GraphSpec extends GraphStyle {
   name: string;
+  /** The width of the plot area (see {@link PlotDimension}); auto follows the window. */
+  width: PlotDimension;
+  /** The height of the plot area. */
+  height: PlotDimension;
   /**
    * The style (see {@link StyleSpec}) last given to the graph, or null.
    * Traces and axes added to the graph later take their look from it.
@@ -504,6 +550,12 @@ export interface FigureSize {
 export interface StyleSpec {
   graph?: Partial<GraphLook>;
   size?: FigureSize;
+  /**
+   * How the plot area is sized, for the sides it says: auto, absolute or
+   * aspect only. Plan and per unit follow the ranges of the axes, which are
+   * data, so a style does not hold them (its `size` keeps what they gave).
+   */
+  plot?: { width?: PlotDimension; height?: PlotDimension };
   axes?: Partial<Record<AxisRole, Partial<AxisLook>>>;
   traces?: readonly Partial<TraceLook>[];
 }
@@ -604,6 +656,8 @@ export interface GraphTemplate {
   /** Every axis, the four sides first. A range left as null is worked out from the data. */
   axes: readonly TemplateAxis[];
   annotations: readonly TemplateAnnotation[];
+  /** How the plot area is sized, every mode (its axes are the template's); left out, auto. */
+  plot?: { width: PlotDimension; height: PlotDimension };
 }
 
 export interface TableSpec {
@@ -847,7 +901,16 @@ export const TITLE_BAR_HEIGHT = 24;
 /** Height of the cursor readout bar under a graph. */
 export const INFO_BAR_HEIGHT = 56;
 
-/** The size a graph is drawn at in its window, and exported at. */
+/** The smallest a window can be made. */
+export const MIN_WINDOW_WIDTH = 160;
+export const MIN_WINDOW_HEIGHT = 120;
+
+/**
+ * The size a graph's window offers it, and the size it is exported at when
+ * its plot area follows the window. A side of the plot area that is not
+ * auto makes the figure as big as it needs to be instead, and the window is
+ * fitted to it (see ../plot/windowFit).
+ */
 export function figureSize(window: WindowState, graph: GraphSpec | undefined): FigureSize {
   const info = graph?.showInfo ? INFO_BAR_HEIGHT : 0;
   return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - info };

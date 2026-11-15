@@ -1,5 +1,6 @@
 import type { Arrangement } from "./arrange";
 import type { Command } from "./commands";
+import type { PlotDimension } from "./types";
 
 /** Python source to be written as it is, where a literal would otherwise go. */
 class PyExpression {
@@ -130,6 +131,46 @@ function addControlCall(command: Extract<Command, { op: "addControl" }>): string
       : "";
   const named = words ? props : { label, ...props };
   return `${panel}.${command.kind}(${joinArgs(name, positional, keywords(named))})`;
+}
+
+const LENGTH_CALLS: Record<string, string> = { pt: "op.pt", cm: "op.cm", inch: "op.inch" };
+
+/**
+ * How a side of the plot area is sized, as `Graph.set` takes it: "auto",
+ * a length (`op.cm(8)`), or a tuple ("aspect", f), ("plan", f, haxis,
+ * vaxis), ("per_unit", n, unit, axis). Anything else is written as it is.
+ */
+function plotDimensionPython(value: unknown): unknown {
+  const dimension = value as Partial<PlotDimension> | null;
+  const tuple = (...items: unknown[]) => new PyExpression(`(${items.map(pyLiteral).join(", ")})`);
+  switch (dimension?.mode) {
+    case "auto":
+      return "auto";
+    case "absolute":
+      return new PyExpression(
+        `${LENGTH_CALLS[dimension.unit ?? "pt"] ?? "op.pt"}(${pyLiteral(dimension.value)})`,
+      );
+    case "aspect":
+      return tuple("aspect", dimension.factor);
+    case "plan":
+      return tuple("plan", dimension.factor, dimension.hAxis, dimension.vAxis);
+    case "perUnit":
+      return tuple("per_unit", dimension.value, dimension.unit, dimension.axis);
+    default:
+      return value;
+  }
+}
+
+/** A graph's properties as `Graph.set` takes them. */
+function graphKeywords(props: Readonly<Record<string, unknown>>): string {
+  return keywords(
+    Object.fromEntries(
+      Object.entries(props).map(([key, value]) => [
+        key,
+        key === "width" || key === "height" ? plotDimensionPython(value) : value,
+      ]),
+    ),
+  );
 }
 
 /**
@@ -343,7 +384,7 @@ export function echoPython(
     case "removeCursor":
       return `op.graph(${pyLiteral(command.graph)}).cursor(${pyLiteral(command.cursor)}).remove()`;
     case "modifyGraph":
-      return `op.graph(${pyLiteral(command.graph)}).set(${keywords(command.props)})`;
+      return `op.graph(${pyLiteral(command.graph)}).set(${graphKeywords(command.props)})`;
     case "addAnnotation": {
       const graph = `op.graph(${pyLiteral(command.graph)})`;
       const place = keywords({ x: command.x, y: command.y });

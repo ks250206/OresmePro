@@ -1,5 +1,11 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { applyCommand, checkGraphTemplate, checkName, checkStyle } from "../doc/commands";
+import {
+  applyCommand,
+  checkGraphTemplate,
+  checkName,
+  checkStyle,
+  savedPlotSize,
+} from "../doc/commands";
 import { dict, dictFrom } from "../doc/dict";
 import { formulaCurrent, parseFormula } from "../doc/formula";
 import { checkPanel } from "../doc/panels";
@@ -181,6 +187,7 @@ function upgradeGraph(
       ]),
     ),
     showInfo: saved.showInfo ?? false,
+    ...savedPlotSize(saved.width, saved.height, axes),
     style: typeof saved.style === "string" && saved.style in styles ? saved.style : null,
     axes,
   };

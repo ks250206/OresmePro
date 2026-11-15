@@ -87,7 +87,10 @@ export function layoutPage(
     if (item.kind === "graph") {
       const graph = item.graph === null ? undefined : state.graphs[item.graph];
       if (!graph) continue;
+      // A plot area of a fixed size has that size on paper: the graph is
+      // drawn from the top left of its box, cut off at the box's edges.
       const layout = layoutGraph(graph, state.waves, item.w, item.h, measure, {
+        unitsPerPoint: 1,
         cursors: false,
         timeZone: state.timeZone,
       });
