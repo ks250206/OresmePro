@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import time
+import traceback
 
 from IPython.core.displayhook import DisplayHook
 from IPython.core.displaypub import DisplayPublisher
@@ -368,6 +369,81 @@ async def execute(code):
     except asyncio.CancelledError:
         _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
         return False
+    finally:
+        _current_task = None
+        _state = "idle"
+        _interrupt_requested = False
+
+
+def actions_revision():
+    """A number that changes whenever an action is registered."""
+    return oresme._actions_revision
+
+
+def actions():
+    """The registered actions, as JSON for the application."""
+    return json.dumps(oresme.actions(), allow_nan=False)
+
+
+def _report(error):
+    """Send an exception to the history, as IPython does for an input."""
+    name = type(error).__name__
+    if isinstance(error, oresme.OresmeError):
+        # A refusal says all there is to say; the frames are this module's.
+        text = f"{name}: {error}"
+    else:
+        text = "".join(traceback.format_exception(error))
+    _oresme_js.error(name, str(error), text)
+
+
+# The checked call that run_action makes: (action, keyword arguments).
+_checked = None
+
+
+def check_action(action, version, args_json):
+    """Check a call of an action from the application, before it is run.
+
+    Returns the Python that does the same, to show in the history, or None
+    if the call was refused (and the reason was reported).
+    """
+    global _checked
+    _checked = None
+    try:
+        found, given, passed = oresme._prepare_action(action, json.loads(args_json), version)
+    except (Exception, KeyboardInterrupt) as error:
+        _report(error)
+        return None
+    _checked = (found, passed)
+    return oresme._action_code(found, given)
+
+
+async def run_action():
+    """Run the call that check_action accepted, in an op.atomic() block.
+
+    Returns the JSON of what it returned (see oresme._result_json), or None
+    if it raised.
+    """
+    global _checked, _current_task, _state, _interrupt_requested
+    found, passed = _checked
+    _checked = None
+    _current_task = asyncio.current_task()
+    _state = "running"
+    try:
+        if _interrupt_requested:
+            raise asyncio.CancelledError
+        _sync(_pull)
+        try:
+            with oresme.atomic():
+                value = found.function(**passed)
+            return json.dumps({"result": oresme._result_json(value)}, allow_nan=False)
+        finally:
+            _sync(_push)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
+        return None
+    except Exception as error:
+        _report(error)
+        return None
     finally:
         _current_task = None
         _state = "idle"

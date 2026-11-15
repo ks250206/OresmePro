@@ -1,3 +1,4 @@
+import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
 import type { Doc } from "../core/doc/doc";
 import type { FileStore } from "../core/files/files";
 import type { History } from "../core/history/history";
@@ -36,6 +37,10 @@ export interface KernelOptions {
 interface Running {
   historyId: number;
   startedAt: number;
+  /** For an action call: settles its promise when it is done. */
+  settle?: (outcome: { ok: true; value: unknown } | { ok: false; error: string }) => void;
+  /** The last error it reported, which an action call is rejected with. */
+  error?: string;
 }
 
 /**
@@ -57,6 +62,8 @@ export class KernelClient {
   private inputBuffer: SharedArrayBuffer | null = null;
   private inputHistoryId: number | null = null;
   private readonly listeners = new Set<() => void>();
+  private catalog: readonly ActionSpec[] = [];
+  private readonly actionListeners = new Set<() => void>();
   private readonly running = new Map<number, Running>();
   private readonly completions = new Map<number, (items: CompletionItem[]) => void>();
   private pendingReply: { json: string; data: Float64Array | null } | null = null;
@@ -76,6 +83,15 @@ export class KernelClient {
     return () => this.listeners.delete(listener);
   };
 
+  /** The actions Python has registered (empty until it is up). */
+  readonly getActions = (): readonly ActionSpec[] => this.catalog;
+
+  /** Calls `listener` whenever the list of actions changes. */
+  readonly subscribeActions = (listener: () => void): (() => void) => {
+    this.actionListeners.add(listener);
+    return () => this.actionListeners.delete(listener);
+  };
+
   start(): void {
     if (typeof SharedArrayBuffer === "undefined" || !globalThis.crossOriginIsolated) {
       this.setState({
@@ -86,6 +102,7 @@ export class KernelClient {
       return;
     }
     this.ready = false;
+    this.setActions([]);
     this.setState({
       status: "starting",
       message: "Loading Python…",
@@ -134,6 +151,51 @@ export class KernelClient {
     this.send({ type: "execute", id, code });
     this.refreshStatus();
     return historyId;
+  }
+
+  /**
+   * Calls a registered action (see `op.action`) with plain values, queued
+   * behind any code that is running, as a GUI does. The call is entered in
+   * the history as the Python that does the same, with what it prints.
+   * Resolves to the JSON form of what the action returned; rejects with the
+   * error's message if the call is refused or fails, which changes nothing.
+   * `version` picks a version of the action, the highest by default.
+   */
+  invoke(action: string, args: ActionArgs = {}, version?: number): Promise<unknown> {
+    const { history } = this.options;
+    let argsJson: string;
+    let code: string;
+    try {
+      argsJson = JSON.stringify(args);
+      code = invokeCode(action, args, version);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    this.options.onExecute?.();
+    // Until Python has checked the call, it is shown as the op.invoke it is.
+    const historyId = history.add("gui", code, "queued");
+    if (!this.worker || this.state.status === "unavailable" || this.state.status === "failed") {
+      history.appendOutput(historyId, {
+        kind: "error",
+        name: "PythonUnavailable",
+        message: this.state.message,
+        traceback: `Python is not running: ${this.state.message}`,
+      });
+      history.update(historyId, { status: "error", durationMs: 0 });
+      return Promise.reject(new Error(`Python is not running: ${this.state.message}`));
+    }
+    const id = this.nextId;
+    this.nextId += 1;
+    return new Promise((resolve, reject) => {
+      this.running.set(id, {
+        historyId,
+        startedAt: Date.now(),
+        settle: (outcome) =>
+          outcome.ok ? resolve(outcome.value) : reject(new Error(outcome.error)),
+      });
+      this.send({ type: "invoke", id, action, version: version ?? null, argsJson });
+      this.refreshStatus();
+    });
   }
 
   /** Completions at a cursor position; empty if Python is busy or not up. */
@@ -252,6 +314,14 @@ export class KernelClient {
           this.setState({ message: message.message || "Running…" });
         }
         break;
+      case "actions":
+        this.setActions(message.catalog);
+        break;
+      case "echo": {
+        const run = this.running.get(message.id);
+        if (run) history.update(run.historyId, { code: message.code });
+        break;
+      }
       case "ready":
         this.ready = true;
         this.refreshStatus();
@@ -293,6 +363,7 @@ export class KernelClient {
       case "error": {
         const run = this.running.get(message.id);
         if (run) {
+          run.error = message.message ? `${message.name}: ${message.message}` : message.name;
           history.appendOutput(run.historyId, {
             kind: "error",
             name: message.name,
@@ -319,6 +390,12 @@ export class KernelClient {
           status: message.ok ? "ok" : "error",
           durationMs: Date.now() - run.startedAt,
         });
+        if (message.ok) {
+          const reply = (message.result ? JSON.parse(message.result) : {}) as { result?: unknown };
+          run.settle?.({ ok: true, value: reply.result ?? null });
+        } else {
+          run.settle?.({ ok: false, error: run.error ?? "The action failed." });
+        }
         // The input that would not stop has ended: the one running now was not asked to.
         if (this.running.size > 0 && this.state.interrupting) {
           this.setState({ message: "Running…", interrupting: false });
@@ -378,6 +455,7 @@ export class KernelClient {
         traceback: reason,
       });
       history.update(run.historyId, { status: "error", durationMs: Date.now() - run.startedAt });
+      run.settle?.({ ok: false, error: reason });
     }
     this.running.clear();
     for (const resolve of this.completions.values()) resolve([]);
@@ -391,6 +469,12 @@ export class KernelClient {
     } else {
       this.setState({ status: "ready", message: "Python ready", interrupting: false });
     }
+  }
+
+  private setActions(catalog: readonly ActionSpec[]): void {
+    if (catalog.length === 0 && this.catalog.length === 0) return;
+    this.catalog = catalog;
+    for (const listener of this.actionListeners) listener();
   }
 
   private setState(change: Partial<KernelState>): void {

@@ -14,6 +14,8 @@ export interface KernelHooks {
   /** A MIME bundle (JSON) for an expression result or display() call. */
   display(bundleJson: string): void;
   error(name: string, message: string, traceback: string): void;
+  /** The registered actions (JSON), once Python is up and again whenever they change. */
+  actions?(catalogJson: string): void;
 }
 
 export interface CompletionItem {
@@ -26,6 +28,18 @@ export interface CompletionItem {
 export interface PythonKernel {
   /** Resolves to true if the code ran without raising. */
   execute(code: string): Promise<boolean>;
+  /**
+   * Calls a registered action with arguments given as JSON. `onChecked`
+   * gets the Python that does the same once the call is accepted; a refused
+   * call never runs. Resolves to the JSON `{"result": ...}`, or null if the
+   * call was refused or raised (the error went to `hooks.error`).
+   */
+  invoke(
+    action: string,
+    version: number | null,
+    argsJson: string,
+    onChecked: (code: string) => void,
+  ): Promise<string | null>;
   complete(code: string, cursor: number): CompletionItem[];
   /** Cancels the running input if it is waiting on `await`. */
   interrupt(): void;
@@ -66,13 +80,42 @@ export async function bootPython(
   onProgress("Starting Python…");
   pyodide.runPython(`import sys\nsys.path.insert(0, ${JSON.stringify(SITE)})`);
   const kernel = pyodide.pyimport("oresme_kernel");
+  // Code that runs may register actions (a procedure, say): the main thread
+  // is told the new list after it ends.
+  let actionsRevision = Number(kernel.actions_revision());
+  hooks.actions?.(String(kernel.actions()));
+  const reportActions = () => {
+    const revision = Number(kernel.actions_revision());
+    if (revision === actionsRevision) return;
+    actionsRevision = revision;
+    hooks.actions?.(String(kernel.actions()));
+  };
   return {
     // Packages the code imports are installed by the Python side before it
     // runs (see _load_packages in oresme_kernel.py), where an interrupt can
     // cancel the wait like any other.
     execute: async (code) => {
       kernel.prepare();
-      return Boolean(await kernel.execute(code));
+      try {
+        return Boolean(await kernel.execute(code));
+      } finally {
+        reportActions();
+      }
+    },
+    invoke: async (action, version, argsJson, onChecked) => {
+      kernel.prepare();
+      try {
+        // undefined, not null, reaches Python as None (null is pyodide's jsnull).
+        const code = kernel.check_action(action, version ?? undefined, argsJson) as
+          | string
+          | undefined;
+        if (code === undefined || code === null) return null;
+        onChecked(code);
+        const result = (await kernel.run_action()) as string | undefined;
+        return result ?? null;
+      } finally {
+        reportActions();
+      }
     },
     complete: (code, cursor) => JSON.parse(kernel.complete(code, cursor)) as CompletionItem[],
     interrupt: () => kernel.interrupt(),
