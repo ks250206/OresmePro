@@ -58,6 +58,16 @@ jobs:
       - name: End-to-end tests
         run: pnpm e2e
 
+      # What keeps plugin code apart from the app is up to each browser, so the
+      # sandbox's tests run in Firefox and WebKit as well.
+      - name: Install Firefox and WebKit
+        run: pnpm exec playwright install --with-deps firefox webkit
+
+      - name: Plugin sandbox in Firefox and WebKit
+        run: pnpm e2e --project=firefox --project=webkit
+        env:
+          E2E_ALL_BROWSERS: "1"
+
       - name: Keep the end-to-end report
         if: failure()
         uses: actions/upload-artifact@v4
