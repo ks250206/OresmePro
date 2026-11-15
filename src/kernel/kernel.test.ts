@@ -2276,3 +2276,121 @@ describe("op.atomic", () => {
     expect(stdout).toMatch(/waits for the end of the op.atomic\(\) block/);
   });
 });
+
+describe("formulas", () => {
+  it("sets, reads, follows and removes a formula", async () => {
+    expect(
+      await run(
+        [
+          'V = op.make("fV", [2.0, 4.0, 6.0], x0=1, dx=0.5)',
+          'I = op.make("fI", [1.0, 0.0, 2.0], x0=1, dx=0.5)',
+          'R = op.set_formula("fR", "fV / fI")',
+          "print(R.formula, R.data.tolist(), R.x0, R.dx)",
+          "V[0] = 8",
+          "print(R.data.tolist(), R.formula_info['status'], R.formula_info['inputs'])",
+          'R.formula = "fV * 2"',
+          "print(R.data.tolist(), R.formula_info['auto'])",
+          "R.formula = None",
+          "V[0] = 1",
+          "print(R.formula, R.data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "fV / fI [2.0, nan, 3.0] 1.0 0.5",
+        "[8.0, nan, 3.0] ok ['fV', 'fI']",
+        "[16.0, 8.0, 12.0] True",
+        "None [16.0, 8.0, 12.0]",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toMatch(/1 point was divided by zero and is NaN/);
+  });
+
+  it("keeps a manual formula until recalculate", async () => {
+    expect(
+      await run(
+        [
+          'a = op.make("fa", [1.0, 2.0])',
+          'b = op.set_formula("fb", "fa + 1", auto=False)',
+          "a[1] = 10",
+          "print(b.data.tolist(), b.formula_info['status'])",
+          "op.recalculate([b])",
+          "print(b.data.tolist(), b.formula_info['status'])",
+          "print(repr(b))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "[2.0, 3.0] stale",
+        "[2.0, 11.0] ok",
+        "Wave('fb', n=2, x0=0, dx=1, formula='fa + 1')",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("raises where a formula is wrong, and warns of one that fails later", async () => {
+    expect(
+      await run(
+        [
+          'op.make("fc", [1.0, 2.0])',
+          "for expr in ['fc +', 'fc.real', '__import__(\"os\")', 'nothere * 2']:",
+          "    try:",
+          '        op.set_formula("fd", expr)',
+          "    except op.OresmeError as error:",
+          "        print(error)",
+          'op.set_formula("fd", "fc * 3")',
+          'op.make("fother", [1.0])',
+          'op.set_formula("fbad", "fd + fc")',
+          'op.wave("fd").formula = None',
+          'op.wave("fd").insert_points(0)',
+          "print(op.wave('fbad').formula_info['status'])",
+          "op.recalculate()",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "The formula ends where a value is expected (at character 5)",
+        '"." has no meaning in a formula (at character 3)',
+        '"_" has no meaning in a formula (at character 1)',
+        "Missing input: there is no wave named nothere (at character 1)",
+        "error",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toMatch(/fbad: fc has 2 points but fd has 3\./);
+    expect(doc.getState().waves.fd!.data.length).toBe(3);
+  });
+
+  it("runs the echo of the GUI's commands", async () => {
+    await run('op.make("fe", [1.0, 2.0])');
+    expect(
+      await run(echoPython({ op: "setFormula", name: "ff", expr: "fe ^ 2", auto: false })!),
+    ).toBe(true);
+    expect(await run(echoPython({ op: "recalculate", names: ["ff"] })!)).toBe(true);
+    expect(await run(echoPython({ op: "setFormula", name: "ff", expr: null })!)).toBe(true);
+    expect([...doc.getState().waves.ff!.data]).toEqual([1, 4]);
+    expect(doc.getState().waves.ff!.formula).toBeUndefined();
+  });
+
+  it("recomputes inside an op.atomic() block, as one undo step", async () => {
+    await run('op.make("fg", [1.0, 2.0])\nop.set_formula("fh", "fg * 10")');
+    expect(
+      await run(
+        [
+          'g, h = op.wave("fg"), op.wave("fh")',
+          "with op.atomic():",
+          "    g[0] = 5",
+          "    print(h.data.tolist())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("[50.0, 20.0]\n");
+    doc.undo();
+    expect([...doc.getState().waves.fh!.data]).toEqual([10, 20]);
+  });
+});

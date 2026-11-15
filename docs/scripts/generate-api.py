@@ -15,7 +15,10 @@ REPOSITORY = "https://github.com/ks250206/OresmePro/blob/main/src/kernel/python"
 
 # __all__ defines the public module surface. Each export must have one home.
 SECTIONS = {
-    "wave": ("Wave API", "Wave make wave waves exists kill WAVE_TYPES"),
+    "wave": (
+        "Wave API",
+        "Wave make wave waves exists kill set_formula recalculate WAVE_TYPES",
+    ),
     "graph": (
         "Graph API",
         (
