@@ -789,6 +789,7 @@ def _lmfit_fit(model_, x_fit, y_fit, weights, guess, hold, bounds, given):
             f"lmfit {model_.name}", outcome)
 
 
+@_op.atomic()
 def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None,
         xrange=None, exclude=None, mask=None, cursors=False, graph=None, name=None, quiet=False,
         residuals=False, band=None, result=None, record=True, params=None):
@@ -1430,6 +1431,7 @@ class GlobalFitResult:
         return "\n".join(lines)
 
 
+@_op.atomic()
 def fit_global(function, ys, xs=None, *, shared=(), guess=None, hold=None, bounds=None,
                quiet=False, result=None, record=True):
     """Fit one function to several waves at once, with some parameters common to all.
@@ -1637,6 +1639,7 @@ def _sibling(source, suffix, name):
     return name or f"{source.name}{suffix}"
 
 
+@_op.atomic()
 def stats(wave_, quiet=False):
     """Summary statistics of a wave, printed and returned as a dict."""
     source, values = _numeric(wave_)
@@ -1702,6 +1705,7 @@ def _units(y_unit, x_unit, joint):
     return f"({y_unit})·{x_unit}" if "/" in y_unit else f"{y_unit}·{x_unit}"
 
 
+@_op.atomic()
 def differentiate(wave_, name=None, *, x=None):
     """The derivative with respect to X, as a new wave ``<name>_DIF``.
 
@@ -1759,6 +1763,7 @@ def differentiate(wave_, name=None, *, x=None):
     )
 
 
+@_op.atomic()
 def integrate(wave_, name=None, *, x=None):
     """The running integral over X (trapezoidal), as a new wave ``<name>_INT``.
 
@@ -1800,6 +1805,7 @@ def integrate(wave_, name=None, *, x=None):
     )
 
 
+@_op.atomic()
 def smooth(wave_, n=5, name=None):
     """A moving average over ``n`` points (odd), as a new wave ``<name>_smth``."""
     source, values = _numeric(wave_)
@@ -1815,6 +1821,7 @@ def smooth(wave_, n=5, name=None):
     )
 
 
+@_op.atomic()
 def fft(wave_, name=None, output="magnitude"):
     """The spectrum of a wave, as a new wave ``<name>_FFT`` scaled in frequency.
 
@@ -1853,6 +1860,7 @@ def fft(wave_, name=None, output="magnitude"):
     )
 
 
+@_op.atomic()
 def ifft(wave_, name=None, n=None):
     """The signal whose spectrum a complex wave holds, as ``<name>_IFFT``.
 
@@ -1882,6 +1890,7 @@ def ifft(wave_, name=None, n=None):
     )
 
 
+@_op.atomic()
 def histogram(wave_, bins=50, name=None):
     """Counts of the values in ``bins`` equal bins, as a new wave ``<name>_Hist``."""
     source, values = _numeric(wave_)
@@ -1979,6 +1988,7 @@ def _spread(function, values, covariance):
     return float(np.sqrt(abs(slopes @ covariance @ slopes)))
 
 
+@_op.atomic()
 def find_peaks(wave_, x=None, *, min_height=None, min_prominence=None, smooth=0, negative=False):
     """Find the peaks of a 1-D wave. Returns a list of dicts, tallest first.
 
@@ -2143,6 +2153,7 @@ def _triples(ties, what):
         ) from None
 
 
+@_op.atomic()
 def fit_peaks(y, x=None, *, peaks=None, shape="gauss", baseline="constant", range=None,
               xrange=None, exclude=None, mask=None, cursors=False, graph=None, components=True,
               same_width=False, spacing=None, area_ratio=None, quiet=False, result=None,
@@ -2573,6 +2584,7 @@ def _tougaard_integral(x, y, losses_up, C):
     return result
 
 
+@_op.atomic()
 def background(wave_, method="shirley", *, x=None, range=None, cursors=False, graph=None,
                average=5, subtract=False, energy=None, B=2866.0, C=1643.0, scale=True,
                tolerance=1e-6, name=None):
@@ -2743,6 +2755,7 @@ class OnsetResult:
         return "\n".join(lines)
 
 
+@_op.atomic()
 def onset(wave_, x=None, *, edge, baseline=None, graph=None, quiet=False):
     """Where a rising or falling edge starts, by extrapolating it to the baseline.
 
@@ -2893,6 +2906,7 @@ def _spline(x, y, at):
     )
 
 
+@_op.atomic()
 def interpolate(wave_, x=None, *, n=None, at=None, kind="linear", name=None):
     """Values between the points of a wave, as a new wave ``<name>_interp``.
 
@@ -2969,6 +2983,7 @@ def _like(source, name, values):
     )
 
 
+@_op.atomic()
 def filter_image(wave_, kind="gauss", size=3, name=None):
     """Smooth or sharpen a 2-D wave; the result is ``<name>_filt``.
 
@@ -3013,6 +3028,7 @@ def filter_image(wave_, kind="gauss", size=3, name=None):
     return _like(source, _sibling(source, "_filt", name), result)
 
 
+@_op.atomic()
 def line_profile(wave_, start, end, n=None, name=None):
     """The values of a 2-D wave along a straight line, as ``<name>_prof``.
 

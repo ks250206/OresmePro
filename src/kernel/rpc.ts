@@ -1,10 +1,10 @@
 import { arrangeLayout } from "../core/doc/arrange";
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
-import type { Doc } from "../core/doc/doc";
+import type { Doc, DocWriter, Stage } from "../core/doc/doc";
 import { graphScript } from "../core/doc/recreate";
 import { changedInputs } from "../core/doc/results";
-import { DocError, type Wave } from "../core/doc/types";
+import { DocError, type DocState, type Wave } from "../core/doc/types";
 import { bytesToWords, wordsToBytes, type FileStore } from "../core/files/files";
 import { checkSettings, planImport, type ImportSettings } from "../core/io/importData";
 import { planIgorImport } from "../core/io/igorImport";
@@ -68,11 +68,33 @@ function transportData(wave: Wave): Float64Array {
 
 const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.slice(5) : name);
 
-function requireWave(doc: Doc, name: unknown): Wave {
-  const wave = typeof name === "string" ? doc.getState().waves[withoutRoot(name)] : undefined;
+function requireWave(state: DocState, name: unknown): Wave {
+  const wave = typeof name === "string" ? state.waves[withoutRoot(name)] : undefined;
   if (!wave) throw new DocError(`No wave named ${JSON.stringify(name)}.`);
   return wave;
 }
+
+/**
+ * The changes of the `op.atomic()` block Python has open, by document. Kept
+ * here rather than in the context, which may be made anew for each request.
+ */
+const stages = new WeakMap<Doc, Stage>();
+
+/**
+ * Drops the changes of an atomic block that will not be finished: Python
+ * stopped, or the execution ended with the block still open. Returns whether
+ * there was one.
+ */
+export function dropStage(doc: Doc): boolean {
+  const stage = stages.get(doc);
+  if (!stage) return false;
+  stages.delete(doc);
+  stage.discard();
+  return true;
+}
+
+/** Whether Python has an atomic block open on the document. */
+export const hasStage = (doc: Doc): boolean => stages.has(doc);
 
 /**
  * Answers one request from the Python side. `group` ties the commands of one
@@ -86,7 +108,23 @@ export function handleRpc(
   group: string | undefined,
 ): RpcReply {
   const { doc } = context;
-  const state = doc.getState();
+  // Inside an atomic block, Python reads and changes the block's own state;
+  // the document sees nothing until the block ends.
+  const stage = stages.get(doc);
+  const state = stage ? stage.getState() : doc.getState();
+  /** Changes the document (or the open block) with commands that go in together or not at all. */
+  const write = <T>(fn: (writer: DocWriter) => T): T =>
+    stage ? fn(stage) : doc.transact(fn, { group });
+  /** A wave Python reads, noted so the block does not keep what it computed from an outdated one. */
+  const readWave = (name: unknown): Wave => {
+    const wave = requireWave(state, name);
+    stage?.read(wave.name);
+    return wave;
+  };
+  /** Pictures and files are made from the experiment as it is, which the block has not changed yet. */
+  const outsideBlock = (what: string) => {
+    if (stage) throw new DocError(`${what} waits for the end of the op.atomic() block.`);
+  };
   switch (method) {
     case "dispatch": {
       const command = { ...params } as Record<string, unknown>;
@@ -115,12 +153,37 @@ export function handleRpc(
         // Stamped here: the document's commands do not read the clock.
         command.result = { created: Date.now(), ...command.result };
       }
-      return { result: doc.dispatch(command as unknown as Command, { group }) };
+      return { result: write((writer) => writer.dispatch(command as unknown as Command)) };
+    }
+    case "beginAtomic": {
+      if (stage) stage.mark();
+      else stages.set(doc, doc.stage());
+      return { result: null };
+    }
+    case "commitAtomic": {
+      if (!stage) throw new DocError("No op.atomic() block is open.");
+      if (stage.depth > 0) {
+        stage.release();
+      } else {
+        stages.delete(doc);
+        stage.commit({ group });
+      }
+      return { result: null };
+    }
+    case "abortAtomic": {
+      if (!stage) return { result: null };
+      if (stage.depth > 0) {
+        stage.rollback();
+      } else {
+        stages.delete(doc);
+        stage.discard();
+      }
+      return { result: null };
     }
     case "waveInfo":
-      return { result: waveInfo(requireWave(doc, params.name)) };
+      return { result: waveInfo(readWave(params.name)) };
     case "waveData": {
-      const wave = requireWave(doc, params.name);
+      const wave = readWave(params.name);
       if (wave.text) return { result: { ...waveInfo(wave), text: wave.text } };
       // The caller says which revision it has cached; skip the copy if current.
       return params.rev === wave.rev
@@ -145,6 +208,8 @@ export function handleRpc(
       const trace = graph.traces.find((item) => item.name === cursor.trace);
       const position = trace ? tracePosition(trace, state.waves) : null;
       if (!position) throw new DocError(`Cursor ${String(params.cursor)} has lost its trace.`);
+      stage?.read(position.y.name);
+      if (position.x) stage?.read(position.x.name);
       return {
         result: {
           trace: cursor.trace,
@@ -162,6 +227,7 @@ export function handleRpc(
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
         throw new DocError("The file name must end in .pdf, .svg or .png.");
       }
+      outsideBlock("Saving a graph");
       context.exportGraph(params.name, filename, params.cursors === true);
       return { result: null };
     }
@@ -197,6 +263,7 @@ export function handleRpc(
       if (typeof params.name !== "string" || !state.pages[params.name]) {
         throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
       }
+      outsideBlock("Drawing a page layout");
       return { result: context.renderPageSvg(params.name) };
     }
     case "exportPage": {
@@ -207,13 +274,16 @@ export function handleRpc(
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
         throw new DocError("The file name must end in .pdf, .svg or .png.");
       }
+      outsideBlock("Saving a page layout");
       context.exportPage(params.name, filename);
       return { result: null };
     }
     case "arrangeLayout": {
       const layout = typeof params.layout === "string" ? params.layout : "";
       const { commands, leftOut } = arrangeLayout(state, layout, params, context.measureText);
-      for (const command of commands) doc.dispatch(command, { group });
+      write((writer) => {
+        for (const command of commands) writer.dispatch(command);
+      });
       return { result: { leftOut } };
     }
     case "procedureInfo": {
@@ -288,10 +358,12 @@ export function handleRpc(
       const plan = planImport(bytes, filename, settings, state, digest, kind);
       if (plan.commands.length === 0) throw new DocError(`${filename} has no columns.`);
       const made: string[] = [];
-      for (const command of plan.commands) {
-        const result = doc.dispatch(command, { group });
-        if (command.op !== "makeWave" && result) made.push(result);
-      }
+      write((writer) => {
+        for (const command of plan.commands) {
+          const result = writer.dispatch(command);
+          if (command.op !== "makeWave" && result) made.push(result);
+        }
+      });
       return {
         result: {
           tables: plan.tables.map(({ sheet, result }) => ({
@@ -311,7 +383,9 @@ export function handleRpc(
       const bytes = wordsToBytes(data, Number(params.size));
       const plan = planIgorImport(bytes, filename, state, digest);
       if (plan.waves.length === 0) throw new DocError(plan.summary);
-      for (const command of plan.commands) doc.dispatch(command, { group });
+      write((writer) => {
+        for (const command of plan.commands) writer.dispatch(command);
+      });
       return { result: { waves: plan.waves, summary: plan.summary, skipped: plan.skipped } };
     }
     case "removeFile":
@@ -321,6 +395,7 @@ export function handleRpc(
         throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
       }
       const size = (value: unknown) => (typeof value === "number" && value > 0 ? value : null);
+      outsideBlock("Drawing a graph");
       return {
         result: context.renderSvg(
           params.name,

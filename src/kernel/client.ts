@@ -3,7 +3,7 @@ import type { FileStore } from "../core/files/files";
 import type { History } from "../core/history/history";
 import type { CompletionItem } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
-import { answerRpc, type RpcContext } from "./rpc";
+import { answerRpc, dropStage, type RpcContext } from "./rpc";
 import { writeSyncReply } from "./syncChannel";
 
 export interface KernelState {
@@ -306,6 +306,15 @@ export class KernelClient {
         const run = this.running.get(message.id);
         if (!run) break;
         this.running.delete(message.id);
+        // A block is closed by the code that opened it; one still open when its
+        // input ends (opened by hand, say) would hold its changes forever.
+        if (dropStage(this.options.doc)) {
+          history.appendOutput(run.historyId, {
+            kind: "stream",
+            name: "stderr",
+            text: "An op.atomic() block was still open at the end, so its changes were dropped.\n",
+          });
+        }
         history.update(run.historyId, {
           status: message.ok ? "ok" : "error",
           durationMs: Date.now() - run.startedAt,
@@ -359,6 +368,8 @@ export class KernelClient {
 
   private failAll(reason: string): void {
     const { history } = this.options;
+    // Python stopped: an atomic block it had open will never be finished.
+    dropStage(this.options.doc);
     for (const run of this.running.values()) {
       history.appendOutput(run.historyId, {
         kind: "error",

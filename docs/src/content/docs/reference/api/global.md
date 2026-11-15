@@ -13,6 +13,33 @@ editUrl: false
 
 The application rejected a request (bad name, missing wave, ...).
 
+## `atomic`
+
+Make the changes of a block go into the experiment together, or not at all.
+
+::
+
+    with op.atomic():
+        corrected = op.make("corrected", raw.data - background.data)
+        op.display(corrected)
+
+Inside the block Python sees its own changes, but the experiment (and so
+the GUI) sees none of them until the block ends. If the block raises,
+nothing it did is kept; if it ends normally, all of it goes in as one undo
+step. The analyses that make waves and results (``op.fit``,
+``op.fit_peaks``, ``op.background``, ...) each run in a block of their
+own, so one that fails half way leaves nothing behind.
+
+The experiment may change while the block runs, since the GUI does not
+wait for Python. Such changes do not stop the block when they do not meet
+its own (a window moved, another wave edited). But if a wave the block
+read has changed meanwhile, nothing is kept and ``OresmeError`` is raised:
+what was computed from it is out of date.
+
+Blocks may be nested; an inner block that raises takes back only its own
+changes. Graphs and page layouts cannot be drawn or saved inside a block.
+``@op.atomic()`` on a function makes each call of it a block.
+
 ## `load_text`
 
 ```python

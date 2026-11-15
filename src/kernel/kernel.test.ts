@@ -27,6 +27,8 @@ let errors: string[] = [];
 let displays: Record<string, string>[] = [];
 let runCount = 0;
 const exported: string[] = [];
+/** Runs before a request is answered: lets a test change the document as the GUI would meanwhile. */
+let beforeRpc: ((method: string) => void) | null = null;
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
@@ -44,8 +46,9 @@ beforeAll(async () => {
     lockFileURL: "public/pyodide/pyodide-lock.json",
   });
   kernel = await bootPython(pyodide, {
-    rpc: (method, paramsJson, data) =>
-      answerRpc(
+    rpc: (method, paramsJson, data) => {
+      beforeRpc?.(method);
+      return answerRpc(
         {
           doc,
           files,
@@ -81,7 +84,8 @@ beforeAll(async () => {
         // Copy out of the WebAssembly heap, as the worker does by transferring.
         data ? data.slice() : null,
         `run${runCount}`,
-      ),
+      );
+    },
     stream: (name, text) => {
       if (name === "stdout") stdout += text;
       else stderr += text;
@@ -2118,5 +2122,157 @@ describe("oresme Python API", () => {
       await run(echoPython({ op: "saveStyle", name: "stSized", graph: "StyleNew", size: true })!),
     ).toBe(true);
     expect(doc.getState().styles.stSized!.size).toEqual({ width: 440, height: 276 });
+  });
+});
+
+describe("op.atomic", () => {
+  it("keeps nothing of a block that raises", async () => {
+    const before = doc.getState();
+    expect(
+      await run(
+        [
+          "try:",
+          "    with op.atomic():",
+          '        a = op.make("atomA", [1.0, 2.0])',
+          "        a[0] = 5",
+          '        print("inside", a[0], op.exists("atomA"))',
+          '        raise ValueError("stop")',
+          "except ValueError:",
+          '    print("outside", op.exists("atomA"))',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("inside 5.0 True\noutside False\n");
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("puts a block in as one undo step, after the GUI saw none of it", async () => {
+    let seen: boolean | null = null;
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") seen = "atomB" in doc.getState().waves;
+    };
+    try {
+      expect(
+        await run(
+          'with op.atomic():\n    op.make("atomB", [1.0])\n    op.make("atomC", [2.0])\n    op.display(op.wave("atomB"))',
+        ),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    expect(seen).toBe(false);
+    expect(doc.getState().waves.atomC).toBeDefined();
+    doc.undo();
+    expect(doc.getState().waves.atomB).toBeUndefined();
+    expect(doc.getState().waves.atomC).toBeUndefined();
+  });
+
+  it("takes back an inner block only", async () => {
+    expect(
+      await run(
+        [
+          "with op.atomic():",
+          '    op.make("atomOuter", [1.0])',
+          "    try:",
+          "        with op.atomic():",
+          '            op.make("atomInner", [2.0])',
+          "            raise KeyError",
+          "    except KeyError:",
+          "        pass",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(doc.getState().waves.atomOuter).toBeDefined();
+    expect(doc.getState().waves.atomInner).toBeUndefined();
+  });
+
+  it("refuses to keep what was computed from a wave the GUI changed meanwhile", async () => {
+    await run('op.make("atomSrc", [1.0, 2.0, 3.0])');
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") {
+        doc.dispatch({ op: "setWavePoints", name: "atomSrc", start: 0, values: [100] });
+      }
+    };
+    try {
+      expect(
+        await run(
+          [
+            "try:",
+            "    with op.atomic():",
+            '        op.make("atomDouble", op.wave("atomSrc").data * 2)',
+            "except op.OresmeError as error:",
+            "    print(error)",
+          ].join("\n"),
+        ),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    expect(stdout).toMatch(/atomSrc changed while this was running/);
+    expect(doc.getState().waves.atomDouble).toBeUndefined();
+  });
+
+  it("keeps a block when the GUI changed something else meanwhile", async () => {
+    beforeRpc = (method) => {
+      if (method === "commitAtomic") {
+        doc.dispatch({ op: "makeWave", name: "atomGui", data: new Float64Array([7]) });
+      }
+    };
+    try {
+      expect(
+        await run('with op.atomic():\n    op.make("atomTwice", op.wave("atomSrc").data * 2)'),
+      ).toBe(true);
+    } finally {
+      beforeRpc = null;
+    }
+    // atomSrc is as the GUI left it in the test before.
+    expect([...doc.getState().waves.atomTwice!.data]).toEqual([200, 4, 6]);
+    expect(doc.getState().waves.atomGui).toBeDefined();
+  });
+
+  it("leaves nothing of a fit that fails part way", async () => {
+    const before = Object.keys(doc.getState().waves).length;
+    const results = Object.keys(doc.getState().results).length;
+    expect(
+      await run(
+        [
+          "import _oresme_analysis as _analysis",
+          "_keep = _analysis._record",
+          "def _broken(*args, **kwargs):",
+          '    raise RuntimeError("no room")',
+          "_analysis._record = _broken",
+          "x = np.linspace(-3, 3, 61)",
+          "try:",
+          '    op.fit("gauss", op.make("atomPeak", np.exp(-x ** 2), x0=-3, dx=0.1), quiet=True)',
+          "except RuntimeError as error:",
+          '    print("failed:", error)',
+          "finally:",
+          "    _analysis._record = _keep",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("failed: no room\n");
+    // The wave made before the fit is there; nothing the fit made is.
+    const state = doc.getState();
+    expect(state.waves.atomPeak).toBeDefined();
+    expect(state.waves.fit_atomPeak).toBeUndefined();
+    expect(Object.keys(state.waves).length).toBe(before + 1);
+    expect(Object.keys(state.results).length).toBe(results);
+  });
+
+  it("does not draw or save graphs inside a block", async () => {
+    expect(
+      await run(
+        [
+          'g = op.display(op.wave("atomSrc"))',
+          "try:",
+          "    with op.atomic():",
+          '        g.save("inside.svg")',
+          "except op.OresmeError as error:",
+          "    print(error)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toMatch(/waits for the end of the op.atomic\(\) block/);
   });
 });
