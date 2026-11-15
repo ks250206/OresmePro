@@ -100,6 +100,44 @@ export class OpfsPluginStorage implements PluginStorage {
   }
 }
 
+/**
+ * Keeps changes to the plugins one at a time across the browser's tabs: each
+ * reads the list as storage has it, changes it and writes it back while no
+ * other tab can, so no tab writes a list made from an outdated copy (and
+ * then clears away the files of a plugin another tab installed meanwhile).
+ */
+export interface PluginLocks {
+  run<T>(task: () => Promise<T>): Promise<T>;
+}
+
+/** One change at a time within this page: where the browser has no Web Locks, and in tests. */
+export function pageLocks(): PluginLocks {
+  let queue: Promise<unknown> = Promise.resolve();
+  return {
+    run: <T>(task: () => Promise<T>): Promise<T> => {
+      const next = queue.then(task, task);
+      queue = next.catch(() => {});
+      return next;
+    },
+  };
+}
+
+/** One change at a time across the tabs of this browser, with the Web Locks API. */
+export function browserLocks(): PluginLocks {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (!locks) return pageLocks();
+  return { run: (task) => locks.request("oresme-plugins", task) };
+}
+
+export interface PluginStoreOptions {
+  locks?: PluginLocks;
+  /**
+   * A BroadcastChannel name on which tabs tell each other that the plugins
+   * changed, so each reads the list again. Left out, nothing is told.
+   */
+  channel?: string;
+}
+
 const INDEX = "index.json";
 const BLOB = /^[0-9a-f]{64}$/;
 
@@ -112,9 +150,22 @@ export class PluginStore {
   private plugins: InstalledPlugin[] = [];
   private readonly listeners = new Set<() => void>();
   private readonly storage: PluginStorage;
+  private readonly locks: PluginLocks;
+  private readonly channel: BroadcastChannel | null;
 
-  constructor(storage: PluginStorage) {
+  constructor(storage: PluginStorage, options: PluginStoreOptions = {}) {
     this.storage = storage;
+    this.locks = options.locks ?? pageLocks();
+    this.channel =
+      options.channel && typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel(options.channel)
+        : null;
+    // Another tab changed the plugins: read the list again.
+    if (this.channel) {
+      this.channel.onmessage = () => void this.load().catch(() => {});
+      // Outside a browser (in tests) the channel must not keep the process alive.
+      (this.channel as { unref?: () => void }).unref?.();
+    }
   }
 
   readonly list = (): readonly InstalledPlugin[] => this.plugins;
@@ -130,13 +181,19 @@ export class PluginStore {
 
   /** Reads the list of installed plugins. One whose manifest cannot be read back is left out. */
   async load(): Promise<void> {
+    this.plugins = await this.read();
+    this.emit();
+  }
+
+  /** The list of installed plugins as storage has it now. */
+  private async read(): Promise<InstalledPlugin[]> {
     const bytes = await this.storage.read(INDEX);
-    if (!bytes) return;
+    if (!bytes) return [];
     let index: IndexFile;
     try {
       index = JSON.parse(new TextDecoder().decode(bytes)) as IndexFile;
     } catch {
-      return;
+      return [];
     }
     const plugins: InstalledPlugin[] = [];
     for (const entry of index.plugins ?? []) {
@@ -153,8 +210,26 @@ export class PluginStore {
         // Not readable any more; its results stay in the experiments.
       }
     }
-    this.plugins = plugins;
-    this.emit();
+    return plugins;
+  }
+
+  /**
+   * Changes the list: with no other tab changing it meanwhile, from the list
+   * as storage has it (not this tab's copy, which another tab may have made
+   * outdated), and clearing away only files that list no longer needs.
+   */
+  private change<T>(
+    make: (current: InstalledPlugin[]) => Promise<{ plugins: InstalledPlugin[]; value: T }>,
+  ): Promise<T> {
+    return this.locks.run(async () => {
+      const { plugins, value } = await make(await this.read());
+      await this.writeIndex(plugins);
+      this.plugins = plugins;
+      this.emit();
+      await this.collect(plugins);
+      this.channel?.postMessage("changed");
+      return value;
+    });
   }
 
   /**
@@ -162,49 +237,50 @@ export class PluginStore {
    * the same place (an update). A plugin of the same name from somewhere
    * else is refused: one source cannot take another's place by its name.
    */
-  async install(pkg: VerifiedPackage, enabled = true): Promise<InstalledPlugin> {
-    const existing = this.find(pkg.manifest.name);
-    if (existing && JSON.stringify(existing.lock.source) !== JSON.stringify(pkg.lock.source)) {
-      const { source } = existing.lock;
-      const from = source.kind === "github" ? `${source.owner}/${source.repo}` : source.label;
-      throw new PluginError(
-        `A plugin named ${pkg.manifest.name} is already installed from ${from}. Remove it first to install this one.`,
-      );
-    }
-    await this.storage.write(pkg.lock.manifestSha256, pkg.manifestBytes);
-    for (const file of pkg.lock.files) {
-      await this.storage.write(file.sha256, pkg.files.get(file.path)!);
-    }
-    const installed: InstalledPlugin = {
-      manifest: pkg.manifest,
-      lock: pkg.lock,
-      enabled,
-      installedAt: Date.now(),
-    };
-    const plugins = [...this.plugins.filter((plugin) => plugin !== existing), installed];
-    await this.writeIndex(plugins);
-    this.plugins = plugins;
-    this.emit();
-    await this.collect();
-    return installed;
+  install(pkg: VerifiedPackage, enabled = true): Promise<InstalledPlugin> {
+    return this.change(async (current) => {
+      const existing = current.find((plugin) => plugin.manifest.name === pkg.manifest.name);
+      if (existing && JSON.stringify(existing.lock.source) !== JSON.stringify(pkg.lock.source)) {
+        const { source } = existing.lock;
+        const from = source.kind === "github" ? `${source.owner}/${source.repo}` : source.label;
+        throw new PluginError(
+          `A plugin named ${pkg.manifest.name} is already installed from ${from}. Remove it first to install this one.`,
+        );
+      }
+      await this.storage.write(pkg.lock.manifestSha256, pkg.manifestBytes);
+      for (const file of pkg.lock.files) {
+        await this.storage.write(file.sha256, pkg.files.get(file.path)!);
+      }
+      const installed: InstalledPlugin = {
+        manifest: pkg.manifest,
+        lock: pkg.lock,
+        enabled,
+        installedAt: Date.now(),
+      };
+      const plugins = [...current.filter((plugin) => plugin !== existing), installed];
+      return { plugins, value: installed };
+    });
   }
 
-  async setEnabled(name: string, enabled: boolean): Promise<void> {
-    const plugins = this.plugins.map((plugin) =>
-      plugin.manifest.name === name ? { ...plugin, enabled } : plugin,
+  setEnabled(name: string, enabled: boolean): Promise<void> {
+    return this.change((current) =>
+      Promise.resolve({
+        plugins: current.map((plugin) =>
+          plugin.manifest.name === name ? { ...plugin, enabled } : plugin,
+        ),
+        value: undefined,
+      }),
     );
-    await this.writeIndex(plugins);
-    this.plugins = plugins;
-    this.emit();
   }
 
   /** Removes a plugin and its files. Experiments keep what it made. */
-  async remove(name: string): Promise<void> {
-    const plugins = this.plugins.filter((plugin) => plugin.manifest.name !== name);
-    await this.writeIndex(plugins);
-    this.plugins = plugins;
-    this.emit();
-    await this.collect();
+  remove(name: string): Promise<void> {
+    return this.change((current) =>
+      Promise.resolve({
+        plugins: current.filter((plugin) => plugin.manifest.name !== name),
+        value: undefined,
+      }),
+    );
   }
 
   /** The files of a plugin, checked against its lock. */
@@ -230,9 +306,9 @@ export class PluginStore {
   }
 
   /** Removes files no installed plugin needs: left by removals, updates and installs that stopped. */
-  private async collect(): Promise<void> {
+  private async collect(plugins: readonly InstalledPlugin[]): Promise<void> {
     const needed = new Set<string>();
-    for (const plugin of this.plugins) {
+    for (const plugin of plugins) {
       needed.add(plugin.lock.manifestSha256);
       for (const file of plugin.lock.files) needed.add(file.sha256);
     }

@@ -36,6 +36,9 @@ function freeName(base: string, taken: ReadonlySet<string>): string {
 }
 
 /** The wave arguments of a call, by argument name. */
+/** A wave's name as the document keeps it, without the optional "root:" in front. */
+const canonical = (name: string): string => name.replace(/^root:/, "");
+
 export function waveArgs(
   action: PluginAction,
   args: ActionArgs,
@@ -44,8 +47,11 @@ export function waveArgs(
   for (const [name, spec] of Object.entries(action.params)) {
     const value = args[name];
     if (value === undefined) continue;
-    if (spec.type === "wave" && typeof value === "string") waves[name] = value;
-    if (spec.type === "waves" && Array.isArray(value)) waves[name] = value.map(String);
+    // As the document names the waves: "root:signal" is the wave "signal".
+    if (spec.type === "wave" && typeof value === "string") waves[name] = canonical(value);
+    if (spec.type === "waves" && Array.isArray(value)) {
+      waves[name] = value.map((item) => canonical(String(item)));
+    }
   }
   return waves;
 }

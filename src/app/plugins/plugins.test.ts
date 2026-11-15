@@ -6,7 +6,7 @@ import type { RunRequest, Sandbox } from "../../sandbox/host";
 import { contributionCommands } from "./contributions";
 import { PluginHost } from "./host";
 import { fetchFromGitHub, readLocalPackage, unzipPackage } from "./sources";
-import { MemoryPluginStorage, PluginStore } from "./store";
+import { MemoryPluginStorage, pageLocks, PluginStore } from "./store";
 
 const encode = (value: unknown) =>
   new TextEncoder().encode(typeof value === "string" ? value : JSON.stringify(value));
@@ -89,6 +89,54 @@ describe("the plugin store", () => {
     expect(store.find("electrochem")!.manifest.version).toBe("0.2.0");
     const oldCode = first.lock.files.find((file) => file.path === "electrochem.py")!.sha256;
     expect(storage.files.has(oldCode)).toBe(false);
+  });
+
+  it("keeps what another tab changed meanwhile, working from the list as storage has it", async () => {
+    // Two tabs: each read the list before the other changed it.
+    const storage = new MemoryPluginStorage();
+    const locks = pageLocks();
+    const tabA = new PluginStore(storage, { locks });
+    const tabB = new PluginStore(storage, { locks });
+    await tabA.load();
+    await tabB.load();
+    const first = await packageOf();
+    await tabA.install(first);
+    const other = await packageOf({ name: "tafel", title: "Tafel" });
+    await tabB.install(other);
+    const reopened = new PluginStore(storage);
+    await reopened.load();
+    expect(
+      reopened
+        .list()
+        .map((plugin) => plugin.manifest.name)
+        .sort(),
+    ).toEqual(["electrochem", "tafel"]);
+    // A's files were not cleared away as if nothing needed them.
+    for (const file of first.lock.files) expect(storage.files.has(file.sha256)).toBe(true);
+    await expect(reopened.files(reopened.find("electrochem")!)).resolves.toBeDefined();
+
+    // Turning off and removing from the outdated tab A leave B's plugin alone.
+    await tabA.setEnabled("electrochem", false);
+    await tabA.remove("electrochem");
+    await reopened.load();
+    expect(reopened.list().map((plugin) => [plugin.manifest.name, plugin.enabled])).toEqual([
+      ["tafel", true],
+    ]);
+    for (const file of other.lock.files) expect(storage.files.has(file.sha256)).toBe(true);
+  });
+
+  it("makes changes one at a time, so two at once both stay", async () => {
+    const storage = new MemoryPluginStorage();
+    const locks = pageLocks();
+    const tabA = new PluginStore(storage, { locks });
+    const tabB = new PluginStore(storage, { locks });
+    await Promise.all([
+      tabA.install(await packageOf()),
+      tabB.install(await packageOf({ name: "tafel", title: "Tafel" })),
+    ]);
+    const reopened = new PluginStore(storage);
+    await reopened.load();
+    expect(reopened.list()).toHaveLength(2);
   });
 
   it("refuses files changed in storage since they were installed", async () => {
@@ -326,6 +374,17 @@ describe("running a plugin's action", () => {
       /signal changed while the plugin was running/,
     );
     expect(set.doc.getState().waves.signal_scaled).toBeUndefined();
+  });
+
+  it("takes a wave named from root, and keeps its result under the wave's own name", async () => {
+    const { doc, host } = await setUp();
+    doc.dispatch({ op: "makeWave", name: "signal_scaled", data: new Float64Array([0]) });
+    const outcome = await host.run("plugin.electrochem.scale", { y: "root:signal", factor: 2 });
+    // Next to "signal", and not over the "signal_scaled" that is there.
+    expect(outcome.waves).toEqual({ scaled: "signal_scaled_1" });
+    const result = doc.getState().results[outcome.result!]!;
+    expect(result.inputs.map((input) => input.wave)).toEqual(["signal"]);
+    expect(result.settings).toMatchObject({ inputs: { y: "signal" }, params: { factor: 2 } });
   });
 
   it("puts its waves into a block of Python's that is open", async () => {

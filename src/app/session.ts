@@ -12,7 +12,7 @@ import { KernelClient } from "../kernel/client";
 import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
 import { PluginHost } from "./plugins/host";
-import { MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
+import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
@@ -268,6 +268,8 @@ export const pluginStore = new PluginStore(
   typeof navigator !== "undefined" && typeof navigator.storage?.getDirectory === "function"
     ? new OpfsPluginStorage()
     : new MemoryPluginStorage(),
+  // Every tab keeps the same plugins: changes go one at a time and the others hear of them.
+  { locks: browserLocks(), channel: "oresme-plugins" },
 );
 export const plugins = new PluginHost({ store: pluginStore, doc, pyodideURL: PYODIDE_URL });
 
