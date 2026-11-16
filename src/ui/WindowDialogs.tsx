@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { experimentFileName, saveExperimentAs, savedFileName } from "../app/actions";
-import { doc, runGui, ui, useDoc } from "../app/session";
+import {
+  experimentFileName,
+  leaveFor,
+  saveExperimentAs,
+  savedFileName,
+  switchExperiment,
+} from "../app/actions";
+import { doc, experiment, runGui, ui, useDoc } from "../app/session";
 import { procedureName, windowTaken, type Command } from "../core/doc/commands";
 import type { WindowState } from "../core/doc/types";
 import { Button, Dialog, Field, TextInput } from "./controls";
@@ -173,6 +179,51 @@ export function SaveExperimentDialog() {
           ? `Saved as ${filename}, where the browser puts downloads (it may ask where).`
           : "Type a file name."}
       </div>
+    </Dialog>
+  );
+}
+
+/**
+ * Asked when this experiment could not be saved before another one opens:
+ * leaving now would lose what is unsaved. Try again, keep a copy as a file,
+ * or leave anyway.
+ */
+export function UnsavedLeaveDialog({ target }: { target: string }) {
+  const error = experiment.getState();
+  return (
+    <Dialog
+      title="The Experiment Is Not Saved"
+      width={440}
+      onClose={close}
+      submitLabel="Try Again"
+      onSubmit={() => {
+        close();
+        void switchExperiment(target);
+      }}
+      buttons={
+        <>
+          <Button onClick={() => saveExperimentAs(experimentFileName())}>Save as File…</Button>
+          <Button
+            onClick={() => {
+              if (window.confirm("Leave without saving? The unsaved changes are lost.")) {
+                close();
+                leaveFor(target);
+              }
+            }}
+          >
+            Leave Without Saving
+          </Button>
+        </>
+      }
+    >
+      <p className="leading-relaxed">
+        This experiment could not be saved in the browser, so opening another one now would lose the
+        changes since it was last saved.
+      </p>
+      {error.kind === "failed" ? <p className="text-[11px] text-danger">{error.error}</p> : null}
+      <p className="text-[11px] text-muted">
+        Free up the browser&apos;s storage and try again, or keep a copy as a .oresme file first.
+      </p>
     </Dialog>
   );
 }

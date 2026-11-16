@@ -386,6 +386,49 @@ describe("oresme Python API", () => {
     );
   });
 
+  it("gives the same uncertainties wherever X starts, dates and all", async () => {
+    expect(
+      await run(
+        [
+          "rng = np.random.default_rng(7)",
+          "base = np.linspace(0, 10, 50)",
+          "noise = rng.normal(scale=0.01, size=50)",
+          "def stats(function, offset, **options):",
+          "    x = op.make('off_x', base + offset)",
+          "    y = op.make('off_y', 2 * base + 1 + 0.05 * base**2 + noise)",
+          "    return op.fit(function, y, x=x, quiet=True, **options)",
+          "for function, index in (('line', 1), ('poly3', 2)):",
+          "    plain = stats(function, 0)",
+          "    for offset in (1.6e9, 1.7e9):",
+          "        moved = stats(function, offset)",
+          "        print(function, offset, bool(np.isfinite(moved.sigma).all()),",
+          "              abs(moved.sigma[index] / plain.sigma[index] - 1) < 1e-6 if function == 'line'",
+          "              else abs(moved.sigma[-1] / plain.sigma[-1] - 1) < 1e-4)",
+          // A function of its own goes the general way. Its intercept at X = 0, 1.7e9 away, costs
+          // the model its last digits, so the fit stops a little short; the uncertainties are
+          // finite and near those of the same data at X = 0 (they were NaN before).
+          "e0 = op.fit(lambda x, a, b: a + b * x, op.make('lin_y', 2 * base + 1 + noise), x=op.make('lin_x', base), guess=[0, 1], quiet=True)",
+          "e1 = op.fit(lambda x, a, b: a + b * x, op.make('lin_y', 2 * base + 1 + noise), x=op.make('lin_x', base + 1.7e9), guess=[-3.4e9, 2], quiet=True)",
+          "print(bool(np.isfinite(e1.sigma).all()), abs(e1.sigma[1] / e0.sigma[1] - 1) < 0.02)",
+          // Held coefficients keep the fit in X itself, and still give finite uncertainties.
+          "held = stats('line', 1.7e9, hold={'a': 1.0})",
+          "print(bool(np.isfinite(held.sigma[1])))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "line 1600000000.0 True True",
+        "line 1700000000.0 True True",
+        "poly3 1600000000.0 True True",
+        "poly3 1700000000.0 True True",
+        "True True",
+        "True",
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("fits between cursors and reports what it did", async () => {
     expect(
       await run(

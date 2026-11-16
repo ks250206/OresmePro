@@ -325,9 +325,15 @@ export class ExperimentSession {
     void this.saver?.saveNow();
   }
 
-  /** Saves what is unsaved, before the page goes on to something else. */
-  async flush(): Promise<void> {
-    await this.saver?.saveNow();
+  /**
+   * Saves what is unsaved, before the page goes on to something else.
+   * False when this tab saves the experiment and could not: what is
+   * unsaved would be lost by leaving. A tab that does not save it (another
+   * tab does, or it could not be read) has nothing of its own to lose.
+   */
+  async flush(): Promise<boolean> {
+    if (!this.saver) return true;
+    return this.saver.saveNow();
   }
 
   /**
