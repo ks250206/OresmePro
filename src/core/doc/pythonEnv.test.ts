@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { catalogFromLock } from "../../app/packageCatalog";
 import { installedRows, packageState, packageTree } from "../../ui/PackagesDialog";
 import { unzipExperiment, zipExperiment } from "../io/experiment";
 import { Doc } from "./doc";
@@ -115,25 +116,52 @@ describe("the Packages dialog", () => {
     expect(packageState(env.packages[1]!, status)).toBe("not installed");
   });
 
-  it("lists everything in Python, pre-installed too, imported first", () => {
+  it("lists everything in Python, pre-installed too, and the bundled ones before they load", () => {
     const env = setup().getState().python;
     const status = {
-      installed: { numpy: "2.2.5", ipython: "9.0", emcee: "1.0", micropip: "0.11.1", tqdm: "0.9" },
-      imported: ["numpy", "emcee"],
+      installed: { numpy: "2.2.5", ipython: "9.0", emcee: "1.0", sympy: "1.14", scipy: "1.18.0" },
+      imported: ["numpy", "emcee", "scipy"],
       base: ["numpy", "ipython"],
       python: "3.14.2",
       pyodide: "314.0.7",
     };
-    expect(installedRows(status, env, true)).toEqual([
-      { name: "emcee", version: "1.0", kind: "experiment", imported: true },
-      { name: "numpy", version: "2.2.5", kind: "pre-installed", imported: true },
+    const catalog = catalogFromLock({
+      packages: {
+        numpy: { file_name: "numpy-2.2.5.whl", version: "2.2.5" },
+        scipy: { file_name: "scipy-1.18.0.whl", version: "1.18.0" },
+        "scikit-learn": { file_name: "scikit_learn-1.8.0.whl", version: "1.8.0" },
+        lmfit: { file_name: "lmfit-1.3.4.whl", version: "1.3.4" },
+        sympy: { file_name: "https://cdn.jsdelivr.net/pyodide/sympy-1.14.whl", version: "1.14" },
+        "sympy-tests": { file_name: "sympy-tests.zip", version: "1.14", package_type: "package" },
+        libfoo: { file_name: "libfoo.zip", version: "1", package_type: "shared_library" },
+      },
+    });
+    expect(catalog.bundled).toEqual({
+      numpy: "2.2.5",
+      scipy: "1.18.0",
+      "scikit-learn": "1.8.0",
+      lmfit: "1.3.4",
+    });
+    expect(Object.keys(catalog.distribution).sort()).toEqual([
+      "lmfit",
+      "numpy",
+      "scikit-learn",
+      "scipy",
+      "sympy",
     ]);
-    expect(installedRows(status, env, false).map((row) => `${row.name}:${row.kind}`)).toEqual([
-      "emcee:experiment",
-      "numpy:pre-installed",
-      "ipython:pre-installed",
-      "micropip:other",
-      "tqdm:experiment",
+    expect(
+      installedRows(status, env, true, catalog).map((row) => `${row.name}:${row.kind}`),
+    ).toEqual(["emcee:experiment", "numpy:pre-installed", "scipy:bundled"]);
+    const all = installedRows(status, env, false, catalog);
+    expect(all.map((row) => `${row.name}:${row.kind}:${row.loaded}`)).toEqual([
+      "emcee:experiment:true",
+      "numpy:pre-installed:true",
+      "scipy:bundled:true",
+      "ipython:pre-installed:true",
+      "sympy:pyodide:true",
+      "lmfit:bundled:false",
+      "scikit-learn:bundled:false",
     ]);
+    expect(all.find((row) => row.name === "lmfit")!.version).toBe("1.3.4");
   });
 });

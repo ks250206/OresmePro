@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { runPython } from "../app/actions";
+import { loadPackageCatalog, packageCatalog, type PackageCatalog } from "../app/packageCatalog";
 import {
   kernel,
+  PYODIDE_URL,
   pythonPackages,
   RESTORE_PACKAGES,
   ui,
@@ -49,36 +51,69 @@ export function packageState(item: PythonPackage, status: PackagesStatus | null)
   return status.imported.includes(item.name) ? "imported" : "installed";
 }
 
-/** A package Python has now, for the table of everything in Python. */
+/** How a package came to be in Python, or would. */
+export type PackageKind = "pre-installed" | "bundled" | "pyodide" | "experiment" | "other";
+
+export const KIND_LABELS: Record<PackageKind, string> = {
+  "pre-installed": "pre-installed",
+  bundled: "bundled · loads on import",
+  pyodide: "Pyodide · loaded on import",
+  experiment: "this experiment",
+  other: "other",
+};
+
+/** A package for the table of what Python has, and what the app has ready for it. */
 export interface InstalledRow {
   name: string;
   version: string;
-  /** Python started with it; the experiment records it; or neither (micropip, say). */
-  kind: "pre-installed" | "experiment" | "other";
+  kind: PackageKind;
+  /** Whether it is in Python now: bundled ones are not until they are imported. */
+  loaded: boolean;
   imported: boolean;
 }
 
-/** Every package Python has, imported ones first, then by name; with `importedOnly`, those imported. */
+/**
+ * Every package Python has, and those the app ships that load when first
+ * imported (SciPy, pandas, scikit-learn, lmfit, ...) even before they are;
+ * imported ones first, then by name. With `importedOnly`, those imported.
+ */
 export function installedRows(
   status: PackagesStatus,
   env: PythonEnv,
   importedOnly: boolean,
+  catalog: PackageCatalog | null = null,
 ): InstalledRow[] {
   const recorded = new Set(env.packages.map((item) => item.name));
   const imported = new Set(status.imported);
-  return Object.entries(status.installed)
-    .map(([name, version]): InstalledRow => ({
-      name,
-      version,
-      kind: status.base.includes(name)
-        ? "pre-installed"
-        : recorded.has(name)
-          ? "experiment"
-          : "other",
-      imported: imported.has(name),
-    }))
+  const kindOf = (name: string): PackageKind =>
+    status.base.includes(name)
+      ? "pre-installed"
+      : recorded.has(name)
+        ? "experiment"
+        : catalog && name in catalog.bundled
+          ? "bundled"
+          : catalog && name in catalog.distribution
+            ? "pyodide"
+            : "other";
+  const rows: InstalledRow[] = Object.entries(status.installed).map(([name, version]) => ({
+    name,
+    version,
+    kind: kindOf(name),
+    loaded: true,
+    imported: imported.has(name),
+  }));
+  for (const [name, version] of Object.entries(catalog?.bundled ?? {})) {
+    if (name in status.installed) continue;
+    rows.push({ name, version, kind: kindOf(name), loaded: false, imported: false });
+  }
+  return rows
     .filter((row) => !importedOnly || row.imported)
-    .sort((a, b) => Number(b.imported) - Number(a.imported) || a.name.localeCompare(b.name));
+    .sort(
+      (a, b) =>
+        Number(b.imported) - Number(a.imported) ||
+        Number(b.loaded) - Number(a.loaded) ||
+        a.name.localeCompare(b.name),
+    );
 }
 
 /** The packages asked for, each with what it brought, as lines of a tree. */
@@ -116,7 +151,11 @@ export function PackagesDialog() {
   const pip = (line: string) => {
     runPython(line);
   };
-  const rows = status ? installedRows(status, env, importedOnly) : [];
+  const catalog = useStore(packageCatalog, (state) => state.catalog);
+  useEffect(() => {
+    void loadPackageCatalog(PYODIDE_URL);
+  }, []);
+  const rows = status ? installedRows(status, env, importedOnly, catalog) : [];
   const cell = "border-b border-r border-line-soft px-1.5 py-0.5 whitespace-nowrap";
 
   return (
@@ -293,7 +332,7 @@ export function PackagesDialog() {
             >
               <thead className="sticky top-0 bg-chrome">
                 <tr>
-                  {["Package", "Version", "Installed as", "Imported"].map((title) => (
+                  {["Package", "Version", "Kind", "In Python"].map((title) => (
                     <th key={title} className={`${cell} border-line font-semibold`}>
                       {title}
                     </th>
@@ -305,14 +344,10 @@ export function PackagesDialog() {
                   <tr key={row.name} aria-label={`In Python ${row.name}`}>
                     <td className={cell}>{row.name}</td>
                     <td className={`${cell} font-mono text-[11px]`}>{row.version}</td>
-                    <td className={`${cell} text-muted`}>
-                      {row.kind === "pre-installed"
-                        ? "pre-installed"
-                        : row.kind === "experiment"
-                          ? "this experiment"
-                          : "other"}
+                    <td className={`${cell} text-muted`}>{KIND_LABELS[row.kind]}</td>
+                    <td className={row.loaded ? cell : `${cell} text-muted`}>
+                      {row.imported ? "imported" : row.loaded ? "loaded" : "not loaded yet"}
                     </td>
-                    <td className={cell}>{row.imported ? "yes" : ""}</td>
                   </tr>
                 ))}
               </tbody>
@@ -321,8 +356,10 @@ export function PackagesDialog() {
         ) : null}
         {status ? (
           <div className="text-[11px] text-muted">
-            {rows.length} of {Object.keys(status.installed).length} packages shown. Pre-installed
-            ones load with Python; the others of the Pyodide distribution load when imported.
+            {rows.length} shown. Pre-installed packages load with Python. Bundled ones (SciPy,
+            pandas, scikit-learn, lmfit, ...) come with the app and load the first time they are
+            imported, offline too; the rest of the Pyodide distribution loads from its server when
+            imported.
           </div>
         ) : null}
       </div>

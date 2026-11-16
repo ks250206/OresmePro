@@ -15,12 +15,22 @@ test.describe("Python packages", () => {
     // Everything in Python, pre-installed too: NumPy is imported when Python starts.
     const inPython = dialog.getByRole("table", { name: "Packages in Python" });
     await expect(inPython.getByRole("row", { name: "In Python numpy" })).toContainText(
-      /numpy\s*\d+\.\d+.*pre-installed\s*yes/,
+      /numpy\s*\d+\.\d+.*pre-installed\s*imported/,
     );
     await expect(dialog).toContainText(/Python 3\.\d+\.\d+ · Pyodide \d+/);
-    await expect(inPython.getByRole("row", { name: "In Python scipy" })).toHaveCount(0);
     await dialog.getByLabel("Imported only").uncheck();
     await expect(inPython.getByRole("row", { name: "In Python ipython" })).toBeVisible();
+    // What the app ships is listed with its version before it is imported.
+    for (const name of ["scipy", "scikit-learn", "lmfit", "pandas"]) {
+      await expect(inPython.getByRole("row", { name: `In Python ${name}` })).toContainText(
+        /\d+\.\d+.*bundled · loads on import\s*not loaded yet/,
+      );
+    }
+    await app.run("import lmfit");
+    await expect(inPython.getByRole("row", { name: "In Python lmfit" })).toContainText("imported");
+    await expect(inPython.getByRole("row", { name: "In Python scipy" })).toContainText(
+      /loaded|imported/,
+    );
     await dialog.getByLabel("Imported only").check();
     // One of the distribution's that the app serves itself, so no network is needed.
     await dialog.getByRole("button", { name: "Install uncertainties" }).click();
@@ -31,7 +41,7 @@ test.describe("Python packages", () => {
       .toBe(true);
     await app.idle();
     await expect(dialog.getByRole("row", { name: "Package uncertainties" })).toContainText(
-      "installed",
+      /installed|imported/,
     );
     await expect(dialog.getByRole("button", { name: "Install uncertainties" })).toHaveText(
       "Installed",
