@@ -672,6 +672,16 @@ describe("oresme Python API", () => {
     expect(await run("%pip download x")).toBe(false);
     expect(errors.join("\n")).toMatch(/%pip download is not supported/);
     expect(await run("%pip uninstall uncertainties")).toBe(true);
+    // micropip names what has no wheel for the browser: those names are kept, not its FAQ link alone.
+    expect(
+      await run(
+        [
+          "import _oresme_packages as pk",
+          "print(pk._install_problem(ValueError(\"Can't find a pure Python 3 wheel for: 'pymatgen-core', 'spglib'\\nSee: https://pyodide.org/en/stable/usage/faq.html\")))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toMatch(/^No wheel that runs in the browser for: pymatgen-core, spglib\./);
   });
 
   it("keeps procedures as Python files that run and import", async () => {

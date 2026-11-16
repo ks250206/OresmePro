@@ -143,13 +143,27 @@ async def install(*requirements, upgrade=False, quiet=False):
     return [item["name"] for item in records]
 
 
+_NO_WHEEL = re.compile(r"Can't find a pure Python 3 wheel for:?\s*(.+)")
+
+
 def _install_problem(error):
-    text = str(error).strip().splitlines()[-1] if str(error).strip() else type(error).__name__
-    if "pure Python 3 wheel" in text or "Can't find a pure Python" in text:
-        return (
-            f"{text} It has compiled code of its own and no wheel built for Pyodide, so it cannot "
-            "run in the browser."
-        )
+    """What went wrong installing, in words: micropip's own, with the names it gave kept."""
+    lines = [line.strip() for line in str(error).strip().splitlines() if line.strip()]
+    if not lines:
+        return type(error).__name__
+    for line in lines:
+        found = _NO_WHEEL.search(line)
+        if found:
+            names = ", ".join(name.strip(" '\"") for name in found.group(1).split(","))
+            return (
+                f"No wheel that runs in the browser for: {names}. They have compiled code of "
+                "their own, and neither PyPI nor the Pyodide distribution has them built for "
+                "Pyodide (see https://pyodide.org/en/stable/usage/packages-in-pyodide.html). A "
+                "wheel built for this Pyodide (pyodide build; its name ends in "
+                "pyemscripten_..._wasm32.whl) installs from its address: %pip install https://..."
+            )
+    # micropip ends with a line pointing at its FAQ: the reason is the lines before it.
+    text = " ".join(line for line in lines if not line.startswith("See: ")) or lines[-1]
     if "fetch" in text.lower() or "network" in text.lower():
         return f"{text} Installing a package needs the network the first time."
     return text
