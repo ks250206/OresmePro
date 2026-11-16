@@ -2,6 +2,7 @@ import { uniqueName, windowTaken } from "../core/doc/commands";
 import type { DocState } from "../core/doc/types";
 import { download, pickFile } from "./actions";
 import { doc, note, runGui, showError } from "./session";
+import { createStore } from "./store";
 
 /**
  * The procedure name a file of Python is imported under: its name without
@@ -50,4 +51,22 @@ export function exportProcedure(name: string): void {
   const procedure = doc.getState().procedures[name];
   if (!procedure) return;
   download(new Blob([procedure.code], { type: "text/x-python" }), `${name}.py`);
+}
+
+/**
+ * Where a procedure's editor is asked to go: a line to show and put the
+ * cursor on. The editor takes it (and clears it) when it is there, so a
+ * procedure that was closed is reopened first and then goes to the line.
+ */
+export const procedureJump = createStore<{ jump: { name: string; line: number } | null }>({
+  jump: null,
+});
+
+/** Brings a procedure's window to the front (reopening it if it is closed), at a line if given. */
+export function openProcedure(name: string, line?: number): void {
+  const window = doc.getState().windows.find((item) => item.name === name);
+  if (!window) return;
+  if (window.hidden) runGui({ op: "reopenWindow", name });
+  else doc.dispatch({ op: "activateWindow", name });
+  if (line !== undefined) procedureJump.set({ jump: { name, line } });
 }

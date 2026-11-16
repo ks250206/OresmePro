@@ -330,6 +330,7 @@ export function buildState(
       name,
       code: procedure.code ?? "",
       autoRun: procedure.autoRun ?? true,
+      importAs: typeof procedure.importAs === "string" ? procedure.importAs : null,
     };
   }
   // A window whose content did not come along would be an empty frame.

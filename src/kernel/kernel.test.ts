@@ -14,7 +14,7 @@ import { toSvg } from "../core/plot/svg";
 import excelWorkbook from "../core/io/testdata/excel.xlsx?inline";
 import { igorFixture } from "../core/io/testdata/igor";
 import { bootPython, type PythonKernel } from "./boot";
-import { answerRpc } from "./rpc";
+import { answerRpc, type VariablesStatus } from "./rpc";
 
 /**
  * Runs the real Python package inside Pyodide against a real document. Only
@@ -33,6 +33,8 @@ const exported: string[] = [];
 let beforeRpc: ((method: string) => void) | null = null;
 /** The catalogs of actions Python has sent, the latest last. */
 const catalogs: ActionSpec[][] = [];
+/** What Python last said the user's variables are. */
+let variables: VariablesStatus | null = null;
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
@@ -82,6 +84,9 @@ beforeAll(async () => {
           exportPage: (name, filename) => exported.push(`${name}:${filename}`),
           measureText: (text, size) => text.length * size * 0.55,
           importPresets: () => [{ name: "bench", settings: { decimal: ",", skip: 1 } }],
+          variablesStatus: (status) => {
+            variables = status;
+          },
         },
         method,
         paramsJson,
@@ -738,6 +743,40 @@ describe("oresme Python API", () => {
     expect(errors[0]).toMatch(/textAnchor must be one of/);
   });
 
+  it("tells the app the user's variables after each input, and drops them with del", async () => {
+    expect(
+      await run(
+        [
+          "vx = np.zeros((2, 3))",
+          "vname = 'hello'",
+          "def vf(a, b=1):",
+          "    return a",
+          "class VKlass:",
+          "    pass",
+          "vlist = [1, 2, 3]",
+          "_hidden = 1",
+          "import math",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const listed = (prefix: string) =>
+      (variables?.variables ?? []).filter((item) => item.name.toLowerCase().startsWith(prefix));
+    expect(listed("v")).toEqual([
+      { name: "vf", type: "function", summary: "vf(a, b=1)" },
+      { name: "VKlass", type: "class", summary: "VKlass" },
+      { name: "vlist", type: "list", summary: "3 items: [1, 2, 3]" },
+      { name: "vname", type: "str", summary: "'hello'" },
+      { name: "vx", type: "ndarray", summary: "2×3 float64" },
+    ]);
+    // What Python starts with, private names and modules are not the user's variables.
+    const names = (variables?.variables ?? []).map((item) => item.name);
+    for (const name of ["np", "op", "_hidden", "math", "In", "Out", "get_ipython"]) {
+      expect(names).not.toContain(name);
+    }
+    expect(await run("del vx, vname, vf, VKlass, vlist")).toBe(true);
+    expect(listed("v")).toEqual([]);
+  });
+
   it("keeps notes of Markdown text", async () => {
     expect(
       await run(
@@ -759,6 +798,50 @@ describe("oresme Python API", () => {
     expect(errors[0]).toBe("OresmeError: No note named 'nope'.");
     expect(await run("n.kill(); print(op.notes())")).toBe(true);
     expect(stdout).toBe("[]\n");
+  });
+
+  it("runs a procedure as a module bound to a name, and checks one without running it", async () => {
+    expect(
+      await run(
+        [
+          'm = op.new_procedure("mtools", "SCALE = 3\\ndef area(r):\\n    return SCALE * np.pi * r * r\\n", import_as="mt")',
+          "m.run()",
+          "import mtools",
+          "print(m.import_as, round(mt.area(1), 3), mtools is mt, 'SCALE' in globals())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("mt 9.425 True False\n");
+    expect(doc.getState().procedures.mtools!.importAs).toBe("mt");
+
+    // Back to the namespace: its names come in by themselves.
+    expect(await run("m.import_as = None\nm.run()\nprint(SCALE)")).toBe(true);
+    expect(stdout).toBe("3\n");
+    expect(await run('m.import_as = "class"')).toBe(false);
+    expect(errors[0]).toMatch(/must be a Python name/);
+
+    // A module that fails is not kept.
+    expect(
+      await run('m.import_as = "mt"\nm.code = "x = 1\\nraise ValueError(\'bad\')\\n"\nm.run()'),
+    ).toBe(false);
+    expect(errors[0]).toBe("ValueError: bad");
+    expect(await run("import sys\nprint('mtools' in sys.modules)")).toBe(true);
+    expect(stdout).toBe("False\n");
+
+    // check() reads it without running it.
+    expect(
+      await run('m.code = "import nosuchmodule\\nimport numpy\\nraise SystemExit"\nm.check()'),
+    ).toBe(true);
+    expect(displays.at(-1)?.["text/plain"]).toBe(
+      "mtools.py, line 1: no module named 'nosuchmodule' (install it with %pip install, or check the name)",
+    );
+    expect(await run('m.code = "def f(:\\n    pass\\n"\nprint(m.check())')).toBe(true);
+    expect(stdout).toMatch(/^mtools\.py, line 1: SyntaxError: /);
+    expect(
+      await run('m.code = "import mtools2\\ny = np.pi\\n"\nop.new_procedure("mtools2")\nm.check()'),
+    ).toBe(true);
+    expect(displays.at(-1)?.["text/plain"]).toBe("mtools.py: no problems found.");
+    expect(await run("m.kill(); op.procedure('mtools2').kill()")).toBe(true);
   });
 
   it("imports one procedure from another, each its own module", async () => {

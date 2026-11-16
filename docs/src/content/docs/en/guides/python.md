@@ -18,6 +18,8 @@ Each procedure is a file `<name>.py`, and its name is its module name (so it tak
 
 - **Run** (`p.run()`) executes the file **in the command window's namespace**: what it defines can be used from the command line at once.
 - `import name` loads it as **a namespace of its own** (a module). Other procedures can use it too, with `import tools` or `from tools import scaled`. A procedure that changes is loaded again before the next input.
+- The menu at the right of the procedure window's toolbar chooses how Run runs it, written as the Python it is like: `from tools import *` runs it in the command window's namespace (the default); `import tools as` with a name in the field beside it (`tl`) runs it as a module of its own bound to that name, which leaves the command line's names alone. A module run this way has `np` and `op` as the command line does, and one that fails is not kept. From Python: `p.import_as = "tl"`, or `op.new_procedure("tools", code, import_as="tl")`. Running when the experiment opens follows it too.
+- **Check** looks for mistakes without running the file: it opens the list of Ruff's problems (undefined names, unused imports, ...) in the editor, and in Python reports a syntax error or a module that cannot be found (not installed, not in the Pyodide distribution, not another procedure) in the command window (`p.check()`). **Format** only tidies the code with Ruff.
 
 ```python
 # Procedure "tools"
@@ -39,6 +41,24 @@ Right-click a procedure window and choose **Export as name.py** to save it as a 
 Imported code **does not run**. It also comes in with running when the experiment opens turned off, so read it, then **Run** it or turn on **Run When the Experiment Opens**. A `.py` file from someone else can hold any code: run only what you trust. From Python, `op.new_procedure(name, code, auto_run=False)` does the same.
 
 The command session starts with `np` and `op` preloaded. Include `import numpy as np` and `import oresme as op` in a procedure to make its dependencies clear. SciPy, pandas, scikit-learn, and lmfit load on first use. Use **Python → Interrupt** for a long-running command. Restarting Python clears session variables and leaves the experiment's waves in the app.
+
+### Procedure Browser
+
+**Python → Procedure Browser** lists the experiment's procedures and the classes and functions defined in them, nested as written, as Igor's Procedure Browser does.
+
+- With **Signatures** on, it shows parameters (`(r, *, pi=3.14)`) and return annotations too
+- Clicking a function or class opens its procedure (reopening it if it is closed) with the cursor on the line where it is defined
+- Select a file to **Export** it (as `name.py`) or **Run** it; **New…** and **Import…** are there too, and right-click renames it
+- The list comes from the editor's own parser: it needs no running Python, and a file with errors shows what can be read of it
+
+## See and drop variables
+
+**Python → Variables** lists the variables your commands and procedures have made, with their types and a short look at their values: a variable explorer. It is refreshed after each input.
+
+- Arrays show their shape and type (`2×3 float64`), lists and dicts their length and first items, functions their parameters
+- Double-click a variable (or right-click → **Show Value**) to show its value in the Command Window
+- Tick variables and **Drop** them to run `del a, b`; **Drop All…** asks, then drops every variable listed. Both are written in the history
+- What Python starts with (`np`, `op`, IPython's names), names starting with `_` and modules are never listed, so they cannot be dropped by mistake and leave Python unusable
 
 ## Add packages
 

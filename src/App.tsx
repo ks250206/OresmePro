@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { openActionWindow } from "./app/actionWindows";
+import { openTool } from "./app/toolWindows";
 import {
   activeGraph,
   addFilesForPython,
@@ -387,6 +388,9 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => kernel.interruptExecution(),
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
+        { separator: true },
+        { label: "Variables", onSelect: () => openTool("variables") },
+        { label: "Procedure Browser", onSelect: () => openTool("procedureBrowser") },
         { separator: true },
         { label: "Packages…", onSelect: open({ kind: "packages" }) },
         // Plugins are Python packages that add actions, templates and loaders.

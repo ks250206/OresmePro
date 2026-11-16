@@ -309,8 +309,20 @@ export type Command =
   /** Puts a control at a place in the panel's order, counted from 0. */
   | { op: "moveControl"; panel: string; control: string; to: number }
   | { op: "setControlValue"; panel: string; control: string; value: unknown }
-  | { op: "newProcedure"; name?: string; code?: string; autoRun?: boolean }
-  | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
+  | {
+      op: "newProcedure";
+      name?: string;
+      code?: string;
+      autoRun?: boolean;
+      importAs?: string | null;
+    }
+  | {
+      op: "setProcedure";
+      name: string;
+      code?: string;
+      autoRun?: boolean;
+      importAs?: string | null;
+    }
   | { op: "newNote"; name?: string; text?: string }
   | { op: "setNote"; name: string; text: string }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
@@ -776,6 +788,28 @@ export const windowTaken = (state: DocState) => (name: string) =>
  * Checks the name of a procedure: a window name that is also the name of
  * the Python module the procedure is (`import name`), so ASCII only.
  */
+/** Python's keywords, which cannot be the name a module is bound to. */
+const PYTHON_KEYWORDS = new Set(
+  "False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield".split(
+    " ",
+  ),
+);
+
+/** Checks the name a procedure is imported as: a Python identifier, or null to run it in the namespace. */
+export function importAsName(name: unknown): string | null {
+  if (name === null || name === "") return null;
+  if (
+    typeof name !== "string" ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ||
+    PYTHON_KEYWORDS.has(name)
+  ) {
+    throw new DocError(
+      `${JSON.stringify(name)} cannot be the name a procedure is imported as: it must be a Python name.`,
+    );
+  }
+  return name;
+}
+
 export function procedureName(name: unknown): string {
   const checked = checkName(name, "procedure");
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(checked)) {
@@ -2891,6 +2925,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         name,
         code: command.code ?? "",
         autoRun: command.autoRun === undefined ? true : bool(command.autoRun, "autoRun"),
+        importAs: command.importAs === undefined ? null : importAsName(command.importAs),
       };
       return {
         state: {
@@ -2912,8 +2947,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         code: command.code ?? procedure.code,
         autoRun:
           command.autoRun === undefined ? procedure.autoRun : bool(command.autoRun, "autoRun"),
+        importAs:
+          command.importAs === undefined ? procedure.importAs : importAsName(command.importAs),
       };
-      if (next.code === procedure.code && next.autoRun === procedure.autoRun) {
+      if (
+        next.code === procedure.code &&
+        next.autoRun === procedure.autoRun &&
+        next.importAs === procedure.importAs
+      ) {
         return { state, result: null };
       }
       return {

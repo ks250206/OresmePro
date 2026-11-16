@@ -251,6 +251,7 @@ export function echoPython(
         name: command.name,
         code: command.code || undefined,
         autoRun: command.autoRun === false ? false : undefined,
+        importAs: command.importAs || undefined,
       })})`;
     case "newNote":
       return `op.new_note(${keywords({ name: command.name, text: command.text || undefined })})`;

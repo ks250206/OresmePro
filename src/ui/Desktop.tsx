@@ -4,6 +4,7 @@ import { doc, runGui, TITLE_BAR_HEIGHT, ui, useDoc } from "../app/session";
 import { openWindows, type WindowState } from "../core/doc/types";
 import { fixedSides } from "../core/plot/windowFit";
 import { ActionWindows } from "./ActionWindow";
+import { ToolWindows } from "./ToolWindows";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
 import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
@@ -337,6 +338,7 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
         );
       })}
       <ActionWindows z={windows.length + 1} />
+      <ToolWindows z={windows.length + 2} />
     </div>
   );
 }
