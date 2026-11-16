@@ -28,20 +28,40 @@
     "ja": "複数のプロパティをまとめて変えます。self を返します。"
   },
   "Control": {
-    "source": "760c964645fa",
-    "ja": "パネルの部品: 見出し、文章、入力欄、選択欄、ボタン。\n\n``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。"
+    "source": "450e03b383bd",
+    "ja": "パネルの部品: 見出し、文章、入力欄、選択欄、wave の一覧、プロット、ボタン。\n\n``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前、wave の一覧なら選んだ wave の名前のリスト)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、見た目と位置(``color``、``background``、``x``、``y``、``w``、``h``、``z``。``Panel`` を参照)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。見た目と位置のプロパティは ``None`` で既定に戻ります。"
+  },
+  "Control.bring_to_front": {
+    "source": "8043bb411900",
+    "ja": "部品をパネルのほかの部品より前に描きます(いちばん大きい ``z`` にします)。self を返します。"
   },
   "Control.move": {
-    "source": "361a2ff47c96",
-    "ja": "部品をパネルの中の位置(上から 0 で数える)に移します。"
+    "source": "6584cf5eb14b",
+    "ja": "部品をパネルの中の順番の位置(上から 0 で数える)に移します。"
+  },
+  "Control.place": {
+    "source": "9fdf22d08d05",
+    "ja": "部品をパネルの左上から ``x``、``y`` ピクセルの位置に置きます。ほかの部品が並ぶ行からは外れます。``w`` と ``h`` で大きさを決めます。self を返します。"
   },
   "Control.press": {
     "source": "5493f4b34b0a",
     "ja": "ボタンを押します: ``Panel.press`` を参照。"
   },
+  "Control.send_to_back": {
+    "source": "d274e341a041",
+    "ja": "部品をパネルのほかの部品より後ろに描きます(いちばん小さい ``z`` にします)。self を返します。"
+  },
   "Control.set": {
     "source": "1d028cfae1cb",
     "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Control.take_from_graph": {
+    "source": "e913dc603c50",
+    "ja": "プロットに、グラフが描いている wave を渡します: いちばん前のグラフ、または ``graph``(Graph かその名前)。self を返します。"
+  },
+  "Control.unplace": {
+    "source": "1441206dee40",
+    "ja": "部品を行に戻し、位置を持たない部品と同じように並べます。self を返します。"
   },
   "Cursor": {
     "source": "edb0c6563ef1",
@@ -352,8 +372,8 @@
     "ja": "アプリが要求を拒否しました(不正な名前、存在しない wave など)。"
   },
   "Panel": {
-    "source": "35b8b95b5381",
-    "ja": "パネル: 実験のウィンドウの中で、解析を動かす部品を並べたもの。\n\n::\n\n    p = op.panel(\"quick_fit\", title=\"Quick Fit\")\n    p.wave(\"target\", label=\"Spectrum\", dims=1)\n    p.choice(\"model\", [\"gauss\", \"lor\"], label=\"Model\")\n    p.button(\"run\", \"Fit\", action=\"core.fit\",\n             args={\"function\": op.control(\"model\"), \"y\": op.control(\"target\")})\n    p[\"model\"] = \"lor\"\n\n部品を追加するメソッドは、パネル内で一意の部品の ``name`` を最初に受け取ります。同じ名前・同じ種類の部品がすでにあれば、値を保ったままそれを変えるので、パネルを作る Procedure をもう一度実行できます。``value`` は新しい部品の初期値です。``inline=True`` で前の部品と同じ行に置きます。``with p.row():`` の中で追加した部品も同じ行に並びます。\n\n``p[\"name\"]`` で部品の値を読み書きします。値は実験の一部で、一緒に保存され、ほかの変更と同じく Undo できます。ボタンは Action(``op.action`` を参照)を、普通の値と部品の値(``op.control``)で呼びます。自分の Python をボタンで動かすには、Procedure で関数を Action として登録し、その名前を指定します。"
+    "source": "901529de9f99",
+    "ja": "パネル: 実験のウィンドウの中で、解析を動かす部品を並べたもの。\n\n::\n\n    p = op.panel(\"quick_fit\", title=\"Quick Fit\")\n    p.wave(\"target\", label=\"Spectrum\", dims=1)\n    p.choice(\"model\", [\"gauss\", \"lor\"], label=\"Model\")\n    p.button(\"run\", \"Fit\", action=\"core.fit\",\n             args={\"function\": op.control(\"model\"), \"y\": op.control(\"target\")})\n    p[\"model\"] = \"lor\"\n\n部品を追加するメソッドは、パネル内で一意の部品の ``name`` を最初に受け取ります。同じ名前・同じ種類の部品がすでにあれば、値を保ったままそれを変えるので、パネルを作る Procedure をもう一度実行できます。``value`` は新しい部品の初期値です。``inline=True`` で前の部品と同じ行に置きます。``with p.row():`` の中で追加した部品も同じ行に並びます。\n\nどのメソッドも、部品の見た目と位置をキーワードで受け取ります: ``color``(文字の色)と ``background``(背景色)は ``\"#rrggbb\"``、色の名前、``(r, g, b)`` のどれか。``x`` と ``y`` はパネルの左上からのピクセル数で、部品を行から外してそこに置きます。``w`` と ``h`` はピクセルでの大きさ、``z`` は描く順(大きいほど前)です::\n\n    p.button(\"run\", \"Fit\", action=\"core.fit\", x=20, y=140, w=90,\n             color=\"white\", background=\"#2a6fd6\")\n\n``p[\"name\"]`` で部品の値を読み書きします。値は実験の一部で、一緒に保存され、ほかの変更と同じく Undo できます。ボタンは Action(``op.action`` を参照)を、普通の値と部品の値(``op.control``)で呼びます。自分の Python をボタンで動かすには、Procedure で関数を Action として登録し、その名前を指定します。"
   },
   "Panel.button": {
     "source": "39bb5bfa45b0",
@@ -383,9 +403,17 @@
     "source": "a2fee301eacc",
     "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
   },
+  "Panel.list": {
+    "source": "735886d4a1ff",
+    "ja": "選ぶための wave の一覧: 値は選んだ wave の名前のリストです。\n\n``dims`` と ``filter`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。"
+  },
   "Panel.number": {
     "source": "3bda9b13f0bf",
     "ja": "数の入力欄。``min``〜``max``(両端を含む)を指定でき、``step`` は矢印で変わる量です。"
+  },
+  "Panel.plot": {
+    "source": "439c2e1ac9db",
+    "ja": "パネルの中の小さなグラフ。\n\n``traces`` は描く wave で、それぞれ wave、その名前、または ``(y, x)`` の組です。``live=True`` にすると、代わりにいちばん前のグラフが描くものを、変わるたびに描きます。``Control.take_from_graph()``(とプロット自身のボタン)で、いちばん前のグラフの wave を取ってきます。``label`` は上に付く見出し、``w`` と ``h`` は大きさです。"
   },
   "Panel.press": {
     "source": "43ec1fce0975",

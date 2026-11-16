@@ -849,6 +849,8 @@ export const CONTROL_KINDS = [
   "checkbox",
   "choice",
   "wave",
+  "list",
+  "plot",
   "button",
 ] as const;
 export type ControlKind = (typeof CONTROL_KINDS)[number];
@@ -880,6 +882,33 @@ interface ControlBase {
   readonly label: string;
   /** Sits on the same line as the control before it, instead of a line of its own. */
   readonly inline: boolean;
+  /*
+   * The look and place of a control, each left out while it has its usual
+   * value (so that a panel that uses none of them reads as before):
+   */
+  /** The color of its words, as `#rrggbb`; left out for the panel's own. */
+  readonly color?: string;
+  /** The color behind it, as `#rrggbb`; left out for none. */
+  readonly background?: string;
+  /**
+   * Where its top left corner sits, in pixels from the top left of the
+   * panel. Given together: a control placed so sits there, over the
+   * controls that flow in their lines, which go on as if it were not there.
+   * Left out, the control flows in its line (see `inline`).
+   */
+  readonly x?: number;
+  readonly y?: number;
+  /** Its size in pixels; left out, the size its content takes. */
+  readonly w?: number;
+  readonly h?: number;
+  /** The order it is drawn in: one with a higher z is in front. Left out for 0. */
+  readonly z?: number;
+}
+
+/** A wave a panel's plot draws, against the X wave or its own X scaling (x null). */
+export interface PlotTrace {
+  readonly y: string;
+  readonly x: string | null;
 }
 
 export type PanelControl =
@@ -913,6 +942,27 @@ export type PanelControl =
       readonly dims: number | null;
       /** Lists only waves whose names match: text they contain, or a pattern with "*". */
       readonly filter: string;
+    })
+  | (ControlBase & {
+      readonly kind: "list";
+      /**
+       * The waves selected, in the order of the list. They follow their waves
+       * when renamed; a killed wave's name stays, and is shown as missing.
+       */
+      readonly value: readonly string[];
+      /** Lists only waves of this many dimensions; null lists all numeric waves. */
+      readonly dims: number | null;
+      /** Lists only waves whose names match, as a wave picker's filter. */
+      readonly filter: string;
+      /** Whether more than one wave can be selected. */
+      readonly multiple: boolean;
+    })
+  | (ControlBase & {
+      readonly kind: "plot";
+      /** The waves it draws, which "From Active Graph" takes from the frontmost graph. */
+      readonly traces: readonly PlotTrace[];
+      /** Draws what the frontmost graph draws as it changes, instead of its own traces. */
+      readonly live: boolean;
     })
   | (ControlBase & {
       readonly kind: "button";

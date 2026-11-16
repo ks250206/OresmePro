@@ -15,6 +15,8 @@ A panel is a window of buttons and fields that runs analyses: the counterpart of
 | Heading     | A heading                                                                   |
 | Text        | A paragraph (several lines)                                                 |
 | Wave Picker | A choice of wave, narrowed by dimensions and name (a pattern such as `*_I`) |
+| Wave List   | A list of waves, narrowed as a Wave Picker's, to select one or several from |
+| Plot        | A small graph, which takes its waves from the active graph                  |
 | Choice      | A menu of options                                                           |
 | Number      | A number, with a minimum, maximum and step if wanted                        |
 | Text Field  | A field for text                                                            |
@@ -22,6 +24,24 @@ A panel is a window of buttons and fields that runs analyses: the counterpart of
 | Button      | Calls a registered action                                                   |
 
 Controls are laid out one to a line from the top; **On the line before** puts a control beside the one before it. Reorder them with ↑ ↓ (**Alt+arrow keys**) and remove them with **Delete**. Press **Done** in the title bar to stop editing; **Edit** in the title bar, or right-click → **Edit Panel**, edits it again.
+
+## Place controls where you want
+
+Besides laying them out in lines, you can put controls anywhere, as in an Igor panel.
+
+- In edit mode, **drag** a control to put it there (x, y: pixels from the panel's top left). A placed control is out of the lines and sits over the other controls; those in lines go on as if it were not there
+- Drag the **handle** at the bottom right of the selected control to size it (w, h)
+- The **arrow keys** move it a pixel, **Shift+arrow keys** ten. A control in a line that is moved gets a place of its own
+- Where controls overlap, the one with the higher z is drawn in front. **Front** / **Back** in the toolbar, or right-click → **Bring to Front** / **Send to Back**, move it in front of or behind the others
+- Right-click → **Return to Line** puts a placed control back in its line
+
+**Look and Place** in the form on the right gives a control the color of its words (**Color**) and the color behind it (**Background**), its place (**Placed by x and y**, **X**, **Y**), its size (**Width**, **Height**; empty for the size of its content) and its **Z** as numbers. **None** takes a color away. Each drag, each color picked and each run of arrow keys is one undo step, recorded as `op.panel("free").control("go").set(x=200, y=150)`, say.
+
+## Wave List and Plot
+
+A **Wave List** lists the waves that pass its filter. Its value is the list of the names selected, which a button passes to an argument that takes several waves (`waves`). Clear **Select several** to allow one only. It follows its waves when they are renamed; a killed wave is shown as **missing**.
+
+A **Plot** is a small graph in the panel. **From Graph** at its top right (**Take from Active Graph** in the form) gives it the waves of the traces of the frontmost graph, the active one. A new Plot starts with the waves of the active graph. Its waves can also be written in **Waves** in the form, one on each line as `y` or `y vs x`. With **Live** it draws the active graph itself, as it changes, instead of waves of its own. **Width** and **Height** give its size.
 
 ## Give a button an analysis
 
@@ -40,7 +60,9 @@ While a call runs, the panel's buttons cannot be pressed: pressing twice runs on
 
 The controls' values are saved with the experiment and come back when it is opened. Changing a value can be undone and is recorded as `op.panel("quick_fit")["model"] = "lor"`. Typing into a field is one undo step for the whole edit of the field.
 
-A Wave Picker holds a wave's name. It follows the wave when it is renamed; when the wave is killed, the name stays and is shown as **missing**.
+A Wave Picker holds a wave's name. It follows the wave when it is renamed; when the wave is killed, the name stays and is shown as **missing**. So do the waves of a Wave List and a Plot.
+
+The place, size, colors and z of the controls are saved with the experiment and in exported JSON too. Those left as they usually are are not written, so a panel that uses none of them can still be read by earlier versions of the app.
 
 ## Data only, or contains code
 
@@ -74,5 +96,26 @@ r = p.press("run")
 ```
 
 When the panel has a control of that name and kind already, the methods that add controls change its settings and keep its value, so a procedure that builds a panel can run again without losing what people have set.
+
+Each method that adds a control also takes its look and place as keywords: `color` and `background` (`"#rrggbb"`, a color name or `(r, g, b)`), `x` and `y` (where it is placed), `w` and `h` (its size), and `z` (the order of overlapping controls).
+
+```python
+# An action that averages the waves selected (registered in a procedure)
+@op.action("lab.average", title="Average", params={"waves": {"type": "waves", "title": "Waves"}})
+def average(waves):
+    return op.make("average", np.mean([w.data for w in waves], axis=0))
+
+p = op.panel("free", title="Free")
+p.heading("top", "Spectra", x=10, y=8, color="#2a6fd6")
+p.list("waves", "Waves", dims=1, x=10, y=36, w=160, h=140)
+pv = p.plot("preview", x=190, y=36, w=280, h=160)
+pv.take_from_graph()                     # the waves of the frontmost graph
+p.button("run", "Average", action="lab.average", args={"waves": op.control("waves")},
+         x=10, y=190, w=160, background="orange")
+p.control("top").bring_to_front()        # send_to_back() for behind
+p.control("run").place(10, 200)          # unplace() puts it back in its line
+```
+
+`p.data` and `op.set_panel(name, data)` read and write each control's `x`, `y`, `w`, `h`, `color`, `background` and `z` as they are.
 
 [Panel API](../../reference/api/panel/) · [Actions API](../../reference/api/actions/) · [Call analyses by name](../python/#call-analyses-by-name)

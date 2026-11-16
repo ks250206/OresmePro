@@ -4887,14 +4887,17 @@ def _panel_data(value):
 
 class Control:
     """A control of a panel: a heading, a paragraph of text, a field, a
-    picker or a button.
+    picker, a list of waves, a plot or a button.
 
     ``value`` is what a field or picker holds (the name of the wave, for a
-    wave picker) and ``data`` all of its properties, as the panel keeps them.
-    ``set(...)`` changes properties: ``label``, ``inline`` (on the line of
-    the control before it), and those of its kind, as the panel's methods
-    that add controls take them; ``name`` renames it, and the buttons that
-    pass its value follow.
+    wave picker; the names of those selected, for a wave list) and ``data``
+    all of its properties, as the panel keeps them. ``set(...)`` changes
+    properties: ``label``, ``inline`` (on the line of the control before
+    it), its look and place (``color``, ``background``, ``x``, ``y``,
+    ``w``, ``h``, ``z``; see ``Panel``), and those of its kind, as the
+    panel's methods that add controls take them; ``name`` renames it, and
+    the buttons that pass its value follow. ``None`` takes a look or place
+    property back to the usual.
     """
 
     def __init__(self, panel, name):
@@ -4958,11 +4961,56 @@ class Control:
         return self
 
     def move(self, index):
-        """Put the control at a place in the panel, counted from 0 (the top)."""
+        """Put the control at a place in the panel's order, counted from 0 (the top)."""
         _dispatch(
             {"op": "moveControl", "panel": self._panel.name, "control": self._name, "to": _plain(index)}
         )
         return self
+
+    def place(self, x, y, w=None, h=None):
+        """Put the control at ``x``, ``y`` pixels from the top left of the panel,
+        out of the lines the others flow in; ``w`` and ``h`` give it a size.
+        Returns self.
+        """
+        props = {"x": x, "y": y}
+        if w is not None:
+            props["w"] = w
+        if h is not None:
+            props["h"] = h
+        return self.set(**props)
+
+    def unplace(self):
+        """Put the control back in its line, as the controls without a place flow. Returns self."""
+        return self.set(x=None, y=None)
+
+    def _stacked(self, front):
+        mine = self.data.get("z", 0)
+        others = [item.get("z", 0) for item in self._panel._get()["controls"] if item["name"] != self._name]
+        if not others:
+            return self
+        if front and mine <= max(others):
+            self.set(z=max(others) + 1)
+        elif not front and mine >= min(others):
+            self.set(z=min(others) - 1)
+        return self
+
+    def bring_to_front(self):
+        """Draw the control in front of the others of the panel (gives it the highest ``z``). Returns self."""
+        return self._stacked(True)
+
+    def send_to_back(self):
+        """Draw the control behind the others of the panel (gives it the lowest ``z``). Returns self."""
+        return self._stacked(False)
+
+    def take_from_graph(self, graph=None):
+        """Give a plot the waves a graph draws: the frontmost graph, or ``graph``
+        (a Graph or its name). Returns self.
+        """
+        if self.kind != "plot":
+            raise OresmeError(f"{self._name} is a {self.kind}: only a plot takes waves from a graph.")
+        source = graph if isinstance(graph, Graph) else globals()["graph"](graph)
+        traces = [{"y": item["y"], "x": item["x"]} for item in source._info()["traces"]]
+        return self.set(traces=traces)
 
     def press(self):
         """Press the button: see ``Panel.press``."""
@@ -4993,6 +5041,15 @@ class Panel:
     builds a panel can run again. ``value`` is the value a new control
     starts with. ``inline=True`` puts a control on the line of the one
     before it; so does ``with p.row():`` for the controls added in it.
+
+    Each of them also takes the control's look and place, as keywords:
+    ``color`` (of its words) and ``background``, as ``"#rrggbb"``, a color
+    name or ``(r, g, b)``; ``x`` and ``y``, which place it that many pixels
+    from the top left of the panel, out of the lines; ``w`` and ``h``, its
+    size in pixels; and ``z``, the order it is drawn in (higher in front)::
+
+        p.button("run", "Fit", action="core.fit", x=20, y=140, w=90,
+                 color="white", background="#2a6fd6")
 
     ``p["name"]`` reads and sets the value of a control; the values are part
     of the experiment, saved with it and undone like any other change.
@@ -5054,7 +5111,16 @@ class Panel:
     def __contains__(self, name):
         return any(item["name"] == name for item in self._get()["controls"])
 
-    def _add(self, kind, name, props):
+    _STYLE = ("color", "background", "x", "y", "w", "h", "z")
+
+    def _add(self, kind, name, props, style=None):
+        style = style or {}
+        unknown = [key for key in style if key not in self._STYLE]
+        if unknown:
+            raise OresmeError(
+                f"A {kind} control has no property {unknown[0]!r}. Its look and place: {', '.join(self._STYLE)}."
+            )
+        props = {**props, **style}
         props = {key: _panel_data(value) for key, value in props.items() if value is not None}
         if self._row is not None:
             props.setdefault("inline", self._row > 0)
@@ -5072,38 +5138,38 @@ class Panel:
         _dispatch({"op": "addControl", "panel": self._name, "kind": kind, "name": name, "props": props})
         return Control(self, name)
 
-    def heading(self, name, label=None, *, inline=None):
+    def heading(self, name, label=None, *, inline=None, **style):
         """A heading: ``label`` in bold."""
-        return self._add("heading", name, {"label": label, "inline": inline})
+        return self._add("heading", name, {"label": label, "inline": inline}, style)
 
-    def text(self, name, label=None, *, inline=None):
+    def text(self, name, label=None, *, inline=None, **style):
         """A paragraph of text: ``label``, which may have several lines."""
-        return self._add("text", name, {"label": label, "inline": inline})
+        return self._add("text", name, {"label": label, "inline": inline}, style)
 
-    def number(self, name, label=None, *, value=None, min=None, max=None, step=None, inline=None):
+    def number(self, name, label=None, *, value=None, min=None, max=None, step=None, inline=None, **style):
         """A field for a number, from ``min`` to ``max`` (inclusive) if given;
         ``step`` is how much the arrows change it.
         """
         props = {"label": label, "value": value, "min": min, "max": max, "step": step, "inline": inline}
-        return self._add("number", name, props)
+        return self._add("number", name, props, style)
 
-    def string(self, name, label=None, *, value=None, inline=None):
+    def string(self, name, label=None, *, value=None, inline=None, **style):
         """A field for text."""
-        return self._add("string", name, {"label": label, "value": value, "inline": inline})
+        return self._add("string", name, {"label": label, "value": value, "inline": inline}, style)
 
-    def checkbox(self, name, label=None, *, value=None, inline=None):
+    def checkbox(self, name, label=None, *, value=None, inline=None, **style):
         """A checkbox: its value is True or False."""
-        return self._add("checkbox", name, {"label": label, "value": value, "inline": inline})
+        return self._add("checkbox", name, {"label": label, "value": value, "inline": inline}, style)
 
-    def choice(self, name, options, *, value=None, label=None, inline=None):
+    def choice(self, name, options, *, value=None, label=None, inline=None, **style):
         """A menu of ``options`` (texts or numbers); it starts at the first unless ``value`` says."""
         props = {"label": label, "options": list(options), "value": value, "inline": inline}
-        return self._add("choice", name, props)
+        return self._add("choice", name, props, style)
 
     #: The same as ``choice``.
     select = choice
 
-    def wave(self, name, label=None, *, value=None, dims=None, filter=None, inline=None):
+    def wave(self, name, label=None, *, value=None, dims=None, filter=None, inline=None, **style):
         """A wave picker: its value is the name of the wave chosen.
 
         ``dims`` lists only waves of that many dimensions; ``filter`` only
@@ -5112,9 +5178,39 @@ class Panel:
         the wave is killed, the name stays and is shown as missing.
         """
         props = {"label": label, "value": value, "dims": dims, "filter": filter, "inline": inline}
-        return self._add("wave", name, props)
+        return self._add("wave", name, props, style)
 
-    def button(self, name, label=None, *, action, args=None, version=None, inline=None):
+    def list(self, name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style):
+        """A list of waves to select from: its value is the list of the names selected.
+
+        ``dims`` and ``filter`` choose the waves listed, as a wave picker's
+        do; ``multiple=False`` lets only one be selected. A button passes
+        the names to an argument that takes several waves. The list follows
+        its waves when they are renamed; a killed wave stays selected and is
+        shown as missing.
+        """
+        if isinstance(value, (Wave, str)):
+            value = [value]
+        props = {"label": label, "value": value, "dims": dims, "filter": filter, "multiple": multiple, "inline": inline}
+        return self._add("list", name, props, style)
+
+    def plot(self, name, label=None, *, traces=None, live=None, inline=None, **style):
+        """A small graph in the panel.
+
+        ``traces`` are the waves it draws: each a wave, its name, or a pair
+        ``(y, x)``. ``live=True`` draws what the frontmost graph draws
+        instead, as it changes. ``Control.take_from_graph()`` (and the
+        plot's own button) gives it the waves of the frontmost graph.
+        ``label`` is a caption above it; ``w`` and ``h`` its size.
+        """
+        if traces is not None:
+            traces = [
+                {"y": item[0], "x": item[1]} if isinstance(item, (list, tuple)) else item for item in traces
+            ]
+        props = {"label": label, "traces": traces, "live": live, "inline": inline}
+        return self._add("plot", name, props, style)
+
+    def button(self, name, label=None, *, action, args=None, version=None, inline=None, **style):
         """A button that calls the action ``action`` with ``args`` when pressed.
 
         Each argument is a plain value (text, a number, True or False, a
@@ -5124,7 +5220,7 @@ class Panel:
         ``version`` calls that version of the action rather than the highest.
         """
         props = {"label": label, "action": action, "args": args or {}, "version": version, "inline": inline}
-        return self._add("button", name, props)
+        return self._add("button", name, props, style)
 
     @contextlib.contextmanager
     def row(self):

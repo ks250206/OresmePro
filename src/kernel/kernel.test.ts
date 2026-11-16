@@ -3483,6 +3483,45 @@ describe("panels", () => {
     });
     expect(echoed.controls[1]).toMatchObject({ value: "lor" });
   });
+
+  it("places, colors and stacks controls, and lists and plots waves", async () => {
+    expect(
+      await run(
+        [
+          'op.make("la", [1.0, 2.0, 3.0])',
+          'op.make("lb", [3.0, 2.0, 1.0])',
+          'g = op.display(op.wave("lb"), name="LiveG")',
+          'p = op.panel("free")',
+          'b = p.button("go", "Go", action="core.fit", x=20, y=40, w=90, color="white", background=(0, 0, 255))',
+          'h = p.heading("top", "Top", x=10, y=10)',
+          'w = p.list("ws", "Waves", value=op.wave("la"), dims=1)',
+          'pl = p.plot("pv", traces=["la", (op.wave("lb"), op.wave("la"))], w=200, h=120)',
+          "h.bring_to_front()",
+          "b.send_to_back()",
+          "w.place(5, 200, h=80)",
+          "pl.take_from_graph()",
+          'p["ws"] = ["la", "lb"]',
+          'print(b.data["x"], b.data["color"], b.data["background"], h.data["z"], b.data["z"])',
+          'print(w.value, w.data["x"], w.data["h"], pl.data["traces"])',
+          "w.unplace()",
+          'print("x" in w.data, p.data == op.set_panel("free2", p.data).data)',
+        ].join("\n"),
+      ),
+      errors.join("\n"),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "20 #ffffff #0000ff 1 -1",
+        "['la', 'lb'] 5 80 [{'y': 'lb', 'x': None}]",
+        "False True",
+        "",
+      ].join("\n"),
+    );
+    expect(await run('op.panel("free").number("n", nope=1)')).toBe(false);
+    expect(errors.join("")).toMatch(/A number control has no property 'nope'/);
+    expect(await run('op.panel("free").control("go").take_from_graph()')).toBe(false);
+    expect(errors.join("")).toMatch(/only a plot takes waves from a graph/);
+  });
 });
 
 describe("analysis templates", () => {

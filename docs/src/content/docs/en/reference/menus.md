@@ -104,6 +104,7 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 | Restart Python                         | Restarts Python; waves, graphs and tables stay                                 |                     |
 | Packages…                              | The experiment's packages, everything in Python, installing and removing       | `%pip install name` |
 | Plugins…                               | Installs, manages and runs plugins                                             |                     |
+| Plugin Actions                         | Opens the form of an action of a plugin turned on, in a window you can move    |                     |
 | Keep Optional Packages for Offline Use | Keeps the packages the app ships (SciPy and more) in the browser ahead of time |                     |
 
 ## Help

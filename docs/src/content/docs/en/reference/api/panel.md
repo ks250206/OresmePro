@@ -33,6 +33,15 @@ builds a panel can run again. ``value`` is the value a new control
 starts with. ``inline=True`` puts a control on the line of the one
 before it; so does ``with p.row():`` for the controls added in it.
 
+Each of them also takes the control's look and place, as keywords:
+``color`` (of its words) and ``background``, as ``"#rrggbb"``, a color
+name or ``(r, g, b)``; ``x`` and ``y``, which place it that many pixels
+from the top left of the panel, out of the lines; ``w`` and ``h``, its
+size in pixels; and ``z``, the order it is drawn in (higher in front)::
+
+    p.button("run", "Fit", action="core.fit", x=20, y=140, w=90,
+             color="white", background="#2a6fd6")
+
 ``p["name"]`` reads and sets the value of a control; the values are part
 of the experiment, saved with it and undone like any other change.
 A button calls an action (see ``op.action``) with plain values and the
@@ -77,7 +86,7 @@ __setitem__(name, value)
 ### `Panel.heading`
 
 ```python
-heading(name, label=None, *, inline=None)
+heading(name, label=None, *, inline=None, **style)
 ```
 
 A heading: ``label`` in bold.
@@ -85,7 +94,7 @@ A heading: ``label`` in bold.
 ### `Panel.text`
 
 ```python
-text(name, label=None, *, inline=None)
+text(name, label=None, *, inline=None, **style)
 ```
 
 A paragraph of text: ``label``, which may have several lines.
@@ -93,7 +102,7 @@ A paragraph of text: ``label``, which may have several lines.
 ### `Panel.number`
 
 ```python
-number(name, label=None, *, value=None, min=None, max=None, step=None, inline=None)
+number(name, label=None, *, value=None, min=None, max=None, step=None, inline=None, **style)
 ```
 
 A field for a number, from ``min`` to ``max`` (inclusive) if given;
@@ -102,7 +111,7 @@ A field for a number, from ``min`` to ``max`` (inclusive) if given;
 ### `Panel.string`
 
 ```python
-string(name, label=None, *, value=None, inline=None)
+string(name, label=None, *, value=None, inline=None, **style)
 ```
 
 A field for text.
@@ -110,7 +119,7 @@ A field for text.
 ### `Panel.checkbox`
 
 ```python
-checkbox(name, label=None, *, value=None, inline=None)
+checkbox(name, label=None, *, value=None, inline=None, **style)
 ```
 
 A checkbox: its value is True or False.
@@ -118,7 +127,7 @@ A checkbox: its value is True or False.
 ### `Panel.choice`
 
 ```python
-choice(name, options, *, value=None, label=None, inline=None)
+choice(name, options, *, value=None, label=None, inline=None, **style)
 ```
 
 A menu of ``options`` (texts or numbers); it starts at the first unless ``value`` says.
@@ -126,7 +135,7 @@ A menu of ``options`` (texts or numbers); it starts at the first unless ``value`
 ### `Panel.wave`
 
 ```python
-wave(name, label=None, *, value=None, dims=None, filter=None, inline=None)
+wave(name, label=None, *, value=None, dims=None, filter=None, inline=None, **style)
 ```
 
 A wave picker: its value is the name of the wave chosen.
@@ -136,10 +145,38 @@ those whose names contain it, or match it as a pattern with ``*``
 (``"*_I"``). The picker follows the wave when it is renamed; when
 the wave is killed, the name stays and is shown as missing.
 
+### `Panel.list`
+
+```python
+list(name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style)
+```
+
+A list of waves to select from: its value is the list of the names selected.
+
+``dims`` and ``filter`` choose the waves listed, as a wave picker's
+do; ``multiple=False`` lets only one be selected. A button passes
+the names to an argument that takes several waves. The list follows
+its waves when they are renamed; a killed wave stays selected and is
+shown as missing.
+
+### `Panel.plot`
+
+```python
+plot(name, label=None, *, traces=None, live=None, inline=None, **style)
+```
+
+A small graph in the panel.
+
+``traces`` are the waves it draws: each a wave, its name, or a pair
+``(y, x)``. ``live=True`` draws what the frontmost graph draws
+instead, as it changes. ``Control.take_from_graph()`` (and the
+plot's own button) gives it the waves of the frontmost graph.
+``label`` is a caption above it; ``w`` and ``h`` its size.
+
 ### `Panel.button`
 
 ```python
-button(name, label=None, *, action, args=None, version=None, inline=None)
+button(name, label=None, *, action, args=None, version=None, inline=None, **style)
 ```
 
 A button that calls the action ``action`` with ``args`` when pressed.
@@ -208,14 +245,17 @@ op.Control(panel, name)
 ```
 
 A control of a panel: a heading, a paragraph of text, a field, a
-picker or a button.
+picker, a list of waves, a plot or a button.
 
 ``value`` is what a field or picker holds (the name of the wave, for a
-wave picker) and ``data`` all of its properties, as the panel keeps them.
-``set(...)`` changes properties: ``label``, ``inline`` (on the line of
-the control before it), and those of its kind, as the panel's methods
-that add controls take them; ``name`` renames it, and the buttons that
-pass its value follow.
+wave picker; the names of those selected, for a wave list) and ``data``
+all of its properties, as the panel keeps them. ``set(...)`` changes
+properties: ``label``, ``inline`` (on the line of the control before
+it), its look and place (``color``, ``background``, ``x``, ``y``,
+``w``, ``h``, ``z``; see ``Panel``), and those of its kind, as the
+panel's methods that add controls take them; ``name`` renames it, and
+the buttons that pass its value follow. ``None`` takes a look or place
+property back to the usual.
 
 **Properties**
 
@@ -240,7 +280,52 @@ Change several properties at once. Returns self.
 move(index)
 ```
 
-Put the control at a place in the panel, counted from 0 (the top).
+Put the control at a place in the panel's order, counted from 0 (the top).
+
+### `Control.place`
+
+```python
+place(x, y, w=None, h=None)
+```
+
+Put the control at ``x``, ``y`` pixels from the top left of the panel,
+out of the lines the others flow in; ``w`` and ``h`` give it a size.
+Returns self.
+
+### `Control.unplace`
+
+```python
+unplace()
+```
+
+Put the control back in its line, as the controls without a place flow. Returns self.
+
+### `Control.bring_to_front`
+
+```python
+bring_to_front()
+```
+
+Draw the control in front of the others of the panel (gives it the highest ``z``). Returns self.
+
+### `Control.send_to_back`
+
+```python
+send_to_back()
+```
+
+Draw the control behind the others of the panel (gives it the lowest ``z``). Returns self.
+
+### `Control.take_from_graph`
+
+```python
+take_from_graph(graph=None)
+```
+
+Give a plot the waves a graph draws: the frontmost graph, or ``graph``
+(a Graph or its name). Returns self.
+
+**Explicit exceptions** · `OresmeError`
 
 ### `Control.press`
 

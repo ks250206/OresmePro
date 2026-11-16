@@ -3,6 +3,7 @@ import { setEditing, usePanelRuntime } from "../app/panels";
 import { doc, runGui, TITLE_BAR_HEIGHT, ui, useDoc } from "../app/session";
 import { openWindows, type WindowState } from "../core/doc/types";
 import { fixedSides } from "../core/plot/windowFit";
+import { ActionWindows } from "./ActionWindow";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
 import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
@@ -246,7 +247,7 @@ function windowTitle(window: WindowState, names: readonly string[]): string {
  * menus of their own, and text and fields keep the browser's.
  */
 const onBackground = (target: EventTarget): boolean =>
-  !(target as HTMLElement).closest("[data-window], .selectable, input, textarea");
+  !(target as HTMLElement).closest("[data-window], [data-floating], .selectable, input, textarea");
 
 /**
  * The area where graph, table and procedure windows live. Right-clicking it
@@ -335,6 +336,7 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
           </WindowFrame>
         );
       })}
+      <ActionWindows z={windows.length + 1} />
     </div>
   );
 }

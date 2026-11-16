@@ -104,6 +104,7 @@ sidebar:
 | Restart Python                         | Python を再起動する。wave・グラフ・テーブルは残る                              |                     |
 | Packages…                              | この実験のパッケージ、Python の中のパッケージ一覧、導入と削除                  | `%pip install name` |
 | Plugins…                               | プラグインの導入・管理・実行                                                   |                     |
+| Plugin Actions                         | 有効なプラグインの Action のフォームを、動かせるウィンドウで開く               |                     |
 | Keep Optional Packages for Offline Use | 同梱パッケージ(SciPy など)を先にブラウザへ保存し、オフラインで使えるようにする |                     |
 
 ## Help
