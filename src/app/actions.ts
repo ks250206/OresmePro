@@ -17,6 +17,7 @@ import {
   type PageSpec,
   type StyleSpec,
 } from "../core/doc/types";
+import { sourcePath } from "../core/files/files";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { isIgorFile, planIgorImport } from "../core/io/igorImport";
@@ -219,7 +220,7 @@ export async function loadFiles(files: Iterable<File>): Promise<void> {
     try {
       const pending = { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
       if (isIgorFile(file.name)) await importIgorFile(pending);
-      else if (pythonLoader(file.name)) loadWithPython(pending);
+      else if (pythonLoader(file.name)) await loadWithPython(pending);
       else data.push(pending);
     } catch (error) {
       showError(`Could not read ${file.name}`, error);
@@ -257,8 +258,12 @@ export async function importFile(
     let echo: string | undefined;
     if (keep) {
       try {
-        files.put(file.name, file.bytes);
-        echo = importPython(file.name, settings);
+        const path = sourcePath(files, file.name, file.bytes, digest);
+        files.put(path, file.bytes);
+        echo = importPython(path, settings);
+        if (path !== file.name) {
+          note(`Another ${file.name} is kept already: this one is kept as ${path}.`);
+        }
       } catch (error) {
         note(
           `${file.name} is not kept with the experiment: ${error instanceof Error ? error.message : String(error)}`,
@@ -309,16 +314,19 @@ export async function importIgorFile(file: PendingData): Promise<boolean> {
  * and which keeps where the waves came from), and the line that loads it runs
  * as if typed, so the history has it and it undoes as one step.
  */
-export function loadWithPython(file: PendingData): void {
-  const code = pythonLoader(file.name);
-  if (!code) return;
+export async function loadWithPython(file: PendingData): Promise<void> {
+  if (!pythonLoader(file.name)) return;
+  let path: string;
   try {
-    files.put(file.name, file.bytes);
+    path = sourcePath(files, file.name, file.bytes, await sha256(file.bytes));
+    files.put(path, file.bytes);
   } catch (error) {
     showError(`Could not load ${file.name}`, error);
     return;
   }
-  runPython(code);
+  if (path !== file.name)
+    note(`Another ${file.name} is kept already: this one is kept as ${path}.`);
+  runPython(pythonLoader(path)!);
 }
 
 /**

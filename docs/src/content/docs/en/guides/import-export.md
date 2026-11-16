@@ -17,6 +17,8 @@ sidebar:
 
 For CSV and Excel, inspect the header, units, and column types in the preview. For text files, check the encoding too. Unreadable cells in a column explicitly set to numeric become NaN. Override the detected type in the preview if necessary. Save settings as a preset for recurring imports. Igor packed experiments provide their waves and data folders.
 
+A loaded file is kept with the experiment, and a line of the history loads it again. A file with the name of a different one kept already (an instrument that always writes `data.csv`, say) does not replace it: it is kept under its name with the first 8 digits of its SHA-256 added (`data-1a2b3c4d.csv`), so each line of the history goes on loading its own file. The same file loaded again keeps its name.
+
 ## Parquet and HDF5
 
 Python reads Parquet and HDF5 files with Pyodide's pyarrow and h5py packages, which load the first time you read such a file. A dropped or chosen file goes into the experiment's files, and a line such as `op.load_parquet("run.parquet")` runs and stays in the history. Undo removes the whole load in one step.

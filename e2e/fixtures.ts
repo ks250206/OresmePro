@@ -105,6 +105,7 @@ export class App {
           procedures: state.procedures,
           pages: state.pages,
           results: state.results,
+          templates: state.templates,
           windows: state.windows,
         }),
       ) as {
@@ -115,6 +116,7 @@ export class App {
         procedures: typeof state.procedures;
         pages: typeof state.pages;
         results: typeof state.results;
+        templates: typeof state.templates;
         windows: typeof state.windows;
       };
     });

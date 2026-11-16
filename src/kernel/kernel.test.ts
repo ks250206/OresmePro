@@ -1491,6 +1491,31 @@ describe("oresme Python API", () => {
     }
   });
 
+  it("keeps each fit's own curve, whatever fits the wave again", async () => {
+    expect(
+      await run(
+        [
+          "cx = np.linspace(0, 4, 41)",
+          'cy = op.make("curve_y", 1 + 2 * cx + 0.5 * cx**2)',
+          'line = op.fit("line", cy, quiet=True)',
+          'quad = op.fit("poly3", cy, quiet=True)',
+          // Both made fit_curve_y; each result keeps its own.
+          "first, second = op.result(line.name), op.result(quad.name)",
+          "print(sorted(first.kept), first.kept['fit'].name == f'results:{first.name}:fit')",
+          "kf = first.kept['fit']",
+          "print(bool(np.allclose(kf.data, line.coef[0] + line.coef[1] * kf.x)),",
+          "      bool(np.allclose(second.kept['fit'].data, op.wave('fit_curve_y').data)))",
+          "g = first.show()",
+          "print([t.name for t in g.traces])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const out = stdout.trim().split("\n");
+    expect(out[0]).toBe("['fit'] True");
+    expect(out[1]).toBe("True True");
+    expect(out[2]).toBe("['curve_y', 'fit']");
+  });
+
   it("keeps each fit with its settings, to be compared, run again and applied to other waves", async () => {
     expect(
       await run(
@@ -3491,7 +3516,7 @@ describe("analysis templates", () => {
       ],
       [
         'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "core.smooth", "args": {"wave": {"expr": "y * 2"}}}]})',
-        /actions take no other objects/,
+        /Step a: wave takes a wave; an object there must be a \{"\$input": slot\}/,
       ],
       [
         'op.set_template("Bad", {"inputs": ["y"], "steps": [{"id": "a", "action": "lab.nothing", "args": {}}]})',
@@ -3637,7 +3662,8 @@ describe("analysis templates", () => {
       ),
     ).toBe(true);
     const out = stdout.split("\n");
-    expect(out[0]).toMatch(/hold left out of the template: core.fit does not take it/);
+    // The fit's hold is kept in the template, as everything it was done with: nothing is left out.
+    expect(out[0]).toBe("[]");
     expect(out[1]).toBe("['y'] ['fit', 'fit2']");
     expect(out[2]).toBe(
       "{'function': 'gauss', 'y': {'$step': 'fit', 'output': 'residuals'}, 'xrange': [-3, 4], 'quiet': True}",
@@ -3646,15 +3672,41 @@ describe("analysis templates", () => {
     expect(doc.getState().templates.Held!.steps[0]!.args).toEqual({
       function: "gauss",
       y: { $input: "y" },
+      hold: { y0: 1 },
       quiet: true,
     });
+  });
+
+  it("keeps a fit's hold, bounds and excluded ranges in its template, for every sample", async () => {
+    expect(
+      await run(
+        lines(
+          "import warnings",
+          "tx = np.linspace(-5, 5, 101)",
+          'one = op.make("cond1", 1 + 3 * np.exp(-((tx - 0.5) / 0.9) ** 2), x0=-5, dx=0.1)',
+          'two = op.make("cond2", 1 + 2 * np.exp(-((tx + 0.4) / 1.1) ** 2), x0=-5, dx=0.1)',
+          'r = op.fit("gauss", one, hold={"y0": 1}, bounds={"width": (0.1, 3)}, exclude=[(-5, -4), (4, 5)], quiet=True)',
+          "with warnings.catch_warnings(record=True) as caught:",
+          '    warnings.simplefilter("always")',
+          '    t = op.result(r.name).template("Conditions")',
+          "print(len(caught), t.steps[0]['args']['hold'], t.steps[0]['args']['bounds'], t.steps[0]['args']['exclude'])",
+          'run_ = t.run(["cond2"], quiet=True)',
+          "again = op.result(run_.samples[0]['results'][0])",
+          "print(run_.states, again.settings['hold'], again.settings['bounds'], again.settings['exclude'], again['y0'])",
+        ),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "0 {'y0': 1} {'width': [0.1, 3]} [[-5, -4], [4, 5]]\n" +
+        "['succeeded'] {'y0': 1} {'width': [0.1, 3]} [[-5, -4], [4, 5]] 1\n",
+    );
   });
 
   it("writes template changes made in the GUI as Python that does the same", async () => {
     const template = doc.getState().templates.Held!;
     const code = echoPython({ op: "setTemplate", name: "Copy", template });
     expect(code).toBe(
-      'op.set_template("Copy", {"description": "", "inputs": [{"name": "y", "title": "Y wave", "kind": "wave"}], "steps": [{"id": "fit", "action": "core.fit", "version": 1, "args": {"function": "gauss", "y": {"$input": "y"}, "quiet": True}}]})',
+      'op.set_template("Copy", {"description": "", "inputs": [{"name": "y", "title": "Y wave", "kind": "wave"}], "steps": [{"id": "fit", "action": "core.fit", "version": 1, "args": {"function": "gauss", "y": {"$input": "y"}, "hold": {"y0": 1}, "quiet": True}}]})',
     );
     expect(await run(code!)).toBe(true);
     expect(doc.getState().templates.Copy).toEqual(template);

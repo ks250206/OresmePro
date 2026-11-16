@@ -83,6 +83,7 @@ import {
   TextInput,
 } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
+import { TemplateEditorDialog } from "./TemplateEditor";
 import {
   CloseWindowDialog,
   NewProcedureDialog,
@@ -3281,6 +3282,8 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "editTemplate":
+      return <TemplateEditorDialog template={dialog.template} />;
     case "saveExperiment":
       return <SaveExperimentDialog />;
     case "unsavedLeave":

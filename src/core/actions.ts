@@ -27,7 +27,12 @@ export type ParamType =
   | "choice"
   | "numbers"
   /** Samples for a template: a list of objects giving a wave name for each input. */
-  | "samples";
+  | "samples"
+  /**
+   * A value with a structure of its own, as JSON (a fit's hold, bounds or
+   * exclude), which the action checks itself.
+   */
+  | "json";
 
 /** The description of one argument, as `op.action` keeps it. */
 export interface ParamSpec {
@@ -84,6 +89,20 @@ export interface ValidateOptions {
 
 const isNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
+
+/** Whether a value is plain JSON: objects, lists, text, finite numbers, booleans and null. */
+export function isJson(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJson);
+  if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    return (
+      (prototype === Object.prototype || prototype === null) && Object.values(value).every(isJson)
+    );
+  }
+  return false;
+}
 
 function checkValue(
   spec: ParamSpec,
@@ -148,6 +167,10 @@ function checkValue(
         }
         return null;
       });
+    case "json":
+      return isJson(value)
+        ? null
+        : `${where} must be made of objects, lists, text, numbers and true/false.`;
     case "choice":
       return (spec.choices ?? []).includes(value as string | number)
         ? null

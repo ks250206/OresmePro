@@ -48,6 +48,35 @@ describe("analysis templates", () => {
     const template = checkAnalysisTemplate({ ...xps(), inputs: ["spectrum"] });
     expect(template.inputs).toEqual([{ name: "spectrum", title: "", kind: "wave" }]);
     expect(template.steps[1]!.args.y).toEqual({ $step: "bg", output: "subtracted" });
+    // A fit's own settings keep their structure, null inside and references too.
+    const fit = checkAnalysisTemplate({
+      inputs: ["y"],
+      steps: [
+        {
+          id: "fit",
+          action: "core.fit",
+          version: 1,
+          args: {
+            y: { $input: "y" },
+            hold: { y0: 0 },
+            bounds: { A: [0, null] },
+            exclude: [
+              [1, 2],
+              [5, 6],
+            ],
+          },
+        },
+      ],
+    });
+    expect(fit.steps[0]!.args).toEqual({
+      y: { $input: "y" },
+      hold: { y0: 0 },
+      bounds: { A: [0, null] },
+      exclude: [
+        [1, 2],
+        [5, 6],
+      ],
+    });
   });
 
   it("refuse references that point nowhere or forward, and values that are not values", () => {
@@ -59,12 +88,11 @@ describe("analysis templates", () => {
       { inputs: ["y"], steps: [step({ wave: { $step: "b", output: "wave" } }), step({}, "b")] },
       /"b", which is not an earlier step/,
     );
-    refused(one({ wave: { $step: "a" } }), /an object must be/);
-    refused(one({ wave: { $input: "y", extra: 1 } }), /an object must be/);
-    refused(one({ wave: { expr: "y * 2" } }), /actions take no other objects/);
+    refused(one({ wave: { $step: "a" } }), /a reference must be/);
+    refused(one({ wave: { $input: "y", extra: 1 } }), /a reference must be/);
     refused(one({ n: null }), /cannot be null/);
     refused(one({ n: Number.NaN }), /finite number/);
-    refused(one({ n: [[1, 2]] }), /lists inside lists/);
+    refused(one({ bounds: { A: [0, Number.POSITIVE_INFINITY] } }), /finite number/);
     refused(one({ __proto__x: 1 }), /not a parameter name/);
     refused({ inputs: [], steps: [step({})] }, /at least one input/);
     refused({ inputs: ["y"], steps: [] }, /at least one step/);

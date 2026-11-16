@@ -307,7 +307,16 @@ export function TemplatesDialog({
               </Button>
             </div>
           ) : (
-            <div className="flex gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
+              <Button onClick={() => ui.set({ dialog: { kind: "editTemplate" } })}>New…</Button>
+              <Button
+                disabled={name === null}
+                onClick={() =>
+                  name !== null && ui.set({ dialog: { kind: "editTemplate", template: name } })
+                }
+              >
+                Edit…
+              </Button>
               <Button disabled={name === null} onClick={() => setRenaming(name)}>
                 Rename…
               </Button>
