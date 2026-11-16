@@ -27,7 +27,6 @@ test.describe("the example plugin ternary", () => {
     await expect(
       dialog.getByRole("option", { name: "Ternary Diagram", exact: true }).first(),
     ).toBeVisible();
-    await page.keyboard.press("Escape");
 
     const run = await app.run(
       [
@@ -56,5 +55,23 @@ test.describe("the example plugin ternary", () => {
     for (const word of [">SiO2<", ">Al2O3<", ">CaO<", ">100<", ">Samples<"]) {
       expect(svg).toContain(word);
     }
+
+    // Its panel draws one too, from the waves and settings chosen in it.
+    await dialog.getByRole("option", { name: "Ternary Diagram", exact: true }).first().click();
+    await dialog.getByRole("button", { name: "Add Panels to Experiment" }).click();
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().panels)))
+      .toEqual(["TernaryDiagram"]);
+    await dialog.getByRole("button", { name: "Close" }).first().click();
+    const panel = app.window("TernaryDiagram");
+    await panel.getByLabel("A (top)").selectOption("SiO2");
+    await panel.getByLabel("B (bottom right)").selectOption("Al2O3");
+    await panel.getByLabel("C (bottom left)").selectOption("CaO");
+    await panel.getByLabel("Tick labels").selectOption("counterclockwise");
+    await panel.getByRole("button", { name: "Draw", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().graphs)))
+      .toEqual(["Ternary0", "Ternary1"]);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
   });
 });

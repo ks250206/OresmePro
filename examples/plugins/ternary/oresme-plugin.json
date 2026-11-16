@@ -9,16 +9,25 @@
     "entry": "ternary",
     "packages": ["numpy"]
   },
-  "files": ["ternary/__init__.py", "ternary/diagram.py"],
+  "files": ["ternary/__init__.py", "ternary/diagram.py", "panels/ternary.json"],
   "actions": [
     {
       "name": "ternary",
       "title": "Ternary Diagram",
       "description": "Makes a ternary diagram of the points (a, b, c). Each point is scaled to a + b + c = 100 %, so fractions, percentages and amounts all work. A is at the top, B at the bottom right and C at the bottom left.",
       "params": {
-        "a": { "type": "wave", "title": "A" },
-        "b": { "type": "wave", "title": "B" },
-        "c": { "type": "wave", "title": "C" },
+        "a": {
+          "type": "wave",
+          "title": "A"
+        },
+        "b": {
+          "type": "wave",
+          "title": "B"
+        },
+        "c": {
+          "type": "wave",
+          "title": "C"
+        },
         "names": {
           "type": "string",
           "title": "Names",
@@ -53,5 +62,8 @@
         }
       }
     }
-  ]
+  ],
+  "contributes": {
+    "panels": ["panels/ternary.json"]
+  }
 }

@@ -6,6 +6,7 @@ import { layoutGraph } from "../../core/plot/layout";
 import { makePluginGraph, planOutcome } from "../../core/plugins/outcome";
 import { checkResult } from "../../core/sandbox/validate";
 import sdk from "../../sandbox/python/oresme_plugin.py?raw";
+import { contributionCommands } from "./contributions";
 import { sandboxWave } from "./host";
 import { readLocalPackage } from "./sources";
 
@@ -136,6 +137,20 @@ describe("the example plugin ternary", () => {
     expect(pkg.manifest.name).toBe("ternary");
     expect(pkg.manifest.actions.map((action) => action.name)).toEqual(["ternary"]);
     expect([...pkg.files.keys()].sort()).toEqual(pkg.manifest.files.map((f) => f.path).sort());
+
+    // Its panel goes into an experiment, with a field for every argument of the action.
+    const doc = new Doc();
+    const [path] = pkg.manifest.contributes.panels;
+    for (const command of contributionCommands("panels", path!, pkg.files.get(path!)!)) {
+      doc.dispatch(command);
+    }
+    const panel = doc.getState().panels.TernaryDiagram!;
+    const button = panel.controls.find((control) => control.kind === "button")!;
+    expect(button).toMatchObject({ label: "Draw", action: "plugin.ternary.ternary" });
+    const params = Object.keys(pkg.manifest.actions[0]!.params).sort();
+    expect(Object.keys((button as { args: object }).args).sort()).toEqual(params);
+    const names = panel.controls.map((control) => control.name);
+    for (const param of params) expect(names).toContain(param);
   });
 
   it("makes a ternary diagram of traces, with equal sides and no axes drawn", () => {

@@ -4,6 +4,7 @@
 
 - [入れ方](#入れ方)
 - [`ternary`: 3元相図](#ternary-3元相図)
+- [パネル](#パネル)
 - [しくみ](#しくみ)
 - [English](#english)
 
@@ -36,6 +37,10 @@ op.invoke("plugin.ternary.ternary", {"a": "SiO2", "b": "Al2O3", "c": "CaO",
 
 グラフ `Ternary0` ができます。wave は最初の入力の隣に `SiO2_x`、`SiO2_y`(点)、`SiO2_frame_x`(枠)、`SiO2_grid_x`(グリッド)、`SiO2_a_label`(目盛りの数値)、`SiO2_corner_text`(頂点の名前)などの名前で置かれます。
 
+## パネル
+
+**Python › Plugins…** でこのプラグインを選び、**Add Panels to Experiment** を押すと、パネル **Ternary Diagram** が実験に入ります。A・B・C の wave、頂点の名前、グリッドの間隔と有無、目盛りの辺、凡例を選んで **Draw** を押すと、`ternary` を呼んで図を描きます。パネルは実験と一緒に保存され、編集もできます。
+
 ## しくみ
 
 - 組成 (a, b, c) は x = b + a/2、y = a·√3/2 の点になります
@@ -55,4 +60,4 @@ Install it from **Python › Plugins…** with this folder or its GitHub address
 op.invoke("plugin.ternary.ternary", {"a": "SiO2", "b": "Al2O3", "c": "CaO"})
 ```
 
-Each point is scaled to a + b + c = 100 %. `step` sets the grid, `ticks` the sides the values are written on (`clockwise`, `counterclockwise` or `none`), `names` the corners and `legend` the points' legend. The tick labels and corner names are text markers placed in data coordinates; the graph's own axes carry the coordinates and are not drawn; the plot area is sized so that a unit is as long across as up, so the triangle is equilateral. The action returns the graph's description as `"graph"`, and the app checks it and makes the graph with its own commands.
+Its panel (**Add Panels to Experiment** in **Python › Plugins…**) has fields for the waves and the settings and a **Draw** button. Each point is scaled to a + b + c = 100 %. `step` sets the grid, `ticks` the sides the values are written on (`clockwise`, `counterclockwise` or `none`), `names` the corners and `legend` the points' legend. The tick labels and corner names are text markers placed in data coordinates; the graph's own axes carry the coordinates and are not drawn; the plot area is sized so that a unit is as long across as up, so the triangle is equilateral. The action returns the graph's description as `"graph"`, and the app checks it and makes the graph with its own commands.
