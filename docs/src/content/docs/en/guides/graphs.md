@@ -63,6 +63,21 @@ g.magnification = 2     # show it twice as big
 g.set(magnification=1)  # back to its own size
 ```
 
+## Link graphs
+
+Choose two graphs or more in **Graph → Link Graphs…** (also in a graph's right-click menu) and press **Link**: zooming or panning one gives the others the same range.
+The link covers X (the bottom axes) or X and Y (bottom and left). The graphs start at the first one's range.
+With **Cursors follow each other by X**, a cursor put on one graph is put on the others at the point nearest the same X:
+by the value of X, not the point number, so graphs of different points and spacing match (a charge curve, a current and a temperature shown apart, say).
+A linked graph says "linked" in its title. **Unlink** takes graphs out.
+
+```python
+op.link_graphs("XPS1", "XPS2", "XPS3", "XPS4")          # X linked, cursors too
+op.link_graphs(charge, current, temp, axes="xy", cursors=False)
+g.link        # {'graphs': [...], 'axes': 'x', 'cursors': True}
+g.unlink()
+```
+
 ## Reuse and export
 
 Apply a saved graph style to another graph in the experiment. `g.script()` returns Python code to recreate the graph in an experiment containing the required waves. Use `g.save("response.svg")` or **File → Save Graph as PDF / SVG / PNG** to share the figure.

@@ -62,6 +62,8 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** Links graphs (see GraphLink); `graph` is the one it was asked from. */
+  | { kind: "linkGraphs"; graph?: string }
   /** Asks for the file name to save the experiment as. */
   | { kind: "saveExperiment" }
   /** Asks whether to close a window (keeping what it shows) or kill it. */

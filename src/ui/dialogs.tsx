@@ -85,6 +85,7 @@ import {
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import {
   CloseWindowDialog,
+  LinkGraphsDialog,
   NewProcedureDialog,
   RenameWindowDialog,
   SaveExperimentDialog,
@@ -3272,6 +3273,8 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "linkGraphs":
+      return <LinkGraphsDialog graph={dialog.graph} />;
     case "saveExperiment":
       return <SaveExperimentDialog />;
     case "closeWindow":

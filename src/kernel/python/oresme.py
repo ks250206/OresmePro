@@ -77,6 +77,8 @@ __all__ = [
     "table",
     "tables",
     "kill_window",
+    "link_graphs",
+    "unlink_graphs",
     "Procedure",
     "new_procedure",
     "close_window",
@@ -1298,6 +1300,26 @@ class Graph(_Props):
     @property
     def name(self):
         return self._name
+
+    @property
+    def link(self):
+        """How this graph is linked to others (see ``op.link_graphs``), or None.
+
+        A dict of ``graphs`` (all of the group, this one too), ``axes``
+        ("x" or "xy") and ``cursors``.
+        """
+        link = self._info().get("link")
+        if not link:
+            return None
+        graphs = [
+            name for name in windows("graph")
+            if (Graph(name)._info().get("link") or {}).get("group") == link["group"]
+        ]
+        return {"graphs": graphs, "axes": link["axes"], "cursors": link["cursors"]}
+
+    def unlink(self):
+        """Take this graph out of the graphs it is linked to."""
+        unlink_graphs(self._name)
 
     def _info(self):
         return _call("graphInfo", {"name": self._name})[0]
@@ -2983,6 +3005,29 @@ def set_time_zone(zone):
     this zone.
     """
     _dispatch({"op": "setTimeZone", "zone": str(zone)})
+
+
+def link_graphs(*graphs, axes="x", cursors=True):
+    """Link graphs so that zooming or panning one zooms the others alike.
+
+    ``axes="x"`` links the bottom axes, ``"xy"`` the left ones too. With
+    ``cursors``, a cursor set on one graph is set on the others at the point
+    nearest the same X: the same moment of a charge curve, a current and a
+    temperature shown apart. The graphs start at the first one's range and
+    leave any graphs they were linked to before. Returns the group's name.
+    """
+    names = [graph.name if isinstance(graph, Graph) else graph for graph in graphs]
+    if len(names) == 1 and isinstance(names[0], (list, tuple)):
+        names = [graph.name if isinstance(graph, Graph) else graph for graph in names[0]]
+    return _dispatch(
+        {"op": "linkGraphs", "graphs": names, "axes": axes, "cursors": bool(cursors)}
+    )
+
+
+def unlink_graphs(*graphs):
+    """Take graphs out of the graphs they are linked to (see ``link_graphs``)."""
+    names = [graph.name if isinstance(graph, Graph) else graph for graph in graphs]
+    _dispatch({"op": "unlinkGraphs", "graphs": names})
 
 
 def kill_window(name):

@@ -287,6 +287,11 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => ui.set({ dialog: { kind: "graphTemplates" } }),
         },
         graphDialog("Recreation Script…", (name) => ({ kind: "graphScript", graph: name })),
+        { separator: true },
+        {
+          label: "Link Graphs…",
+          onSelect: () => ui.set({ dialog: { kind: "linkGraphs", graph: graph ?? undefined } }),
+        },
       ],
     },
     { title: "Layout", items: layoutItems },

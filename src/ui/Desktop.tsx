@@ -312,7 +312,7 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
                 ? `${window.name}.py`
                 : panel
                   ? panel.title || window.name
-                  : windowTitle(window, names)
+                  : `${windowTitle(window, names)}${graph?.link ? " · linked" : ""}`
             }
             z={windows.indexOf(window) + 1}
             accessory={window.kind === "panel" ? <PanelEditToggle name={window.name} /> : undefined}

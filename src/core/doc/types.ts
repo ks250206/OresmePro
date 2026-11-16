@@ -507,8 +507,22 @@ export function sizeAxes(dimension: PlotDimension): string[] {
   return [];
 }
 
+/**
+ * Graphs linked to look at the same thing: zooming or panning one zooms the
+ * others alike (the bottom axis, and the left with "xy"), and with
+ * `cursors` a cursor set on one is set on the others at the point nearest
+ * the same X. The graphs of a group share its name.
+ */
+export interface GraphLink {
+  group: string;
+  axes: "x" | "xy";
+  cursors: boolean;
+}
+
 export interface GraphSpec extends GraphStyle {
   name: string;
+  /** The graphs this one is linked to (see {@link GraphLink}), or null. */
+  link: GraphLink | null;
   /** The width of the plot area (see {@link PlotDimension}); auto follows the window. */
   width: PlotDimension;
   /** The height of the plot area. */

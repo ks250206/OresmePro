@@ -586,6 +586,7 @@ export function GraphWindow({ name }: { name: string }) {
       })),
       { label: "Modify Graph…", onSelect: open({ kind: "modifyGraph", graph: name }) },
       { label: "Rename Graph…", onSelect: open({ kind: "renameWindow", name }) },
+      { label: "Link Graphs…", onSelect: open({ kind: "linkGraphs", graph: name }) },
       { label: "Apply Style", submenu: styleItems() },
       { label: "Styles…", onSelect: open({ kind: "styles", graph: name }) },
       { label: "Save as Template…", onSelect: open({ kind: "saveGraphTemplate", graph: name }) },

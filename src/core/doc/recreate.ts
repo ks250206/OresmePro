@@ -156,6 +156,8 @@ export function recreationCommands(
     "cursors",
     // Which style the graph was given is not part of how it looks.
     "style",
+    // A link is between graphs: the copy is a graph by itself.
+    "link",
   ]);
   if (hasKeys(style)) run({ op: "modifyGraph", graph: name, props: style });
   return commands;

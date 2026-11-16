@@ -449,6 +449,16 @@ export function echoPython(
       return `op.graph_template(${pyLiteral(command.template)}).make(${makeArguments(command)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
+    case "linkGraphs":
+      return `op.link_graphs(${joinArgs(
+        command.graphs.map(pyLiteral).join(", "),
+        keywords({
+          axes: command.axes === "xy" ? "xy" : undefined,
+          cursors: command.cursors === false ? false : undefined,
+        }),
+      )})`;
+    case "unlinkGraphs":
+      return `op.unlink_graphs(${command.graphs.map(pyLiteral).join(", ")})`;
     case "closeWindow":
       return `op.close_window(${pyLiteral(command.name)})`;
     case "reopenWindow":
