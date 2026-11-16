@@ -1,6 +1,13 @@
 import { MAX_PLOT_SIZE, MIN_PLOT_SIZE, SCREEN_UNITS_PER_POINT, toPoints } from "../plot/plotSize";
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
+import {
+  checkAttributeName,
+  checkAttributeValue,
+  dropAttributes,
+  isFolderKey,
+  renameAttributeKeys,
+} from "./attributes";
 import { dict, filterDict, withEntry, withoutEntries, type Dict } from "./dict";
 import {
   checkCycle,
@@ -346,6 +353,11 @@ export type Command =
   | ({ op: "updateRunSample"; run: string; index: number } & SampleOutcome)
   | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
+  /**
+   * Sets attributes of a sample: of a data folder ("run1:", with a colon) or
+   * of a wave. A value of null removes that attribute.
+   */
+  | { op: "setAttributes"; target: string; values: Record<string, unknown> }
   /** Closes a window but keeps what it shows, to reopen it (see WindowState.hidden). */
   | { op: "closeWindow"; name: string }
   | { op: "reopenWindow"; name: string }
@@ -1647,7 +1659,9 @@ function renameReferences(
     waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
   }
   const panels = renameInPanels(state.panels, rename);
-  return { ...state, waves, graphs, tables, results, panels, runs };
+  // A sample's attributes go where its wave or folder goes.
+  const attributes = renameAttributeKeys(state.attributes, rename);
+  return { ...state, waves, graphs, tables, results, panels, runs, attributes };
 }
 
 /** A wave under a new name; a formula that was up to date with it stays so. */
@@ -1792,7 +1806,12 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
     }
   }
   const waves = withoutEntries(state.waves, names);
-  return { ...state, waves, waveOrder: state.waveOrder.filter((name) => name in waves) };
+  return {
+    ...state,
+    waves,
+    waveOrder: state.waveOrder.filter((name) => name in waves),
+    attributes: dropAttributes(state.attributes, (key) => names.includes(key)),
+  };
 }
 
 function changed(wave: Wave, change: Partial<Wave>): Wave {
@@ -2136,7 +2155,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const inside = (name: string) => name === path || name.startsWith(`${path}:`);
       const emptied = removeWaves(state, state.waveOrder.filter(inside));
       return {
-        state: { ...emptied, folders: state.folders.filter((folder) => !inside(folder)) },
+        state: {
+          ...emptied,
+          folders: state.folders.filter((folder) => !inside(folder)),
+          attributes: dropAttributes(
+            emptied.attributes,
+            (key) => isFolderKey(key) && inside(key.slice(0, -1)),
+          ),
+        },
         result: null,
       };
     }
@@ -2887,6 +2913,32 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         made = name;
       });
       return { state: next, result: made };
+    }
+    case "setAttributes": {
+      const target = command.target;
+      if (typeof target !== "string") throw new DocError("target must be a wave or a data folder.");
+      if (isFolderKey(target)) {
+        if (!state.folders.includes(target.slice(0, -1))) {
+          throw new DocError(`No data folder named ${JSON.stringify(target.slice(0, -1))}.`);
+        }
+      } else {
+        requireWave(state, target);
+      }
+      if (typeof command.values !== "object" || command.values === null) {
+        throw new DocError("values must be a dict of attribute names and values.");
+      }
+      const key = isFolderKey(target) ? target : requireWave(state, target).name;
+      const next: Record<string, number | string> = { ...state.attributes[key] };
+      for (const [name, value] of Object.entries(command.values)) {
+        checkAttributeName(name);
+        if (value === null) delete next[name];
+        else next[name] = checkAttributeValue(value, name);
+      }
+      const attributes =
+        Object.keys(next).length > 0
+          ? withEntry(state.attributes, key, next)
+          : withoutEntries(state.attributes, [key]);
+      return { state: { ...state, attributes }, result: null };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {

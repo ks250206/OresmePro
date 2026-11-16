@@ -1,4 +1,5 @@
 import { arrangeLayout } from "../core/doc/arrange";
+import { folderAttributes, isFolderKey, waveAttributes } from "../core/doc/attributes";
 import type { Command } from "../core/doc/commands";
 import { uniqueName } from "../core/doc/commands";
 import type { Doc, DocWriter, Stage } from "../core/doc/doc";
@@ -253,6 +254,22 @@ export function handleRpc(
       return { result: state.timeZone };
     case "listFolders":
       return { result: state.folders };
+    case "attributes": {
+      const target = typeof params.target === "string" ? params.target : "";
+      if (isFolderKey(target)) {
+        const folder = target.slice(0, -1);
+        if (!state.folders.includes(folder)) {
+          throw new DocError(`No data folder named ${JSON.stringify(folder)}.`);
+        }
+        return {
+          result: params.own ? { ...state.attributes[target] } : folderAttributes(state, folder),
+        };
+      }
+      const wave = readWave(target);
+      return {
+        result: params.own ? { ...state.attributes[wave.name] } : waveAttributes(state, wave.name),
+      };
+    }
     case "uniqueName": {
       const base = typeof params.base === "string" ? params.base : "wave";
       return { result: uniqueName(base, (name) => name in state.waves) };

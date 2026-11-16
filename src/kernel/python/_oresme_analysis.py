@@ -20,6 +20,7 @@ __all__ = [
     "result",
     "results",
     "results_table",
+    "plot_results",
     "make_template",
     "fit",
     "fit_batch",
@@ -1345,15 +1346,33 @@ def _result_name(item):
     return name
 
 
+def _result_attributes(info):
+    """The attributes of the sample a result is about: those of the first wave it read."""
+    inputs = info.get("inputs") or []
+    if not inputs:
+        return {}
+    try:
+        return _op._call("attributes", {"target": inputs[0]["wave"], "own": False})[0]
+    except _op.OresmeError:
+        # The wave is gone: its attributes went with it.
+        return {}
+
+
+def _clean(key):
+    return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
+
+
 def results_table(results_=None, name="Results", sigma=True):
     """Put results side by side: a row for each, a column for each parameter.
 
     ``results_`` is a list of results (names, or what the fits returned);
     all of them if left out. Makes text waves ``<name>_result`` and
-    ``<name>_data`` (which result, and the wave it was about) and, for each
-    parameter, ``<name>_<parameter>`` and (with ``sigma``)
-    ``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
-    table, which is returned. A parameter a result does not have is NaN.
+    ``<name>_data`` (which result, and the wave it was about), a wave for
+    each attribute of the samples (see ``op.set_attributes``; numbers, or
+    text where any is text), and, for each parameter, ``<name>_<parameter>``
+    and (with ``sigma``) ``<name>_<parameter>_sd``, then ``<name>_chisq``,
+    and shows them in a table, which is returned. A parameter or attribute a
+    result does not have is NaN (or empty text).
     """
     names = [_result_name(item) for item in (results() if results_ is None else results_)]
     if not names:
@@ -1369,13 +1388,22 @@ def results_table(results_=None, name="Results", sigma=True):
         value = info[field][info["names"].index(key)]
         return np.nan if value is None else value
 
-    def clean(key):
-        return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
-
+    clean = _clean
     waves = [
         _op.make(f"{name}_result", names),
         _op.make(f"{name}_data", [str(info["settings"].get("y", "")) for info in infos]),
     ]
+    samples = [_result_attributes(info) for info in infos]
+    keys = []
+    for found in samples:
+        keys += [key for key in found if key not in keys]
+    for key in keys:
+        values = [found.get(key) for found in samples]
+        if any(isinstance(value, str) for value in values):
+            column_ = ["" if value is None else str(value) for value in values]
+        else:
+            column_ = [np.nan if value is None else value for value in values]
+        waves.append(_op.make(f"{name}_{clean(key)}", column_))
     for key in parameters:
         waves.append(_op.make(f"{name}_{clean(key)}", [column(info, key, "coef") for info in infos]))
         if sigma:
@@ -1394,6 +1422,69 @@ def results_table(results_=None, name="Results", sigma=True):
             existing[name].append(*missing)
         return existing[name]
     return _op.edit(*waves, name=name)
+
+
+def plot_results(y, x=None, results_=None, *, name="ResultsPlot", sigma=True):
+    """Plot a parameter of results against an attribute of their samples, or another parameter.
+
+    ``y`` is a parameter's name (``"A"``); ``x`` an attribute of the samples
+    (``"thickness"``, see ``op.set_attributes``), another parameter, or None
+    for the results in order. ``results_`` are the results to plot, all of
+    them if left out; those without ``y``, or without a number for ``x``, are
+    left out. Makes ``<name>_x``, ``<name>_y`` and (with ``sigma``)
+    ``<name>_y_sd``, graphs them as markers with error bars, and returns the
+    graph:
+
+        op.set_attributes("run1:", thickness=10); ...
+        op.plot_results("A", "thickness")
+    """
+    names = [_result_name(item) for item in (results() if results_ is None else results_)]
+    infos = [_op._call("resultInfo", {"name": item})[0] for item in names]
+
+    def parameter(info, key, field="coef"):
+        if key not in info["names"]:
+            return None
+        value = info[field][info["names"].index(key)]
+        return None if value is None else float(value)
+
+    xs, ys, sds, labels = [], [], [], []
+    for index, info in enumerate(infos):
+        value = parameter(info, y)
+        if value is None:
+            continue
+        if x is None:
+            across = float(index)
+        else:
+            across = parameter(info, x)
+            if across is None:
+                found = _result_attributes(info).get(x)
+                across = float(found) if _op._is_number(found) else None
+        if across is None:
+            continue
+        xs.append(across)
+        ys.append(value)
+        sds.append(parameter(info, y, "sigma"))
+        labels.append(info["name"])
+    if not ys:
+        raise _op.OresmeError(
+            f"No result has {y!r}" + ("" if x is None else f" and a number for {x!r}") + " to plot."
+        )
+    order = np.argsort(xs, kind="stable")
+    x_wave = _op.make(f"{name}_x", np.asarray(xs)[order])
+    y_wave = _op.make(f"{name}_y", np.asarray(ys)[order])
+    error = None
+    if sigma and any(item is not None for item in sds):
+        error = _op.make(
+            f"{name}_y_sd", np.asarray([np.nan if item is None else item for item in sds])[order]
+        )
+    graph = _op.display(y_wave, x=x_wave)
+    trace = graph.traces[0]
+    trace.set(mode="lines+markers" if x is None else "markers", marker="circle")
+    if error is not None:
+        trace.set(y_error=error.name)
+    graph.axis("left").label = y
+    graph.axis("bottom").label = "result" if x is None else x
+    return graph
 
 
 def fit_batch(function, waves, *, table=True, quiet=True, **options):

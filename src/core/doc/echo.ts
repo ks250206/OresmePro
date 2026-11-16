@@ -449,6 +449,8 @@ export function echoPython(
       return `op.graph_template(${pyLiteral(command.template)}).make(${makeArguments(command)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
+    case "setAttributes":
+      return `op.set_attributes(${pyLiteral(command.target)}, ${pyLiteral(command.values)})`;
     case "closeWindow":
       return `op.close_window(${pyLiteral(command.name)})`;
     case "reopenWindow":

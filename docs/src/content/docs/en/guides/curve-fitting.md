@@ -19,6 +19,21 @@ Call `op.fit_functions()` to see model names and formulas. The `gauss` model use
 
 [Gaussian example](../../examples/gaussian/) · [Exponential example](../../examples/exponential/) · [Analysis API](../../reference/api/analysis/#fit)
 
+## Compare results with the conditions of the samples
+
+Give **attributes** to the samples (composition, thickness, temperature, cycle, instrument) on their data folders or on waves.
+In the table of **Data → Sample Attributes…**, type a number or text for each sample (row). A folder's attributes are those of every wave in it, and a wave's own come on top.
+**Attributes…** in the right-click menu of a folder or wave in the Data Browser opens it too.
+
+A result has the attributes of the sample of the wave it read. **Analysis → Results…** shows them as columns, and **Plot…** plots a parameter against an attribute (or another parameter), thickness across and A up, say, with the standard deviations as error bars. `op.results_table()` makes a column for each attribute too.
+
+```python
+op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")   # a folder (with a colon)
+op.wave("run1:spectrum").set_attributes(cycle=3)                         # a wave
+op.wave("run1:spectrum").attributes      # {'thickness': 12.5, 'Mg': 0.3, 'instrument': 'XPS-2', 'cycle': 3}
+op.plot_results("A", "thickness")        # A against thickness
+```
+
 ## Apply the same steps to many samples
 
 Keep an analysis you settled on for one sample as a named **analysis template**, and apply it to many samples in turn.

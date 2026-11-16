@@ -41,6 +41,7 @@ A wave is numeric with 1 to 4 dimensions, or a 1-D list of text.
 - `x_unit` (read/write)
 - `unit` (read/write) · Unit of the stored values, shown on axes.
 - `note` (read/write)
+- `attributes` (read-only) · The attributes of the sample this wave is: those of its data folders, then its own. A dict of name to number or text, such as ``{"thickness": 12.5, "instrument": "XPS-2"}``; see ``op.set_attributes``.
 - `formula` (read/write) · The formula the values are computed from, as text; None if there is none. Assigning one computes it now and keeps it up to date as its waves change: ``r.formula = "V / I"`` (see ``op.set_formula`` for the language, and for a formula computed only when asked). Assigning None removes the formula and keeps the values.
 - `formula_info` (read-only) · How the formula stands, as a dict; None if there is none. ``expr`` and ``auto`` are as set; ``inputs`` names the waves it reads; ``status`` is ``"ok"``, ``"stale"`` (a manual formula whose inputs changed since it was computed), ``"error"`` (the last computation failed and the values are from before it) or ``"missing"`` (one of its waves does not exist), with ``message`` saying more; ``zero_divisions`` counts the points that were divided by zero and so are NaN.
 - `flat` (read-only) · The points in storage order, whatever the shape: ``w.flat[6:9] = 0``.
@@ -56,6 +57,14 @@ Change the number type, converting the values (Igor's Redimension).
 Into an integer type they are rounded and held at the ends of its
 range. A real wave made complex gets zero imaginary parts; a complex
 wave made real keeps its real parts.
+
+### `Wave.set_attributes`
+
+```python
+set_attributes(values=None, **named)
+```
+
+Set attributes of this wave itself (None removes one). Returns self.
 
 ### `Wave.set_scale`
 

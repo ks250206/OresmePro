@@ -12,6 +12,7 @@ import {
 } from "../app/session";
 import type { Command } from "../core/doc/commands";
 import { formulaStatus, type FormulaStatus } from "../core/doc/formula";
+import { folderKey, waveAttributes } from "../core/doc/attributes";
 import { changedInputs } from "../core/doc/results";
 import { leafName, parentFolder, type DocState, type Wave } from "../core/doc/types";
 import { renderMatrix } from "../core/plot/colorTables";
@@ -136,6 +137,10 @@ function WaveInfo({ state, wave }: { state: DocState; wave: Wave }) {
       rows.push(["Min", `${formatNumber(extent.min)}${unit(wave.unit)}`]);
       rows.push(["Max", `${formatNumber(extent.max)}${unit(wave.unit)}`]);
     }
+  }
+  // The sample's attributes, its folders' and its own.
+  for (const [name, value] of Object.entries(waveAttributes(state, wave.name))) {
+    rows.push([name, typeof value === "number" ? formatNumber(value) : value]);
   }
   return (
     <div className="flex flex-col gap-1.5 border-t border-line p-2">
@@ -451,6 +456,10 @@ export function DataBrowser() {
         onSelect: open({ kind: "waveType", wave: name }),
       },
       {
+        label: "Attributes…",
+        onSelect: open({ kind: "attributes", targets }),
+      },
+      {
         label: "Rename or Move…",
         disabled: !single,
         onSelect: open({ kind: "renameWave", wave: name }),
@@ -484,6 +493,10 @@ export function DataBrowser() {
     ];
     if (folder) {
       items.push(
+        {
+          label: "Attributes…",
+          onSelect: () => ui.set({ dialog: { kind: "attributes", targets: [folderKey(folder)] } }),
+        },
         {
           label: "Rename or Move…",
           onSelect: () => ui.set({ dialog: { kind: "renameFolder", folder } }),

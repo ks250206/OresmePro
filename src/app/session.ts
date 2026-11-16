@@ -62,6 +62,8 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** The attributes of samples, as a table: of `targets` (keys, see ../core/doc/attributes), or every data folder. */
+  | { kind: "attributes"; targets?: string[] }
   /** Asks for the file name to save the experiment as. */
   | { kind: "saveExperiment" }
   /** Asks whether to close a window (keeping what it shows) or kill it. */

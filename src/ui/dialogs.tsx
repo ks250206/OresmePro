@@ -82,6 +82,7 @@ import {
   Select,
   TextInput,
 } from "./controls";
+import { AttributesDialog } from "./AttributesDialog";
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import {
   CloseWindowDialog,
@@ -3272,6 +3273,8 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "attributes":
+      return <AttributesDialog targets={dialog.targets} />;
     case "saveExperiment":
       return <SaveExperimentDialog />;
     case "closeWindow":

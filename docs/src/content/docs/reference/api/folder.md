@@ -20,6 +20,15 @@ A data folder. ``Folder("")`` is root.
 **プロパティ**
 
 - `path` (read-only)
+- `attributes` (read-only) · The attributes of the sample this folder is: those of the folders it is in, then its own.
+
+### `Folder.set_attributes`
+
+```python
+set_attributes(values=None, **named)
+```
+
+Set attributes of this folder, which its waves have too (None removes one). Returns self.
 
 ### `Folder.make`
 
@@ -98,3 +107,34 @@ op.folders()
 ```
 
 Every data folder below root.
+
+## `set_attributes`
+
+```python
+op.set_attributes(target, values=None, **named)
+```
+
+Set attributes of a sample: a data folder or a wave.
+
+``target`` is a wave, a folder (``op.folder("run1")``), a wave's name, or
+a folder's path followed by a colon (``"run1:"``). The attributes are
+given as a dict, keywords, or both: names of letters, digits and _,
+values that are numbers or text; None removes an attribute. A folder's
+attributes are those of every wave in it, below its own:
+
+    op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")
+    op.wave("run1:spectrum").set_attributes(cycle=3)
+
+Results have the attributes of the wave they read, so
+``op.results_table()`` and ``op.plot_results()`` can set them beside the
+parameters.
+
+**明示的な例外** · `TypeError`
+
+## `attributes`
+
+```python
+op.attributes(target, *, own=False)
+```
+
+The attributes of a wave or a data folder: with those it has from its folders, or with ``own`` only its own.
