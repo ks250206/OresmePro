@@ -1448,6 +1448,31 @@ describe("oresme Python API", () => {
     }
   });
 
+  it("keeps each fit's own curve, whatever fits the wave again", async () => {
+    expect(
+      await run(
+        [
+          "cx = np.linspace(0, 4, 41)",
+          'cy = op.make("curve_y", 1 + 2 * cx + 0.5 * cx**2)',
+          'line = op.fit("line", cy, quiet=True)',
+          'quad = op.fit("poly3", cy, quiet=True)',
+          // Both made fit_curve_y; each result keeps its own.
+          "first, second = op.result(line.name), op.result(quad.name)",
+          "print(sorted(first.kept), first.kept['fit'].name == f'results:{first.name}:fit')",
+          "kf = first.kept['fit']",
+          "print(bool(np.allclose(kf.data, line.coef[0] + line.coef[1] * kf.x)),",
+          "      bool(np.allclose(second.kept['fit'].data, op.wave('fit_curve_y').data)))",
+          "g = first.show()",
+          "print([t.name for t in g.traces])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const out = stdout.trim().split("\n");
+    expect(out[0]).toBe("['fit'] True");
+    expect(out[1]).toBe("True True");
+    expect(out[2]).toBe("['curve_y', 'fit']");
+  });
+
   it("keeps each fit with its settings, to be compared, run again and applied to other waves", async () => {
     expect(
       await run(

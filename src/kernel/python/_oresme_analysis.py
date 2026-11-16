@@ -1178,13 +1178,58 @@ class Result:
 
     @property
     def outputs(self):
-        """The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out."""
+        """The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out.
+
+        These are the analysis's own names (``fit_signal``), which fitting the
+        same wave again makes anew: they show the latest. ``kept`` is what this
+        result made.
+        """
         existing = set(_op._call("listWaves")[0])
         return {
             role: _op.Wave(wave_)
             for role, wave_ in self._info()["outputs"].items()
             if wave_ in existing
         }
+
+    @property
+    def kept(self):
+        """This result's own copies of what it made, by role, in the data folder ``results:<name>``.
+
+        They stay as the analysis made them when the same wave is fitted
+        again, so results can be compared curve by curve. Removing the
+        result removes them, unless a graph or table shows them.
+        """
+        existing = set(_op._call("listWaves")[0])
+        return {
+            role: _op.Wave(wave_)
+            for role, wave_ in self._info().get("kept", {}).items()
+            if wave_ in existing
+        }
+
+    def show(self):
+        """Graph the data this result read with the curves it made (its kept copies).
+
+        Returns the graph. For a fit of several waves, each with its curve.
+        """
+        info = self._info()
+        settings = info["settings"]
+        kept = self.kept
+        ys = settings.get("ys") or ([settings["y"]] if settings.get("y") else [])
+        xs = settings.get("xs") or ([settings.get("x")] * len(ys))
+        if not ys:
+            raise _op.OresmeError(f"{self._name} does not say which waves it read.")
+        graph = None
+        for index, (y, x) in enumerate(zip(ys, xs)):
+            if graph is None:
+                graph = _op.display(y, x=x)
+            else:
+                graph.append(y, x=x)
+            graph.traces[-1].set(mode="markers")
+            curves = [kept[role] for role in ("fit", f"fit{index}") if role in kept]
+            for curve in curves:
+                graph.append(curve, x=x if len(curve.data) == len(_op.wave(y).data) and x else None)
+                graph.traces[-1].set(color="black")
+        return graph
 
     def __getitem__(self, name):
         info = self._info()
