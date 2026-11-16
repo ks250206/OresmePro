@@ -1,7 +1,7 @@
-import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useMemo, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { setEditing, usePanelRuntime } from "../app/panels";
-import { doc, runGui, TITLE_BAR_HEIGHT, useDoc } from "../app/session";
-import type { WindowState } from "../core/doc/types";
+import { doc, runGui, TITLE_BAR_HEIGHT, ui, useDoc } from "../app/session";
+import { openWindows, type WindowState } from "../core/doc/types";
 import { fixedSides } from "../core/plot/windowFit";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
@@ -175,20 +175,33 @@ function WindowFrame({
         }`}
         style={{ height: TITLE_BAR_HEIGHT - 1 }}
         {...drag}
+        // On the bar, not the title: dragging captures the pointer, so the bar gets the clicks.
+        onDoubleClick={(event) => {
+          if ((event.target as HTMLElement).closest("button")) return;
+          ui.set({ dialog: { kind: "renameWindow", name: window.name } });
+        }}
       >
         <button
           type="button"
           aria-label={`Close ${window.name}`}
-          title="Close"
+          title="Close or kill (Alt-click: kill)"
           className={`grid h-3 w-3 place-items-center rounded-full text-[9px] leading-none text-transparent hover:text-black/70 ${
             active ? "bg-[#e5665e]" : "bg-line"
           }`}
           onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => runGui({ op: "killWindow", name: window.name })}
+          onClick={(event) =>
+            // Alt-click kills at once; a click asks whether to close or kill.
+            event.altKey
+              ? runGui({ op: "killWindow", name: window.name })
+              : ui.set({ dialog: { kind: "closeWindow", name: window.name } })
+          }
         >
           {"×"}
         </button>
-        <span className="min-w-0 flex-1 truncate text-center text-[11.5px] font-medium">
+        <span
+          className="min-w-0 flex-1 truncate text-center text-[11.5px] font-medium"
+          title="Double-click to rename"
+        >
           {title}
         </span>
         {accessory ?? <span className="w-3" />}
@@ -239,7 +252,9 @@ const onBackground = (target: EventTarget): boolean =>
  * gives the menu bar's commands, as `menus`.
  */
 export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
-  const windows = useDoc((state) => state.windows);
+  const all = useDoc((state) => state.windows);
+  // Closed windows are kept in the experiment but not drawn.
+  const windows = useMemo(() => openWindows(all), [all]);
   const graphs = useDoc((state) => state.graphs);
   const tables = useDoc((state) => state.tables);
   const panels = useDoc((state) => state.panels);
@@ -261,7 +276,14 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
         openContextMenu(event, menuBarItems(menus));
       }}
     >
-      {windows.length === 0 ? (
+      {windows.length === 0 && all.length > 0 ? (
+        <div className="absolute inset-0 grid place-items-center text-muted">
+          <div className="max-w-sm text-center leading-relaxed">
+            <div className="mb-1 text-[13px] font-medium text-ink/70">Every window is closed</div>
+            Reopen one from the <b>Windows</b> menu, where each kind lists its windows.
+          </div>
+        </div>
+      ) : windows.length === 0 ? (
         <div className="absolute inset-0 grid place-items-center text-muted">
           <div className="max-w-sm text-center leading-relaxed">
             <div className="mb-1 text-[13px] font-medium text-ink/70">No windows yet</div>

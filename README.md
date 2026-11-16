@@ -51,7 +51,7 @@ g.legend()
 ウィンドウの上の右クリックは、これまでどおりそのウィンドウのメニューです。
 
 CSV / TSV などのテキストと **Excel のブック**(`.xlsx` / `.xlsm`)は、ウィンドウにドロップするか
-**File › Load Delimited Text…** / **Load Excel Workbook…** で読み込みます。読み込む前に **Load Data** ダイアログが開き、
+**Data › Load Delimited Text…** / **Load Excel Workbook…** で読み込みます。読み込む前に **Load Data** ダイアログが開き、
 ファイルがどう読まれるかを先頭 100 行のプレビューで確認して、そのまま **Load** を押すか、判定を直してから読み込めます。
 
 ![Load Data ダイアログ。表の前の 4 行を読み飛ばし、ヘッダーから名前と単位を分けたプレビュー](.github/readme/import.png)
@@ -94,7 +94,7 @@ op.load_text("cell3.mpt", preset="EC-Lab")               # ダイアログで保
 ```
 
 **Igor Pro のファイル**も読み込めます。バイナリウェーブ(`.ibw`)と、パックド実験(`.pxp`、テンプレートの `.pxt`)の wave です。
-ウィンドウにドロップするか **File › Load Igor Files…** で、ダイアログを経ずにすぐ読み込みます(ファイルが中身をそのまま記述しているので、判定することがありません)。
+ウィンドウにドロップするか **Data › Load Igor Files…** で、ダイアログを経ずにすぐ読み込みます(ファイルが中身をそのまま記述しているので、判定することがありません)。
 
 - `.ibw` は 1 ファイルが 1 つの wave です。`.pxp` は、すべての wave を元のデータフォルダごと、いま開いている実験に加えます。
   フォルダは必要なものが作られ、同じ名前のフォルダがあればその中に入ります。wave のないデータフォルダは作りません。
@@ -127,7 +127,7 @@ op.load_igor("session.pxp")     # すべての wave のリスト。w.name はフ
 ```
 
 **Parquet**(`.parquet`)と **HDF5**(`.h5`、`.hdf5`)のファイルは、Pyodide のパッケージ(pyarrow、h5py)を使って Python で読み込みます。
-ウィンドウにドロップするか **File › Load Parquet or HDF5 Files…** で、ファイルを実験のファイルに入れてから `op.load_parquet("run.parquet")` / `op.load_hdf5("scan.h5")` を実行します。
+ウィンドウにドロップするか **Data › Load Parquet or HDF5 Files…** で、ファイルを実験のファイルに入れてから `op.load_parquet("run.parquet")` / `op.load_hdf5("scan.h5")` を実行します。
 履歴にはその行が残り、1 回の Undo で取り消せます。pyarrow・h5py は初めて読み込むときに取り込まれます(数秒かかります)。
 
 - Parquet は列ごとに 1 つの wave になり、表が開きます。整数・浮動小数点数・decimal は数値 wave(64 ビット整数と decimal は `float64`、float16 は `float32`)、
@@ -490,7 +490,7 @@ wave に式を持たせ、ほかの wave から値を計算します(Igor の Se
 
 [`examples/plugins/electrochem`](examples/plugins/electrochem/) は、隔離された環境(サンドボックス)の Python で動くプラグインの見本です。CV の酸化・還元ピーク(`cv_peaks`: Epa、Epc、ΔEp、E1/2、ipa/ipc)、Tafel 勾配と交換電流密度(`tafel`)、インピーダンスの等価回路フィット(`eis_fit`: R(RC)、R(RQ)、Randles。Nyquist 図用のフィット曲線と、係数・不確かさ・χ²)と、Nyquist 図のグラフテンプレートが入っています。数値計算は合成データで検算してあります。
 
-**Analysis › Plugins…** から入れます。
+**Python › Plugins…** から入れます。
 
 - **Install from GitHub…** に `https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem` を入れる(その時点のコミットに固定されます)
 - **Install from Folder…** でこのリポジトリの `examples/plugins/electrochem` フォルダを選ぶ
@@ -499,7 +499,7 @@ wave に式を持たせ、ほかの wave から値を計算します(Igor の Se
 
 ### プロシージャウィンドウ
 
-Igor のプロシージャウィンドウに当たる、実験に保存される Python ファイルです(**Windows › New Procedure**)。
+Igor のプロシージャウィンドウに当たる、実験に保存される Python ファイルです(**Windows › New Procedure…**)。
 
 ![プロシージャウィンドウ。未定義の名前に付いたリンターの警告と、右クリックのメニュー](.github/readme/editor.png)
 
@@ -658,7 +658,7 @@ Python の作業ディレクトリ(`/experiment`)は実験の一部です。
 
 ### プラグイン
 
-**Analysis › Plugins…** から、解析・パネル・テンプレート・スタイルをまとめたプラグインを入れます。中央の配布サービスはなく、GitHub のリポジトリ(`https://github.com/<owner>/<repo>`、`…/tree/<ブランチ>/<フォルダ>`)か、フォルダ・zip から入れます。
+**Python › Plugins…** から、解析・パネル・テンプレート・スタイルをまとめたプラグインを入れます。中央の配布サービスはなく、GitHub のリポジトリ(`https://github.com/<owner>/<repo>`、`…/tree/<ブランチ>/<フォルダ>`)か、フォルダ・zip から入れます。
 
 - **入れる前に中身を見せます。** 名前・版・導入元・コミット・Action の一覧・使う Python パッケージ・ファイル数を表示し、**Install** を押すまでプラグインのコードは何も実行しません。
 - **コミットに固定します。** ブランチやタグはその時点のコミットに解決し、すべてのファイルをそのコミットから取得します。各ファイルの SHA-256 を記録し、ブラウザに保存したファイルを読み出すたびに照合します(書き換えられていれば実行しません)。

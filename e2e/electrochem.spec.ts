@@ -29,7 +29,7 @@ test.describe("the example plugin electrochem", () => {
     );
     expect(made.output).toBe("71\n");
 
-    await app.menu("Analysis", "Plugins…");
+    await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(ELECTROCHEM);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
     await expect(approval).toContainText("Electrochemistry 0.1.0");
@@ -128,7 +128,7 @@ test.describe("the example plugin electrochem", () => {
     expect(
       await page.evaluate(() => globalThis.oresme.doc.getState().results.Plugin1!.settings),
     ).toMatchObject({ params: { model: "R(RQ)" } });
-    await app.menu("Analysis", "Plugins…");
+    await app.menu("Python", "Plugins…");
 
     // Removed, the plugin leaves its result, waves and template; running it again says what is needed.
     page.once("dialog", (confirm) => void confirm.accept());

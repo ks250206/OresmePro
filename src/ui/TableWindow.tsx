@@ -392,6 +392,11 @@ export function TableWindow({ name }: { name: string }) {
         disabled: points("delete").length === 0,
         onSelect: () => runGui(points("delete")),
       },
+      { separator: true },
+      {
+        label: "Rename Table…",
+        onSelect: () => ui.set({ dialog: { kind: "renameWindow", name } }),
+      },
     ];
     // Back to the grid afterwards, so the keyboard keeps working on the selection.
     const refocus = (item: MenuItem): MenuItem => ({

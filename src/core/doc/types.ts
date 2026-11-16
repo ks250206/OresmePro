@@ -891,7 +891,21 @@ export interface WindowState {
   y: number;
   w: number;
   h: number;
+  /**
+   * Closed but kept: what it shows stays in the experiment, and reopening it
+   * brings it back as it is now (Igor keeps a recreation macro instead).
+   * Left out when the window is open.
+   */
+  hidden?: boolean;
 }
+
+/** The windows that are open (not closed and kept), back to front. */
+export const openWindows = (windows: readonly WindowState[]): WindowState[] =>
+  windows.filter((window) => !window.hidden);
+
+/** The frontmost open window, or null when none is open. */
+export const frontWindow = (windows: readonly WindowState[]): WindowState | null =>
+  windows.findLast((window) => !window.hidden) ?? null;
 
 /** Every record kept by name is a {@link Dict}, built with the functions of ./dict. */
 export interface DocState {

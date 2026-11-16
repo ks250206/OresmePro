@@ -12,7 +12,7 @@ OresmePro のプラグインの見本です。サイクリックボルタモグ�
 
 ## 入れ方
 
-**Analysis › Plugins…** を開き、次のどちらかで入れます。
+**Python › Plugins…** を開き、次のどちらかで入れます。
 
 - **Install from GitHub…**: アドレスに `https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem` を入れて **Fetch**。ブランチはその時点のコミットに固定されます。
 - **Install from Folder…**: このフォルダ(`examples/plugins/electrochem`)を選びます。
@@ -151,7 +151,7 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/electro
 
 ## English
 
-**electrochem** is an example OresmePro plugin that runs in the plugin sandbox (Python with NumPy and SciPy, no network, no storage). Install it from **Analysis › Plugins…** with _Install from GitHub…_ (`https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem`) or _Install from Folder…_ (this folder). Units: potentials in V (an `mV` wave is converted), currents in the current wave's unit, impedances in Ω, frequencies in Hz; anodic current positive (IUPAC) unless told otherwise.
+**electrochem** is an example OresmePro plugin that runs in the plugin sandbox (Python with NumPy and SciPy, no network, no storage). Install it from **Python › Plugins…** with _Install from GitHub…_ (`https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem`) or _Install from Folder…_ (this folder). Units: potentials in V (an `mV` wave is converted), currents in the current wave's unit, impedances in Ω, frequencies in Hz; anodic current positive (IUPAC) unless told otherwise.
 
 - **`cv_peaks`** (current, potential, cycle, window, anodic_baseline, cathodic_baseline, convention): splits the CV into sweeps where the potential turns, finds the oxidation peak on the positive-going sweep and the reduction peak on the negative-going one (refined by a parabola through the points within three times the noise of the top), with optional linear baselines fitted over given potential ranges. Reports Epa, Epc, ΔEp, E1/2, ipa and ipc (heights above the baseline, positive) and ipa/ipc; makes `peak_E`/`peak_i` markers and, with baselines, a `baseline` wave to plot against the potential.
 - **`tafel`** (current, potential, e_from, e_to, e_eq, area, temperature): least-squares line through log10|j| against η = E − E_eq over a range; reports the Tafel slope (mV/dec, negative on the cathodic branch), the exchange current density j0 (extrapolated to η = 0), the transfer coefficient α = ln(10)RT/(F|b|), with uncertainties from the fit's covariance; makes `abs` (|j|) and `fit` (the line from η = 0 to the end of the range).

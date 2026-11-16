@@ -243,7 +243,11 @@ export function echoPython(
     case "setControlValue":
       return `op.panel(${pyLiteral(command.panel)})[${pyLiteral(command.control)}] = ${pyLiteral(command.value)}`;
     case "newProcedure":
-      return `op.new_procedure(${keywords({ name: command.name, code: command.code || undefined })})`;
+      return `op.new_procedure(${keywords({
+        name: command.name,
+        code: command.code || undefined,
+        autoRun: command.autoRun === false ? false : undefined,
+      })})`;
     case "modifyTable":
       return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
     case "redimension":
@@ -445,6 +449,12 @@ export function echoPython(
       return `op.graph_template(${pyLiteral(command.template)}).make(${makeArguments(command)})`;
     case "killWindow":
       return `op.kill_window(${pyLiteral(command.name)})`;
+    case "closeWindow":
+      return `op.close_window(${pyLiteral(command.name)})`;
+    case "reopenWindow":
+      return `op.reopen_window(${pyLiteral(command.name)})`;
+    case "renameWindow":
+      return `op.rename_window(${pyLiteral(command.name)}, ${pyLiteral(command.newName)})`;
   }
 }
 

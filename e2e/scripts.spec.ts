@@ -3,8 +3,10 @@ import { type App, expect, test } from "./fixtures";
 
 test.describe("procedure windows", () => {
   test("a procedure is typed, run, and there again after a reload", async ({ app, page }) => {
-    await app.menu("Windows", "New Procedure");
-    expect((await app.lastEntry()).code).toBe("op.new_procedure()");
+    await app.menu("Windows", "New Procedure…");
+    await expect(page.getByLabel("Procedure name")).toHaveValue("Procedure");
+    await app.doIt();
+    expect((await app.lastEntry()).code).toBe('op.new_procedure(name="Procedure")');
     const editor = app.window("Procedure").getByRole("textbox", { name: "Procedure.py" });
     await editor.click();
     await page.keyboard.type("def area(r):\nreturn 3 * r * r\n");
@@ -80,6 +82,10 @@ test.describe("procedure windows", () => {
 
     // Closing the window can be undone, text and all.
     await page.getByRole("button", { name: "Close Fits" }).click();
+    await page
+      .getByRole("dialog", { name: "Close Fits" })
+      .getByRole("button", { name: "Kill" })
+      .click();
     expect((await app.doc()).procedures).toEqual({});
     await page.keyboard.press("Control+z");
     expect((await app.doc()).procedures.Fits!.code).toContain("def bad()");
@@ -277,7 +283,7 @@ test.describe("the procedure editor", () => {
 test.describe("opening an experiment with procedures", () => {
   test("asks before running them, and opens without running if refused", async ({ app, page }) => {
     await app.run('p = op.new_procedure(code="FROM_FILE = 42\\n")');
-    const saved = await app.download(() => page.keyboard.press("Control+s"));
+    const saved = await app.saveExperiment();
 
     const open = async (answer: "accept" | "dismiss") => {
       const messages: string[] = [];
@@ -337,7 +343,7 @@ test.describe("the experiment's files", () => {
     await page.getByRole("menuitem", { name: "Delete" }).click();
     expect((await app.run('import os; print(os.path.exists("notes.txt"))')).output).toBe("False\n");
 
-    const saved = await app.download(() => page.keyboard.press("Control+s"));
+    const saved = await app.saveExperiment();
     // A new experiment opens in the tab; the old one stays among the browser's experiments.
     await app.menu("File", "New Experiment");
     await expect(page).toHaveTitle("Untitled — OresmePro");

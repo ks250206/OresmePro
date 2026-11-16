@@ -44,7 +44,7 @@ test.describe("experiments", () => {
   test("an experiment is saved to a file and opened again", async ({ app, page }) => {
     await sample(app);
     const before = await app.doc();
-    const saved = await app.download(() => page.keyboard.press("Control+s"));
+    const saved = await app.saveExperiment();
     expect(saved.file.suggestedFilename()).toBe("Experiment.oresme");
     expect(saved.bytes.subarray(0, 2).toString()).toBe("PK");
 
@@ -76,7 +76,7 @@ test.describe("experiments", () => {
     page,
   }) => {
     await sample(app);
-    const saved = await app.download(() => page.keyboard.press("Control+s"));
+    const saved = await app.saveExperiment();
     await app.run('op.make("extra", [1, 2, 3])');
     page.once("dialog", (dialog) => void dialog.accept());
     await app.drop([{ name: "saved.oresme", content: [...saved.bytes] }]);

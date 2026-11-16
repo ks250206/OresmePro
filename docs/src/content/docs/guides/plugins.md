@@ -8,7 +8,7 @@ sidebar:
 
 ## 入れる
 
-**Analysis → Plugins…** を開き、**Install from GitHub…**、**Install from Folder…**、**Install from Zip…** のどれかを選びます。
+**Python → Plugins…** を開き、**Install from GitHub…**、**Install from Folder…**、**Install from Zip…** のどれかを選びます。
 
 - GitHub の場合は、リポジトリの URL を入れます。`…/tree/<ブランチ>/<フォルダ>` の形の URL も使えます。ブランチやタグを別に指定することもできます
 - ブランチやタグは、その時点のコミットに固定されます。以後のファイルはすべて同じコミットから取得するので、リポジトリが更新されても、入れたものは変わりません
@@ -31,7 +31,7 @@ Python のコードを含むプラグインは、アプリとは別のサンド�
 
 ## 使う
 
-- **Analysis → Plugins…** でプラグインを選ぶと、その Action のフォームが出ます。wave と値を選んで **Run** を押します
+- **Python → Plugins…** でプラグインを選ぶと、その Action のフォームが出ます。wave と値を選んで **Run** を押します
 - Python からは `op.invoke("plugin.<プラグイン名>.<Action 名>", {...})` で呼びます。`op.atomic()` の中でも使えます
 - 結果の wave は、最初の入力 wave の隣に `<入力名>_<役割>` という名前で作られます。同じ名前の wave があるときは上書きせず、`_1` などを付けます
 - プラグインが結果を返すと、フィットと同じく **Analysis → Results…** に残ります。結果には、作ったプラグイン・版・導入元・コミットが記録されます

@@ -26,7 +26,8 @@ test.describe("installed app", () => {
     expect((await app.run("print(1 + 1)")).output).toBe("2\n");
 
     // Ruff was kept although no procedure window was open before: it lints and formats.
-    await app.menu("Windows", "New Procedure");
+    await app.menu("Windows", "New Procedure…");
+    await app.doIt();
     await app.window("Procedure").getByRole("textbox", { name: "Procedure.py" }).click();
     await page.keyboard.type("print(np.pi,missing)");
     await expect(app.window("Procedure").locator(".cm-lintRange-warning")).toHaveText(["missing"], {

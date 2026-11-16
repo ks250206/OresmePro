@@ -2,7 +2,7 @@ import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
-import { figureSize, type DocState } from "../core/doc/types";
+import { figureSize, frontWindow, type DocState } from "../core/doc/types";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
@@ -62,6 +62,12 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** Asks for the file name to save the experiment as. */
+  | { kind: "saveExperiment" }
+  /** Asks whether to close a window (keeping what it shows) or kill it. */
+  | { kind: "closeWindow"; name: string }
+  | { kind: "renameWindow"; name: string }
+  | { kind: "newProcedure" }
   /** Installing, managing and running plugins. */
   | { kind: "plugins" }
   | { kind: "about" };
@@ -548,4 +554,4 @@ export function useHistoryEntries() {
 }
 
 /** The frontmost window, if any. */
-export const activeWindow = (state: DocState) => state.windows.at(-1) ?? null;
+export const activeWindow = (state: DocState) => frontWindow(state.windows);

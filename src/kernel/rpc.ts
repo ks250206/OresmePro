@@ -291,7 +291,11 @@ export function handleRpc(
     case "listWindows":
       return {
         result: state.windows
-          .filter((window) => window.kind === params.kind)
+          .filter(
+            (window) =>
+              (params.kind === undefined || params.kind === null || window.kind === params.kind) &&
+              (params.closed !== false || !window.hidden),
+          )
           .map((window) => window.name),
       };
     case "graphInfo": {

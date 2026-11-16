@@ -8,11 +8,11 @@ sidebar:
 
 | Input                                              | Menu                                   | Python            |
 | -------------------------------------------------- | -------------------------------------- | ----------------- |
-| CSV, TSV, whitespace-delimited text                | **File → Load Delimited Text…**        | `op.load_text`    |
-| Excel (.xlsx, .xlsm)                               | **File → Load Excel Workbook…**        | `op.load_excel`   |
-| Igor wave (.ibw) or packed experiment (.pxp, .pxt) | **File → Load Igor Files…**            | `op.load_igor`    |
-| Parquet (.parquet)                                 | **File → Load Parquet or HDF5 Files…** | `op.load_parquet` |
-| HDF5 (.h5, .hdf5)                                  | **File → Load Parquet or HDF5 Files…** | `op.load_hdf5`    |
+| CSV, TSV, whitespace-delimited text                | **Data → Load Delimited Text…**        | `op.load_text`    |
+| Excel (.xlsx, .xlsm)                               | **Data → Load Excel Workbook…**        | `op.load_excel`   |
+| Igor wave (.ibw) or packed experiment (.pxp, .pxt) | **Data → Load Igor Files…**            | `op.load_igor`    |
+| Parquet (.parquet)                                 | **Data → Load Parquet or HDF5 Files…** | `op.load_parquet` |
+| HDF5 (.h5, .hdf5)                                  | **Data → Load Parquet or HDF5 Files…** | `op.load_hdf5`    |
 | Arbitrary files for Python                         | **File → Add Files for Python…**       | `open`            |
 
 For CSV and Excel, inspect the header, units, and column types in the preview. For text files, check the encoding too. Unreadable cells in a column explicitly set to numeric become NaN. Override the detected type in the preview if necessary. Save settings as a preset for recurring imports. Igor packed experiments provide their waves and data folders.

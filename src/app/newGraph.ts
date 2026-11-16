@@ -2,6 +2,7 @@ import { checkName, uniqueName, windowTaken, type Command } from "../core/doc/co
 import { echoPython, pyLiteral } from "../core/doc/echo";
 import { traceLook } from "../core/doc/styles";
 import {
+  frontWindow,
   DATE_UNIT,
   TRACE_COLORS,
   type DocState,
@@ -290,9 +291,18 @@ export const nextGraphName = (state: DocState): string => uniqueName("Graph", wi
 
 /** Why a name typed for a new graph cannot be used, or null (an empty name is fine). */
 export function graphNameProblem(state: DocState, name: string): string | null {
+  return windowNameProblem(state, name, "graph");
+}
+
+/** Why a new window cannot have this name, or null if it can (or none is given). */
+export function windowNameProblem(
+  state: DocState,
+  name: string,
+  what: "graph" | "table",
+): string | null {
   if (name === "") return null;
   try {
-    checkName(name, "graph");
+    checkName(name, what);
   } catch (error) {
     return (error as Error).message;
   }
@@ -304,7 +314,7 @@ export function graphNameProblem(state: DocState, name: string): string | null {
  * Igor's "From Target", which limits the dialog's lists to them.
  */
 export function targetWaves(state: DocState): { window: string; waves: string[] } | null {
-  const top = state.windows.at(-1);
+  const top = frontWindow(state.windows);
   if (!top) return null;
   if (top.kind === "table") {
     const table = state.tables[top.name];

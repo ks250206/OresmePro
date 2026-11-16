@@ -8,11 +8,11 @@ sidebar:
 
 | 入力                                               | メニュー                               | Python            |
 | -------------------------------------------------- | -------------------------------------- | ----------------- |
-| CSV、TSV、空白区切り                               | **File → Load Delimited Text…**        | `op.load_text`    |
-| Excel（.xlsx、.xlsm）                              | **File → Load Excel Workbook…**        | `op.load_excel`   |
-| Igor Wave（.ibw）・Packed Experiment（.pxp、.pxt） | **File → Load Igor Files…**            | `op.load_igor`    |
-| Parquet（.parquet）                                | **File → Load Parquet or HDF5 Files…** | `op.load_parquet` |
-| HDF5（.h5、.hdf5）                                 | **File → Load Parquet or HDF5 Files…** | `op.load_hdf5`    |
+| CSV、TSV、空白区切り                               | **Data → Load Delimited Text…**        | `op.load_text`    |
+| Excel（.xlsx、.xlsm）                              | **Data → Load Excel Workbook…**        | `op.load_excel`   |
+| Igor Wave（.ibw）・Packed Experiment（.pxp、.pxt） | **Data → Load Igor Files…**            | `op.load_igor`    |
+| Parquet（.parquet）                                | **Data → Load Parquet or HDF5 Files…** | `op.load_parquet` |
+| HDF5（.h5、.hdf5）                                 | **Data → Load Parquet or HDF5 Files…** | `op.load_hdf5`    |
 | Python で直接読む任意のファイル                    | **File → Add Files for Python…**       | `open`            |
 
 CSV や Excel ではプレビューで文字コード、列見出し、単位、列型を確認します。数値型に指定した列で変換できないセルは NaN になります。列が意図せず文字列として検出された場合は、プレビューで列型を指定します。定型データの設定はインポートのプリセットに保存できます。Igor の Packed Experiment からは Wave とデータフォルダを取り込みます。

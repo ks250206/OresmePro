@@ -56,6 +56,32 @@ Remove the selected columns and return the same table. The waves remain in the e
 kill()
 ```
 
+Kill the window and what it shows (see ``op.kill_window``).
+
+### `Table.close`
+
+```python
+close()
+```
+
+Close the window, keeping what it shows to reopen (see ``op.close_window``).
+
+### `Table.reopen`
+
+```python
+reopen()
+```
+
+Open the window again after ``close()``, in front of the others.
+
+### `Table.rename`
+
+```python
+rename(new_name)
+```
+
+Give it and its window another name (see ``op.rename_window``). Returns self.
+
 ### `Table.set`
 
 ```python

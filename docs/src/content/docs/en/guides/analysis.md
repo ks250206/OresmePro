@@ -31,4 +31,4 @@ Differentiate and integrate using the wave's scaling for uniform samples. Supply
 | `tafel`    | Tafel slope (mV/dec) and exchange current density over a chosen range, with uncertainties                                    |
 | `eis_fit`  | Equivalent-circuit fit of an impedance spectrum (R(RC), R(RQ), Randles): parameters, uncertainties, χ², and fitted Z′ and Z″ |
 
-It also brings a Nyquist graph template. Install it from **Analysis › Plugins…**: paste the address above into **Install from GitHub…**, or pick the folder with **Install from Folder…**. From Python, call it as `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})`. The README in that folder describes the inputs, models, and sign conventions.
+It also brings a Nyquist graph template. Install it from **Python › Plugins…**: paste the address above into **Install from GitHub…**, or pick the folder with **Install from Folder…**. From Python, call it as `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})`. The README in that folder describes the inputs, models, and sign conventions.

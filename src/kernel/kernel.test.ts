@@ -586,6 +586,66 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("False\n");
   });
 
+  it("imports one procedure from another, each its own module", async () => {
+    // Procedures become files before each input, so each step is an input of its own.
+    expect(
+      await run(
+        [
+          'op.new_procedure("ns_tools", "SCALE = 3\\ndef scaled(x):\\n    return SCALE * x\\n")',
+          'op.new_procedure("ns_main", "import ns_tools\\nSCALE = 10\\nresult = ns_tools.scaled(2)\\n", auto_run=False)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(
+      await run(
+        "import ns_main\nprint(ns_main.result, ns_main.SCALE, ns_main.ns_tools.SCALE, op.procedure('ns_main').auto_run)",
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("6 10 3 False\n");
+    // A rename is the module's new name: the old one goes.
+    expect(await run('op.rename_window("ns_tools", "ns_util")')).toBe(true);
+    expect(
+      await run(
+        "import importlib, os\nprint(os.path.exists('ns_tools.py'), importlib.import_module('ns_util').scaled(1))",
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("False 3\n");
+    expect(await run('op.kill_window("ns_main"); op.kill_window("ns_util")')).toBe(true);
+  });
+
+  it("closes, reopens and renames windows", async () => {
+    expect(
+      await run(
+        [
+          'w = op.display(op.make("win_y", [1.0, 2.0]), name="WinG")',
+          "w.close()",
+          'print([n for n in op.windows("graph") if n.startswith("Win")], [n for n in op.windows("graph", closed=False) if n.startswith("Win")])',
+          "w.reopen()",
+          'print(w.rename("WinSpectrum").name, op.graph("WinSpectrum").name)',
+          'op.close_window("WinSpectrum")',
+          'op.reopen_window(op.graph("WinSpectrum"))',
+          "for bad in (lambda: op.rename_window('WinSpectrum', '1x'), lambda: op.close_window('none')):",
+          "    try:",
+          "        bad()",
+          "    except op.OresmeError as error:",
+          "        print(str(error)[:30])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      [
+        "['WinG'] []",
+        "WinSpectrum WinSpectrum",
+        '"1x" is not a valid graph name',
+        'No window named "none".',
+        "",
+      ].join("\n"),
+    );
+    expect(
+      doc.getState().windows.find((window) => window.name === "WinSpectrum"),
+    ).not.toHaveProperty("hidden");
+  });
+
   it("keeps the files Python writes, and gives it the files of the experiment", async () => {
     // Every byte value, and bit patterns that are NaNs when read as numbers.
     const odd = [1, 0, 0, 0, 0, 0, 0xf0, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 7];

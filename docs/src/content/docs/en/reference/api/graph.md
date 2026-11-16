@@ -308,6 +308,32 @@ whatever ``width`` and ``height`` say.
 kill()
 ```
 
+Kill the window and what it shows (see ``op.kill_window``).
+
+### `Graph.close`
+
+```python
+close()
+```
+
+Close the window, keeping what it shows to reopen (see ``op.close_window``).
+
+### `Graph.reopen`
+
+```python
+reopen()
+```
+
+Open the window again after ``close()``, in front of the others.
+
+### `Graph.rename`
+
+```python
+rename(new_name)
+```
+
+Give it and its window another name (see ``op.rename_window``). Returns self.
+
 ## `Length`
 
 A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.

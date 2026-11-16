@@ -10,6 +10,7 @@ import {
   runPython,
 } from "../app/actions";
 import { parseConstraints, parseHold, parseSpans } from "../app/fitOptions";
+import { windowNameProblem } from "../app/newGraph";
 import {
   doc,
   exportLayout,
@@ -25,7 +26,7 @@ import {
 } from "../app/session";
 import { browserLibrary, sameStyle } from "../app/styleLibrary";
 import { GRID_GAP, GRID_MARGIN, GRID_PRESETS, readingOrder } from "../core/doc/arrange";
-import { checkName, uniqueName, type Command } from "../core/doc/commands";
+import { checkName, uniqueName, windowTaken, type Command } from "../core/doc/commands";
 import {
   nameProblems,
   parseShape,
@@ -82,6 +83,12 @@ import {
   TextInput,
 } from "./controls";
 import { ExperimentsDialog } from "./ExperimentsDialog";
+import {
+  CloseWindowDialog,
+  NewProcedureDialog,
+  RenameWindowDialog,
+  SaveExperimentDialog,
+} from "./WindowDialogs";
 import { GraphTemplatesDialog, SaveGraphTemplateDialog } from "./GraphTemplateDialogs";
 import { ImportDialog } from "./ImportDialog";
 import { NewGraphDialog } from "./NewGraphDialog";
@@ -334,13 +341,28 @@ function NewTableDialog() {
   const [waves, setWaves] = useState<string[]>(() =>
     preselected.filter((name) => order.includes(name)),
   );
+  const [name, setName] = useState("");
+  const tableName = name.trim();
+  const fallback = useDoc((state) => uniqueName("Table", windowTaken(state)));
+  const problem = useDoc((state) => windowNameProblem(state, tableName, "table"));
   return (
     <Dialog
       title="New Table"
       onClose={close}
-      submitDisabled={waves.length === 0}
-      onSubmit={() => submit({ op: "edit", waves })}
+      submitDisabled={waves.length === 0 || problem !== null}
+      onSubmit={() => submit({ op: "edit", waves, ...(tableName ? { name: tableName } : {}) })}
     >
+      <Field label="Name">
+        <TextInput
+          aria-label="Table name"
+          aria-invalid={problem !== null}
+          className="w-40"
+          placeholder={fallback}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        {problem ? <span className="text-[11px] text-danger">{problem}</span> : null}
+      </Field>
       <div className="text-muted">Columns</div>
       <NameList label="Columns" names={order} selected={waves} onChange={setWaves} />
     </Dialog>
@@ -3250,6 +3272,14 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "saveExperiment":
+      return <SaveExperimentDialog />;
+    case "closeWindow":
+      return <CloseWindowDialog name={dialog.name} />;
+    case "renameWindow":
+      return <RenameWindowDialog name={dialog.name} />;
+    case "newProcedure":
+      return <NewProcedureDialog />;
     case "about":
       return <AboutDialog />;
   }
