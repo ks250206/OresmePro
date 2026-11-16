@@ -15,9 +15,27 @@ sidebar:
 - 既知のパラメータを固定するには `hold`、許容範囲を指定するには `bounds` を使います。既知の点ごとの標準偏差は `sigma` に渡します。
 - `op.fit` は `FitResult` を返します。`converged`、`reason`、残差とパラメータ間の相関を確認し、初期値やフィット範囲を調整します。
 - 係数と推定標準偏差は `W_coef` と `W_sigma` に書かれます。フィットは通常 Experiment にも記録され、**Analysis → Results…** から比較・再実行できます。
+- 同じ wave をフィットし直すと `fit_<wave名>` は新しい曲線に置き換わりますが、各結果は作った曲線・残差・信頼帯のコピーをデータフォルダ `results:<結果名>` に残します(`op.result("Fit0").kept`)。Results の **Show** で、読んだデータとその結果の曲線をグラフにします。結果を削除するとコピーも消えます(グラフなどで表示中のものは残ります)。
+- X の原点が 0 から遠いデータ(日付 wave など)でも、係数の不確かさは原点を動かしたデータと同じ値になります。パラメータが互いに独立に決まらないときは、収束とは別に「不確かさを推定できなかった」と理由に書かれます。
 - 組み込みモデルに加え、初期値付きの Python 関数や lmfit モデルを渡せます。
 
 [ガウシアン](../../examples/gaussian/) · [指数関数](../../examples/exponential/) · [Analysis API](../../reference/api/analysis/#fit)
+
+## 試料の条件と結果を比べる
+
+組成・膜厚・温度・サイクル数・装置などの**試料の属性**を、データフォルダ(試料ごとのフォルダ)か wave に付けられます。
+**Data → Sample Attributes…** の表で、行(試料)ごとに数値か文字を入力します。フォルダの属性はその中の wave すべてに付き、wave 自身の属性が上書きします。
+Data Browser のフォルダ・wave の右クリック **Attributes…** でも開けます。
+
+結果は、読んだ wave の試料の属性を持ちます。**Analysis → Results…** では属性が列に並び、**Plot…** で「膜厚を横軸、A を縦軸」のように、
+パラメータを属性(または別のパラメータ)に対してプロットできます(標準偏差は誤差棒)。`op.results_table()` も属性の列を作ります。
+
+```python
+op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")   # フォルダ(末尾に :)
+op.wave("run1:spectrum").set_attributes(cycle=3)                         # wave
+op.wave("run1:spectrum").attributes      # {'thickness': 12.5, 'Mg': 0.3, 'instrument': 'XPS-2', 'cycle': 3}
+op.plot_results("A", "thickness")        # A を膜厚に対してプロット
+```
 
 ## 同じ手順を多くの試料に適用する
 
@@ -25,6 +43,10 @@ sidebar:
 
 1. **Analysis → Results…** で結果を選び、**Make Template…** で名前を付けます。結果が読んだ wave はテンプレートの入力になります。
    複数の結果を選ぶと、行った順の複数段のテンプレートになり、前の段が作った wave(残差など)は「その段の出力」として次の段に渡ります。
+   `hold`・`bounds`・`exclude` もそのままテンプレートに入るので、試料 1 で決めた条件で試料 2 以降をフィットできます。
+   **Analysis → Templates…** の **New…** / **Edit…** では、テンプレートを画面で作り直せます。登録された Action から段を追加して並べ替え、
+   各引数を「値」「入力」「前の段の出力」から選びます(`hold` などは `{"y0": 0}` のような JSON で書きます)。
+   **Save and Try** で 1 つの試料に試してから、全試料に実行できます。
 2. **Analysis → Templates…** でテンプレートを選び、試料の行を作ります(1 行が 1 試料)。**Add Selected Waves** は Data Browser で選んだ wave、
    **Add from Folder** はフォルダの wave(入力が複数のときは、入力と同じ名前の wave を持つフォルダごと)から行を作ります。
 3. **Run** で実行します。試料ごとに `op.atomic()` の中で全段を行うので、失敗した試料は何も残さず、成功した試料はその場で実験に入ります。

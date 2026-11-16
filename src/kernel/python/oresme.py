@@ -79,6 +79,8 @@ __all__ = [
     "kill_window",
     "link_graphs",
     "unlink_graphs",
+    "set_attributes",
+    "attributes",
     "Procedure",
     "new_procedure",
     "close_window",
@@ -582,6 +584,20 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     @note.setter
     def note(self, value):
         _dispatch({"op": "setWaveMeta", "name": self._name, "note": str(value)})
+
+    @property
+    def attributes(self):
+        """The attributes of the sample this wave is: those of its data folders, then its own.
+
+        A dict of name to number or text, such as ``{"thickness": 12.5,
+        "instrument": "XPS-2"}``; see ``op.set_attributes``.
+        """
+        return attributes(self)
+
+    def set_attributes(self, values=None, **named):
+        """Set attributes of this wave itself (None removes one). Returns self."""
+        set_attributes(self, values, **named)
+        return self
 
     def set_scale(self, x0=None, dx=None, unit=None, *, y0=None, dy=None, y_unit=None):
         """Set the scaling: start, step and unit along X (and Y for a 2-D wave)."""
@@ -2055,6 +2071,16 @@ class Folder:
     def _join(self, name):
         return f"{self._path}:{name}" if self._path else name
 
+    @property
+    def attributes(self):
+        """The attributes of the sample this folder is: those of the folders it is in, then its own."""
+        return attributes(self)
+
+    def set_attributes(self, values=None, **named):
+        """Set attributes of this folder, which its waves have too (None removes one). Returns self."""
+        set_attributes(self, values, **named)
+        return self
+
     def make(self, name, data=None, **options):
         """Create a wave in this folder. Same options as ``op.make``."""
         return make(self._join(name), data, **options)
@@ -3030,6 +3056,51 @@ def unlink_graphs(*graphs):
     _dispatch({"op": "unlinkGraphs", "graphs": names})
 
 
+def _attribute_target(target):
+    """A wave by name, or a data folder as "path:"; from a Wave or a Folder too."""
+    if isinstance(target, Folder):
+        if not target.path:
+            raise OresmeError("Root has no attributes: give them to a data folder or a wave.")
+        return f"{target.path}:"
+    if isinstance(target, Wave):
+        return target.name
+    if isinstance(target, str) and target:
+        return target
+    raise TypeError("Give a wave, a data folder (op.folder('run1') or 'run1:'), or a name.")
+
+
+def set_attributes(target, values=None, **named):
+    """Set attributes of a sample: a data folder or a wave.
+
+    ``target`` is a wave, a folder (``op.folder("run1")``), a wave's name, or
+    a folder's path followed by a colon (``"run1:"``). The attributes are
+    given as a dict, keywords, or both: names of letters, digits and _,
+    values that are numbers or text; None removes an attribute. A folder's
+    attributes are those of every wave in it, below its own:
+
+        op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")
+        op.wave("run1:spectrum").set_attributes(cycle=3)
+
+    Results have the attributes of the wave they read, so
+    ``op.results_table()`` and ``op.plot_results()`` can set them beside the
+    parameters.
+    """
+    given = {**(values or {}), **named}
+    plain = {}
+    for key, value in given.items():
+        if value is not None and not isinstance(value, str):
+            if not _is_number(value):
+                raise TypeError(f"{key} must be a number, text or None, not {value!r}.")
+            value = int(value) if _is_integer(value) and not isinstance(value, float) else float(value)
+        plain[str(key)] = value
+    _dispatch({"op": "setAttributes", "target": _attribute_target(target), "values": plain})
+
+
+def attributes(target, *, own=False):
+    """The attributes of a wave or a data folder: with those it has from its folders, or with ``own`` only its own."""
+    return _call("attributes", {"target": _attribute_target(target), "own": bool(own)})[0]
+
+
 def kill_window(name):
     """Kill a graph, table, procedure, page layout or panel: its window and what it shows.
 
@@ -3192,7 +3263,7 @@ def default_style():
 
 #: The kinds of value a parameter of an action takes.
 _PARAM_TYPES = ("wave", "waves", "number", "integer", "string", "boolean", "choice", "numbers",
-                "samples")
+                "samples", "json")
 _PARAM_KEYS = frozenset(
     ("type", "title", "description", "optional", "default", "choices", "min", "max", "length", "arg")
 )
@@ -3258,6 +3329,34 @@ def _is_integer(value):
     return _is_number(value) and (isinstance(value, numbers.Integral) or float(value).is_integer())
 
 
+def _json_value(value, where):
+    """A value made of dicts (with text keys), lists, text, numbers, True/False and None, as plain JSON.
+
+    For the settings of an action that have a structure of their own (a
+    fit's ``hold``, ``bounds`` or ``exclude``), which the action checks.
+    """
+    if value is None or isinstance(value, (bool, np.bool_)):
+        return None if value is None else bool(value)
+    if isinstance(value, str):
+        return value
+    if _is_number(value):
+        if not math.isfinite(float(value)):
+            raise OresmeError(f"{where} must be made of finite numbers, not {value!r}.")
+        return int(value) if _is_integer(value) and not isinstance(value, float) else float(value)
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_json_value(item, f"{where}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, dict):
+        plain = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise OresmeError(f"{where}: keys must be text, not {key!r}.")
+            plain[key] = _json_value(item, f"{where}[{key!r}]")
+        return plain
+    raise OresmeError(
+        f"{where} must be made of dicts, lists, text, numbers, True, False and None, not {value!r}."
+    )
+
+
 def _check_value(spec, value, where, resolve_names=True):
     """The value of one argument as plain JSON, or OresmeError saying what is wrong with it."""
     kind = spec["type"]
@@ -3308,6 +3407,8 @@ def _check_value(spec, value, where, resolve_names=True):
         if not isinstance(value, (bool, np.bool_)):
             raise OresmeError(f"{where} must be True or False, not {value!r}.")
         return bool(value)
+    if kind == "json":
+        return _json_value(value, where)
     if kind == "samples":
         # The waves are looked up sample by sample, when each is done.
         rows = []
@@ -4103,16 +4204,35 @@ def set_template(name, data):
                 step["version"] = max(_actions[action_id])
             if isinstance(step.get("args"), dict):
                 step["args"] = {key: _template_value(value) for key, value in step["args"].items()}
+                _check_structured(step)
             filled.append(step)
         data["steps"] = filled
     _dispatch({"op": "setTemplate", "name": name, "template": data})
     return Template(name)
 
 
+def _check_structured(step):
+    """Refuses an object as an argument that takes none: only a reference, or a ``json`` setting, is one."""
+    params = _actions.get(step.get("action"), {}).get(step.get("version"))
+    if params is None:
+        return
+    for key, value in step["args"].items():
+        if not isinstance(value, dict) or "$input" in value or "$step" in value:
+            continue
+        spec = params.params.get(key)
+        if spec is not None and spec["type"] != "json":
+            raise OresmeError(
+                f"Step {step['id']}: {key} takes a {spec['type']}; an object there must be a "
+                '{"$input": slot} or a {"$step": step, "output": key}.'
+            )
+
+
 def _template_value(value):
     """An argument of a step as plain JSON: waves by name, NumPy numbers as numbers."""
     if isinstance(value, Wave):
         return value.name
+    if isinstance(value, dict):
+        return {key: _template_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_template_value(item) for item in value]
     if isinstance(value, np.generic):
@@ -4321,6 +4441,9 @@ def _resolve(value, inputs, outputs, where):
         return value
     if "$input" in value:
         return inputs[value["$input"]]
+    if "$step" not in value:
+        # A value with a structure of its own (a fit's bounds), which may hold references.
+        return {name: _resolve(item, inputs, outputs, where) for name, item in value.items()}
     step, key = value["$step"], value["output"]
     returned = outputs[step]
     if key not in returned:
@@ -4352,8 +4475,13 @@ def _do_sample(run_name, index, plan, inputs):
                 except OresmeError as error:
                     raise OresmeError(f"{where}: {error}") from None
                 outputs[step["id"]] = _step_outputs(_result_json(found.function(**passed)))
-            made = [name for name in _call("listWaves")[0] if name not in before_waves]
             kept = [name for name in _call("listResults")[0] if name not in before_results]
+            # The results' own copies of what they made belong to them, not to the sample.
+            copies = tuple(f"results:{name}:" for name in kept)
+            made = [
+                name for name in _call("listWaves")[0]
+                if name not in before_waves and not name.startswith(copies)
+            ]
             # In the same block as the outputs: the record and what it records go in together.
             _dispatch({
                 "op": "updateRunSample", "run": run_name, "index": index, "state": "succeeded",

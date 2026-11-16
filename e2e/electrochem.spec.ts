@@ -150,7 +150,9 @@ test.describe("the example plugin electrochem", () => {
       const state = globalThis.oresme.doc.getState();
       return {
         results: Object.keys(state.results),
-        waves: state.waveOrder,
+        // Each result's own copies of the curves it made are kept apart, in results:<name>.
+        waves: state.waveOrder.filter((name) => !name.startsWith("results:")),
+        copies: state.waveOrder.filter((name) => name.startsWith("results:")).length,
         traces: Object.values(state.graphs).map((graph) =>
           graph.traces.map((trace) => [trace.y, trace.x]),
         ),
@@ -158,6 +160,7 @@ test.describe("the example plugin electrochem", () => {
     });
     expect(kept).toEqual({
       results: ["Plugin0", "Plugin1"],
+      copies: 4,
       waves: [
         "eis_f",
         "eis_re",

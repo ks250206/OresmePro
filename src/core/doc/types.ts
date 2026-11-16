@@ -952,6 +952,11 @@ export interface DocState {
   readonly timeZone: string;
   /** Back-to-front z-order; the last window is the active one. */
   readonly windows: readonly WindowState[];
+  /**
+   * The attributes of samples, by data folder ("run1:", with a colon) or by
+   * wave (see ./attributes).
+   */
+  readonly attributes: Dict<Readonly<Record<string, number | string>>>;
 }
 
 export const emptyDoc = (): DocState => ({
@@ -971,6 +976,7 @@ export const emptyDoc = (): DocState => ({
   runs: dict(),
   timeZone: "UTC",
   windows: [],
+  attributes: dict(),
 });
 
 /** Height of a window's title bar; the content area is the window minus this. */

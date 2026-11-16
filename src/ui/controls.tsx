@@ -13,6 +13,7 @@ import {
   type SelectHTMLAttributes,
 } from "react";
 import { flushSync } from "react-dom";
+import { docsUrl } from "../app/links";
 import { MARKUP_CODES } from "../core/plot/richText";
 
 const inputClass =
@@ -98,6 +99,7 @@ export function Dialog({
   submitDisabled,
   width = 420,
   buttons,
+  help,
 }: {
   title: string;
   children: ReactNode;
@@ -108,6 +110,8 @@ export function Dialog({
   width?: number;
   /** More buttons for the footer, on the left as in Igor ("To Cmd Line"). */
   buttons?: ReactNode;
+  /** The page of the documentation about this dialog ("guides/curve-fitting/"), linked in its footer. */
+  help?: string;
 }) {
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
@@ -146,6 +150,19 @@ export function Dialog({
         <div className="border-b border-line-soft px-3 py-2 font-semibold">{title}</div>
         <div className="flex min-h-0 flex-col gap-2 overflow-auto p-3">{children}</div>
         <div className="flex justify-end gap-2 border-t border-line-soft px-3 py-2">
+          {help !== undefined ? (
+            <a
+              href={docsUrl(help)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the documentation for this dialog"
+              className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border border-line bg-paper text-muted hover:text-ink ${
+                buttons ? "" : "mr-auto"
+              }`}
+            >
+              ?<span className="sr-only">Help</span>
+            </a>
+          ) : null}
           {buttons ? <div className="mr-auto flex gap-2">{buttons}</div> : null}
           <Button onClick={onClose}>{onSubmit ? "Cancel" : "Close"}</Button>
           {onSubmit ? (

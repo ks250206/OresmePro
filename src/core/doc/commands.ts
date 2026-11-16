@@ -1,6 +1,13 @@
 import { MAX_PLOT_SIZE, MIN_PLOT_SIZE, SCREEN_UNITS_PER_POINT, toPoints } from "../plot/plotSize";
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
+import {
+  checkAttributeName,
+  checkAttributeValue,
+  dropAttributes,
+  isFolderKey,
+  renameAttributeKeys,
+} from "./attributes";
 import { dict, filterDict, withEntry, withoutEntries, type Dict } from "./dict";
 import {
   checkCycle,
@@ -14,6 +21,7 @@ import {
 } from "./formula";
 import {
   checkResult,
+  keptFolder,
   renameInResult,
   RESULT_BASE,
   RESULT_KINDS,
@@ -353,6 +361,11 @@ export type Command =
    */
   | { op: "linkGraphs"; graphs: readonly string[]; axes?: string; cursors?: boolean }
   | { op: "unlinkGraphs"; graphs: readonly string[] }
+  /**
+   * Sets attributes of a sample: of a data folder ("run1:", with a colon) or
+   * of a wave. A value of null removes that attribute.
+   */
+  | { op: "setAttributes"; target: string; values: Record<string, unknown> }
   /** Closes a window but keeps what it shows, to reopen it (see WindowState.hidden). */
   | { op: "closeWindow"; name: string }
   | { op: "reopenWindow"; name: string }
@@ -597,6 +610,53 @@ function unlink(state: DocState, names: readonly string[]): DocState {
   for (const group of groups) {
     const left = Object.values(next.graphs).filter((graph) => graph.link?.group === group);
     if (left.length === 1) next = putGraph(next, { ...left[0]!, link: null });
+  }
+  return next;
+}
+
+/**
+ * Copies the waves a result made into its own data folder (see keptFolder),
+ * so that what it made stays when the analysis is run again and makes the
+ * same names anew. Waves that are gone are left out.
+ */
+function keepOutputs(
+  state: DocState,
+  result: string,
+  outputs: Readonly<Record<string, string>>,
+): { state: DocState; kept: Record<string, string> } {
+  const kept: Record<string, string> = {};
+  const roles = Object.entries(outputs).filter(([, wave]) => wave in state.waves);
+  if (roles.length === 0) return { state, kept };
+  let next = withFolders(state, keptFolder(result));
+  for (const [role, wave] of roles) {
+    const source = next.waves[wave]!;
+    const name = `${keptFolder(result)}:${role}`;
+    next = putWave(
+      next,
+      withoutFormula(
+        changed(source, { name, data: source.data.slice(), imag: source.imag?.slice() ?? null }),
+      ),
+    );
+    kept[role] = name;
+  }
+  return { state: next, kept };
+}
+
+/**
+ * Removes a result's own copies, except those something still shows (a
+ * graph, a table), and its folder and the results folder if that empties
+ * them.
+ */
+function dropKept(state: DocState, result: AnalysisResult): DocState {
+  const unused = Object.values(result.kept).filter(
+    (name) => name in state.waves && waveUsers(state, name).length === 0,
+  );
+  let next = unused.length > 0 ? removeWaves(state, unused) : state;
+  for (const folder of [keptFolder(result.name), "results"]) {
+    const holds = (name: string) => name.startsWith(`${folder}:`);
+    if (next.folders.includes(folder) && !next.waveOrder.some(holds) && !next.folders.some(holds)) {
+      next = { ...next, folders: next.folders.filter((item) => item !== folder) };
+    }
   }
   return next;
 }
@@ -1770,7 +1830,9 @@ function renameReferences(
     waves = withEntry(waves, wave.name, { ...wave, formula: { ...formula, expr, inputs } });
   }
   const panels = renameInPanels(state.panels, rename);
-  return { ...state, waves, graphs, tables, results, panels, runs };
+  // A sample's attributes go where its wave or folder goes.
+  const attributes = renameAttributeKeys(state.attributes, rename);
+  return { ...state, waves, graphs, tables, results, panels, runs, attributes };
 }
 
 /** A wave under a new name; a formula that was up to date with it stays so. */
@@ -1915,7 +1977,12 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
     }
   }
   const waves = withoutEntries(state.waves, names);
-  return { ...state, waves, waveOrder: state.waveOrder.filter((name) => name in waves) };
+  return {
+    ...state,
+    waves,
+    waveOrder: state.waveOrder.filter((name) => name in waves),
+    attributes: dropAttributes(state.attributes, (key) => names.includes(key)),
+  };
 }
 
 function changed(wave: Wave, change: Partial<Wave>): Wave {
@@ -2260,7 +2327,14 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const inside = (name: string) => name === path || name.startsWith(`${path}:`);
       const emptied = removeWaves(state, state.waveOrder.filter(inside));
       return {
-        state: { ...emptied, folders: state.folders.filter((folder) => !inside(folder)) },
+        state: {
+          ...emptied,
+          folders: state.folders.filter((folder) => !inside(folder)),
+          attributes: dropAttributes(
+            emptied.attributes,
+            (key) => isFolderKey(key) && inside(key.slice(0, -1)),
+          ),
+        },
         result: null,
       };
     }
@@ -2813,15 +2887,27 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? uniqueName(RESULT_BASE[kind ?? "fit"], taken)
           : checkName(command.name, "result");
       const result = checkResult(command.result, name, state);
-      return { state: { ...state, results: withEntry(state.results, name, result) }, result: name };
+      // The result run again under its name keeps what it makes now, not what it made before.
+      const before = state.results[name];
+      const { state: next, kept } = keepOutputs(
+        before ? dropKept(state, before) : state,
+        name,
+        result.outputs,
+      );
+      return {
+        state: { ...next, results: withEntry(next.results, name, { ...result, kept }) },
+        result: name,
+      };
     }
     case "removeResults": {
+      let next = state;
       for (const name of command.names) {
-        if (!(name in state.results))
-          throw new DocError(`No result named ${JSON.stringify(name)}.`);
+        const result = state.results[name];
+        if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+        next = dropKept(next, result);
       }
       return {
-        state: { ...state, results: withoutEntries(state.results, command.names) },
+        state: { ...next, results: withoutEntries(next.results, command.names) },
         result: null,
       };
     }
@@ -2833,15 +2919,24 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.results) {
         throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
       }
+      // Its copies move with it, and whatever names them follows (graphs, the result itself).
+      let moved = state;
+      if (state.folders.includes(keptFolder(command.name))) {
+        moved = applyCommand(state, {
+          op: "renameFolder",
+          path: keptFolder(command.name),
+          newPath: keptFolder(newName),
+        }).state;
+      }
       const runs = dict<TemplateRun>();
-      for (const run of Object.values(state.runs)) {
+      for (const run of Object.values(moved.runs)) {
         runs[run.name] = renameResultInRun(run, command.name, newName);
       }
       return {
         state: {
-          ...state,
-          results: withEntry(withoutEntries(state.results, [command.name]), newName, {
-            ...result,
+          ...moved,
+          results: withEntry(withoutEntries(moved.results, [command.name]), newName, {
+            ...moved.results[command.name]!,
             name: newName,
           }),
           runs,
@@ -3037,6 +3132,32 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "unlinkGraphs": {
       for (const name of command.graphs) requireGraph(state, name);
       return { state: unlink(state, command.graphs), result: null };
+    }
+    case "setAttributes": {
+      const target = command.target;
+      if (typeof target !== "string") throw new DocError("target must be a wave or a data folder.");
+      if (isFolderKey(target)) {
+        if (!state.folders.includes(target.slice(0, -1))) {
+          throw new DocError(`No data folder named ${JSON.stringify(target.slice(0, -1))}.`);
+        }
+      } else {
+        requireWave(state, target);
+      }
+      if (typeof command.values !== "object" || command.values === null) {
+        throw new DocError("values must be a dict of attribute names and values.");
+      }
+      const key = isFolderKey(target) ? target : requireWave(state, target).name;
+      const next: Record<string, number | string> = { ...state.attributes[key] };
+      for (const [name, value] of Object.entries(command.values)) {
+        checkAttributeName(name);
+        if (value === null) delete next[name];
+        else next[name] = checkAttributeValue(value, name);
+      }
+      const attributes =
+        Object.keys(next).length > 0
+          ? withEntry(state.attributes, key, next)
+          : withoutEntries(state.attributes, [key]);
+      return { state: { ...state, attributes }, result: null };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {

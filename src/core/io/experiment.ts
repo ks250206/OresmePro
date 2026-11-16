@@ -6,6 +6,7 @@ import {
   checkStyle,
   savedPlotSize,
 } from "../doc/commands";
+import { checkAttributeName, checkAttributeValue, isFolderKey } from "../doc/attributes";
 import { dict, dictFrom } from "../doc/dict";
 import { formulaCurrent, parseFormula } from "../doc/formula";
 import { checkPanel } from "../doc/panels";
@@ -94,6 +95,8 @@ export interface SavedExperiment {
   runs?: Record<string, TemplateRun>;
   timeZone?: string;
   windows: WindowState[];
+  /** By data folder ("run1:") or wave; left out by files from before attributes. */
+  attributes?: Record<string, Record<string, number | string>>;
 }
 
 /** Where the experiment's files (see FileStore) sit in an .oresme archive. */
@@ -138,6 +141,7 @@ export function describeExperiment(
     runs: dictFrom(state.runs),
     timeZone: state.timeZone,
     windows: [...state.windows],
+    attributes: dictFrom(state.attributes),
   };
 }
 
@@ -376,6 +380,21 @@ export function buildState(
     }
   }
   const timeZone = isTimeZone(saved.timeZone) ? saved.timeZone : "UTC";
+  // Those of waves and folders that are there, with names and values that can be read.
+  const attributes = dict<Record<string, number | string>>();
+  for (const [key, values] of Object.entries(saved.attributes ?? {})) {
+    const there = isFolderKey(key) ? state.folders.includes(key.slice(0, -1)) : key in state.waves;
+    if (!there || typeof values !== "object" || values === null) continue;
+    const kept: Record<string, number | string> = {};
+    for (const [name, value] of Object.entries(values)) {
+      try {
+        kept[checkAttributeName(name)] = checkAttributeValue(value, name);
+      } catch {
+        continue;
+      }
+    }
+    if (Object.keys(kept).length > 0) attributes[key] = kept;
+  }
   return {
     ...state,
     graphs,
@@ -391,6 +410,7 @@ export function buildState(
     runs,
     timeZone,
     windows,
+    attributes,
   };
 }
 

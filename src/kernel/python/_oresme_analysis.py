@@ -20,6 +20,7 @@ __all__ = [
     "result",
     "results",
     "results_table",
+    "plot_results",
     "make_template",
     "fit",
     "fit_batch",
@@ -450,14 +451,67 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                 break
         jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))
-        try:
-            covariance = np.linalg.inv(jacobian.T @ jacobian)
-            # Without per-point uncertainties, they are estimated from the scatter.
-            if weights is None:
-                covariance = covariance * chi / freedom
-        except np.linalg.LinAlgError:
-            covariance = np.full((len(params), len(params)), np.nan)
+        covariance = _covariance(jacobian)
+        # Without per-point uncertainties, they are estimated from the scatter.
+        if weights is None:
+            covariance = covariance * chi / freedom
+        if not np.all(np.isfinite(covariance)):
+            # Reached or not, the answer does not pin each parameter down.
+            reason += "; the uncertainties could not be estimated (the parameters are not independent there)"
     return params, covariance, chi, converged, reason
+
+
+def _covariance(jacobian):
+    """The inverse of J^T J, the covariance of the parameters before scaling by the scatter.
+
+    Worked out from the singular values of J with its columns scaled to unit
+    length, never by forming and inverting J^T J: that squares the condition
+    number, so a fit against X far from zero (dates are seconds since 1970)
+    lost all its digits and gave NaN or wrong uncertainties. All NaN where a
+    parameter is not determined (a column of zeros, or columns that depend
+    on each other within the rounding).
+    """
+    count = jacobian.shape[1]
+    undetermined = np.full((count, count), np.nan)
+    if not np.all(np.isfinite(jacobian)):
+        return undetermined
+    norms = np.sqrt(np.sum(jacobian**2, axis=0))
+    if not np.all(norms > 0):
+        return undetermined
+    _, singular, vt = np.linalg.svd(jacobian / norms, full_matrices=False)
+    if not singular[-1] > singular[0] * max(jacobian.shape) * np.finfo(float).eps:
+        return undetermined
+    inner = (vt.T / singular**2) @ vt
+    return inner / np.outer(norms, norms)
+
+
+def _centred_polynomial(x, y, count, weights):
+    """Fits the ``count`` coefficients of a polynomial in X (lowest power first).
+
+    Solved in u = (X - centre) / half of the range, then turned back into
+    coefficients of X with their covariance, which is exact algebra: the
+    coefficients of X are only as well determined as they are, but none of
+    the digits is lost on the way.
+    """
+    low, high = float(np.min(x)), float(np.max(x))
+    centre = 0.5 * (low + high)
+    half = 0.5 * (high - low) or 1.0
+    # coefficients of X = transform @ coefficients of u
+    transform = np.zeros((count, count))
+    for power in range(count):
+        for lower in range(power + 1):
+            transform[lower, power] = (
+                math.comb(power, lower) * (-centre) ** (power - lower) / half**power
+            )
+
+    def in_u(x_, *values):
+        return np.vander((x_ - centre) / half, count, increasing=True) @ np.asarray(values)
+
+    design = np.vander((x - centre) / half, count, increasing=True)
+    solved, covariance, chisq, converged, reason = _least_squares(
+        in_u, x, y, np.zeros(count), weights, design=design
+    )
+    return transform @ solved, transform @ covariance @ transform.T, chisq, converged, reason
 
 
 def _index_of(names, name, what):
@@ -944,12 +998,21 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
             return model(x_, *trial)
 
         design = None
-        if isinstance(function, str) and (function == "line" or function.startswith("poly")):
+        polynomial = isinstance(function, str) and (function == "line" or function.startswith("poly"))
+        if polynomial:
             # a + b*x and K0 + K1*x + ... are linear in their parameters.
             design = np.vander(x_fit, len(names), increasing=True)[:, free]
-        best, free_covariance, chisq, converged, reason = _least_squares(
-            reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
-        )
+        if polynomial and not held and np.all(np.isinf(lower)) and np.all(np.isinf(upper)):
+            # Powers of X far from zero hardly differ: fit in X centred and
+            # scaled to [-1, 1], where they are independent, and carry the
+            # answer back. Held or bounded coefficients are of X itself.
+            best, free_covariance, chisq, converged, reason = _centred_polynomial(
+                x_fit, y_fit, len(names), weights
+            )
+        else:
+            best, free_covariance, chisq, converged, reason = _least_squares(
+                reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
+            )
     # From here on `params` is the fitted coefficients, in the order of `names`.
     params = full.copy()
     params[free] = best
@@ -1178,13 +1241,58 @@ class Result:
 
     @property
     def outputs(self):
-        """The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out."""
+        """The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out.
+
+        These are the analysis's own names (``fit_signal``), which fitting the
+        same wave again makes anew: they show the latest. ``kept`` is what this
+        result made.
+        """
         existing = set(_op._call("listWaves")[0])
         return {
             role: _op.Wave(wave_)
             for role, wave_ in self._info()["outputs"].items()
             if wave_ in existing
         }
+
+    @property
+    def kept(self):
+        """This result's own copies of what it made, by role, in the data folder ``results:<name>``.
+
+        They stay as the analysis made them when the same wave is fitted
+        again, so results can be compared curve by curve. Removing the
+        result removes them, unless a graph or table shows them.
+        """
+        existing = set(_op._call("listWaves")[0])
+        return {
+            role: _op.Wave(wave_)
+            for role, wave_ in self._info().get("kept", {}).items()
+            if wave_ in existing
+        }
+
+    def show(self):
+        """Graph the data this result read with the curves it made (its kept copies).
+
+        Returns the graph. For a fit of several waves, each with its curve.
+        """
+        info = self._info()
+        settings = info["settings"]
+        kept = self.kept
+        ys = settings.get("ys") or ([settings["y"]] if settings.get("y") else [])
+        xs = settings.get("xs") or ([settings.get("x")] * len(ys))
+        if not ys:
+            raise _op.OresmeError(f"{self._name} does not say which waves it read.")
+        graph = None
+        for index, (y, x) in enumerate(zip(ys, xs)):
+            if graph is None:
+                graph = _op.display(y, x=x)
+            else:
+                graph.append(y, x=x)
+            graph.traces[-1].set(mode="markers")
+            curves = [kept[role] for role in ("fit", f"fit{index}") if role in kept]
+            for curve in curves:
+                graph.append(curve, x=x if len(curve.data) == len(_op.wave(y).data) and x else None)
+                graph.traces[-1].set(color="black")
+        return graph
 
     def __getitem__(self, name):
         info = self._info()
@@ -1345,15 +1453,33 @@ def _result_name(item):
     return name
 
 
+def _result_attributes(info):
+    """The attributes of the sample a result is about: those of the first wave it read."""
+    inputs = info.get("inputs") or []
+    if not inputs:
+        return {}
+    try:
+        return _op._call("attributes", {"target": inputs[0]["wave"], "own": False})[0]
+    except _op.OresmeError:
+        # The wave is gone: its attributes went with it.
+        return {}
+
+
+def _clean(key):
+    return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
+
+
 def results_table(results_=None, name="Results", sigma=True):
     """Put results side by side: a row for each, a column for each parameter.
 
     ``results_`` is a list of results (names, or what the fits returned);
     all of them if left out. Makes text waves ``<name>_result`` and
-    ``<name>_data`` (which result, and the wave it was about) and, for each
-    parameter, ``<name>_<parameter>`` and (with ``sigma``)
-    ``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
-    table, which is returned. A parameter a result does not have is NaN.
+    ``<name>_data`` (which result, and the wave it was about), a wave for
+    each attribute of the samples (see ``op.set_attributes``; numbers, or
+    text where any is text), and, for each parameter, ``<name>_<parameter>``
+    and (with ``sigma``) ``<name>_<parameter>_sd``, then ``<name>_chisq``,
+    and shows them in a table, which is returned. A parameter or attribute a
+    result does not have is NaN (or empty text).
     """
     names = [_result_name(item) for item in (results() if results_ is None else results_)]
     if not names:
@@ -1369,13 +1495,22 @@ def results_table(results_=None, name="Results", sigma=True):
         value = info[field][info["names"].index(key)]
         return np.nan if value is None else value
 
-    def clean(key):
-        return "".join(char if char.isalnum() or char == "_" else "_" for char in key).strip("_")
-
+    clean = _clean
     waves = [
         _op.make(f"{name}_result", names),
         _op.make(f"{name}_data", [str(info["settings"].get("y", "")) for info in infos]),
     ]
+    samples = [_result_attributes(info) for info in infos]
+    keys = []
+    for found in samples:
+        keys += [key for key in found if key not in keys]
+    for key in keys:
+        values = [found.get(key) for found in samples]
+        if any(isinstance(value, str) for value in values):
+            column_ = ["" if value is None else str(value) for value in values]
+        else:
+            column_ = [np.nan if value is None else value for value in values]
+        waves.append(_op.make(f"{name}_{clean(key)}", column_))
     for key in parameters:
         waves.append(_op.make(f"{name}_{clean(key)}", [column(info, key, "coef") for info in infos]))
         if sigma:
@@ -1394,6 +1529,69 @@ def results_table(results_=None, name="Results", sigma=True):
             existing[name].append(*missing)
         return existing[name]
     return _op.edit(*waves, name=name)
+
+
+def plot_results(y, x=None, results_=None, *, name="ResultsPlot", sigma=True):
+    """Plot a parameter of results against an attribute of their samples, or another parameter.
+
+    ``y`` is a parameter's name (``"A"``); ``x`` an attribute of the samples
+    (``"thickness"``, see ``op.set_attributes``), another parameter, or None
+    for the results in order. ``results_`` are the results to plot, all of
+    them if left out; those without ``y``, or without a number for ``x``, are
+    left out. Makes ``<name>_x``, ``<name>_y`` and (with ``sigma``)
+    ``<name>_y_sd``, graphs them as markers with error bars, and returns the
+    graph:
+
+        op.set_attributes("run1:", thickness=10); ...
+        op.plot_results("A", "thickness")
+    """
+    names = [_result_name(item) for item in (results() if results_ is None else results_)]
+    infos = [_op._call("resultInfo", {"name": item})[0] for item in names]
+
+    def parameter(info, key, field="coef"):
+        if key not in info["names"]:
+            return None
+        value = info[field][info["names"].index(key)]
+        return None if value is None else float(value)
+
+    xs, ys, sds, labels = [], [], [], []
+    for index, info in enumerate(infos):
+        value = parameter(info, y)
+        if value is None:
+            continue
+        if x is None:
+            across = float(index)
+        else:
+            across = parameter(info, x)
+            if across is None:
+                found = _result_attributes(info).get(x)
+                across = float(found) if _op._is_number(found) else None
+        if across is None:
+            continue
+        xs.append(across)
+        ys.append(value)
+        sds.append(parameter(info, y, "sigma"))
+        labels.append(info["name"])
+    if not ys:
+        raise _op.OresmeError(
+            f"No result has {y!r}" + ("" if x is None else f" and a number for {x!r}") + " to plot."
+        )
+    order = np.argsort(xs, kind="stable")
+    x_wave = _op.make(f"{name}_x", np.asarray(xs)[order])
+    y_wave = _op.make(f"{name}_y", np.asarray(ys)[order])
+    error = None
+    if sigma and any(item is not None for item in sds):
+        error = _op.make(
+            f"{name}_y_sd", np.asarray([np.nan if item is None else item for item in sds])[order]
+        )
+    graph = _op.display(y_wave, x=x_wave)
+    trace = graph.traces[0]
+    trace.set(mode="lines+markers" if x is None else "markers", marker="circle")
+    if error is not None:
+        trace.set(y_error=error.name)
+    graph.axis("left").label = y
+    graph.axis("bottom").label = "result" if x is None else x
+    return graph
 
 
 def fit_batch(function, waves, *, table=True, quiet=True, **options):
@@ -1430,13 +1628,14 @@ def make_template(name, results_, description=""):
 
     ``results_`` is a list of results (names, or what the fits returned), in
     the order they were done; each becomes a step that calls its action
-    (``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+    (``core.fit``, ``core.fit_peaks``) with the settings it was done with,
+    ``hold``, ``bounds`` and ``exclude`` included.
     A wave an analysis read becomes an input of the template, named after
     the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
     made becomes a reference to that step's output instead, so that results
     done one after the other become a template of several steps. Steps are
-    quiet. Settings the action cannot take (``hold=``, ``bounds=``,
-    ``exclude=``, data given as an array) are left out with a warning. A
+    quiet. Settings the action cannot take (data given as an array, say)
+    are left out with a warning. A
     fit of several waves at once (``op.fit_global``) has no action and
     cannot be in a template. Returns the template (see ``op.Template``).
     """
@@ -1496,6 +1695,8 @@ def make_template(name, results_, description=""):
                     left_out.append(key)
                 continue
             if "default" in spec and spec["default"] == value:
+                continue
+            if spec["type"] == "json" and not _says_something(value):
                 continue
             if spec["type"] == "wave":
                 if not isinstance(value, str):
@@ -3334,6 +3535,12 @@ with _op._registering("core"):
             **_X_WAVE,
             "guess": {"type": "numbers", "title": "Initial guess", "optional": True,
                       "description": "One starting value per parameter."},
+            "hold": {"type": "json", "title": "Hold", "optional": True,
+                     "description": 'Parameters kept fixed: {"y0": 0} at a value, or ["y0"] at the starting guess.'},
+            "bounds": {"type": "json", "title": "Bounds", "optional": True,
+                       "description": 'Limits of parameters, null for none: {"A": [0, null]}.'},
+            "exclude": {"type": "json", "title": "Exclude", "optional": True,
+                        "description": "X ranges left out: [x1, x2] or [[x1, x2], ...]."},
             "sigma": _wave_param("Weighting wave", "The standard deviation of each point.", True),
             **_POINTS,
             **_GRAPH,
@@ -3360,6 +3567,8 @@ with _op._registering("core"):
             "shape": {"type": "choice", "title": "Shape", "choices": list(_SHAPES), "default": "gauss"},
             "baseline": {"type": "choice", "title": "Baseline", "choices": ["constant", "linear"],
                          "default": "constant"},
+            "exclude": {"type": "json", "title": "Exclude", "optional": True,
+                        "description": "X ranges left out: [x1, x2] or [[x1, x2], ...]."},
             **_POINTS,
             **_GRAPH,
             "components": {"type": "boolean", "title": "Peak waves", "default": True,

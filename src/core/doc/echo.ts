@@ -459,6 +459,8 @@ export function echoPython(
       )})`;
     case "unlinkGraphs":
       return `op.unlink_graphs(${command.graphs.map(pyLiteral).join(", ")})`;
+    case "setAttributes":
+      return `op.set_attributes(${pyLiteral(command.target)}, ${pyLiteral(command.values)})`;
     case "closeWindow":
       return `op.close_window(${pyLiteral(command.name)})`;
     case "reopenWindow":

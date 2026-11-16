@@ -311,6 +311,7 @@ export function NewGraphDialog({ append }: { append?: string }) {
   return (
     <Dialog
       title={append ? `Append Traces to ${append}` : "New Graph"}
+      help="guides/graphs/"
       width={820}
       onClose={close}
       submitDisabled={!canDo}

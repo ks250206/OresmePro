@@ -108,7 +108,8 @@ does the same to other waves.
 - `covariance` (read-only)
 - `correlation` (read-only)
 - `created` (read-only) · When the analysis was done, as a ``datetime`` in UTC.
-- `outputs` (read-only) · The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out.
+- `outputs` (read-only) · The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out. These are the analysis's own names (``fit_signal``), which fitting the same wave again makes anew: they show the latest. ``kept`` is what this result made.
+- `kept` (read-only) · This result's own copies of what it made, by role, in the data folder ``results:<name>``. They stay as the analysis made them when the same wave is fitted again, so results can be compared curve by curve. Removing the result removes them, unless a graph or table shows them.
 - `kind` (read-only)
 - `label` (read-only)
 - `names` (read-only)
@@ -121,6 +122,18 @@ does the same to other waves.
 - `reason` (read-only)
 - `settings` (read-only)
 - `changed` (read-only)
+
+### `Result.show`
+
+```python
+show()
+```
+
+Graph the data this result read with the curves it made (its kept copies).
+
+Returns the graph. For a fit of several waves, each with its curve.
+
+**Explicit exceptions** · `OresmeError`
 
 ### `Result.__getitem__`
 
@@ -208,10 +221,33 @@ Put results side by side: a row for each, a column for each parameter.
 
 ``results_`` is a list of results (names, or what the fits returned);
 all of them if left out. Makes text waves ``<name>_result`` and
-``<name>_data`` (which result, and the wave it was about) and, for each
-parameter, ``<name>_<parameter>`` and (with ``sigma``)
-``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
-table, which is returned. A parameter a result does not have is NaN.
+``<name>_data`` (which result, and the wave it was about), a wave for
+each attribute of the samples (see ``op.set_attributes``; numbers, or
+text where any is text), and, for each parameter, ``<name>_<parameter>``
+and (with ``sigma``) ``<name>_<parameter>_sd``, then ``<name>_chisq``,
+and shows them in a table, which is returned. A parameter or attribute a
+result does not have is NaN (or empty text).
+
+**Explicit exceptions** · `OresmeError`
+
+## `plot_results`
+
+```python
+op.plot_results(y, x=None, results_=None, *, name='ResultsPlot', sigma=True)
+```
+
+Plot a parameter of results against an attribute of their samples, or another parameter.
+
+``y`` is a parameter's name (``"A"``); ``x`` an attribute of the samples
+(``"thickness"``, see ``op.set_attributes``), another parameter, or None
+for the results in order. ``results_`` are the results to plot, all of
+them if left out; those without ``y``, or without a number for ``x``, are
+left out. Makes ``<name>_x``, ``<name>_y`` and (with ``sigma``)
+``<name>_y_sd``, graphs them as markers with error bars, and returns the
+graph:
+
+    op.set_attributes("run1:", thickness=10); ...
+    op.plot_results("A", "thickness")
 
 **Explicit exceptions** · `OresmeError`
 
@@ -225,13 +261,14 @@ Keep analyses as a template: their steps and settings, with the waves taken out.
 
 ``results_`` is a list of results (names, or what the fits returned), in
 the order they were done; each becomes a step that calls its action
-(``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+(``core.fit``, ``core.fit_peaks``) with the settings it was done with,
+``hold``, ``bounds`` and ``exclude`` included.
 A wave an analysis read becomes an input of the template, named after
 the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
 made becomes a reference to that step's output instead, so that results
 done one after the other become a template of several steps. Steps are
-quiet. Settings the action cannot take (``hold=``, ``bounds=``,
-``exclude=``, data given as an array) are left out with a warning. A
+quiet. Settings the action cannot take (data given as an array, say)
+are left out with a warning. A
 fit of several waves at once (``op.fit_global``) has no action and
 cannot be in a template. Returns the template (see ``op.Template``).
 
