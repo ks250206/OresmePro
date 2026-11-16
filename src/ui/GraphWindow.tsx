@@ -585,6 +585,7 @@ export function GraphWindow({ name }: { name: string }) {
         onSelect: open({ kind: "modifyContour", graph: name, contour: contour.name }),
       })),
       { label: "Modify Graph…", onSelect: open({ kind: "modifyGraph", graph: name }) },
+      { label: "Rename Graph…", onSelect: open({ kind: "renameWindow", name }) },
       { label: "Apply Style", submenu: styleItems() },
       { label: "Styles…", onSelect: open({ kind: "styles", graph: name }) },
       { label: "Save as Template…", onSelect: open({ kind: "saveGraphTemplate", graph: name }) },

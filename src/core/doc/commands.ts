@@ -1,7 +1,7 @@
 import { MAX_PLOT_SIZE, MIN_PLOT_SIZE, SCREEN_UNITS_PER_POINT, toPoints } from "../plot/plotSize";
 import { isTickFormat, isTimeZone } from "../plot/ticks";
 import { normalizeColor } from "./colors";
-import { dict, filterDict, withEntry, withoutEntries } from "./dict";
+import { dict, filterDict, withEntry, withoutEntries, type Dict } from "./dict";
 import {
   checkCycle,
   evaluateFormula,
@@ -300,7 +300,7 @@ export type Command =
   /** Puts a control at a place in the panel's order, counted from 0. */
   | { op: "moveControl"; panel: string; control: string; to: number }
   | { op: "setControlValue"; panel: string; control: string; value: unknown }
-  | { op: "newProcedure"; name?: string; code?: string }
+  | { op: "newProcedure"; name?: string; code?: string; autoRun?: boolean }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
   | { op: "saveStyle"; name: string; graph: string; size?: boolean }
@@ -346,6 +346,11 @@ export type Command =
   | ({ op: "updateRunSample"; run: string; index: number } & SampleOutcome)
   | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
+  /** Closes a window but keeps what it shows, to reopen it (see WindowState.hidden). */
+  | { op: "closeWindow"; name: string }
+  | { op: "reopenWindow"; name: string }
+  /** Gives a graph, table, procedure, page layout or panel and its window another name. */
+  | { op: "renameWindow"; name: string; newName: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
 
@@ -570,6 +575,39 @@ export const windowTaken = (state: DocState) => (name: string) =>
   name in state.procedures ||
   name in state.pages ||
   name in state.panels;
+
+/**
+ * Checks the name of a procedure: a window name that is also the name of
+ * the Python module the procedure is (`import name`), so ASCII only.
+ */
+export function procedureName(name: unknown): string {
+  const checked = checkName(name, "procedure");
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(checked)) {
+    throw new DocError('A procedure name can have only ASCII letters, digits and "_".');
+  }
+  return checked;
+}
+
+function requireWindow(state: DocState, name: string): WindowState {
+  const window = state.windows.find((item) => item.name === name);
+  if (!window) throw new DocError(`No window named ${JSON.stringify(name)}.`);
+  return window;
+}
+
+/** A record kept by name, renamed: its key and its own `name`. */
+function renamedEntry<T extends { name: string }>(
+  records: Dict<T>,
+  name: string,
+  newName: string,
+): Dict<T> {
+  const record = records[name];
+  if (!record) return records;
+  return dict<T>(
+    Object.entries(records).map(([key, value]): [string, T] =>
+      key === name ? [newName, { ...value, name: newName }] : [key, value],
+    ),
+  );
+}
 
 export function placeWindow(state: DocState, name: string, kind: WindowState["kind"]): WindowState {
   const slot = state.windows.length % 8;
@@ -1739,8 +1777,17 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
   for (const name of names) {
     const users = waveUsers(state, name);
     if (users.length > 0) {
+      // A closed window still shows its waves when it is reopened, so it keeps them too.
+      const closed = new Set(
+        state.windows.filter((window) => window.hidden).map((window) => window.name),
+      );
+      const named = users.map((user) => (closed.has(user) ? `${user} (closed)` : user));
       throw new DocError(
-        `Wave ${JSON.stringify(name)} is in use by ${users.join(", ")}. Remove it from there first.`,
+        `Wave ${JSON.stringify(name)} is in use by ${named.join(", ")}. Remove it from there first${
+          closed.size > 0 && users.some((user) => closed.has(user))
+            ? ", or kill the closed window"
+            : ""
+        }.`,
       );
     }
   }
@@ -2573,14 +2620,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "newProcedure": {
       let name = "Procedure";
       if (command.name !== undefined) {
-        name = checkName(command.name, "procedure");
+        name = procedureName(command.name);
       } else {
         // Procedure, Procedure1, Procedure2: the first is plain, like Igor's.
         for (let count = 1; windowTaken(state)(name); count += 1) name = `Procedure${count}`;
-      }
-      // The procedure is a Python module of this name.
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-        throw new DocError('A procedure name can have only ASCII letters, digits and "_".');
       }
       if (windowTaken(state)(name)) {
         throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
@@ -2588,7 +2631,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (command.code !== undefined && typeof command.code !== "string") {
         throw new DocError("code must be text.");
       }
-      const procedure: ProcedureSpec = { name, code: command.code ?? "", autoRun: true };
+      const procedure: ProcedureSpec = {
+        name,
+        code: command.code ?? "",
+        autoRun: command.autoRun === undefined ? true : bool(command.autoRun, "autoRun"),
+      };
       return {
         state: {
           ...state,
@@ -2871,6 +2918,76 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "closeWindow": {
+      const target = requireWindow(state, command.name);
+      if (target.hidden) return { state, result: null };
+      // To the back, so the window in front of the others is always an open one.
+      return {
+        state: {
+          ...state,
+          windows: [
+            { ...target, hidden: true },
+            ...state.windows.filter((window) => window !== target),
+          ],
+        },
+        result: null,
+      };
+    }
+    case "reopenWindow": {
+      const target = requireWindow(state, command.name);
+      const { hidden: _, ...open } = target;
+      if (!target.hidden && state.windows.at(-1) === target) return { state, result: null };
+      return {
+        state: {
+          ...state,
+          windows: [...state.windows.filter((window) => window !== target), open],
+        },
+        result: null,
+      };
+    }
+    case "renameWindow": {
+      const target = requireWindow(state, command.name);
+      const newName =
+        target.kind === "procedure"
+          ? procedureName(command.newName)
+          : checkName(command.newName, target.kind === "page" ? "page layout" : target.kind);
+      if (newName === target.name) return { state, result: newName };
+      if (windowTaken(state)(newName)) {
+        throw new DocError(`A window named ${JSON.stringify(newName)} already exists.`);
+      }
+      const { name } = target;
+      let pages = renamedEntry(state.pages, name, newName);
+      // Page layouts show graphs by name.
+      if (target.kind === "graph") {
+        pages = dict<PageSpec>(
+          Object.entries(pages).map(([key, page]): [string, PageSpec] => [
+            key,
+            page.items.some((item) => item.graph === name)
+              ? {
+                  ...page,
+                  items: page.items.map((item) =>
+                    item.graph === name ? { ...item, graph: newName } : item,
+                  ),
+                }
+              : page,
+          ]),
+        );
+      }
+      return {
+        state: {
+          ...state,
+          graphs: renamedEntry(state.graphs, name, newName),
+          tables: renamedEntry(state.tables, name, newName),
+          procedures: renamedEntry(state.procedures, name, newName),
+          pages,
+          panels: renamedEntry(state.panels, name, newName),
+          windows: state.windows.map((window) =>
+            window === target ? { ...window, name: newName } : window,
+          ),
+        },
+        result: newName,
+      };
+    }
     case "moveWindow": {
       const windows = state.windows.map((window) =>
         window.name === command.name
@@ -2886,8 +3003,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return { state: { ...state, windows }, result: null };
     }
     case "activateWindow": {
-      const target = state.windows.find((window) => window.name === command.name);
-      if (!target) throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
+      const target = requireWindow(state, command.name);
+      // A closed window comes back with reopenWindow, which can be undone.
+      if (target.hidden) {
+        throw new DocError(`${command.name} is closed. Reopen it to bring it to the front.`);
+      }
       if (state.windows.at(-1) === target) return { state, result: null };
       return {
         state: {

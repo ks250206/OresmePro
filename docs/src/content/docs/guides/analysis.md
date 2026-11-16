@@ -31,4 +31,4 @@ FFT は等間隔の1次元信号に使います。サンプル間隔 `dx` と X 
 | `tafel`    | 指定した範囲の Tafel 勾配(mV/dec)と交換電流密度、その不確かさ                                     |
 | `eis_fit`  | インピーダンスの等価回路フィット(R(RC)、R(RQ)、Randles): 係数・不確かさ・χ² と、フィットの Z′・Z″ |
 
-Nyquist 図のグラフテンプレートも付いています。**Analysis › Plugins…** の **Install from GitHub…** に上のアドレスを入れるか、**Install from Folder…** でそのフォルダを選んで入れます。Python からは `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})` のように呼びます。入力・モデル・符号の約束は、そのフォルダの README にあります。
+Nyquist 図のグラフテンプレートも付いています。**Python › Plugins…** の **Install from GitHub…** に上のアドレスを入れるか、**Install from Folder…** でそのフォルダを選んで入れます。Python からは `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})` のように呼びます。入力・モデル・符号の約束は、そのフォルダの README にあります。

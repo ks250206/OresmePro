@@ -79,6 +79,10 @@ __all__ = [
     "kill_window",
     "Procedure",
     "new_procedure",
+    "close_window",
+    "reopen_window",
+    "rename_window",
+    "windows",
     "procedure",
     "procedures",
     "time_zone",
@@ -1585,7 +1589,21 @@ class Graph(_Props):
         )[0]
 
     def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
         kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         return {"text/plain": repr(self), "image/svg+xml": self.svg()}
@@ -1648,7 +1666,21 @@ class Procedure:
         exec(compile(code, path, "exec"), get_ipython().user_ns)
 
     def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
         kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
 
     def __repr__(self):
         return f"Procedure({self._name!r})"
@@ -1814,7 +1846,21 @@ class Layout(_Props):
         _call("exportPage", {"name": self._name, "filename": str(filename)})
 
     def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
         kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         return {"text/plain": repr(self), "image/svg+xml": self.svg()}
@@ -1905,7 +1951,21 @@ class Table(_Props):
         return self
 
     def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
         kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
 
     def __repr__(self):
         return f"Table({self._name!r})"
@@ -2877,11 +2937,19 @@ def table(name=None):
     return Table(name)
 
 
-def new_procedure(name=None, code=""):
-    """Make a procedure window: a Python file that is saved with the experiment."""
+def new_procedure(name=None, code="", *, auto_run=True):
+    """Make a procedure window: a Python file that is saved with the experiment.
+
+    It is the module ``name`` (``import name`` from the command line or
+    another procedure); ``Procedure.run()`` runs it in the interactive
+    namespace instead. ``auto_run=False`` keeps it from running when the
+    experiment opens, as a procedure imported from a file starts.
+    """
     command = {"op": "newProcedure", "code": str(code)}
     if name is not None:
         command["name"] = name
+    if not auto_run:
+        command["autoRun"] = False
     return Procedure(_dispatch(command))
 
 
@@ -2918,8 +2986,55 @@ def set_time_zone(zone):
 
 
 def kill_window(name):
-    """Close a graph, table or procedure window."""
-    _dispatch({"op": "killWindow", "name": name})
+    """Kill a graph, table, procedure, page layout or panel: its window and what it shows.
+
+    The waves it showed stay. To close the window and keep what it shows,
+    use ``close_window``.
+    """
+    _dispatch({"op": "killWindow", "name": _window_name(name)})
+
+
+def close_window(name):
+    """Close a window but keep what it shows in the experiment.
+
+    A closed graph still follows its waves, a closed procedure can still be
+    imported, and ``reopen_window`` (or the Windows menu) brings the window
+    back as it is then. ``kill_window`` removes it for good.
+    """
+    _dispatch({"op": "closeWindow", "name": _window_name(name)})
+
+
+def reopen_window(name):
+    """Open a window that was closed with ``close_window``, in front of the others."""
+    _dispatch({"op": "reopenWindow", "name": _window_name(name)})
+
+
+def rename_window(name, new_name):
+    """Give a graph, table, procedure, page layout or panel another name.
+
+    The window and what it shows are renamed together; page layouts that
+    show a renamed graph follow it. A procedure's name is also its module's
+    name, so it takes only ASCII letters, digits and ``_``. Returns the new
+    name.
+    """
+    return _dispatch({"op": "renameWindow", "name": _window_name(name), "newName": new_name})
+
+
+def windows(kind=None, *, closed=True):
+    """The names of the windows, back to front: all, or those of one ``kind``.
+
+    ``kind`` is "graph", "table", "procedure", "page" or "panel". With
+    ``closed=False``, windows that are closed (see ``close_window``) are
+    left out.
+    """
+    return _call("listWindows", {"kind": kind, "closed": bool(closed)})[0]
+
+
+def _window_name(value):
+    name = getattr(value, "name", value)
+    if not isinstance(name, str):
+        raise TypeError("A window is given by its name, or by the object that stands for it.")
+    return name
 
 
 class Style:
@@ -4744,7 +4859,21 @@ class Panel:
         return invoke(call["action"], call["args"], version=call["version"])
 
     def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
         kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
 
     def __repr__(self):
         return f"Panel({self._name!r})"

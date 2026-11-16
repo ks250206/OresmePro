@@ -10,7 +10,33 @@ sidebar:
 
 ## Procedure に保存する
 
-**Windows → New Procedure** でエディタを開き、Python を入力して **Run** を押します。**Shift+Enter** では選択範囲または現在行、**Ctrl+Enter**（macOS では **⌘+Enter**）ではファイル全体を実行できます。Procedure は Experiment に保存されます。Python から作成する場合は `op.new_procedure(name, code)` を使います。
+**Windows → New Procedure…** でエディタを開き、Python を入力して **Run** を押します。**Shift+Enter** では選択範囲または現在行、**Ctrl+Enter**（macOS では **⌘+Enter**）ではファイル全体を実行できます。Procedure は Experiment に保存されます。Python から作成する場合は `op.new_procedure(name, code)` を使います。
+
+### 名前空間と import
+
+Procedure はそれぞれ `<名前>.py` というファイルで、名前がそのままモジュール名です(そのため名前は ASCII の英数字と `_` だけ)。
+
+- **Run**(`p.run()`)はファイルを**コマンドウィンドウと同じ名前空間**で実行します。定義した関数や変数はそのままコマンド入力から使えます。
+- `import 名前` で読み込むと、Procedure ごとに**別の名前空間**(モジュール)になります。ほかの Procedure からも `import tools` や `from tools import scaled` で使えます。Procedure の中身を変えると、次の入力の前に読み込み直されます。
+
+```python
+# Procedure "tools"
+SCALE = 3
+def scaled(x):
+    return SCALE * x
+
+# Procedure "analysis"
+import tools
+result = tools.scaled(2)   # 6。analysis 側の SCALE とはぶつからない
+```
+
+名前を変えるとモジュール名も変わるので、`import` している側も書き換えてください。
+
+### 書き出しと読み込み
+
+Procedure ウィンドウを右クリックして **Export as 名前.py** を選ぶと `.py` ファイルとして保存できます。**Windows → Import Procedure…**(または同じ右クリックメニュー)で `.py` ファイルを Procedure として取り込みます。名前はファイル名から付けます(使えない文字は `_`、同じ名前があれば `_0` などを付ける)。
+
+取り込んだコードは**実行されません**。Experiment を開いたときの自動実行もオフの状態で入るので、中身を確認してから **Run** するか、**Run When the Experiment Opens** をオンにしてください。他人から受け取った `.py` には任意のコードを書けるため、信頼できるものだけを実行してください。Python からは `op.new_procedure(name, code, auto_run=False)` で同じことができます。
 
 コマンド入力には `np` と `op` が初期設定されています。Procedure に `import numpy as np` と `import oresme as op` を書いておくと依存が明確です。SciPy、pandas、scikit-learn、lmfit は利用時に読み込まれます。長い処理を止めるには **Python → Interrupt** を使います。Python を再起動するとセッション変数は消えますが、Experiment の Wave はアプリ側に残ります。
 

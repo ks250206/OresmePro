@@ -40,7 +40,7 @@ SECTIONS = {
     "global": (
         "Global Functions",
         (
-            "OresmeError atomic load_text load_excel load_igor load_parquet load_hdf5 kill_window "
+            "OresmeError atomic load_text load_excel load_igor load_parquet load_hdf5 kill_window close_window reopen_window rename_window windows "
             "Procedure new_procedure procedure procedures time_zone set_time_zone "
             "Layout LayoutItem new_layout layout layouts"
         ),

@@ -54,12 +54,14 @@ import {
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
 import { useEffect, useRef, useState } from "react";
+import { exportProcedure, importProcedures } from "../app/procedures";
 import { useStore } from "../app/store";
 import {
   doc,
   kernel,
   procedureRuns,
   runProcedure,
+  ui,
   useDoc,
   useKernelState,
   type MenuItem,
@@ -326,6 +328,13 @@ function ProcedureEditor({ name }: { name: string }) {
         checked: procedure.autoRun,
         onSelect: () => doc.dispatch({ op: "setProcedure", name, autoRun: !procedure.autoRun }),
       },
+      { separator: true },
+      {
+        label: "Rename Procedure…",
+        onSelect: () => ui.set({ dialog: { kind: "renameWindow", name } }),
+      },
+      { label: `Export as ${name}.py`, onSelect: () => exportProcedure(name) },
+      { label: "Import Procedure…", onSelect: importProcedures },
     ];
   };
 

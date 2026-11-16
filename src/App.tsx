@@ -25,6 +25,9 @@ import {
   openLaunchedFiles,
 } from "./app/isolate";
 import { importPanels, newPanel } from "./app/panels";
+import { importProcedures } from "./app/procedures";
+import { windowListItems } from "./app/windowMenu";
+import { frontWindow } from "./core/doc/types";
 import { ruffFiles } from "./editor/loadRuff";
 import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
@@ -101,7 +104,7 @@ function useMenus(): MenuDefinition[] {
     Object.values(state.waves).some((wave) => wave.formula !== undefined),
   );
   const pageSelection = useUi((state) => state.pageSelection);
-  const top = windows.at(-1);
+  const top = frontWindow(windows);
   const graph = top?.kind === "graph" ? top.name : null;
   const spec = graph ? graphs[graph] : undefined;
   // The Layout menu acts on the frontmost window when it is a page layout.
@@ -142,10 +145,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Save Experiment As…", shortcut: `${MOD}S`, onSelect: saveExperiment },
         { label: "Go Back to Opening State…", onSelect: () => void revertExperiment() },
         { separator: true },
-        { label: "Load Delimited Text…", onSelect: loadDelimitedText },
-        { label: "Load Excel Workbook…", onSelect: loadExcelWorkbook },
-        { label: "Load Igor Files…", onSelect: loadIgorFiles },
-        { label: "Load Parquet or HDF5 Files…", onSelect: loadParquetHdf5Files },
+        // Loading data is in the Data menu; these are files for Python to read itself.
         { label: "Add Files for Python…", onSelect: addFilesForPython },
         { separator: true },
         graphItem("Save Graph as PDF", (name) => exportGraph(name, `${name}.pdf`)),
@@ -225,7 +225,6 @@ function useMenus(): MenuDefinition[] {
         analysis("Multi-peak Fit…", "fit_peaks"),
         { label: "Results…", onSelect: open({ kind: "results" }) },
         { label: "Templates…", onSelect: open({ kind: "templates" }) },
-        { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
         { label: "Background…", onSelect: open({ kind: "background" }) },
         { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },
@@ -298,10 +297,23 @@ function useMenus(): MenuDefinition[] {
         { label: "New Image Plot…", onSelect: open({ kind: "matrixPlot", plot: "image" }) },
         { label: "New Contour Plot…", onSelect: open({ kind: "matrixPlot", plot: "contour" }) },
         { label: "New Table…", onSelect: open({ kind: "newTable" }) },
-        { label: "New Procedure", onSelect: () => runGui({ op: "newProcedure" }) },
+        { label: "New Procedure…", onSelect: open({ kind: "newProcedure" }) },
         { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
         { label: "New Panel", onSelect: newPanel },
+        { separator: true },
+        { label: "Import Procedure…", onSelect: importProcedures },
         { label: "Import Panel…", onSelect: importPanels },
+        { separator: true },
+        {
+          label: "Rename Window…",
+          disabled: !top,
+          onSelect: () => top && ui.set({ dialog: { kind: "renameWindow", name: top.name } }),
+        },
+        {
+          label: "Close Window…",
+          disabled: !top,
+          onSelect: () => top && ui.set({ dialog: { kind: "closeWindow", name: top.name } }),
+        },
         { separator: true },
         {
           label: "Data Browser",
@@ -314,13 +326,7 @@ function useMenus(): MenuDefinition[] {
           onSelect: () => ui.set({ showCommand: !showCommand }),
         },
         ...(windows.length > 0 ? [{ separator: true } as MenuItem] : []),
-        ...[...windows]
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map<MenuItem>((window) => ({
-            label: window.name,
-            checked: window === top,
-            onSelect: () => doc.dispatch({ op: "activateWindow", name: window.name }),
-          })),
+        ...windowListItems(windows, top),
       ],
     },
     {
@@ -334,6 +340,8 @@ function useMenus(): MenuDefinition[] {
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
         { separator: true },
+        // Plugins are Python packages that add actions, templates and loaders.
+        { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
         {
           label: "Keep Optional Packages for Offline Use",
           onSelect: () =>

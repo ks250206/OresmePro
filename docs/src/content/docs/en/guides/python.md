@@ -10,7 +10,33 @@ In the Command Window, use **↑ / ↓** to recall commands matching the typed p
 
 ## Save scripts as procedures
 
-Choose **Windows → New Procedure**, enter Python, and click **Run**. **Shift+Enter** executes the selection or current line, and **Ctrl+Enter** (**⌘+Enter** on macOS) executes the entire file. Procedures are stored in the experiment. Use `op.new_procedure(name, code)` to create one from Python.
+Choose **Windows → New Procedure…**, enter Python, and click **Run**. **Shift+Enter** executes the selection or current line, and **Ctrl+Enter** (**⌘+Enter** on macOS) executes the entire file. Procedures are stored in the experiment. Use `op.new_procedure(name, code)` to create one from Python.
+
+### Namespaces and import
+
+Each procedure is a file `<name>.py`, and its name is its module name (so it takes only ASCII letters, digits and `_`).
+
+- **Run** (`p.run()`) executes the file **in the command window's namespace**: what it defines can be used from the command line at once.
+- `import name` loads it as **a namespace of its own** (a module). Other procedures can use it too, with `import tools` or `from tools import scaled`. A procedure that changes is loaded again before the next input.
+
+```python
+# Procedure "tools"
+SCALE = 3
+def scaled(x):
+    return SCALE * x
+
+# Procedure "analysis"
+import tools
+result = tools.scaled(2)   # 6; analysis's own SCALE does not clash
+```
+
+Renaming a procedure renames its module, so change the procedures that import it too.
+
+### Export and import
+
+Right-click a procedure window and choose **Export as name.py** to save it as a `.py` file. **Windows → Import Procedure…** (or the same right-click menu) makes a procedure of each `.py` file chosen, named after the file (characters a module name cannot have become `_`, and `_0` and so on is added to a name in use).
+
+Imported code **does not run**. It also comes in with running when the experiment opens turned off, so read it, then **Run** it or turn on **Run When the Experiment Opens**. A `.py` file from someone else can hold any code: run only what you trust. From Python, `op.new_procedure(name, code, auto_run=False)` does the same.
 
 The command session starts with `np` and `op` preloaded. Include `import numpy as np` and `import oresme as op` in a procedure to make its dependencies clear. SciPy, pandas, scikit-learn, and lmfit load on first use. Use **Python → Interrupt** for a long-running command. Restarting Python clears session variables and leaves the experiment's waves in the app.
 

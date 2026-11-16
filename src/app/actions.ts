@@ -363,17 +363,42 @@ export async function revertExperiment(): Promise<void> {
 }
 
 /** Downloads the whole experiment as one .oresme file. */
+/** The file name an experiment is saved as by default: its name, made safe for files. */
+export const experimentFileName = (name: string = experiment.getInfo().name): string =>
+  `${name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "Experiment"}.oresme`;
+
+/**
+ * The file name typed in Save Experiment As, as it is saved: what was
+ * typed, with characters files cannot have replaced and ".oresme" added
+ * if it is not there; null when nothing usable was typed.
+ */
+export function savedFileName(typed: string): string | null {
+  const name = typed
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\.oresme$/i, "")
+    .trim();
+  return name && name !== "." && name !== ".." ? `${name}.oresme` : null;
+}
+
+/** Asks for a file name, then saves the experiment under it (see SaveExperimentDialog). */
 export function saveExperiment(): void {
+  ui.set({ dialog: { kind: "saveExperiment" } });
+}
+
+/** Hands the user the experiment as one .oresme file named `filename`. */
+export function saveExperimentAs(filename: string): boolean {
   try {
     const bytes = zipExperiment(
       doc.getState(),
       history.getEntries(),
       files.list(),
     ) as Uint8Array<ArrayBuffer>;
-    const name = experiment.getInfo().name.replace(/[\\/:*?"<>|]+/g, "_");
-    download(new Blob([bytes], { type: "application/zip" }), `${name}.oresme`);
+    download(new Blob([bytes], { type: "application/zip" }), filename);
+    return true;
   } catch (error) {
     showError("Could not save the experiment", error);
+    return false;
   }
 }
 

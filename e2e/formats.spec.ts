@@ -67,7 +67,7 @@ test.describe("loading Parquet and HDF5 files", () => {
     );
     const [chooser] = await Promise.all([
       page.waitForEvent("filechooser"),
-      app.menu("File", "Load Parquet or HDF5 Files…"),
+      app.menu("Data", "Load Parquet or HDF5 Files…"),
     ]);
     await chooser.setFiles({
       name: "beam.h5",

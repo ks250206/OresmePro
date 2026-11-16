@@ -8,7 +8,7 @@ Plugins add analyses (actions), panels, templates, graph templates, and styles. 
 
 ## Install
 
-Open **Analysis → Plugins…** and choose **Install from GitHub…**, **Install from Folder…**, or **Install from Zip…**.
+Open **Python → Plugins…** and choose **Install from GitHub…**, **Install from Folder…**, or **Install from Zip…**.
 
 - For GitHub, enter the repository address. Addresses of the form `…/tree/<branch>/<folder>` work too, and the branch or tag can be given separately
 - The branch or tag is fixed to the commit it points at. Every file is fetched from that one commit, so what you installed does not change when the repository does
@@ -31,7 +31,7 @@ Procedures and the command line are different: they run in the app's Python, whi
 
 ## Use
 
-- Select a plugin in **Analysis → Plugins…** to see a form for its actions. Choose waves and values and click **Run**
+- Select a plugin in **Python → Plugins…** to see a form for its actions. Choose waves and values and click **Run**
 - From Python, call `op.invoke("plugin.<plugin>.<action>", {...})`. It also works inside `op.atomic()`
 - Returned waves are made next to the first input wave and named `<input>_<role>`. An existing wave is never overwritten; `_1` and so on is added instead
 - A result the plugin returns is kept in **Analysis → Results…** like a fit, with the plugin, version, source, and commit that made it

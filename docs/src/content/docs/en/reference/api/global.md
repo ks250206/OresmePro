@@ -175,7 +175,55 @@ the first time this runs.
 op.kill_window(name)
 ```
 
-Close a graph, table or procedure window.
+Kill a graph, table, procedure, page layout or panel: its window and what it shows.
+
+The waves it showed stay. To close the window and keep what it shows,
+use ``close_window``.
+
+## `close_window`
+
+```python
+op.close_window(name)
+```
+
+Close a window but keep what it shows in the experiment.
+
+A closed graph still follows its waves, a closed procedure can still be
+imported, and ``reopen_window`` (or the Windows menu) brings the window
+back as it is then. ``kill_window`` removes it for good.
+
+## `reopen_window`
+
+```python
+op.reopen_window(name)
+```
+
+Open a window that was closed with ``close_window``, in front of the others.
+
+## `rename_window`
+
+```python
+op.rename_window(name, new_name)
+```
+
+Give a graph, table, procedure, page layout or panel another name.
+
+The window and what it shows are renamed together; page layouts that
+show a renamed graph follow it. A procedure's name is also its module's
+name, so it takes only ASCII letters, digits and ``_``. Returns the new
+name.
+
+## `windows`
+
+```python
+op.windows(kind=None, *, closed=True)
+```
+
+The names of the windows, back to front: all, or those of one ``kind``.
+
+``kind`` is "graph", "table", "procedure", "page" or "panel". With
+``closed=False``, windows that are closed (see ``close_window``) are
+left out.
 
 ## `Procedure`
 
@@ -211,13 +259,44 @@ stops it and is reported with the file's name and line.
 kill()
 ```
 
+Kill the window and what it shows (see ``op.kill_window``).
+
+### `Procedure.close`
+
+```python
+close()
+```
+
+Close the window, keeping what it shows to reopen (see ``op.close_window``).
+
+### `Procedure.reopen`
+
+```python
+reopen()
+```
+
+Open the window again after ``close()``, in front of the others.
+
+### `Procedure.rename`
+
+```python
+rename(new_name)
+```
+
+Give it and its window another name (see ``op.rename_window``). Returns self.
+
 ## `new_procedure`
 
 ```python
-op.new_procedure(name=None, code='')
+op.new_procedure(name=None, code='', *, auto_run=True)
 ```
 
 Make a procedure window: a Python file that is saved with the experiment.
+
+It is the module ``name`` (``import name`` from the command line or
+another procedure); ``Procedure.run()`` runs it in the interactive
+namespace instead. ``auto_run=False`` keeps it from running when the
+experiment opens, as a procedure imported from a file starts.
 
 ## `procedure`
 
@@ -359,6 +438,32 @@ Download the page as a file: .pdf (at the paper's size), .svg or .png.
 ```python
 kill()
 ```
+
+Kill the window and what it shows (see ``op.kill_window``).
+
+### `Layout.close`
+
+```python
+close()
+```
+
+Close the window, keeping what it shows to reopen (see ``op.close_window``).
+
+### `Layout.reopen`
+
+```python
+reopen()
+```
+
+Open the window again after ``close()``, in front of the others.
+
+### `Layout.rename`
+
+```python
+rename(new_name)
+```
+
+Give it and its window another name (see ``op.rename_window``). Returns self.
 
 ### `Layout.set`
 

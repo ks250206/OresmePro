@@ -15,7 +15,7 @@ test.describe("plugins", () => {
     page,
   }) => {
     await app.run('op.make("signal", [1.0, 2.0, 3.0], dx=0.5)');
-    await app.menu("Analysis", "Plugins…");
+    await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(SCALE);
 
     // Nothing is installed until the user has seen what it is and does.
@@ -116,7 +116,7 @@ test.describe("plugins", () => {
       return route.fulfill({ status: 200, headers: cors, body });
     });
 
-    await app.menu("Analysis", "Plugins…");
+    await app.menu("Python", "Plugins…");
     const dialog = page.getByRole("dialog", { name: "Plugins" });
     await dialog.getByRole("button", { name: "Install from GitHub…" }).click();
     const form = page.getByRole("dialog", { name: "Install Plugin from GitHub" });

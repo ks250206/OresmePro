@@ -175,6 +175,32 @@ is missing (no wave chosen, say) or the action refuses the call.
 kill()
 ```
 
+Kill the window and what it shows (see ``op.kill_window``).
+
+### `Panel.close`
+
+```python
+close()
+```
+
+Close the window, keeping what it shows to reopen (see ``op.close_window``).
+
+### `Panel.reopen`
+
+```python
+reopen()
+```
+
+Open the window again after ``close()``, in front of the others.
+
+### `Panel.rename`
+
+```python
+rename(new_name)
+```
+
+Give it and its window another name (see ``op.rename_window``). Returns self.
+
 ## `Control`
 
 ```python

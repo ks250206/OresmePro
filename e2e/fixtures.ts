@@ -218,6 +218,19 @@ export class App {
     }, kind);
   }
 
+  /**
+   * Saves the experiment as Ctrl+S does, through Save Experiment As, under
+   * the file name it offers unless `name` is given; returns the file.
+   */
+  async saveExperiment(name?: string): Promise<{ file: Download; bytes: Buffer }> {
+    return this.download(async () => {
+      await this.page.keyboard.press("Control+s");
+      const dialog = this.page.getByRole("dialog", { name: "Save Experiment As" });
+      if (name !== undefined) await dialog.getByLabel("File name").fill(name);
+      await dialog.getByRole("button", { name: "Save" }).click();
+    });
+  }
+
   /** Performs an action that downloads a file and returns the file's bytes. */
   async download(action: () => Promise<unknown>): Promise<{ file: Download; bytes: Buffer }> {
     const [file] = await Promise.all([this.page.waitForEvent("download"), action()]);
