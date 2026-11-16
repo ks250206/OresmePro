@@ -4359,8 +4359,13 @@ def _do_sample(run_name, index, plan, inputs):
                 except OresmeError as error:
                     raise OresmeError(f"{where}: {error}") from None
                 outputs[step["id"]] = _step_outputs(_result_json(found.function(**passed)))
-            made = [name for name in _call("listWaves")[0] if name not in before_waves]
             kept = [name for name in _call("listResults")[0] if name not in before_results]
+            # The results' own copies of what they made belong to them, not to the sample.
+            copies = tuple(f"results:{name}:" for name in kept)
+            made = [
+                name for name in _call("listWaves")[0]
+                if name not in before_waves and not name.startswith(copies)
+            ]
             # In the same block as the outputs: the record and what it records go in together.
             _dispatch({
                 "op": "updateRunSample", "run": run_name, "index": index, "state": "succeeded",

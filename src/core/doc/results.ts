@@ -35,8 +35,18 @@ export interface AnalysisResult {
   converged: boolean;
   /** Why the fit stopped. */
   reason: string;
-  /** The waves it made, by role: "fit", "residuals", ... */
+  /**
+   * The waves it made, by role: "fit", "residuals", ... These are the
+   * analysis's own names (fit_signal), which the next analysis of the same
+   * wave makes again: they show the latest.
+   */
   outputs: Record<string, string>;
+  /**
+   * The result's own copies of what it made, by the same roles, in the data
+   * folder results:<name> (see keptFolder): what this analysis made, however
+   * often the wave is fitted again.
+   */
+  kept: Record<string, string>;
   /** For a result of a plugin: which plugin, at which commit, made it. Null for the app's own. */
   source: ResultSource | null;
 }
@@ -193,12 +203,17 @@ export function checkResult(value: unknown, name: string, state: DocState | null
     if (given === null && !now) throw new DocError(`No wave named ${JSON.stringify(wave)}.`);
     inputs.push({ wave, fingerprint: given ?? waveFingerprint(now!) });
   }
-  const outputs: Record<string, string> = {};
-  if (isObject(value.outputs)) {
-    for (const [role, wave] of Object.entries(value.outputs)) {
-      if (typeof wave === "string") outputs[role] = wave;
+  const waveNames = (given: unknown): Record<string, string> => {
+    const named: Record<string, string> = {};
+    if (isObject(given)) {
+      for (const [role, wave] of Object.entries(given)) {
+        if (typeof wave === "string") named[role] = wave;
+      }
     }
-  }
+    return named;
+  };
+  const outputs = waveNames(value.outputs);
+  const kept = waveNames(value.kept);
   let source: ResultSource | null = null;
   if (isObject(value.source)) {
     const given = value.source;
@@ -236,9 +251,13 @@ export function checkResult(value: unknown, name: string, state: DocState | null
     converged: value.converged === true,
     reason: typeof value.reason === "string" ? value.reason : "",
     outputs,
+    kept,
     source,
   };
 }
+
+/** The data folder in which a result keeps its own copies of the waves it made. */
+export const keptFolder = (result: string): string => `results:${result}`;
 
 /** The settings and outputs of a result with a wave's name changed wherever it stands for the wave. */
 export function renameInResult(
@@ -263,11 +282,12 @@ export function renameInResult(
     );
   }
   const inputs = result.inputs.map((input) => ({ ...input, wave: rename(input.wave) }));
-  const outputs = Object.fromEntries(
-    Object.entries(result.outputs).map(([role, wave]) => [role, rename(wave)]),
-  );
+  const byRole = (waves: Record<string, string>) =>
+    Object.fromEntries(Object.entries(waves).map(([role, wave]) => [role, rename(wave)]));
+  const outputs = byRole(result.outputs);
+  const kept = byRole(result.kept);
   const same =
-    JSON.stringify([settings, inputs, outputs]) ===
-    JSON.stringify([result.settings, result.inputs, result.outputs]);
-  return same ? result : { ...result, settings, inputs, outputs };
+    JSON.stringify([settings, inputs, outputs, kept]) ===
+    JSON.stringify([result.settings, result.inputs, result.outputs, result.kept]);
+  return same ? result : { ...result, settings, inputs, outputs, kept };
 }

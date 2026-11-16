@@ -108,7 +108,8 @@ does the same to other waves.
 - `covariance` (read-only)
 - `correlation` (read-only)
 - `created` (read-only) · When the analysis was done, as a ``datetime`` in UTC.
-- `outputs` (read-only) · The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out.
+- `outputs` (read-only) · The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out. These are the analysis's own names (``fit_signal``), which fitting the same wave again makes anew: they show the latest. ``kept`` is what this result made.
+- `kept` (read-only) · This result's own copies of what it made, by role, in the data folder ``results:<name>``. They stay as the analysis made them when the same wave is fitted again, so results can be compared curve by curve. Removing the result removes them, unless a graph or table shows them.
 - `kind` (read-only)
 - `label` (read-only)
 - `names` (read-only)
@@ -121,6 +122,18 @@ does the same to other waves.
 - `reason` (read-only)
 - `settings` (read-only)
 - `changed` (read-only)
+
+### `Result.show`
+
+```python
+show()
+```
+
+Graph the data this result read with the curves it made (its kept copies).
+
+Returns the graph. For a fit of several waves, each with its curve.
+
+**Explicit exceptions** · `OresmeError`
 
 ### `Result.__getitem__`
 

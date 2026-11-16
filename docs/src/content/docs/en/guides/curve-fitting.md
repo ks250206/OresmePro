@@ -15,6 +15,8 @@ Call `op.fit_functions()` to see model names and formulas. The `gauss` model use
 - Use `hold` to fix parameters and `bounds` to constrain them. Supply known standard deviations of the observations with `sigma`.
 - `op.fit` returns a `FitResult`. Inspect `converged`, `reason`, residuals, and parameter correlations before adjusting the starting values or range.
 - Coefficients and estimated standard deviations are written to `W_coef` and `W_sigma`. Fits are recorded in the experiment by default and can be compared or repeated via **Analysis → Results…**.
+- Fitting the same wave again replaces `fit_<wave>` with the new curve, but each result keeps copies of the curve, residuals and band it made in the data folder `results:<result>` (`op.result("Fit0").kept`). **Show** in Results graphs the data a result read with its own curve. Deleting a result deletes its copies, except those shown in a graph or table.
+- Data whose X is far from zero (date waves, say) get the same coefficient uncertainties as the same data moved to zero. Where the parameters are not determined independently, the reason says the uncertainties could not be estimated, apart from whether the fit converged.
 - Pass a built-in model name, a Python callable with a starting guess, or an lmfit model.
 
 [Gaussian example](../../examples/gaussian/) · [Exponential example](../../examples/exponential/) · [Analysis API](../../reference/api/analysis/#fit)

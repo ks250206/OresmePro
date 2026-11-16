@@ -76,9 +76,10 @@ export interface Autosaver {
   stop: () => void;
   /**
    * Saves what is unsaved now instead of at the next interval or retry.
-   * Resolves when it has been written, or when writing it has failed.
+   * Resolves when it has been written (true), or when writing it has
+   * failed or something is still unsaved (false).
    */
-  saveNow: () => Promise<void>;
+  saveNow: () => Promise<boolean>;
   /** Counts everything as unsaved: the document, the files and the history. */
   markAll: () => void;
 }
@@ -259,7 +260,7 @@ async function readIndexed(
   dir: StorageDirectory,
   kind: Kind,
   generation: Generation,
-): Promise<{ text: string; data: Map<string, Uint8Array> } | null> {
+): Promise<{ text: string; data: Map<string, Uint8Array>; missing: string[] } | null> {
   const name = generation === "backup" ? BACKUP[INDEX[kind]]! : INDEX[kind];
   let previous: string | null = null;
   for (let attempt = 0; ; attempt += 1) {
@@ -267,16 +268,16 @@ async function readIndexed(
     if (!index) return null;
     const text = await index.text();
     const data = new Map<string, Uint8Array>();
-    let complete = true;
+    // Every file is read, so that one that is missing costs only itself.
+    const missing: string[] = [];
     for (const name of references(kind, text)) {
       const file = await readFile(dir, name);
-      if (!file) {
-        complete = false;
-        break;
-      }
-      data.set(name, new Uint8Array(await file.arrayBuffer()));
+      if (!file) missing.push(name);
+      else data.set(name, new Uint8Array(await file.arrayBuffer()));
     }
-    if (complete || text === previous || attempt + 1 >= RESTORE_ATTEMPTS) return { text, data };
+    if (missing.length === 0 || text === previous || attempt + 1 >= RESTORE_ATTEMPTS) {
+      return { text, data, missing };
+    }
     previous = text;
   }
 }
@@ -315,11 +316,26 @@ export async function restore(
     const read = await readIndexed(dir, "file", generation);
     if (read) {
       const loaded: [string, Uint8Array][] = [];
+      const lost: string[] = [];
       for (const { path, file } of JSON.parse(read.text) as SavedFile[]) {
         const bytes = read.data.get(file);
         if (bytes) loaded.push([path, bytes]);
+        else lost.push(path);
       }
       files.load(loaded);
+      // The files that could be read are there; the experiment is not whole
+      // without the others, so it is not saved over until the user decides.
+      if (lost.length > 0) {
+        failed(
+          "the experiment's files",
+          new Error(
+            `${lost.length} of the experiment's files could not be read: ${lost.slice(0, 5).join(", ")}${
+              lost.length > 5 ? ", …" : ""
+            }.`,
+          ),
+        );
+        report.incomplete = true;
+      }
     }
   } catch (error) {
     failed("the experiment's files", error);
@@ -567,6 +583,7 @@ export function autosave(
         await saving;
         if (failures > 0 || !(dirtyDoc || dirtyFiles || dirtyHistory)) break;
       }
+      return failures === 0 && !(dirtyDoc || dirtyFiles || dirtyHistory);
     },
     markAll: () => {
       dirtyDoc = dirtyFiles = dirtyHistory = true;

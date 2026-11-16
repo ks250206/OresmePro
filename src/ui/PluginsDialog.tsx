@@ -423,7 +423,7 @@ export function PluginsDialog() {
 
   if (step.kind === "busy") {
     return (
-      <Dialog title="Plugins" onClose={close} width={460}>
+      <Dialog title="Plugins" onClose={close} help="guides/plugins/" width={460}>
         <p className="m-0">{step.message}</p>
       </Dialog>
     );
@@ -496,6 +496,7 @@ export function PluginsDialog() {
   return (
     <Dialog
       title="Plugins"
+      help="guides/plugins/"
       onClose={close}
       width={720}
       buttons={

@@ -266,6 +266,7 @@ export function TemplatesDialog({
   return (
     <Dialog
       title="Analysis Templates"
+      help="guides/analysis/"
       onClose={close}
       onSubmit={() => void start()}
       submitLabel={

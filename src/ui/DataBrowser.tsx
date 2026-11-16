@@ -321,6 +321,30 @@ function ResultList() {
 }
 
 /** Lists the waves of the experiment in their data folders, like Igor's Data Browser. */
+/**
+ * Whether a wave matches what is typed in the Data Browser's search box:
+ * every word, in any case, somewhere in its path, units, number type or
+ * note ("text" finds text waves).
+ */
+export function waveMatches(wave: Wave, query: string): boolean {
+  const haystack = [
+    wave.name,
+    wave.unit,
+    wave.xUnit,
+    wave.yUnit,
+    wave.text ? "text" : wave.type,
+    wave.shape.length > 1 ? `${wave.shape.length}d` : "",
+    wave.note,
+  ]
+    .join("\n")
+    .toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((word) => haystack.includes(word));
+}
+
 export function DataBrowser() {
   const order = useDoc((state) => state.waveOrder);
   const waves = useDoc((state) => state.waves);
@@ -330,17 +354,60 @@ export function DataBrowser() {
   const collapsed = useUi((state) => state.collapsedFolders);
   const selected = useUi((state) => state.selectedWaves).filter((name) => name in waves);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
   const focused = selected.length === 1 ? waves[selected[0]!] : undefined;
+  const filtering = filter.trim() !== "";
+  const shown = (name: string) => !filtering || waveMatches(waves[name]!, filter);
+  // While a filter is typed, every folder with a wave that matches is open.
+  const isOpenFolder = (folder: string) =>
+    folder === "" || filtering || !collapsed.includes(folder);
 
-  // The rows as shown, top to bottom, for shift-selection.
+  // The rows as shown, top to bottom, for shift-selection and the arrow keys.
   const visible: string[] = [];
   const collect = (folder: string) => {
     for (const child of folders) {
-      if (parentFolder(child) === folder && !collapsed.includes(child)) collect(child);
+      if (parentFolder(child) === folder && isOpenFolder(child)) collect(child);
     }
-    for (const name of order) if (parentFolder(name) === folder) visible.push(name);
+    for (const name of order) if (parentFolder(name) === folder && shown(name)) visible.push(name);
   };
   collect("");
+  /** Whether a folder has a wave the filter lets through, at any depth. */
+  const hasShown = (folder: string): boolean =>
+    order.some(
+      (name) => shown(name) && (name.startsWith(`${folder}:`) || parentFolder(name) === folder),
+    );
+
+  /** The arrow keys move the selection through the rows shown; Enter opens a table. */
+  const onListKey = (event: React.KeyboardEvent) => {
+    const last = selected.at(-1);
+    const at = last ? visible.indexOf(last) : -1;
+    const go = (index: number) => {
+      const name = visible[Math.max(0, Math.min(visible.length - 1, index))];
+      if (!name) return;
+      event.preventDefault();
+      ui.set({
+        selectedWaves: event.shiftKey ? [...new Set([...selected, name])] : [name],
+      });
+      listRef.current
+        ?.querySelector(`[data-wave="${CSS.escape(name)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    };
+    if (event.key === "ArrowDown") go(at + 1);
+    else if (event.key === "ArrowUp") go(at < 0 ? visible.length - 1 : at - 1);
+    else if (event.key === "Home") go(0);
+    else if (event.key === "End") go(visible.length - 1);
+    else if (event.key === "Enter" && selected.length > 0) {
+      event.preventDefault();
+      runGui({ op: "edit", waves: selected });
+    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      event.stopPropagation();
+      ui.set({ selectedWaves: [...visible] });
+    } else if (event.key === "Escape") {
+      ui.set({ selectedWaves: [] });
+    }
+  };
 
   const select = (
     name: string,
@@ -507,7 +574,8 @@ export function DataBrowser() {
 
   const renderFolder = (folder: string, depth: number): React.ReactNode => {
     const indent = { paddingLeft: 8 + depth * 12 };
-    const isOpen = folder === "" || !collapsed.includes(folder);
+    const isOpen = isOpenFolder(folder);
+    if (filtering && folder !== "" && !hasShown(folder)) return null;
     return (
       <div key={folder || "root"} role="group" aria-label={folder || "root"}>
         <div
@@ -533,7 +601,7 @@ export function DataBrowser() {
               .filter((child) => parentFolder(child) === folder && child !== folder)
               .map((child) => renderFolder(child, depth + 1))}
             {order
-              .filter((name) => parentFolder(name) === folder)
+              .filter((name) => parentFolder(name) === folder && shown(name))
               .map((name) => {
                 const wave = waves[name]!;
                 const active = selected.includes(name);
@@ -543,6 +611,7 @@ export function DataBrowser() {
                     role="option"
                     aria-selected={active}
                     aria-label={name}
+                    data-wave={name}
                     draggable
                     className={`flex cursor-default items-center gap-1.5 py-[1px] pr-2 ${
                       active ? "bg-accent text-white" : "hover:bg-chrome"
@@ -606,11 +675,34 @@ export function DataBrowser() {
       <div className="flex h-6 shrink-0 items-center border-b border-line px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
         Data Browser
       </div>
+      <div className="shrink-0 border-b border-line bg-chrome px-1.5 py-1">
+        <input
+          type="search"
+          aria-label="Find waves"
+          placeholder="Find: name, unit, type, note"
+          spellCheck={false}
+          className="h-5 w-full rounded border border-line bg-paper px-1.5 text-[11.5px] outline-none focus:border-accent"
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setFilter("");
+            else if (event.key === "ArrowDown" || event.key === "Enter") {
+              // On into the list, at the first wave found.
+              event.preventDefault();
+              if (visible[0]) ui.set({ selectedWaves: [visible[0]] });
+              listRef.current?.focus();
+            }
+          }}
+        />
+      </div>
       <div
+        ref={listRef}
         role="listbox"
         aria-label="Waves"
         aria-multiselectable
-        className="min-h-0 flex-1 overflow-y-auto bg-paper py-0.5"
+        tabIndex={0}
+        onKeyDown={onListKey}
+        className="min-h-0 flex-1 overflow-y-auto bg-paper py-0.5 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/50"
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) ui.set({ selectedWaves: [] });
         }}
@@ -618,6 +710,9 @@ export function DataBrowser() {
         {...dropProps("")}
       >
         {renderFolder("", 0)}
+        {filtering && visible.length === 0 && order.length > 0 ? (
+          <div className="px-4 py-1 text-muted">No wave matches “{filter.trim()}”.</div>
+        ) : null}
         {order.length === 0 && folders.length === 0 ? (
           <div className="px-4 py-1 leading-relaxed text-muted">
             No waves yet. Drop a CSV or Igor file here, or make one:
