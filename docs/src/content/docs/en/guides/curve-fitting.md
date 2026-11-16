@@ -25,6 +25,10 @@ Keep an analysis you settled on for one sample as a named **analysis template**,
 
 1. In **Analysis → Results…**, select a result and choose **Make Template…**. The waves the result read become the template's inputs.
    Select several results to make a template of several steps, in the order they were done; a wave an earlier step made (residuals, say) is passed to the next step as that step's output.
+   A template made from fits keeps their `hold`, `bounds` and `exclude`, so the conditions settled on the first sample are those of every other.
+   **New…** and **Edit…** in **Analysis → Templates…** make or change a template on screen: add steps from the registered actions and put them in order,
+   and take each argument from a value, an input, or what an earlier step returned (`hold` and the like are written as JSON, such as `{"y0": 0}`).
+   **Save and Try** tries it on one sample before it is run on all.
 2. In **Analysis → Templates…**, select the template and add a row for each sample. **Add Selected Waves** takes the waves selected in the Data Browser;
    **Add from Folder** takes the waves of a folder (for several inputs, each folder holding waves named after the inputs).
 3. Choose **Run**. Each sample runs all steps inside `op.atomic()`: a sample that fails leaves nothing, and one that succeeds goes into the experiment at once.

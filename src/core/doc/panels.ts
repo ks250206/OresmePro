@@ -772,6 +772,8 @@ export function controlForParam(
     case "numbers":
     // A template's samples: rows of waves, which no one control holds.
     case "samples":
+    // A structure of its own, which no control edits.
+    case "json":
       return null;
   }
 }

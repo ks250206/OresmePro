@@ -1430,13 +1430,14 @@ def make_template(name, results_, description=""):
 
     ``results_`` is a list of results (names, or what the fits returned), in
     the order they were done; each becomes a step that calls its action
-    (``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+    (``core.fit``, ``core.fit_peaks``) with the settings it was done with,
+    ``hold``, ``bounds`` and ``exclude`` included.
     A wave an analysis read becomes an input of the template, named after
     the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
     made becomes a reference to that step's output instead, so that results
     done one after the other become a template of several steps. Steps are
-    quiet. Settings the action cannot take (``hold=``, ``bounds=``,
-    ``exclude=``, data given as an array) are left out with a warning. A
+    quiet. Settings the action cannot take (data given as an array, say)
+    are left out with a warning. A
     fit of several waves at once (``op.fit_global``) has no action and
     cannot be in a template. Returns the template (see ``op.Template``).
     """
@@ -1496,6 +1497,8 @@ def make_template(name, results_, description=""):
                     left_out.append(key)
                 continue
             if "default" in spec and spec["default"] == value:
+                continue
+            if spec["type"] == "json" and not _says_something(value):
                 continue
             if spec["type"] == "wave":
                 if not isinstance(value, str):
@@ -3334,6 +3337,12 @@ with _op._registering("core"):
             **_X_WAVE,
             "guess": {"type": "numbers", "title": "Initial guess", "optional": True,
                       "description": "One starting value per parameter."},
+            "hold": {"type": "json", "title": "Hold", "optional": True,
+                     "description": 'Parameters kept fixed: {"y0": 0} at a value, or ["y0"] at the starting guess.'},
+            "bounds": {"type": "json", "title": "Bounds", "optional": True,
+                       "description": 'Limits of parameters, null for none: {"A": [0, null]}.'},
+            "exclude": {"type": "json", "title": "Exclude", "optional": True,
+                        "description": "X ranges left out: [x1, x2] or [[x1, x2], ...]."},
             "sigma": _wave_param("Weighting wave", "The standard deviation of each point.", True),
             **_POINTS,
             **_GRAPH,
@@ -3360,6 +3369,8 @@ with _op._registering("core"):
             "shape": {"type": "choice", "title": "Shape", "choices": list(_SHAPES), "default": "gauss"},
             "baseline": {"type": "choice", "title": "Baseline", "choices": ["constant", "linear"],
                          "default": "constant"},
+            "exclude": {"type": "json", "title": "Exclude", "optional": True,
+                        "description": "X ranges left out: [x1, x2] or [[x1, x2], ...]."},
             **_POINTS,
             **_GRAPH,
             "components": {"type": "boolean", "title": "Peak waves", "default": True,

@@ -113,15 +113,19 @@ export function argReference(
 
 /**
  * One argument of a step, checked: a fixed value (a number, a string, true
- * or false, or a list of them), a reference, or a list holding references.
+ * or false, a list, or an object of an action's own, such as a fit's
+ * bounds), a reference, or a list or object holding references. Null is a
+ * value only inside a list or an object ({"A": [0, null]}): an argument that
+ * is null is left out instead.
  */
 function checkArg(
   value: unknown,
   where: string,
   slots: ReadonlySet<string>,
   earlier: ReadonlySet<string>,
-  inList = false,
+  inside = false,
 ): Json {
+  if (value === null && inside) return null;
   if (value === null || value === undefined) {
     throw new DocError(`${where} cannot be null: leave the argument out instead.`);
   }
@@ -131,11 +135,17 @@ function checkArg(
   }
   if (typeof value === "string" || typeof value === "boolean") return value;
   if (Array.isArray(value)) {
-    if (inList) throw new DocError(`${where}: lists inside lists are not arguments of actions.`);
     return value.map((item, index) => checkArg(item, `${where}[${index}]`, slots, earlier, true));
   }
   if (!isObject(value)) throw new DocError(`${where} is not a value a template can hold.`);
   const keys = Object.keys(value).sort();
+  if (!keys.some((key) => key.startsWith("$"))) {
+    const plain: JsonObject = {};
+    for (const key of keys) {
+      plain[key] = checkArg(value[key], `${where}.${key}`, slots, earlier, true);
+    }
+    return plain;
+  }
   if (keys.length === 1 && keys[0] === "$input") {
     const slot = value.$input;
     if (typeof slot !== "string" || !slots.has(slot)) {
@@ -156,7 +166,7 @@ function checkArg(
     return { $step: step, output };
   }
   throw new DocError(
-    `${where}: an object must be {"$input": slot} or {"$step": step, "output": key}; actions take no other objects.`,
+    `${where}: a reference must be {"$input": slot} or {"$step": step, "output": key}, with nothing else.`,
   );
 }
 

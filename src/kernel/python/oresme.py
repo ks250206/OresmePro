@@ -3147,7 +3147,7 @@ def default_style():
 
 #: The kinds of value a parameter of an action takes.
 _PARAM_TYPES = ("wave", "waves", "number", "integer", "string", "boolean", "choice", "numbers",
-                "samples")
+                "samples", "json")
 _PARAM_KEYS = frozenset(
     ("type", "title", "description", "optional", "default", "choices", "min", "max", "length", "arg")
 )
@@ -3213,6 +3213,34 @@ def _is_integer(value):
     return _is_number(value) and (isinstance(value, numbers.Integral) or float(value).is_integer())
 
 
+def _json_value(value, where):
+    """A value made of dicts (with text keys), lists, text, numbers, True/False and None, as plain JSON.
+
+    For the settings of an action that have a structure of their own (a
+    fit's ``hold``, ``bounds`` or ``exclude``), which the action checks.
+    """
+    if value is None or isinstance(value, (bool, np.bool_)):
+        return None if value is None else bool(value)
+    if isinstance(value, str):
+        return value
+    if _is_number(value):
+        if not math.isfinite(float(value)):
+            raise OresmeError(f"{where} must be made of finite numbers, not {value!r}.")
+        return int(value) if _is_integer(value) and not isinstance(value, float) else float(value)
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_json_value(item, f"{where}[{index}]") for index, item in enumerate(value)]
+    if isinstance(value, dict):
+        plain = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise OresmeError(f"{where}: keys must be text, not {key!r}.")
+            plain[key] = _json_value(item, f"{where}[{key!r}]")
+        return plain
+    raise OresmeError(
+        f"{where} must be made of dicts, lists, text, numbers, True, False and None, not {value!r}."
+    )
+
+
 def _check_value(spec, value, where, resolve_names=True):
     """The value of one argument as plain JSON, or OresmeError saying what is wrong with it."""
     kind = spec["type"]
@@ -3263,6 +3291,8 @@ def _check_value(spec, value, where, resolve_names=True):
         if not isinstance(value, (bool, np.bool_)):
             raise OresmeError(f"{where} must be True or False, not {value!r}.")
         return bool(value)
+    if kind == "json":
+        return _json_value(value, where)
     if kind == "samples":
         # The waves are looked up sample by sample, when each is done.
         rows = []
@@ -4058,16 +4088,35 @@ def set_template(name, data):
                 step["version"] = max(_actions[action_id])
             if isinstance(step.get("args"), dict):
                 step["args"] = {key: _template_value(value) for key, value in step["args"].items()}
+                _check_structured(step)
             filled.append(step)
         data["steps"] = filled
     _dispatch({"op": "setTemplate", "name": name, "template": data})
     return Template(name)
 
 
+def _check_structured(step):
+    """Refuses an object as an argument that takes none: only a reference, or a ``json`` setting, is one."""
+    params = _actions.get(step.get("action"), {}).get(step.get("version"))
+    if params is None:
+        return
+    for key, value in step["args"].items():
+        if not isinstance(value, dict) or "$input" in value or "$step" in value:
+            continue
+        spec = params.params.get(key)
+        if spec is not None and spec["type"] != "json":
+            raise OresmeError(
+                f"Step {step['id']}: {key} takes a {spec['type']}; an object there must be a "
+                '{"$input": slot} or a {"$step": step, "output": key}.'
+            )
+
+
 def _template_value(value):
     """An argument of a step as plain JSON: waves by name, NumPy numbers as numbers."""
     if isinstance(value, Wave):
         return value.name
+    if isinstance(value, dict):
+        return {key: _template_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_template_value(item) for item in value]
     if isinstance(value, np.generic):
@@ -4276,6 +4325,9 @@ def _resolve(value, inputs, outputs, where):
         return value
     if "$input" in value:
         return inputs[value["$input"]]
+    if "$step" not in value:
+        # A value with a structure of its own (a fit's bounds), which may hold references.
+        return {name: _resolve(item, inputs, outputs, where) for name, item in value.items()}
     step, key = value["$step"], value["output"]
     returned = outputs[step]
     if key not in returned:

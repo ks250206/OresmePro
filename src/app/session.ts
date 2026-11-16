@@ -59,6 +59,8 @@ export type DialogRequest =
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
   | { kind: "results"; result?: string }
+  /** Makes a template (none given) or changes one, step by step. */
+  | { kind: "editTemplate"; template?: string }
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }

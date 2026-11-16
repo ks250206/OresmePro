@@ -225,13 +225,14 @@ Keep analyses as a template: their steps and settings, with the waves taken out.
 
 ``results_`` is a list of results (names, or what the fits returned), in
 the order they were done; each becomes a step that calls its action
-(``core.fit``, ``core.fit_peaks``) with the settings it was done with.
+(``core.fit``, ``core.fit_peaks``) with the settings it was done with,
+``hold``, ``bounds`` and ``exclude`` included.
 A wave an analysis read becomes an input of the template, named after
 the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
 made becomes a reference to that step's output instead, so that results
 done one after the other become a template of several steps. Steps are
-quiet. Settings the action cannot take (``hold=``, ``bounds=``,
-``exclude=``, data given as an array) are left out with a warning. A
+quiet. Settings the action cannot take (data given as an array, say)
+are left out with a warning. A
 fit of several waves at once (``op.fit_global``) has no action and
 cannot be in a template. Returns the template (see ``op.Template``).
 
