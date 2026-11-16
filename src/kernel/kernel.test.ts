@@ -612,6 +612,68 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("Link0\n(2, 6) ['LinkA', 'LinkB'] x\n8\nNone None\n");
   });
 
+  it("installs packages with %pip, records them in the experiment and puts them in again", async () => {
+    // A wheel of our own, put where micropip can read it without a network.
+    expect(
+      await run(
+        [
+          "import zipfile, os",
+          'os.makedirs("/tmp/wheels", exist_ok=True)',
+          'wheel = "/tmp/wheels/tiny_pkg-0.1-py3-none-any.whl"',
+          "with zipfile.ZipFile(wheel, 'w') as z:",
+          '    z.writestr("tiny_pkg/__init__.py", "VALUE = 42\\n")',
+          '    z.writestr("tiny_pkg-0.1.dist-info/METADATA", "Metadata-Version: 2.1\\nName: tiny-pkg\\nVersion: 0.1\\nSummary: A test\\n")',
+          '    z.writestr("tiny_pkg-0.1.dist-info/WHEEL", "Wheel-Version: 1.0\\nGenerator: test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n")',
+          '    z.writestr("tiny_pkg-0.1.dist-info/RECORD", "")',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(await run("%pip install emfs:/tmp/wheels/tiny_pkg-0.1-py3-none-any.whl")).toBe(true);
+    expect(stdout).toContain("Installed tiny-pkg 0.1.");
+    expect(await run("import tiny_pkg; print(tiny_pkg.VALUE)")).toBe(true);
+    expect(stdout).toBe("42\n");
+    const recorded = doc.getState().python.packages.find((item) => item.name === "tiny-pkg");
+    expect(recorded).toMatchObject({ version: "0.1", source: "pypi", requested: true });
+    expect(recorded!.url).toContain("tiny_pkg-0.1-py3-none-any.whl");
+
+    // One of the distribution's, which comes from it.
+    expect(await run("await op.install('uncertainties', quiet=True)")).toBe(true);
+    expect(
+      doc.getState().python.packages.find((item) => item.name === "uncertainties"),
+    ).toMatchObject({
+      source: "pyodide",
+      requested: true,
+    });
+
+    expect(await run("%pip freeze")).toBe(true);
+    expect(stdout).toMatch(/^tiny-pkg==0\.1\nuncertainties==[\d.]+\n$/);
+    expect(
+      await run("p = op.packages(); print([x.name for x in p if x.recorded], p[0].source)"),
+    ).toBe(true);
+    expect(stdout).toContain("'tiny-pkg'");
+    expect(await run("%pip show tiny-pkg")).toBe(true);
+    expect(stdout).toContain("Version: 0.1");
+
+    // Taken out of Python behind the experiment's back, it is put in again from what is recorded.
+    expect(
+      await run(
+        "import micropip, sys\nmicropip.uninstall('tiny-pkg')\nsys.modules.pop('tiny_pkg', None)\nprint(await op.install())",
+      ),
+    ).toBe(true);
+    expect(stdout).toContain("['tiny-pkg']");
+    expect(
+      await run("import importlib, tiny_pkg; importlib.reload(tiny_pkg); print(tiny_pkg.VALUE)"),
+    ).toBe(true);
+    expect(stdout.trim().split("\n").at(-1)).toBe("42");
+
+    expect(await run("%pip uninstall tiny-pkg")).toBe(true);
+    expect(doc.getState().python.packages.map((item) => item.name)).not.toContain("tiny-pkg");
+    expect(await run("%pip install no-such-package-oresme-test")).toBe(false);
+    expect(await run("%pip download x")).toBe(false);
+    expect(errors.join("\n")).toMatch(/%pip download is not supported/);
+    expect(await run("%pip uninstall uncertainties")).toBe(true);
+  });
+
   it("keeps procedures as Python files that run and import", async () => {
     expect(
       await run(

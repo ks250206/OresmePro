@@ -15,6 +15,7 @@ import { PresetStore } from "./importPresets";
 import { PluginHost } from "./plugins/host";
 import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
+import type { PackagesStatus } from "../kernel/rpc";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
 import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
@@ -70,6 +71,8 @@ export type DialogRequest =
   | { kind: "attributes"; targets?: string[] }
   /** This experiment could not be saved before opening `target`: what to do. */
   | { kind: "unsavedLeave"; target: string }
+  /** The Python packages of the experiment: installing, removing and seeing them. */
+  | { kind: "packages" }
   /** Asks for the file name to save the experiment as. */
   | { kind: "saveExperiment" }
   /** Asks whether to close a window (keeping what it shows) or kill it. */
@@ -104,6 +107,12 @@ export interface UiState {
   contextMenu: { x: number; y: number; items: MenuItem[] } | null;
   /** Cursor position readout shown in the status bar. */
   readout: string;
+  /**
+   * Whether the experiment's Python packages from PyPI were held back when
+   * it was opened from a file, as code the user has not seen: they are not
+   * installed when Python starts until the user says so (Python › Packages).
+   */
+  packagesHeld: boolean;
   showBrowser: boolean;
   showCommand: boolean;
   browserWidth: number;
@@ -196,6 +205,7 @@ export const ui = createStore<UiState>({
   alert: null,
   contextMenu: null,
   readout: "",
+  packagesHeld: false,
   showBrowser: true,
   showCommand: true,
   browserWidth: 220,
@@ -290,6 +300,9 @@ export const runProcedureCode = (name: string): string =>
  */
 export const procedureRuns = createStore<{ code: Readonly<Record<string, string>> }>({ code: {} });
 
+/** The line that installs the experiment's recorded packages again (see op.install). */
+export const RESTORE_PACKAGES = "await op.install()";
+
 /** Runs a procedure in the interactive namespace, through the history like a typed command. */
 export function runProcedure(name: string, source: "user" | "gui" = "user"): number {
   const code = doc.getState().procedures[name]?.code;
@@ -306,6 +319,10 @@ export function runProcedure(name: string, source: "user" | "gui" = "user"): num
  */
 function runProcedures(): void {
   procedureRuns.set({ code: {} });
+  // The experiment's packages go in first, so that its procedures can import them.
+  if (doc.getState().python.packages.length > 0 && !ui.get().packagesHeld) {
+    kernel.execute(RESTORE_PACKAGES, "gui");
+  }
   for (const procedure of Object.values(doc.getState().procedures)) {
     if (procedure.autoRun && procedure.code.trim()) runProcedure(procedure.name, "gui");
   }
@@ -321,13 +338,23 @@ export const pluginStore = new PluginStore(
 );
 export const plugins = new PluginHost({ store: pluginStore, doc, pyodideURL: PYODIDE_URL });
 
+/**
+ * Which packages Python has installed and imported, as it last said (see
+ * PackagesStatus); null until it has said, and again when it restarts.
+ */
+export const pythonPackages = createStore<{ status: PackagesStatus | null }>({ status: null });
+
 export const kernel: KernelClient = new KernelClient({
   doc,
   history,
   files,
   pluginCatalog: () => plugins.catalog(),
   invokePlugin: (action, args, writer) => plugins.run(action, args as ActionArgs, writer),
-  onStart: runProcedures,
+  onStart: () => {
+    pythonPackages.set({ status: null });
+    runProcedures();
+  },
+  packagesStatus: (status) => pythonPackages.set({ status }),
   onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),

@@ -193,6 +193,9 @@ export function echoPython(
     case "activateWindow":
     case "resizeColumn":
     case "setProcedure":
+    // Recorded by the Python that installs or removes them (op.install, %pip).
+    case "recordPackages":
+    case "forgetPackages":
       return null;
     case "removeResults":
       return command.names.map((name) => `op.result(${pyLiteral(name)}).remove()`).join("\n");

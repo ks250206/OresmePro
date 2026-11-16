@@ -39,6 +39,18 @@ export interface RpcContext {
   importPresets(): readonly NamedImportSettings[];
   /** The actions of the plugins that are on (see src/app/plugins/host.ts). */
   pluginCatalog?: () => readonly unknown[];
+  /** Hears which packages Python has installed and imported (see PackagesStatus). */
+  packagesStatus?: (status: PackagesStatus) => void;
+}
+
+/** The packages Python has now, as it says after an input that changed them. */
+export interface PackagesStatus {
+  /** Every distribution installed, by normalized name: its version. */
+  installed: Record<string, string>;
+  /** Those of them whose modules have been imported. */
+  imported: string[];
+  /** Those Python started with. */
+  base: string[];
 }
 
 /** A named set of import settings, as the app keeps them for the files of an instrument. */
@@ -254,6 +266,11 @@ export function handleRpc(
       return { result: state.timeZone };
     case "listFolders":
       return { result: state.folders };
+    case "pythonEnv":
+      return { result: state.python };
+    case "packagesStatus":
+      context.packagesStatus?.(params as unknown as PackagesStatus);
+      return { result: null };
     case "attributes": {
       const target = typeof params.target === "string" ? params.target : "";
       if (isFolderKey(target)) {

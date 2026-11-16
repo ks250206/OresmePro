@@ -84,6 +84,7 @@ import {
 } from "./controls";
 import { AttributesDialog } from "./AttributesDialog";
 import { ExperimentsDialog } from "./ExperimentsDialog";
+import { PackagesDialog } from "./PackagesDialog";
 import { TemplateEditorDialog } from "./TemplateEditor";
 import {
   CloseWindowDialog,
@@ -3290,6 +3291,8 @@ function renderDialog(dialog: DialogRequest) {
       return <AttributesDialog targets={dialog.targets} />;
     case "editTemplate":
       return <TemplateEditorDialog template={dialog.template} />;
+    case "packages":
+      return <PackagesDialog />;
     case "saveExperiment":
       return <SaveExperimentDialog />;
     case "unsavedLeave":

@@ -9,6 +9,7 @@ import {
   renameAttributeKeys,
 } from "./attributes";
 import { dict, filterDict, withEntry, withoutEntries, type Dict } from "./dict";
+import { checkPackage, withPackages, withoutPackages } from "./pythonEnv";
 import {
   checkCycle,
   evaluateFormula,
@@ -354,6 +355,13 @@ export type Command =
   | ({ op: "updateRunSample"; run: string; index: number } & SampleOutcome)
   | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
+  /**
+   * Records Python packages the experiment uses, as op.install found them
+   * installed (see ./pythonEnv), under the Pyodide version it ran.
+   */
+  | { op: "recordPackages"; packages: readonly unknown[]; pyodide: string }
+  /** Stops using packages: they and what only they needed are no longer recorded. */
+  | { op: "forgetPackages"; names: readonly string[] }
   /**
    * Links graphs (at least two) so that their axes zoom together, the
    * bottom ("x") or the bottom and the left ("xy"), and, with `cursors`,
@@ -3158,6 +3166,21 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? withEntry(state.attributes, key, next)
           : withoutEntries(state.attributes, [key]);
       return { state: { ...state, attributes }, result: null };
+    }
+    case "recordPackages": {
+      if (!Array.isArray(command.packages)) throw new DocError("packages must be a list.");
+      const packages = command.packages.map(checkPackage);
+      if (typeof command.pyodide !== "string") throw new DocError("pyodide must be a version.");
+      return {
+        state: { ...state, python: withPackages(state.python, packages, command.pyodide) },
+        result: null,
+      };
+    }
+    case "forgetPackages": {
+      return {
+        state: { ...state, python: withoutPackages(state.python, command.names) },
+        result: null,
+      };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
