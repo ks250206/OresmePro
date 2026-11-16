@@ -137,6 +137,14 @@ export interface LayoutOptions {
   timeZone?: string;
 }
 
+/**
+ * The angle an axis label is drawn at, in degrees clockwise from reading
+ * across: a left axis's reads upwards (-90) and a right axis's downwards
+ * (90), as in Igor; bottom and top read across. lblRot turns it further.
+ */
+const titleAngle = (spec: AxisSpec): number =>
+  (spec.side === "left" ? -90 : spec.side === "right" ? 90 : 0) + spec.labelRotation;
+
 /** Whether an axis writes its tick labels: not when its labels are axis only or off. */
 const showsTickLabels = (spec: AxisSpec): boolean => spec.labels === "on";
 
@@ -1173,6 +1181,15 @@ export function layoutGraph(
   );
   const tickOut = (spec: AxisSpec): number =>
     spec.ticks !== "none" && spec.ticks !== "inside" ? MAJOR_TICK : 0;
+  /** How far an axis label reaches away from the plot, turned as it is drawn. */
+  const titleExtent = (axis: AxisInfo): number => {
+    const angle = (titleAngle(axis.spec) * Math.PI) / 180;
+    const { width, ascent, descent } = axis.title;
+    const height = ascent + descent;
+    return axis.vertical
+      ? Math.abs(width * Math.cos(angle)) + Math.abs(height * Math.sin(angle))
+      : Math.abs(width * Math.sin(angle)) + Math.abs(height * Math.cos(angle));
+  };
   const labelExtent = (axis: AxisInfo): number =>
     !showsTickLabels(axis.spec)
       ? 0
@@ -1277,7 +1294,7 @@ export function layoutGraph(
       axis.depth =
         tickOut(axis.spec) +
         (showsTickLabels(axis.spec) ? TICK_LABEL_GAP + labelExtent(axis) : 0) +
-        (axis.title.width > 0 ? AXIS_LABEL_GAP + axis.title.ascent + axis.title.descent : 0);
+        (axis.title.width > 0 ? AXIS_LABEL_GAP + titleExtent(axis) : 0);
     }
 
     for (const side of AXIS_SIDES) {
@@ -1838,14 +1855,20 @@ export function layoutGraph(
       at += out * AXIS_LABEL_GAP;
       const { title } = axis;
       const middle = (scale.p0 + scale.p1) / 2;
-      if (axis.vertical) {
-        // Reads bottom-to-top on both sides, like Igor.
-        const baseline = side === "left" ? at - title.descent : at + title.ascent;
-        emitText(prims, title, baseline, middle, { align: 0.5, rotate: -90, family, fill: INK });
-      } else {
-        const baseline = side === "bottom" ? at + title.ascent : at - title.descent;
-        emitText(prims, title, middle, baseline, { align: 0.5, family, fill: INK });
-      }
+      // The label's middle sits half its reach out from the gap, whatever its angle.
+      const reach = out * (titleExtent(axis) / 2);
+      const centre = axis.vertical ? { x: at + reach, y: middle } : { x: middle, y: at + reach };
+      const degrees = titleAngle(axis.spec);
+      const angle = (degrees * Math.PI) / 180;
+      // emitText places the baseline: it is half the text's height below its middle, turned.
+      const below = (title.ascent - title.descent) / 2;
+      emitText(
+        prims,
+        title,
+        centre.x - Math.sin(angle) * below,
+        centre.y + Math.cos(angle) * below,
+        { align: 0.5, ...(degrees % 360 !== 0 ? { rotate: degrees } : {}), family, fill: INK },
+      );
     }
   };
 

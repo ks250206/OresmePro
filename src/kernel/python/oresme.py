@@ -878,6 +878,10 @@ class Axis(_Props):
     labels as raw strings (``r"..."``), or Python reads ``\\f`` and ``\\u``
     as its own escapes.
 
+    ``label_rotation`` turns the axis label from where its side sets it, in
+    degrees clockwise, as Igor's lblRot: a left axis's label reads upwards, a
+    right axis's downwards, and 180 turns either round.
+
     ``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
     (tick labels and the axis label), ``"axis only"`` (the axis label, no
     tick labels) or ``"off"`` (neither). The axis line and ticks stay.
@@ -887,6 +891,7 @@ class Axis(_Props):
         "label",
         "label_size",
         "label_style",
+        "label_rotation",
         "tick_label_size",
         "labels",
         "min",
@@ -3558,6 +3563,9 @@ def action(id, *, version=1, title, params, description=None):
     - ``"choice"``: one of ``choices``, a list of strings or numbers;
     - ``"samples"``: a list of dicts, each giving the name of a wave for
       each input of a template (see ``Template.run``).
+    - ``"json"``: a value with a structure of its own (dicts, lists, text,
+      numbers, True/False, and None inside), which the function checks
+      itself: a fit's ``hold``, ``bounds`` or ``exclude``, say.
 
     An argument that is left out is not passed, so the function's default
     applies. None (null) is never a value: leave the argument out instead.

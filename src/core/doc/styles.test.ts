@@ -146,6 +146,7 @@ describe("graph styles", () => {
       grid: "major",
       labelSize: 20,
       labelStyle: "italic",
+      labelRotation: 0,
       tickLabelSize: null,
       labels: "on",
     });
