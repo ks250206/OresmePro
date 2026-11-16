@@ -768,11 +768,32 @@ describe("oresme Python API", () => {
       { name: "vname", type: "str", summary: "'hello'" },
       { name: "vx", type: "ndarray", summary: "2×3 float64" },
     ]);
-    // What Python starts with, private names and modules are not the user's variables.
+    // What Python starts with and private names are not the user's variables.
     const names = (variables?.variables ?? []).map((item) => item.name);
-    for (const name of ["np", "op", "_hidden", "math", "In", "Out", "get_ipython"]) {
+    for (const name of ["np", "op", "_hidden", "In", "Out", "get_ipython"]) {
       expect(names).not.toContain(name);
     }
+    // Modules the user imported are, and procedures say they are.
+    expect(variables?.variables.find((item) => item.name === "math")).toEqual({
+      name: "math",
+      type: "module",
+      summary: "math",
+    });
+    expect(
+      await run(
+        'op.new_procedure("vtools", "A = 1\\n", import_as="vt").run()\nimport vtools as vt2',
+      ),
+    ).toBe(true);
+    expect(listed("vt")).toEqual([
+      { name: "vt", type: "module", summary: "vtools (procedure)" },
+      { name: "vt2", type: "module", summary: "vtools (procedure)" },
+    ]);
+    // Dropping a module takes only the name: importing it again brings it back.
+    expect(await run("del vt, vt2, math\nimport math as m2\nprint(m2.sqrt(4))")).toBe(true);
+    expect(stdout).toBe("2.0\n");
+    expect(listed("vt")).toEqual([]);
+    expect(await run("del m2")).toBe(true);
+    expect(await run("op.procedure('vtools').kill()")).toBe(true);
     expect(await run("del vx, vname, vf, VKlass, vlist")).toBe(true);
     expect(listed("v")).toEqual([]);
   });
