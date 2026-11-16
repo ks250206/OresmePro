@@ -347,6 +347,7 @@ function useMenus(): MenuDefinition[] {
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
         { separator: true },
+        { label: "Packages…", onSelect: open({ kind: "packages" }) },
         // Plugins are Python packages that add actions, templates and loaders.
         { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
         {

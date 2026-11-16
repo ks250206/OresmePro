@@ -1,3 +1,4 @@
+import { emptyPythonEnv, type PythonEnv } from "./pythonEnv";
 import { dict, type Dict } from "./dict";
 import type { AnalysisTemplate, TemplateRun } from "./analysisTemplates";
 import type { AnalysisResult } from "./results";
@@ -957,6 +958,8 @@ export interface DocState {
    * wave (see ./attributes).
    */
   readonly attributes: Dict<Readonly<Record<string, number | string>>>;
+  /** The Python packages the experiment uses beyond those Python starts with (see ./pythonEnv). */
+  readonly python: PythonEnv;
 }
 
 export const emptyDoc = (): DocState => ({
@@ -977,6 +980,7 @@ export const emptyDoc = (): DocState => ({
   timeZone: "UTC",
   windows: [],
   attributes: dict(),
+  python: emptyPythonEnv(),
 });
 
 /** Height of a window's title bar; the content area is the window minus this. */

@@ -40,6 +40,28 @@ Procedure ウィンドウを右クリックして **Export as 名前.py** を選
 
 コマンド入力には `np` と `op` が初期設定されています。Procedure に `import numpy as np` と `import oresme as op` を書いておくと依存が明確です。SciPy、pandas、scikit-learn、lmfit は利用時に読み込まれます。長い処理を止めるには **Python → Interrupt** を使います。Python を再起動するとセッション変数は消えますが、Experiment の Wave はアプリ側に残ります。
 
+## パッケージを追加する
+
+NumPy・SciPy・pandas・scikit-learn・lmfit など、Pyodide に同梱されたパッケージは `import` するだけで読み込まれます。
+それ以外は **Python → Packages…** か、コマンド入力の `%pip` で追加します。
+
+```python
+%pip install pybaselines impedance      # PyPI から(依存も一緒に)
+%pip install statsmodels                # Pyodide 同梱のものはそこから
+%pip list                               # Python に入っているもの全部
+%pip freeze                             # この実験が使うもの(name==version)
+%pip show pybaselines
+%pip uninstall impedance
+await op.install("emcee==3.1.6")        # Python から。結果は op.packages()
+```
+
+- 入れたパッケージは、名前・バージョン・wheel・SHA-256・依存関係として**実験に記録**されます。実験を開くたび・Python を再起動するたびに、記録どおりのバージョンが自動で入り直してから Procedure が動きます(履歴に `await op.install()` が残ります)。
+- PyPI の wheel はブラウザに保存され、同じパッケージを使う実験どうしで共有されます。一度入れたものはオフラインでも入れ直せます。
+- 他の人から受け取った `.oresme` を開くとき、PyPI のパッケージを使っていれば入れるかどうかを確認します(import するとそのコードが動くため)。断った場合は **Python → Packages…** の **Install Them** であとから入れられます。
+- **Python → Packages…** では、この実験のパッケージとそれが連れてきた依存をツリーで表示し、Python の中での状態(未導入・導入済み・import 済み)も示します。おすすめ(pybaselines、impedance、statsmodels、PyWavelets、uncertainties、emcee、iminuit、pint、sympy など)はワンクリックで入れられ、**Copy Requirements** で一覧をコピーできます。下の **In Python now** の表は、プリインストール(NumPy・IPython など)、アプリ同梱で import 時に読み込まれるもの(SciPy・pandas・scikit-learn・lmfit など。import 前も版付きで表示)、この実験のものを含め、Python のパッケージを版と状態(import 済み・読み込み済み・未読み込み)つきで表示します。
+- 入れられるのは、pure Python の wheel と Pyodide 向けにビルドされたものだけです。Pyodide に同梱されたパッケージの一覧は [Packages in Pyodide](https://pyodide.org/en/stable/usage/packages-in-pyodide.html) にあります。Pyodide にない独自のコンパイル済みコードを持つパッケージ(Numba、PyTorch など)は動きません。
+- `%pip uninstall` で記録から外れます。すでに import したモジュールは Python を再起動するまで残ります。
+
 ## 変更をまとめて反映する
 
 `with op.atomic():` の中の変更は、ブロックが例外なく終わったときに 1 回の Undo 単位としてまとめて Experiment に入ります。途中で例外が起きると何も残りません。ブロックの中の Python には自分の変更が見えますが、画面にはブロックが終わるまで何も表示されません。

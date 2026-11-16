@@ -42,7 +42,7 @@ SECTIONS = {
         (
             "OresmeError atomic load_text load_excel load_igor load_parquet load_hdf5 kill_window close_window reopen_window rename_window windows "
             "Procedure new_procedure procedure procedures time_zone set_time_zone "
-            "Layout LayoutItem new_layout layout layouts"
+            "Layout LayoutItem new_layout layout layouts install uninstall packages"
         ),
     ),
 }
@@ -204,7 +204,7 @@ def render_symbol(name, node, inherited_set, notes, japanese):
 
 
 def generate():
-    files = ("oresme.py", "_oresme_analysis.py")
+    files = ("oresme.py", "_oresme_analysis.py", "_oresme_packages.py")
     modules = [ast.parse((SOURCE / file).read_text(encoding="utf-8")) for file in files]
     symbols = {}
     for file, module in zip(files, modules, strict=True):

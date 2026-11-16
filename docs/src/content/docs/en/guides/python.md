@@ -40,6 +40,28 @@ Imported code **does not run**. It also comes in with running when the experimen
 
 The command session starts with `np` and `op` preloaded. Include `import numpy as np` and `import oresme as op` in a procedure to make its dependencies clear. SciPy, pandas, scikit-learn, and lmfit load on first use. Use **Python → Interrupt** for a long-running command. Restarting Python clears session variables and leaves the experiment's waves in the app.
 
+## Add packages
+
+Packages of the Pyodide distribution (NumPy, SciPy, pandas, scikit-learn, lmfit and more) load when they are imported.
+Add others with **Python → Packages…**, or `%pip` in the command line.
+
+```python
+%pip install pybaselines impedance      # from PyPI, with what they need
+%pip install statsmodels                # one of Pyodide's comes from Pyodide
+%pip list                               # everything in Python
+%pip freeze                             # what this experiment uses (name==version)
+%pip show pybaselines
+%pip uninstall impedance
+await op.install("emcee==3.1.6")        # from Python; see op.packages()
+```
+
+- What is installed is **recorded in the experiment**: name, version, wheel, SHA-256 and what it needs. Whenever the experiment opens or Python restarts, the versions recorded are installed again before its procedures run (the history shows `await op.install()`).
+- The browser keeps the wheels from PyPI, shared by every experiment that uses them, so a package installed once installs again offline.
+- Opening an `.oresme` file from someone else that uses packages from PyPI asks first, as importing them runs their code. Declined, they can be installed later with **Install Them** in **Python → Packages…**.
+- **Python → Packages…** shows the experiment's packages with what each brought, as a tree, and how each stands in Python (not installed, installed, imported). Suggestions (pybaselines, impedance, statsmodels, PyWavelets, uncertainties, emcee, iminuit, pint, sympy and more) install with one click, and **Copy Requirements** copies the list. Its **In Python now** table lists Python's packages with their versions and state (imported, loaded, not loaded yet): pre-installed ones (NumPy, IPython), those the app ships that load when first imported (SciPy, pandas, scikit-learn, lmfit, shown before they are), and the experiment's.
+- Pure Python wheels and wheels built for Pyodide install. [Packages in Pyodide](https://pyodide.org/en/stable/usage/packages-in-pyodide.html) lists the packages of the distribution. A package with compiled code of its own that Pyodide does not ship (Numba, PyTorch) cannot run.
+- `%pip uninstall` takes a package out of the record. Modules already imported stay until Python restarts.
+
 ## Apply changes together
 
 Changes made inside `with op.atomic():` reach the experiment together, as one undo step, when the block ends without an exception. If the block raises, nothing it did is kept. Python inside the block sees its own changes; the interface shows none of them until the block ends.

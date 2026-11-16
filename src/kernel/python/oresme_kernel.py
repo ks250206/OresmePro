@@ -112,6 +112,10 @@ builtins.input = oresme._input
 
 shell = _Shell.instance()
 shell.colors = "lightbg"
+# `%pip install name` installs with micropip and records it in the experiment.
+import _oresme_packages  # noqa: E402
+
+shell.input_transformers_cleanup.append(_oresme_packages.pip_lines)
 shell.run_cell("import numpy as np\nimport oresme as op", store_history=False, silent=True)
 
 
@@ -376,6 +380,7 @@ async def execute(code):
             return await _execute(code)
         finally:
             _sync(_push)
+            _sync(_oresme_packages.report)
     except asyncio.CancelledError:
         _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
         return False
@@ -496,3 +501,7 @@ def complete(code, cursor):
             if len(items) >= 200:
                 break
     return json.dumps(items)
+
+
+# What Python has from the start (NumPy, IPython and theirs), for Python › Packages.
+_sync(_oresme_packages.report)

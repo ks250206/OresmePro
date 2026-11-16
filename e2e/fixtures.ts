@@ -106,6 +106,7 @@ export class App {
           pages: state.pages,
           results: state.results,
           templates: state.templates,
+          python: state.python,
           windows: state.windows,
         }),
       ) as {
@@ -117,6 +118,7 @@ export class App {
         pages: typeof state.pages;
         results: typeof state.results;
         templates: typeof state.templates;
+        python: typeof state.python;
         windows: typeof state.windows;
       };
     });

@@ -7,13 +7,18 @@
 //
 // 2. It keeps what the app is made of, so that an installed OresmePro starts
 //    without a network: the page and its scripts, and Python itself. Packages
-//    that Python fetches later (SciPy, say) are kept from their first use.
+//    that Python fetches later (SciPy, say) are kept from their first use, and
+//    so are wheels from PyPI that an experiment installs (%pip install): those
+//    are kept apart from any one build, as every experiment that uses one
+//    shares the file, which never changes at its address.
 //
 // The page registers this file as sw.js?app=<build>&python=<version>. A new
 // build is a new URL, so a new worker, which lets go of the old build's files.
 const params = new URL(self.location.href).searchParams;
 const SHELL = `oresme-app-${params.get("app") ?? "dev"}`;
 const PYTHON = `oresme-python-${params.get("python") ?? "dev"}`;
+/** Wheels from PyPI: one cache for every build, as their addresses never change. */
+const WHEELS = "oresme-wheels";
 
 // A kept file answers any request for its URL. Servers that send "Vary:
 // Origin" would otherwise make the copy fetched here (which has no Origin
@@ -27,7 +32,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith("oresme-") && name !== SHELL && name !== PYTHON) {
+        if (name.startsWith("oresme-") && name !== SHELL && name !== PYTHON && name !== WHEELS) {
           await caches.delete(name);
         }
       }
@@ -57,6 +62,8 @@ function cacheFor(request, url) {
   if (url.origin === self.location.origin) {
     return url.pathname.includes("/pyodide/") ? PYTHON : SHELL;
   }
+  // Wheels from PyPI: the address holds the wheel's hash, so it never changes.
+  if (url.hostname === "files.pythonhosted.org" && url.pathname.endsWith(".whl")) return WHEELS;
   // Packages of the Pyodide distribution, from its CDN: versioned, so they never change.
   return url.hostname === "cdn.jsdelivr.net" && url.pathname.includes("/pyodide/") ? PYTHON : null;
 }

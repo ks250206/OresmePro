@@ -8,6 +8,7 @@ import {
 } from "../doc/commands";
 import { checkAttributeName, checkAttributeValue, isFolderKey } from "../doc/attributes";
 import { dict, dictFrom } from "../doc/dict";
+import { savedPythonEnv, type PythonEnv } from "../doc/pythonEnv";
 import { formulaCurrent, parseFormula } from "../doc/formula";
 import { checkPanel } from "../doc/panels";
 import { checkResult, type AnalysisResult } from "../doc/results";
@@ -97,6 +98,8 @@ export interface SavedExperiment {
   windows: WindowState[];
   /** By data folder ("run1:") or wave; left out by files from before attributes. */
   attributes?: Record<string, Record<string, number | string>>;
+  /** The Python packages it uses; left out by files from before. */
+  python?: PythonEnv;
 }
 
 /** Where the experiment's files (see FileStore) sit in an .oresme archive. */
@@ -142,6 +145,7 @@ export function describeExperiment(
     timeZone: state.timeZone,
     windows: [...state.windows],
     attributes: dictFrom(state.attributes),
+    python: state.python,
   };
 }
 
@@ -411,6 +415,7 @@ export function buildState(
     timeZone,
     windows,
     attributes,
+    python: savedPythonEnv(saved.python),
   };
 }
 

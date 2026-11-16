@@ -33,6 +33,7 @@ export interface KernelOptions {
   measureText: RpcContext["measureText"];
   importPresets: RpcContext["importPresets"];
   pluginCatalog?: RpcContext["pluginCatalog"];
+  packagesStatus?: RpcContext["packagesStatus"];
   /**
    * Runs a plugin's action for Python (`op.invoke("plugin....")`). It is
    * answered later, when the plugin's sandbox is done; Python waits. Its

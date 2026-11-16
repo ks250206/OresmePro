@@ -17,6 +17,7 @@ import {
   type PageSpec,
   type StyleSpec,
 } from "../core/doc/types";
+import { fromOutside } from "../core/doc/pythonEnv";
 import { sourcePath } from "../core/files/files";
 import { unzipExperiment, zipExperiment } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
@@ -447,6 +448,18 @@ async function openExperimentFile(file: File): Promise<void> {
           .map((procedure) => procedure.name)
           .join(", ")}). Run them?\n\nChoose Cancel to open the experiment without running them.`,
       );
+    // Packages from PyPI run their own code when imported: theirs to allow too.
+    const outside = fromOutside(opened.state.python);
+    const packagesAllowed =
+      outside.length === 0 ||
+      window.confirm(
+        `${file.name} uses Python packages from PyPI (${outside
+          .map((item) => `${item.name} ${item.version}`)
+          .join(
+            ", ",
+          )}). Install them?\n\nChoose Cancel to open it without them; Python › Packages… installs them later.`,
+      );
+    ui.set({ packagesHeld: !packagesAllowed });
     const procedures = allowed
       ? opened.state.procedures
       : dict(
