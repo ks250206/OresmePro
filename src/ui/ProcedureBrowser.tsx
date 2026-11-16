@@ -7,6 +7,15 @@ import { openContextMenu } from "./Menu";
 
 type Kind = "class" | "function" | "method";
 
+/**
+ * Where a file's definitions start: past its icon, under its name, so that
+ * they read as inside it; each level further in goes STEP more.
+ */
+const INDENT = 46;
+const STEP = 16;
+/** The middle of a file's icon, where the guide down to its definitions runs. */
+const FILE_ICON_MIDDLE = 32;
+
 /** The look of each kind of definition: a letter on a colored square, as editors' outlines show them. */
 const KINDS: Record<Kind, { letter: string; color: string; label: string }> = {
   class: { letter: "C", color: "#d97706", label: "class" },
@@ -170,7 +179,7 @@ export function ProcedureBrowser() {
             aria-label={`${item.name} in ${name}`}
             title={`${KINDS[kind].label} ${item.name}, ${name}.py line ${item.line}`}
             className="group flex h-[22px] w-full min-w-0 items-center gap-1.5 pr-2 text-left hover:bg-accent-soft"
-            style={{ paddingLeft: 26 + depth * 16 }}
+            style={{ paddingLeft: INDENT + depth * STEP }}
             onClick={() => {
               setSelected(name);
               openProcedure(name, item.line);
@@ -196,7 +205,7 @@ export function ProcedureBrowser() {
               <span
                 aria-hidden
                 className="pointer-events-none absolute top-0 bottom-1 w-px bg-line"
-                style={{ left: 33 + depth * 16 }}
+                style={{ left: INDENT + 7 + depth * STEP }}
               />
               {renderItems(name, item.children, depth + 1, item.kind === "class")}
             </ul>
@@ -314,7 +323,13 @@ export function ProcedureBrowser() {
                     </span>
                   </div>
                   {open && matches.length > 0 ? (
-                    <ul role="group" className="m-0 list-none p-0">
+                    <ul role="group" className="relative m-0 list-none p-0">
+                      {/* A guide down from the file to what it defines. */}
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute top-0 bottom-1 w-px bg-line"
+                        style={{ left: FILE_ICON_MIDDLE }}
+                      />
                       {renderItems(name, matches, 0, false)}
                     </ul>
                   ) : null}
