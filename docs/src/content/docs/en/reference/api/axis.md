@@ -42,6 +42,10 @@ right axis's downwards, and 180 turns either round.
 (tick labels and the axis label), ``"axis only"`` (the axis label, no
 tick labels) or ``"off"`` (neither). The axis line and ticks stay.
 
+``line=False`` leaves out the axis line itself. With ``ticks="none"`` and
+``labels="off"`` too, nothing of the axis is drawn: for a figure such as
+a ternary diagram, drawn with traces on axes that are not shown.
+
 Get an axis with `graph.axis(name)` or use a shortcut such as `graph.left`. Assign `axis.range = (0, 10)` to set explicit limits, or call `axis.autoscale()` to restore automatic limits.
 
 **Properties**
@@ -50,7 +54,7 @@ Get an axis with `graph.axis(name)` or use a shortcut such as `graph.left`. Assi
 - `range` (read/write) · (min, max); None for a limit that follows the data.
 - `side` (read-only)
 
-**Configurable properties** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**Configurable properties** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `line`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 

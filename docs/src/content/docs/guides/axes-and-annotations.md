@@ -29,6 +29,25 @@ g.axis("left").set(labels="off")
 g.axis("right").label_rotation = 180
 ```
 
+**Modify Axis** の **Draw the axis line** を外すと、軸線そのものを描きません(Igor Pro の `axThick=0` に当たります)。目盛りを none、Show labels を off にもすると、その軸は何も描かれません。3元相図のように、トレースで描いた図を、表示しない軸の座標に置くときに使います。
+
+```python
+g.axis("left").set(line=False, ticks="none", labels="off")
+```
+
+## 文字マーカー
+
+**Modify Trace Appearance** の **Text markers** で wave を選ぶと、マーカーの代わりに、その wave の値を各点に文字で描きます(Igor Pro の textMarker に当たります)。データ座標の位置に置くラベルとして使えます。テキスト wave ならその文字を、数値の wave なら数値を書きます。モードは markers か lines+markers にします。
+
+- **Text anchor** で、ラベルのどの点をデータ点に合わせるかを選びます。`MC` は中央、`RC` は点の左、`MT` は点の下に置きます
+- Python では文字の大きさ(`text_size`)と回転(`text_rotation`、時計回りの度)も指定できます
+- 色はトレースの色です。`color_wave` で点ごとに色を変えることもできます
+
+```python
+names = op.make("names", ["P1", "P2", "P3"])
+g.trace("peaks").set(mode="markers", text_marker=names, text_anchor="LB", text_size=10)
+```
+
 - `g.legend()` はトレースの凡例を追加します。`anchor="LT"` で左上を指定できます。
 - `g.textbox("Run 1")` はグラフ上に固定したテキストを追加します。
 - `g.tag(trace, point, "Y = {y}")` は指定点に追従するラベルを追加します。点番号は0始まりです。

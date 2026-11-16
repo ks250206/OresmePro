@@ -26,13 +26,21 @@ to ``color_max``, or the wave's own range). For a complex wave, ``part``
 chooses what is plotted: ``"real"``, ``"imag"``, ``"magnitude"`` or
 ``"phase"`` (radians).
 
+``text_marker`` draws the values of another wave (text, or numbers) at
+the points instead of markers, as Igor's text markers do: labels placed
+in data coordinates. ``text_anchor`` says which point of each label sits
+on its data point ("MC" centres it, "RC" puts it to the left, "MT"
+below), ``text_size`` is their size (None: the graph's font size) and
+``text_rotation`` turns them clockwise, in degrees. The mode must draw
+markers ("markers" or "lines+markers").
+
 **Properties**
 
 - `name` (read-only)
 - `y` (read-only) · The Y wave.
 - `x` (read-only) · The X wave, or `None` when plotting against the Y wave's X scaling.
 
-**Configurable properties** · `mode`, `color`, `line_size`, `line_style`, `marker`, `marker_size`, `marker_fill`, `hidden`, `y_error`, `x_error`, `fill`, `fill_color`, `fill_opacity`, `x_offset`, `y_offset`, `color_wave`, `color_table`, `color_min`, `color_max`, `part`
+**Configurable properties** · `mode`, `color`, `line_size`, `line_style`, `marker`, `marker_size`, `marker_fill`, `hidden`, `y_error`, `x_error`, `fill`, `fill_color`, `fill_opacity`, `x_offset`, `y_offset`, `color_wave`, `color_table`, `color_min`, `color_max`, `part`, `text_marker`, `text_anchor`, `text_size`, `text_rotation`
 
 ### `Trace.remove`
 

@@ -86,4 +86,33 @@ def scale(y, factor=2.0):
 
 wave の引数は `Wave`(`.data` は読み取り専用の NumPy 配列。`.x`、`.dx`、`.unit` なども使えます)として渡されます。`values` の `result` に `names`、`coef`、`sigma` を入れると、解析結果として残ります。
 
-見本として、電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット)を [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem) に置いています。
+文字列のリスト(または文字列の NumPy 配列)を `wave(...)` に渡すと、テキスト wave になります(文字マーカーのラベルなど)。
+
+### グラフを返す
+
+Action は `waves` と `values` に加えて `"graph"` を返せます。アプリは、返された wave だけを使って(役割の名前で指定します)、そのグラフを作ります。
+
+```python
+return {
+    "waves": {"x": wave(x), "y": wave(y), "label": wave(["P1", "P2"])},
+    "graph": {
+        "name": "Peaks",
+        "traces": [
+            {"y": "y", "x": "x", "mode": "markers", "legend": "Peaks"},
+            {"y": "y", "x": "x", "mode": "markers", "text_marker": "label", "text_anchor": "LB"},
+        ],
+        "axes": {"left": {"label": "Intensity"}, "bottom": {"min": 0}},
+        "graph": {"margin_left": 40},
+        "annotations": [{"kind": "legend", "anchor": "RT"}],
+    },
+}
+```
+
+- トレースは、アプリのトレースと同じプロパティ(`mode`、`color`、`line_size`、`marker`、`text_marker` など)を取ります。wave を指すプロパティには役割の名前を書きます。`axis`、`haxis` で軸の側を選び、`legend` を付けたトレースは凡例に並びます
+- `axes` と `graph` は、軸とグラフのプロパティです。名前は Python と同じ snake_case で書けます
+- アプリは、Python から頼まれたときと同じように、すべてを確かめてから作ります。不正なプロパティがあれば、その実行は何も残しません
+
+見本として、次のプラグインを置いています。
+
+- 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
+- 3元相図: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary)。枠、グリッド、目盛りの数値、頂点の名前を、普通のトレースと文字マーカーで描き、グラフとして返します

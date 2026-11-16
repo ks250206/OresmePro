@@ -29,6 +29,25 @@ An axis label's direction is set by its side: a left axis's label reads upwards,
 g.axis("right").label_rotation = 180
 ```
 
+Unticking **Draw the axis line** in **Modify Axis** leaves out the axis line itself, as Igor Pro's `axThick=0` does. With ticks none and Show labels off too, nothing of the axis is drawn: for a figure drawn with traces on axes that are not shown, such as a ternary diagram.
+
+```python
+g.axis("left").set(line=False, ticks="none", labels="off")
+```
+
+## Text markers
+
+Choosing a wave under **Text markers** in **Modify Trace Appearance** draws its values at the points instead of markers, as Igor Pro's text markers do: labels placed in data coordinates. A text wave gives its text; a numeric wave, its numbers. The mode must be markers or lines+markers.
+
+- **Text anchor** says which point of each label sits on its data point: `MC` centres it, `RC` puts it to the left of the point, `MT` below it
+- From Python, `text_size` sets their size and `text_rotation` turns them clockwise, in degrees
+- They take the trace's color, or a color per point from `color_wave`
+
+```python
+names = op.make("names", ["P1", "P2", "P3"])
+g.trace("peaks").set(mode="markers", text_marker=names, text_anchor="LB", text_size=10)
+```
+
 - `g.legend()` adds a trace legend. Use `anchor="LT"` to position it in the upper left.
 - `g.textbox("Run 1")` adds text anchored to the graph.
 - `g.tag(trace, point, "Y = {y}")` adds a label attached to a point. Point indices start at zero.

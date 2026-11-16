@@ -1,0 +1,57 @@
+{
+  "manifestVersion": 1,
+  "name": "ternary",
+  "title": "Ternary Diagram",
+  "version": "0.1.0",
+  "description": "Plots compositions of three components as a ternary diagram: a triangle with a grid, tick labels and corner names, drawn with ordinary traces so that colors, lines, markers, text and the legend can be changed in Modify Trace and the rest of the app afterwards.",
+  "license": "MIT",
+  "python": {
+    "entry": "ternary",
+    "packages": ["numpy"]
+  },
+  "files": ["ternary/__init__.py", "ternary/diagram.py"],
+  "actions": [
+    {
+      "name": "ternary",
+      "title": "Ternary Diagram",
+      "description": "Makes a ternary diagram of the points (a, b, c). Each point is scaled to a + b + c = 100 %, so fractions, percentages and amounts all work. A is at the top, B at the bottom right and C at the bottom left.",
+      "params": {
+        "a": { "type": "wave", "title": "A" },
+        "b": { "type": "wave", "title": "B" },
+        "c": { "type": "wave", "title": "C" },
+        "names": {
+          "type": "string",
+          "title": "Names",
+          "default": "A, B, C",
+          "description": "The names written at the corners, top, bottom right and bottom left, separated by commas."
+        },
+        "step": {
+          "type": "number",
+          "title": "Grid step (%)",
+          "default": 10,
+          "min": 1,
+          "max": 50,
+          "description": "How far apart the grid lines and tick labels are."
+        },
+        "grid": {
+          "type": "boolean",
+          "title": "Grid",
+          "default": true
+        },
+        "ticks": {
+          "type": "choice",
+          "title": "Tick labels",
+          "default": "clockwise",
+          "choices": ["clockwise", "counterclockwise", "none"],
+          "description": "Which side each component's values are written on. Clockwise: A on the left side, B on the right, C at the bottom; counterclockwise: A on the right, B at the bottom, C on the left."
+        },
+        "legend": {
+          "type": "string",
+          "title": "Legend",
+          "default": "",
+          "description": "The points' text in a legend at the top right; empty, no legend."
+        }
+      }
+    }
+  ]
+}
