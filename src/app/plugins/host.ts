@@ -9,7 +9,7 @@ import {
   splitPluginActionId,
   type PluginAction,
 } from "../../core/plugins/manifest";
-import { planOutcome, waveArgs } from "../../core/plugins/outcome";
+import { makePluginGraph, planOutcome, waveArgs } from "../../core/plugins/outcome";
 import type { SandboxDtype, SandboxWave } from "../../core/sandbox/protocol";
 import { Sandbox } from "../../sandbox/host";
 import type { InstalledPlugin, PluginStore } from "./store";
@@ -28,6 +28,8 @@ export interface PluginRunOutcome {
   values: JsonValue;
   /** The name of the analysis result kept, if the action kept one. */
   result: string | null;
+  /** The name of the graph made, if the action asked for one. */
+  graph: string | null;
   /** What the plugin printed. */
   log: string;
 }
@@ -191,7 +193,10 @@ export class PluginHost {
         const made = target.dispatch(command);
         if (command.op === "addResult") result = made;
       }
-      return { waves: plan.waves, values: plan.values, result, log: outcome.log };
+      const graph = plan.graph
+        ? makePluginGraph(target, plan.graph, plan.waves, plugin.manifest.name)
+        : null;
+      return { waves: plan.waves, values: plan.values, result, graph, log: outcome.log };
     };
     return writer ? apply(writer) : this.options.doc.transact(apply);
   }

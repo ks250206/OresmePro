@@ -1,8 +1,8 @@
 import type { ActionArgs, JsonValue } from "../actions";
-import type { Command } from "../doc/commands";
+import { checkName, uniqueName, windowTaken, type Command } from "../doc/commands";
 import type { ResultSource } from "../doc/results";
-import { leafName, parentFolder, type DocState } from "../doc/types";
-import type { CheckedResult } from "../sandbox/validate";
+import { DocError, leafName, parentFolder, type DocState } from "../doc/types";
+import { WAVE_PROPS, type CheckedResult, type PluginGraph } from "../sandbox/validate";
 import type { PluginAction } from "./manifest";
 
 /**
@@ -21,6 +21,8 @@ export interface OutcomePlan {
   values: JsonValue;
   /** Whether the commands keep an analysis result (its name is what addResult returns). */
   keepsResult: boolean;
+  /** The graph the action asked for, to make once the waves are there (see makePluginGraph). */
+  graph: PluginGraph | null;
 }
 
 const isObject = (value: unknown): value is Record<string, JsonValue> =>
@@ -82,10 +84,10 @@ export function planOutcome(
     commands.push({
       op: "makeWave",
       name,
-      data: wave.data,
+      ...(wave.text
+        ? { text: wave.text }
+        : { data: wave.data, type: wave.type, shape: wave.shape }),
       ...(wave.imag ? { imag: wave.imag } : {}),
-      type: wave.type,
-      shape: wave.shape,
       x0: wave.x0,
       dx: wave.dx,
       xUnit: wave.xUnit,
@@ -137,5 +139,82 @@ export function planOutcome(
     });
     keepsResult = true;
   }
-  return { commands, waves, values: outcome.values, keepsResult };
+  return { commands, waves, values: outcome.values, keepsResult, graph: outcome.graph };
+}
+
+/** What makePluginGraph works on: the document as the run's commands leave it. */
+export interface GraphTarget {
+  getState(): DocState;
+  dispatch(command: Command): unknown;
+}
+
+/**
+ * Makes the graph a plugin asked for, with the document's own commands, so
+ * every property is checked as if typed in Python: a bad one refuses the
+ * whole run. The graph shows only the waves the run made (`waves`, by role).
+ * Returns the graph's name.
+ */
+export function makePluginGraph(
+  target: GraphTarget,
+  graph: PluginGraph,
+  waves: Readonly<Record<string, string>>,
+  plugin: string,
+): string {
+  const wave = (role: string): string => {
+    const name = waves[role];
+    if (name === undefined) {
+      throw new DocError(`The graph uses ${role}, which is not a wave the action returned.`);
+    }
+    return name;
+  };
+  const run = (command: Command): unknown => {
+    try {
+      return target.dispatch(command);
+    } catch (error) {
+      if (error instanceof DocError) {
+        throw new DocError(`The graph ${plugin} asked for cannot be made: ${error.message}`);
+      }
+      throw error;
+    }
+  };
+  const base = graph.name === null ? "Graph" : checkName(graph.name, "graph");
+  const name = run({
+    op: "display",
+    y: [],
+    name: uniqueName(base, windowTaken(target.getState())),
+  }) as string;
+  const legend: string[] = [];
+  for (const trace of graph.traces) {
+    const made = run({
+      op: "appendTraces",
+      graph: name,
+      y: [wave(trace.y)],
+      x: trace.x === null ? null : wave(trace.x),
+      vAxis: trace.vAxis,
+      hAxis: trace.hAxis,
+    }) as string;
+    const props: Record<string, JsonValue> = { ...trace.props };
+    for (const key of WAVE_PROPS) {
+      if (typeof props[key] === "string") props[key] = wave(props[key] as string);
+    }
+    if (Object.keys(props).length > 0) run({ op: "modifyTrace", graph: name, trace: made, props });
+    if (trace.legend !== null) legend.push(`\\s(${made}) ${trace.legend}`);
+  }
+  for (const [side, props] of Object.entries(graph.axes)) {
+    if (Object.keys(props).length > 0) run({ op: "modifyAxis", graph: name, axis: side, props });
+  }
+  if (Object.keys(graph.graph).length > 0)
+    run({ op: "modifyGraph", graph: name, props: graph.graph });
+  for (const annotation of graph.annotations) {
+    const made = run({
+      op: "addAnnotation",
+      graph: name,
+      kind: annotation.kind,
+      text: annotation.text ?? (annotation.kind === "legend" ? legend.join("\n") : ""),
+    }) as string;
+    if (Object.keys(annotation.props).length > 0) {
+      run({ op: "modifyAnnotation", graph: name, annotation: made, props: annotation.props });
+    }
+  }
+  return name;
 }

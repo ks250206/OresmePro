@@ -261,6 +261,7 @@ describe("what a plugin's run does to the experiment", () => {
           shape: [3],
           data: new Float64Array([1, 2, 3]),
           imag: null,
+          text: null,
           x0: 0,
           dx: 1,
           xUnit: "Ohm",
@@ -273,6 +274,7 @@ describe("what a plugin's run does to the experiment", () => {
       ],
     ],
     values,
+    graph: null,
     log: "",
   });
   const source = {
