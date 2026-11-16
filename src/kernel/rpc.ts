@@ -51,6 +51,9 @@ export interface PackagesStatus {
   imported: string[];
   /** Those Python started with. */
   base: string[];
+  /** The versions of Python and of Pyodide. */
+  python: string;
+  pyodide: string;
 }
 
 /** A named set of import settings, as the app keeps them for the files of an instrument. */

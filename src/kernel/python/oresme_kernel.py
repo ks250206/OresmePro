@@ -501,3 +501,7 @@ def complete(code, cursor):
             if len(items) >= 200:
                 break
     return json.dumps(items)
+
+
+# What Python has from the start (NumPy, IPython and theirs), for Python › Packages.
+_sync(_oresme_packages.report)

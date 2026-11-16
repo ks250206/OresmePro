@@ -240,6 +240,8 @@ def report():
         "installed": installed,
         "imported": sorted(name for name in installed if _imported(name, _tops)),
         "base": sorted(_BASE),
+        "python": sys.version.split()[0],
+        "pyodide": _pyodide_version(),
     }
     if state != _last_report:
         _op._call("packagesStatus", state)

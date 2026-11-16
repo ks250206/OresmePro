@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { packageState, packageTree } from "../../ui/PackagesDialog";
+import { installedRows, packageState, packageTree } from "../../ui/PackagesDialog";
 import { unzipExperiment, zipExperiment } from "../io/experiment";
 import { Doc } from "./doc";
 import { echoPython } from "./echo";
@@ -103,9 +103,37 @@ describe("the Packages dialog", () => {
     ]);
     const emcee = env.packages[0]!;
     expect(packageState(emcee, null)).toBe("Python has not said");
-    const status = { installed: { emcee: "1.0", tqdm: "0.9" }, imported: ["emcee"], base: [] };
+    const status = {
+      installed: { emcee: "1.0", tqdm: "0.9" },
+      imported: ["emcee"],
+      base: [],
+      python: "3.14.2",
+      pyodide: "314.0.7",
+    };
     expect(packageState(emcee, status)).toBe("imported");
     expect(packageState(env.packages[4]!, status)).toBe("installed 0.9, 1.0 recorded");
     expect(packageState(env.packages[1]!, status)).toBe("not installed");
+  });
+
+  it("lists everything in Python, pre-installed too, imported first", () => {
+    const env = setup().getState().python;
+    const status = {
+      installed: { numpy: "2.2.5", ipython: "9.0", emcee: "1.0", micropip: "0.11.1", tqdm: "0.9" },
+      imported: ["numpy", "emcee"],
+      base: ["numpy", "ipython"],
+      python: "3.14.2",
+      pyodide: "314.0.7",
+    };
+    expect(installedRows(status, env, true)).toEqual([
+      { name: "emcee", version: "1.0", kind: "experiment", imported: true },
+      { name: "numpy", version: "2.2.5", kind: "pre-installed", imported: true },
+    ]);
+    expect(installedRows(status, env, false).map((row) => `${row.name}:${row.kind}`)).toEqual([
+      "emcee:experiment",
+      "numpy:pre-installed",
+      "ipython:pre-installed",
+      "micropip:other",
+      "tqdm:experiment",
+    ]);
   });
 });
