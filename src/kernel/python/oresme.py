@@ -83,6 +83,10 @@ __all__ = [
     "attributes",
     "Procedure",
     "new_procedure",
+    "Note",
+    "new_note",
+    "note",
+    "notes",
     "close_window",
     "reopen_window",
     "rename_window",
@@ -1729,6 +1733,63 @@ class Procedure:
         return f"Procedure({self._name!r})"
 
 
+class Note:
+    """A note: text in Markdown kept in the experiment, shown formatted in its window.
+
+    ::
+
+        n = op.new_note("log", "# Run 12")
+        n.append("Baseline from 0 to 5 s.")
+        n.append(f"Peak at {r.coef[1]:.3g} eV")
+
+    HTML in the text is shown as text, links go only to http, https and
+    mailto addresses, and a picture is shown only when its data is in the
+    text (``data:image/png;base64,...``): one at an address is a link.
+    """
+
+    def __init__(self, name):
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def text(self):
+        """The Markdown of the note."""
+        return _call("noteInfo", {"name": self._name})[0]["text"]
+
+    @text.setter
+    def text(self, value):
+        _dispatch({"op": "setNote", "name": self._name, "text": str(value)})
+
+    def append(self, text):
+        """Add a paragraph at the end of the note. Returns self."""
+        now = self.text.rstrip("\n")
+        self.text = f"{now}\n\n{text}\n" if now else f"{text}\n"
+        return self
+
+    def kill(self):
+        """Kill the window and what it shows (see ``op.kill_window``)."""
+        kill_window(self._name)
+
+    def close(self):
+        """Close the window, keeping what it shows to reopen (see ``op.close_window``)."""
+        close_window(self._name)
+
+    def reopen(self):
+        """Open the window again after ``close()``, in front of the others."""
+        reopen_window(self._name)
+
+    def rename(self, new_name):
+        """Give it and its window another name (see ``op.rename_window``). Returns self."""
+        self._name = rename_window(self._name, new_name)
+        return self
+
+    def __repr__(self):
+        return f"Note({self._name!r})"
+
+
 class LayoutItem(_Props):
     """A graph or a block of text on a page layout.
 
@@ -3022,6 +3083,34 @@ def procedure(name=None):
     return Procedure(name)
 
 
+def new_note(name=None, text=""):
+    """Make a note window: Markdown text saved with the experiment (see ``Note``).
+
+    Without a name it is called Note0, Note1, ...
+    """
+    command = {"op": "newNote", "text": str(text)}
+    if name is not None:
+        command["name"] = name
+    return Note(_dispatch(command))
+
+
+def notes():
+    """Every note of the experiment."""
+    return [Note(name) for name in _call("listWindows", {"kind": "note"})[0]]
+
+
+def note(name=None):
+    """A note by name; with no name, the frontmost one."""
+    names = _call("listWindows", {"kind": "note"})[0]
+    if name is None:
+        if not names:
+            raise OresmeError("There are no notes.")
+        return Note(names[-1])
+    if name not in names:
+        raise OresmeError(f"No note named {name!r}.")
+    return Note(name)
+
+
 def time_zone():
     """The time zone dates are shown and typed in: "UTC", "local" or a name such as "Asia/Tokyo"."""
     return _call("timeZone")[0]
@@ -3144,7 +3233,7 @@ def rename_window(name, new_name):
 def windows(kind=None, *, closed=True):
     """The names of the windows, back to front: all, or those of one ``kind``.
 
-    ``kind`` is "graph", "table", "procedure", "page" or "panel". With
+    ``kind`` is "graph", "table", "procedure", "page", "panel" or "note". With
     ``closed=False``, windows that are closed (see ``close_window``) are
     left out.
     """

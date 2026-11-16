@@ -26,6 +26,7 @@ sidebar:
 | **Page layout**       | Graphs and text arranged on paper, for a figure exported as PDF and more                                                                                                                         |
 | **Table**             | A window of waves as columns, edited cell by cell                                                                                                                                                |
 | **Procedure**         | A Python file kept in the experiment; its name is a module name that can be imported                                                                                                             |
+| **Note**              | Text written in Markdown, kept in the experiment and shown formatted                                                                                                                             |
 | **Panel**             | A window of your own, of buttons and fields that call actions                                                                                                                                    |
 | **Close and Kill**    | Close puts a window away and keeps what it shows, to reopen from the Windows menu; Kill deletes it with what it shows                                                                            |
 | **Result**            | The record of an analysis such as a fit: coefficients, uncertainties, settings, fingerprints of its inputs, and copies of the curves it made (`results:<name>`)                                  |

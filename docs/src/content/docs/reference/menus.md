@@ -87,12 +87,14 @@ sidebar:
 | ------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
 | New Graph… / New Image Plot… / New Contour Plot… / New Table… | ウィンドウを作る(名前を指定できる)                                   | `op.display(y)`、`op.edit(y)`                 |
 | New Procedure…                                                | Procedure(実験に保存される Python ファイル)を作る                    | `op.new_procedure("tools")`                   |
+| New Note                                                      | Markdown で書くノートを作る                                          | `op.new_note()`                               |
 | New Page Layout / New Panel                                   | ページレイアウト・パネルを作る                                       | `op.new_layout()`、`op.new_panel()`           |
 | Import Procedure… / Import Panel…                             | `.py` / パネルの JSON を取り込む。取り込んだコードは実行しない       |                                               |
+| Import Markdown as Note…                                      | `.md` ファイルをノートとして取り込む                                 |                                               |
 | Rename Window…                                                | 最前面のウィンドウの名前を変える(タイトルバーのダブルクリックでも)   | `op.rename_window("G0", "Spectrum")`          |
 | Close Window…                                                 | 閉じる(中身は残る)か Kill するかを選ぶ                               | `op.close_window(...)`、`op.kill_window(...)` |
 | Data Browser / Command Window                                 | パネルの表示・非表示                                                 |                                               |
-| Graphs / Tables / Procedures / Layouts / Panels               | 種類ごとのウィンドウ一覧。閉じたものは「(closed)」で、選ぶと開き直す | `op.reopen_window(...)`                       |
+| Graphs / Tables / Procedures / Layouts / Panels / Notes       | 種類ごとのウィンドウ一覧。閉じたものは「(closed)」で、選ぶと開き直す | `op.reopen_window(...)`                       |
 
 ## Python
 
@@ -115,5 +117,6 @@ sidebar:
 | グラフ           | Modify Trace / Axis / Graph、Rename Graph…、Link Graphs…、Apply Style、カーソルの設置、範囲の拡大・縮小                                                                |
 | テーブル         | Display、Set Wave Values…、Change Wave Scaling…、Rename or Move…、行の挿入・削除、Rename Table…                                                                        |
 | Procedure        | 編集・整形・検索、Run Procedure、Run Selection、Run When the Experiment Opens、Rename Procedure…、Export as name.py、Import Procedure…                                 |
+| Note             | Rename Note…、Export as name.md、Import Markdown…                                                                                                                      |
 | ページレイアウト | Layout メニューと同じ項目、項目の編集・削除                                                                                                                            |
 | Data Browser     | wave: Display・Edit・Attributes…・Change Wave Scaling…・Rename or Move…・Duplicate…・Kill。フォルダ: Make Waves…・New Data Folder…・Attributes…・Rename or Move…・Kill |

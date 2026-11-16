@@ -404,6 +404,14 @@ export function handleRpc(
       if (!call) throw new DocError(problems.join(" "));
       return { result: call };
     }
+    case "noteInfo": {
+      const note =
+        typeof params.name === "string" && Object.hasOwn(state.notes, params.name)
+          ? state.notes[params.name]
+          : undefined;
+      if (!note) throw new DocError(`No note named ${JSON.stringify(params.name)}.`);
+      return { result: note };
+    }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
       if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`);

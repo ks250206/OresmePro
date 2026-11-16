@@ -1,7 +1,7 @@
 ---
 title: 全般
 sidebar:
-  order: 19
+  order: 20
 editUrl: false
 ---
 

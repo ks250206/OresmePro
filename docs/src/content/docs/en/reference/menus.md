@@ -87,12 +87,14 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 | ------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------- |
 | New Graph… / New Image Plot… / New Contour Plot… / New Table… | Makes a window (with a name if you give one)                                | `op.display(y)`, `op.edit(y)`                 |
 | New Procedure…                                                | Makes a procedure (a Python file kept in the experiment)                    | `op.new_procedure("tools")`                   |
+| New Note                                                      | Makes a note written in Markdown                                            | `op.new_note()`                               |
 | New Page Layout / New Panel                                   | Makes a page layout or a panel                                              | `op.new_layout()`, `op.new_panel()`           |
 | Import Procedure… / Import Panel…                             | Takes in a `.py` file or a panel's JSON; imported code does not run         |                                               |
+| Import Markdown as Note…                                      | Takes in `.md` files as notes                                               |                                               |
 | Rename Window…                                                | Renames the frontmost window (double-clicking its title bar too)            | `op.rename_window("G0", "Spectrum")`          |
 | Close Window…                                                 | Close (keep what it shows) or Kill                                          | `op.close_window(...)`, `op.kill_window(...)` |
 | Data Browser / Command Window                                 | Shows or hides them                                                         |                                               |
-| Graphs / Tables / Procedures / Layouts / Panels               | The windows of each kind; closed ones say "(closed)" and reopen when chosen | `op.reopen_window(...)`                       |
+| Graphs / Tables / Procedures / Layouts / Panels / Notes       | The windows of each kind; closed ones say "(closed)" and reopen when chosen | `op.reopen_window(...)`                       |
 
 ## Python
 
@@ -115,5 +117,6 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 | Graph        | Modify Trace / Axis / Graph, Rename Graph…, Link Graphs…, Apply Style, cursors, zooming in and out                                                                     |
 | Table        | Display, Set Wave Values…, Change Wave Scaling…, Rename or Move…, insert and delete rows, Rename Table…                                                                |
 | Procedure    | Editing, formatting, find, Run Procedure, Run Selection, Run When the Experiment Opens, Rename Procedure…, Export as name.py, Import Procedure…                        |
+| Note         | Rename Note…, Export as name.md, Import Markdown…                                                                                                                      |
 | Page layout  | The items of the Layout menu, editing and removing items                                                                                                               |
 | Data Browser | Waves: Display, Edit, Attributes…, Change Wave Scaling…, Rename or Move…, Duplicate…, Kill. Folders: Make Waves…, New Data Folder…, Attributes…, Rename or Move…, Kill |

@@ -8,6 +8,7 @@ const WINDOW_GROUPS: readonly [WindowState["kind"], string][] = [
   ["procedure", "Procedures"],
   ["page", "Layouts"],
   ["panel", "Panels"],
+  ["note", "Notes"],
 ];
 
 /**

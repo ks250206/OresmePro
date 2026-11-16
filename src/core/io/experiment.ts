@@ -31,6 +31,7 @@ import {
   type GraphSpec,
   type PageSpec,
   type PanelSpec,
+  type NoteSpec,
   type ProcedureSpec,
   type GraphTemplate,
   type StyleSpec,
@@ -88,6 +89,7 @@ export interface SavedExperiment {
   procedures?: Record<string, ProcedureSpec>;
   pages?: Record<string, PageSpec>;
   panels?: Record<string, PanelSpec>;
+  notes?: Record<string, NoteSpec>;
   styles?: Record<string, StyleSpec>;
   defaultStyle?: string | null;
   graphTemplates?: Record<string, GraphTemplate>;
@@ -136,6 +138,7 @@ export function describeExperiment(
     procedures: dictFrom(state.procedures),
     pages: dictFrom(state.pages),
     panels: dictFrom(state.panels),
+    notes: dictFrom(state.notes),
     styles: dictFrom(state.styles),
     defaultStyle: state.defaultStyle,
     graphTemplates: dictFrom(state.graphTemplates),
@@ -347,13 +350,19 @@ export function buildState(
       continue;
     }
   }
+  const notes = dict<NoteSpec>();
+  for (const [name, note] of Object.entries(saved.notes ?? {})) {
+    checkName(name, "note");
+    notes[name] = { name, text: typeof note?.text === "string" ? note.text : "" };
+  }
   const windows = saved.windows.filter(
     (window) =>
       window.name in graphs ||
       window.name in tables ||
       window.name in procedures ||
       window.name in pages ||
-      window.name in panels,
+      window.name in panels ||
+      window.name in notes,
   );
   const results = dict<AnalysisResult>();
   for (const [name, result] of Object.entries(saved.results ?? {})) {
@@ -406,6 +415,7 @@ export function buildState(
     procedures,
     pages,
     panels,
+    notes,
     styles,
     defaultStyle,
     graphTemplates,

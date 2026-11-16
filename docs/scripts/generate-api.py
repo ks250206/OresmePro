@@ -67,6 +67,7 @@ SECTIONS = {
         "Procedure",
         "Procedure new_procedure procedure procedures",
     ),
+    "notes": ("Notes", "ノート", "Note new_note note notes"),
     "packages": ("Packages", "パッケージ", "install uninstall packages"),
     "panel": ("Panels", "パネル", "Panel Control panel panels new_panel set_panel control"),
     "global": ("General", "全般", "OresmeError atomic time_zone set_time_zone"),

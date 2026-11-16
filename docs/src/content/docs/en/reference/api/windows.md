@@ -17,7 +17,7 @@ op.windows(kind=None, *, closed=True)
 
 The names of the windows, back to front: all, or those of one ``kind``.
 
-``kind`` is "graph", "table", "procedure", "page" or "panel". With
+``kind`` is "graph", "table", "procedure", "page", "panel" or "note". With
 ``closed=False``, windows that are closed (see ``close_window``) are
 left out.
 

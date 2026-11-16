@@ -24,6 +24,7 @@ description: OresmePro の公開 Python API を分類ごとに調べる。
 | グラフや文字をページに並べる               | [ページレイアウト](./api/layout/)             | [Layout メニュー](./menus/#layout)                                  |
 | ウィンドウの名前を変える・閉じる・開き直す | [ウィンドウ](./api/windows/)                  | [メニュー](./menus/#windows)                                        |
 | 実験に保存する Python ファイルを扱う       | [Procedure](./api/procedure/)                 | [Procedure](../guides/python/)                                      |
+| 実験に残すメモを Markdown で書く           | [ノート](./api/notes/)                        | [ノートを書く](../guides/experiments/#ノートを書く)                 |
 | パッケージを入れる・一覧する               | [パッケージ](./api/packages/)                 | [パッケージを追加する](../guides/python/#パッケージを追加する)      |
 | エラー、まとめて変更、時刻表示             | [全般](./api/global/)                         | [Python](../guides/python/)                                         |
 

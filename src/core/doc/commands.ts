@@ -311,6 +311,8 @@ export type Command =
   | { op: "setControlValue"; panel: string; control: string; value: unknown }
   | { op: "newProcedure"; name?: string; code?: string; autoRun?: boolean }
   | { op: "setProcedure"; name: string; code?: string; autoRun?: boolean }
+  | { op: "newNote"; name?: string; text?: string }
+  | { op: "setNote"; name: string; text: string }
   /** Keeps the look of a graph as a style; with `size`, the size it is drawn at too. */
   | { op: "saveStyle"; name: string; graph: string; size?: boolean }
   /** Defines a style from its parts (see StyleSpec), replacing one of that name. */
@@ -377,20 +379,22 @@ export type Command =
   /** Closes a window but keeps what it shows, to reopen it (see WindowState.hidden). */
   | { op: "closeWindow"; name: string }
   | { op: "reopenWindow"; name: string }
-  /** Gives a graph, table, procedure, page layout or panel and its window another name. */
+  /** Gives a graph, table, procedure, page layout, panel or note and its window another name. */
   | { op: "renameWindow"; name: string; newName: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
   | { op: "activateWindow"; name: string };
 
 /**
  * Window geometry, focus and column widths are view state: not undoable and
- * not echoed. Neither is the text of a procedure: its editor has its own undo.
+ * not echoed. Neither is the text of a procedure or a note: its editor has
+ * its own undo.
  */
 export const isTransient = (command: Command): boolean =>
   command.op === "moveWindow" ||
   command.op === "activateWindow" ||
   command.op === "resizeColumn" ||
-  command.op === "setProcedure";
+  command.op === "setProcedure" ||
+  command.op === "setNote";
 
 export interface CommandOutcome {
   state: DocState;
@@ -759,13 +763,14 @@ function resized(source: WaveData, at: number, removed: number, added: number, f
   return next;
 }
 
-/** Whether a window (graph, table, procedure, page layout or panel) already has this name. */
+/** Whether a window (graph, table, procedure, page layout, panel or note) already has this name. */
 export const windowTaken = (state: DocState) => (name: string) =>
   name in state.graphs ||
   name in state.tables ||
   name in state.procedures ||
   name in state.pages ||
-  name in state.panels;
+  name in state.panels ||
+  name in state.notes;
 
 /**
  * Checks the name of a procedure: a window name that is also the name of
@@ -811,7 +816,9 @@ export function placeWindow(state: DocState, name: string, kind: WindowState["ki
           ? { w: 440, h: 560 }
           : kind === "panel"
             ? { w: 340, h: 280 }
-            : { w: 520, h: 340 };
+            : kind === "note"
+              ? { w: 560, h: 380 }
+              : { w: 520, h: 340 };
   return { name, kind, x: 24 + slot * 28, y: 16 + slot * 28, ...size };
 }
 
@@ -2880,6 +2887,42 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         result: null,
       };
     }
+    case "newNote": {
+      let name = "Note0";
+      if (command.name !== undefined) {
+        name = checkName(command.name, "note");
+      } else {
+        // Note0, Note1, ...: numbered from zero as graphs and tables are.
+        for (let count = 1; windowTaken(state)(name); count += 1) name = `Note${count}`;
+      }
+      if (windowTaken(state)(name)) {
+        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+      }
+      if (command.text !== undefined && typeof command.text !== "string") {
+        throw new DocError("text must be text.");
+      }
+      return {
+        state: {
+          ...state,
+          notes: withEntry(state.notes, name, { name, text: command.text ?? "" }),
+          windows: [...state.windows, placeWindow(state, name, "note")],
+        },
+        result: name,
+      };
+    }
+    case "setNote": {
+      const note = state.notes[command.name];
+      if (!note) throw new DocError(`No note named ${JSON.stringify(command.name)}.`);
+      if (typeof command.text !== "string") throw new DocError("text must be text.");
+      if (command.text === note.text) return { state, result: null };
+      return {
+        state: {
+          ...state,
+          notes: withEntry(state.notes, command.name, { ...note, text: command.text }),
+        },
+        result: null,
+      };
+    }
     case "saveStyle": {
       const name = checkName(command.name, "style");
       requireGraph(state, command.graph);
@@ -3214,6 +3257,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           procedures: withoutEntries(state.procedures, gone),
           pages,
           panels: withoutEntries(state.panels, gone),
+          notes: withoutEntries(state.notes, gone),
           windows: state.windows.filter((window) => window.name !== command.name),
         },
         result: null,
@@ -3282,6 +3326,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           procedures: renamedEntry(state.procedures, name, newName),
           pages,
           panels: renamedEntry(state.panels, name, newName),
+          notes: renamedEntry(state.notes, name, newName),
           windows: state.windows.map((window) =>
             window === target ? { ...window, name: newName } : window,
           ),

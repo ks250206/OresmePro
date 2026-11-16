@@ -6,6 +6,7 @@ import { fixedSides } from "../core/plot/windowFit";
 import { GraphWindow } from "./GraphWindow";
 import { LayoutWindow } from "./LayoutWindow";
 import { keepFocus, menuBarItems, openContextMenu, type MenuDefinition } from "./Menu";
+import { NoteWindow } from "./NoteWindow";
 import { PanelWindow } from "./PanelWindow";
 import { ProcedureWindow } from "./ProcedureWindow";
 import { TableWindow } from "./TableWindow";
@@ -326,6 +327,8 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
               <LayoutWindow name={window.name} />
             ) : window.kind === "panel" ? (
               <PanelWindow name={window.name} />
+            ) : window.kind === "note" ? (
+              <NoteWindow name={window.name} />
             ) : (
               <ProcedureWindow name={window.name} />
             )}

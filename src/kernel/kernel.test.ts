@@ -720,6 +720,29 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("False\n");
   });
 
+  it("keeps notes of Markdown text", async () => {
+    expect(
+      await run(
+        [
+          'n = op.new_note("diary", "# Run 12")',
+          'n.append("Peak at 1.5 eV").append("- baseline 0-5 s")',
+          "print(n, op.notes(), op.note().name, repr(n.text))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "Note('diary') [Note('diary')] diary '# Run 12\\n\\nPeak at 1.5 eV\\n\\n- baseline 0-5 s\\n'\n",
+    );
+    expect(doc.getState().windows.at(-1)).toMatchObject({ name: "diary", kind: "note" });
+    doc.dispatch({ op: "setNote", name: "diary", text: "typed" });
+    expect(await run("n.rename('log'); print(n.text, op.windows('note'))")).toBe(true);
+    expect(stdout).toBe("typed ['log']\n");
+    expect(await run("op.note('nope')")).toBe(false);
+    expect(errors[0]).toBe("OresmeError: No note named 'nope'.");
+    expect(await run("n.kill(); print(op.notes())")).toBe(true);
+    expect(stdout).toBe("[]\n");
+  });
+
   it("imports one procedure from another, each its own module", async () => {
     // Procedures become files before each input, so each step is an input of its own.
     expect(
