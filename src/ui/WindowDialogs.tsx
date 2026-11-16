@@ -39,6 +39,7 @@ export function CloseWindowDialog({ name }: { name: string }) {
   return (
     <Dialog
       title={`Close ${name}`}
+      help="guides/experiments/"
       width={400}
       onClose={close}
       submitLabel="Close"
@@ -129,6 +130,7 @@ export function NewProcedureDialog() {
   return (
     <Dialog
       title="New Procedure"
+      help="guides/python/"
       width={360}
       onClose={close}
       submitDisabled={problem !== null}
@@ -157,6 +159,7 @@ export function SaveExperimentDialog() {
   return (
     <Dialog
       title="Save Experiment As"
+      help="guides/experiments/"
       width={400}
       onClose={close}
       submitLabel="Save"

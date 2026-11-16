@@ -426,6 +426,7 @@ function MakeWavesDialog({ folder: requested = "" }: { folder?: string }) {
   return (
     <Dialog
       title="Make Waves"
+      help="guides/waves/"
       width={440}
       onClose={close}
       submitDisabled={names.length === 0 || problems.length > 0}
@@ -684,6 +685,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   return (
     <Dialog
       title={`Modify Trace Appearance — ${graphName}`}
+      help="guides/graphs/"
       width={520}
       onClose={close}
       submitDisabled={invalid || Object.keys(props).length === 0}
@@ -960,6 +962,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   return (
     <Dialog
       title={`Modify Axis — ${graphName}`}
+      help="guides/axes-and-annotations/"
       onClose={close}
       submitDisabled={
         invalid ||
@@ -1478,6 +1481,7 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
   return (
     <Dialog
       title={`Modify Graph — ${graphName}`}
+      help="guides/graphs/"
       onClose={close}
       width={520}
       submitDisabled={
@@ -2104,7 +2108,7 @@ function StylesDialog({ graph: initial }: { graph?: string }) {
 
   const libraryMissing = !browserLibrary().available;
   return (
-    <Dialog title="Graph Styles" onClose={close} width={660}>
+    <Dialog title="Graph Styles" onClose={close} help="guides/graphs/" width={660}>
       {graph ? (
         <div role="group" aria-label="Save style" className="flex flex-col gap-1.5">
           <Field label={`Save ${graph} as`} group>
@@ -2550,6 +2554,7 @@ function CurveFitDialog({ wave: initial }: { wave?: string }) {
   return (
     <Dialog
       title="Curve Fitting"
+      help="guides/curve-fitting/"
       onClose={close}
       submitDisabled={y === "" || held === null || limits === null || excluded === null}
       onSubmit={() => {
@@ -2818,6 +2823,7 @@ function AnalysisDialog({ operation, wave: initial }: { operation: string; wave?
   return (
     <Dialog
       title={spec.title}
+      help="guides/analysis/"
       width={400}
       onClose={close}
       submitDisabled={wave === "" || invalid}
@@ -2913,6 +2919,7 @@ function BackgroundDialog({ wave: initial }: { wave?: string }) {
   return (
     <Dialog
       title="Background"
+      help="guides/analysis/"
       width={420}
       onClose={close}
       submitDisabled={wave === "" || rangeBad || averageBad}
@@ -3110,6 +3117,7 @@ function OnsetDialog({ wave: initial }: { wave?: string }) {
   return (
     <Dialog
       title="Onset"
+      help="guides/analysis/"
       width={440}
       onClose={close}
       submitDisabled={wave === "" || edgeBad || baseBad || levelBad}
