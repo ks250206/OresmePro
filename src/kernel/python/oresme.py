@@ -799,6 +799,14 @@ class Trace(_Props):
     to ``color_max``, or the wave's own range). For a complex wave, ``part``
     chooses what is plotted: ``"real"``, ``"imag"``, ``"magnitude"`` or
     ``"phase"`` (radians).
+
+    ``text_marker`` draws the values of another wave (text, or numbers) at
+    the points instead of markers, as Igor's text markers do: labels placed
+    in data coordinates. ``text_anchor`` says which point of each label sits
+    on its data point ("MC" centres it, "RC" puts it to the left, "MT"
+    below), ``text_size`` is their size (None: the graph's font size) and
+    ``text_rotation`` turns them clockwise, in degrees. The mode must draw
+    markers ("markers" or "lines+markers").
     """
 
     _props = (
@@ -822,6 +830,10 @@ class Trace(_Props):
         "color_min",
         "color_max",
         "part",
+        "text_marker",
+        "text_anchor",
+        "text_size",
+        "text_rotation",
     )
 
     def __init__(self, graph, name):
@@ -839,7 +851,7 @@ class Trace(_Props):
         raise OresmeError(f"{self._graph.name} has no trace named {self._name!r}.")
 
     def _set(self, props):
-        for key in ("yError", "xError", "colorWave"):
+        for key in ("yError", "xError", "colorWave", "textMarker"):
             if isinstance(props.get(key), Wave):
                 props[key] = props[key].name
         _dispatch(
@@ -889,6 +901,10 @@ class Axis(_Props):
     ``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
     (tick labels and the axis label), ``"axis only"`` (the axis label, no
     tick labels) or ``"off"`` (neither). The axis line and ticks stay.
+
+    ``line=False`` leaves out the axis line itself. With ``ticks="none"`` and
+    ``labels="off"`` too, nothing of the axis is drawn: for a figure such as
+    a ternary diagram, drawn with traces on axes that are not shown.
     """
 
     _props = (
@@ -902,6 +918,7 @@ class Axis(_Props):
         "max",
         "log",
         "mirror",
+        "line",
         "ticks",
         "minor",
         "grid",

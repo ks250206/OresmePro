@@ -27,6 +27,7 @@ const SLOT_BASE: Record<SlotRole, string> = {
   yError: "yerr",
   xError: "xerr",
   color: "color",
+  text: "labels",
   z: "z",
 };
 
@@ -182,6 +183,10 @@ export function captureTemplate(
       colorMin: trace.colorMin,
       colorMax: trace.colorMax,
       part: trace.part,
+      textMarker: trace.textMarker === null ? null : slot(trace.textMarker),
+      textAnchor: trace.textAnchor,
+      textSize: trace.textSize,
+      textRotation: trace.textRotation,
     })),
     images: graph.images.map((image) => {
       const { name: _, ...rest } = image;
@@ -257,6 +262,7 @@ function slotsOf(
     if (typeof trace.yError === "string") use(trace.yError, "yError", place, null);
     if (typeof trace.xError === "string") use(trace.xError, "xError", place, null);
     if (trace.colorWave !== null) use(trace.colorWave, "color", place, null);
+    if (trace.textMarker !== null) use(trace.textMarker, "text", place, null);
   });
   for (const item of [...graph.images, ...graph.contours]) use(item.wave, "z", zSlots, "xy");
 
@@ -327,7 +333,7 @@ export function sampleWaves(
   for (const trace of template.traces) {
     const y = waves.get(trace.y);
     if (!y || y.text) continue;
-    const others = [trace.x, trace.yError, trace.xError, trace.colorWave];
+    const others = [trace.x, trace.yError, trace.xError, trace.colorWave, trace.textMarker];
     for (const other of others) {
       if (typeof other !== "string") continue;
       const wave = waves.get(other);
@@ -411,7 +417,7 @@ export function makeFromTemplate(
   }
   const traces: string[] = [];
   for (const trace of template.traces) {
-    const { y, x, vAxis, hAxis, yError, xError, colorWave, ...props } = trace;
+    const { y, x, vAxis, hAxis, yError, xError, colorWave, textMarker, ...props } = trace;
     const made = run({
       op: "appendTraces",
       graph: name,
@@ -430,6 +436,7 @@ export function makeFromTemplate(
         yError: source(yError),
         xError: source(xError),
         colorWave: wave(colorWave),
+        textMarker: wave(textMarker),
       },
     });
   }

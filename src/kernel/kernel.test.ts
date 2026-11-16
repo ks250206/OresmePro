@@ -720,6 +720,24 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("False\n");
   });
 
+  it("draws a wave's values as text markers, and leaves out an axis line", async () => {
+    expect(
+      await run(
+        [
+          'ty = op.make("ty", [0.0, 1.0, 2.0])',
+          'names = op.make("names", ["A", "B", "C"])',
+          "g = op.display(ty)",
+          't = g.trace("ty").set(mode="markers", text_marker=names, text_anchor="LB", text_size=14)',
+          'g.axis("left").line = False',
+          'print(t.text_marker, t.text_anchor, t.text_size, t.text_rotation, g.axis("left").line)',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("names LB 14 0 False\n");
+    expect(await run('t.text_anchor = "XX"')).toBe(false);
+    expect(errors[0]).toMatch(/textAnchor must be one of/);
+  });
+
   it("keeps notes of Markdown text", async () => {
     expect(
       await run(
@@ -2379,7 +2397,7 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe(
       [
-        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'label_rotation': 0, 'tick_label_size': None, 'labels': 'on'}",
+        "Style('stPaper') 15 3 {'mirror': 'on', 'line': True, 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'label_rotation': 0, 'tick_label_size': None, 'labels': 'on'}",
         "15 Style('stPaper') [3, 1, 3] on",
         "22 22 #ff0000 4",
         "22 Style('stTalk') Style('stTalk')",

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
   applyLibraryStyle,
   arrangeItems,
@@ -654,6 +654,14 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   const [opacity, setOpacity] = useState<string | null>(null);
   const colorWaves = useNumericWaves(1);
   const complexWaves = useDoc((state) => state.waves);
+  const labelWaves = useMemo(
+    () =>
+      Object.values(complexWaves)
+        .filter((wave) => wave.shape.length === 1)
+        .map((wave) => wave.name)
+        .sort((a, b) => a.localeCompare(b)),
+    [complexWaves],
+  );
   const base = graph?.traces.find((item) => item.name === selected[0]);
   if (!graph || !base) return null;
   const current = { ...base, ...changes };
@@ -853,6 +861,34 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
                   set({ colorTable: colorTable as TraceStyle["colorTable"] })
                 }
               />
+            ) : null}
+          </Field>
+          <Field label="Text markers">
+            <Select
+              aria-label="Text markers"
+              className="min-w-0 flex-1"
+              disabled={!hasMarkers}
+              value={current.textMarker ?? ""}
+              onChange={(event) => set({ textMarker: event.target.value || null })}
+            >
+              <option value="">none (marker shapes)</option>
+              {labelWaves.map((name) => (
+                <option key={name}>{name}</option>
+              ))}
+            </Select>
+            {current.textMarker !== null ? (
+              <Select
+                aria-label="Text anchor"
+                title="Which point of each label sits on its data point"
+                value={current.textAnchor}
+                onChange={(event) =>
+                  set({ textAnchor: event.target.value as TraceStyle["textAnchor"] })
+                }
+              >
+                {ANCHORS.map((anchor) => (
+                  <option key={anchor}>{anchor}</option>
+                ))}
+              </Select>
             ) : null}
           </Field>
           <Field label="">
@@ -1071,6 +1107,13 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           ))}
         </Select>
         <span className="text-muted">{LABEL_MODE_HINTS[current.labels]}</span>
+      </Field>
+      <Field label="">
+        <Checkbox
+          label="Draw the axis line"
+          checked={current.line}
+          onChange={(event) => set({ line: event.target.checked })}
+        />
       </Field>
       <Field label="Range">
         <TextInput

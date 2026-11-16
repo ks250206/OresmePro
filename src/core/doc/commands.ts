@@ -955,6 +955,19 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   colorMin: (value) => (value === null ? null : finite(value, "colorMin")),
   colorMax: (value) => (value === null ? null : finite(value, "colorMax")),
   part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
+  textMarker: (value) => {
+    if (value === null || typeof value === "string") return value;
+    throw new DocError("textMarker must be a wave name or null.");
+  },
+  textAnchor: (value) => oneOf(value, ANCHORS, "textAnchor"),
+  textSize: (value) => (value === null ? null : fontSize(value, "textSize")),
+  textRotation: (value) => {
+    const degrees = finite(value, "textRotation");
+    if (degrees < -360 || degrees > 360) {
+      throw new DocError("textRotation must be between -360 and 360 degrees.");
+    }
+    return degrees;
+  },
 };
 
 const nullableNumber = (what: string) => (value: unknown) =>
@@ -987,6 +1000,7 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     max: nullableNumber("max"),
     log: (value) => bool(value, "log"),
     mirror: (value) => oneOf(value, MIRROR_MODES, "mirror"),
+    line: (value) => bool(value, "line"),
     ticks: (value) => oneOf(value, TICK_MODES, "ticks"),
     minor: (value) => bool(value, "minor"),
     grid: (value) => oneOf(value, GRID_MODES, "grid"),
@@ -1586,6 +1600,10 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
       colorMin: data.colorMin,
       colorMax: data.colorMax,
       part: data.part,
+      textMarker: data.textMarker === null ? null : slot(data.textMarker, "textMarker"),
+      textAnchor: data.textAnchor,
+      textSize: data.textSize,
+      textRotation: data.textRotation,
     };
   });
 
@@ -1802,6 +1820,7 @@ function renameReferences(
         yError: typeof trace.yError === "string" ? rename(trace.yError) : trace.yError,
         xError: typeof trace.xError === "string" ? rename(trace.xError) : trace.xError,
         colorWave: trace.colorWave === null ? null : rename(trace.colorWave),
+        textMarker: trace.textMarker === null ? null : rename(trace.textMarker),
       });
     }
     const cursors: GraphSpec["cursors"] = dict(
@@ -1968,7 +1987,8 @@ function waveUsers(state: DocState, name: string): string[] {
           trace.x === name ||
           trace.yError === name ||
           trace.xError === name ||
-          trace.colorWave === name,
+          trace.colorWave === name ||
+          trace.textMarker === name,
       ) ||
       graph.images.some((image) => image.wave === name) ||
       graph.contours.some((contour) => contour.wave === name);
@@ -2054,6 +2074,18 @@ function checkErrorWaves(state: DocState, trace: TraceSpec): void {
     if (length !== undefined && wave.data.length !== length) {
       throw new DocError(
         `Color wave ${wave.name} has ${wave.data.length} points but ${trace.y} has ${length}.`,
+      );
+    }
+  }
+  if (trace.textMarker !== null) {
+    const wave = requireWave(state, trace.textMarker);
+    if (wave.shape.length !== 1) {
+      throw new DocError(`Text marker wave ${wave.name} must have one dimension.`);
+    }
+    const points = wave.text ? wave.text.length : wave.data.length;
+    if (length !== undefined && points !== length) {
+      throw new DocError(
+        `Text marker wave ${wave.name} has ${points} points but ${trace.y} has ${length}.`,
       );
     }
   }
@@ -2424,6 +2456,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         xError:
           typeof next.xError === "string" ? requireWave(state, next.xError).name : next.xError,
         colorWave: next.colorWave === null ? null : requireWave(state, next.colorWave).name,
+        textMarker: next.textMarker === null ? null : requireWave(state, next.textMarker).name,
       };
       const traces = graph.traces.map((item) => (item === trace ? normalized : item));
       return { state: putGraph(state, { ...graph, traces }), result: null };
