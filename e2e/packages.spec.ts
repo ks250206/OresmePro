@@ -8,6 +8,10 @@ test.describe("Python packages", () => {
     await app.menu("Python", "Packages…");
     const dialog = page.getByRole("dialog", { name: "Python Packages" });
     await expect(dialog).toContainText("uses no packages beyond those Python starts with");
+    await expect(dialog.getByRole("link", { name: "Packages in Pyodide" })).toHaveAttribute(
+      "href",
+      "https://pyodide.org/en/stable/usage/packages-in-pyodide.html",
+    );
     // Everything in Python, pre-installed too: NumPy is imported when Python starts.
     const inPython = dialog.getByRole("table", { name: "Packages in Python" });
     await expect(inPython.getByRole("row", { name: "In Python numpy" })).toContainText(

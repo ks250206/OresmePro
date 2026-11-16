@@ -59,7 +59,7 @@ await op.install("emcee==3.1.6")        # Python から。結果は op.packages(
 - PyPI の wheel はブラウザに保存され、同じパッケージを使う実験どうしで共有されます。一度入れたものはオフラインでも入れ直せます。
 - 他の人から受け取った `.oresme` を開くとき、PyPI のパッケージを使っていれば入れるかどうかを確認します(import するとそのコードが動くため)。断った場合は **Python → Packages…** の **Install Them** であとから入れられます。
 - **Python → Packages…** では、この実験のパッケージとそれが連れてきた依存をツリーで表示し、Python の中での状態(未導入・導入済み・import 済み)も示します。おすすめ(pybaselines、impedance、statsmodels、PyWavelets、uncertainties、emcee、iminuit、pint、sympy など)はワンクリックで入れられ、**Copy Requirements** で一覧をコピーできます。
-- 入れられるのは、pure Python の wheel と Pyodide 向けにビルドされたものだけです。Pyodide にない独自のコンパイル済みコードを持つパッケージ(Numba、PyTorch など)は動きません。
+- 入れられるのは、pure Python の wheel と Pyodide 向けにビルドされたものだけです。Pyodide に同梱されたパッケージの一覧は [Packages in Pyodide](https://pyodide.org/en/stable/usage/packages-in-pyodide.html) にあります。Pyodide にない独自のコンパイル済みコードを持つパッケージ(Numba、PyTorch など)は動きません。
 - `%pip uninstall` で記録から外れます。すでに import したモジュールは Python を再起動するまで残ります。
 
 ## 変更をまとめて反映する

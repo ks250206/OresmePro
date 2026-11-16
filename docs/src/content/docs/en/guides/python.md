@@ -59,7 +59,7 @@ await op.install("emcee==3.1.6")        # from Python; see op.packages()
 - The browser keeps the wheels from PyPI, shared by every experiment that uses them, so a package installed once installs again offline.
 - Opening an `.oresme` file from someone else that uses packages from PyPI asks first, as importing them runs their code. Declined, they can be installed later with **Install Them** in **Python → Packages…**.
 - **Python → Packages…** shows the experiment's packages with what each brought, as a tree, and how each stands in Python (not installed, installed, imported). Suggestions (pybaselines, impedance, statsmodels, PyWavelets, uncertainties, emcee, iminuit, pint, sympy and more) install with one click, and **Copy Requirements** copies the list.
-- Pure Python wheels and wheels built for Pyodide install. A package with compiled code of its own that Pyodide does not ship (Numba, PyTorch) cannot run.
+- Pure Python wheels and wheels built for Pyodide install. [Packages in Pyodide](https://pyodide.org/en/stable/usage/packages-in-pyodide.html) lists the packages of the distribution. A package with compiled code of its own that Pyodide does not ship (Numba, PyTorch) cannot run.
 - `%pip uninstall` takes a package out of the record. Modules already imported stay until Python restarts.
 
 ## Apply changes together

@@ -21,6 +21,9 @@ import { Button, Checkbox, Dialog, TextInput } from "./controls";
 
 const close = () => ui.set({ dialog: null });
 
+/** Pyodide's list of the packages its distribution has, built for the browser. */
+export const PYODIDE_PACKAGES_URL = "https://pyodide.org/en/stable/usage/packages-in-pyodide.html";
+
 /** Packages worth having for spectra, fits, impedance and statistics, and where each comes from. */
 export const SUGGESTED: readonly { name: string; from: "Pyodide" | "PyPI"; use: string }[] = [
   { name: "pybaselines", from: "PyPI", use: "Baselines of spectra: AsLS, arPLS, SNIP and more" },
@@ -231,7 +234,16 @@ export function PackagesDialog() {
         <div className="text-[11px] text-muted">
           Pure Python packages from PyPI install, and so do the packages of the Pyodide
           distribution; one with compiled code of its own that Pyodide does not ship cannot run in
-          the browser. Installing needs the network the first time; the browser keeps the files.
+          the browser. Installing needs the network the first time; the browser keeps the files.{" "}
+          <a
+            href={PYODIDE_PACKAGES_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent underline"
+          >
+            Packages in Pyodide
+          </a>{" "}
+          lists those the distribution has.
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1">
           {SUGGESTED.map((item) => {
