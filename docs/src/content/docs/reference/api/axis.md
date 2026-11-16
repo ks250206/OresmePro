@@ -1,7 +1,7 @@
 ---
-title: Axis API
+title: 軸
 sidebar:
-  order: 4
+  order: 6
 editUrl: false
 ---
 
@@ -15,38 +15,27 @@ editUrl: false
 op.Axis(graph, name)
 ```
 
-One axis of a graph: "left", "bottom", "right", "top", or one you added.
+グラフの軸: "left"、"bottom"、"right"、"top"、または追加した軸。
 
-``span=(low, high)`` draws the axis over part of the plot area, as
-fractions from 0 to 1; use it to stack plots in one graph.
+``span=(low, high)`` は、軸をプロット領域の一部(0〜1 の割合)に描きます。1 つのグラフにグラフを積み重ねるときに使います。
 
-``reverse=True`` runs the axis high to low. ``tick_step=0.25`` puts the
-major ticks that far apart. ``tick_format`` writes the tick labels like
-Python's ``format``: ``".2f"``, ``"e"``, ``",.0f"``, ``"%"``; ``None``
-goes back to automatic labels.
+``reverse=True`` で軸を大きい値から小さい値の向きにします。``tick_step=0.25`` で主目盛りをその間隔に置きます。``tick_format`` は目盛りラベルを Python の ``format`` のように書きます: ``".2f"``、``"e"``、``",.0f"``、``"%"``。``None`` で自動に戻ります。
 
-``label_size`` and ``tick_label_size`` are the font sizes of the axis
-label and of the tick labels (``None``: the graph's ``font_size``).
-``label_style`` sets the whole label in ``"plain"``, ``"italic"``,
-``"bold"`` or ``"bold italic"``. Codes in the label change part of it,
-as in Igor: ``r"Voltage (\f02V\f00)"`` has an italic V, ``\Z14``
-makes what follows 14 high, ``\u`` puts the units there. Write such
-labels as raw strings (``r"..."``), or Python reads ``\f`` and ``\u``
-as its own escapes.
+``label_size`` と ``tick_label_size`` は軸ラベルと目盛りラベルのフォントの大きさです(``None`` でグラフの ``font_size``)。``label_style`` はラベル全体を ``"plain"``、``"italic"``、``"bold"``、``"bold italic"`` にします。ラベルの中のコードで一部を変えられます(Igor と同じ): ``r"Voltage (\f02V\f00)"`` は V だけ斜体、``\Z14`` はそれ以降を 14 の大きさに、``\u`` はそこに単位を入れます。こうしたラベルは raw 文字列(``r"..."``)で書いてください。そうしないと Python が ``\f`` や ``\u`` を自分のエスケープとして読みます。
 
-``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
-(tick labels and the axis label), ``"axis only"`` (the axis label, no
-tick labels) or ``"off"`` (neither). The axis line and ticks stay.
+``label_rotation`` は軸ラベルを、辺ごとの標準の向きから時計回りに回す角度(度)です(Igor の lblRot に当たります)。左の軸のラベルは下から上へ、右の軸は上から下へ読む向きが標準で、180 でどちらも逆向きになります。
+
+``labels`` は描くラベルを選びます(Igor の noLabel): ``"on"``(目盛りラベルと軸ラベル)、``"axis only"``(軸ラベルだけで目盛りの数値なし)、``"off"``(どちらもなし)。軸線と目盛りは残ります。
 
 `graph.axis(name)` で取得するか、`graph.left` などを使います。`axis.range = (0, 10)` で表示範囲を固定し、`axis.autoscale()` で自動設定に戻せます。
 
 **プロパティ**
 
 - `name` (read-only)
-- `range` (read/write) · (min, max); None for a limit that follows the data.
+- `range` (read/write) · (min, max)。データに従う端は None。
 - `side` (read-only)
 
-**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 
@@ -54,7 +43,7 @@ tick labels) or ``"off"`` (neither). The axis line and ticks stay.
 set(**props)
 ```
 
-Change properties. ``range=(lo, hi)`` sets both limits; ``range=None`` autoscales.
+プロパティを変えます。``range=(lo, hi)`` で両端を設定し、``range=None`` で自動範囲にします。
 
 ### `Axis.autoscale`
 

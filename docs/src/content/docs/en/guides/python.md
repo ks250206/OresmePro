@@ -100,4 +100,4 @@ The argument types are `wave`, `waves`, `number`, `integer`, `numbers`, `string`
 
 An action called from the interface appears in the history as the equivalent Python, such as `op.fit("gauss", op.wave("signal"))`. The buttons of a panel call actions too ([Panels](../panels/)).
 
-[Using the API](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)
+[Using the API](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)

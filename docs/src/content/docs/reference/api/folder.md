@@ -1,7 +1,7 @@
 ---
-title: Folder API
+title: データフォルダと属性
 sidebar:
-  order: 8
+  order: 2
 editUrl: false
 ---
 
@@ -15,12 +15,12 @@ editUrl: false
 op.Folder(path)
 ```
 
-A data folder. ``Folder("")`` is root.
+データフォルダ。``Folder("")`` はルートです。
 
 **プロパティ**
 
 - `path` (read-only)
-- `attributes` (read-only) · The attributes of the sample this folder is: those of the folders it is in, then its own.
+- `attributes` (read-only) · このフォルダが表す試料の属性。上位のフォルダの属性に、このフォルダ自身の属性を重ねたものです。
 
 ### `Folder.set_attributes`
 
@@ -28,7 +28,7 @@ A data folder. ``Folder("")`` is root.
 set_attributes(values=None, **named)
 ```
 
-Set attributes of this folder, which its waves have too (None removes one). Returns self.
+このフォルダに属性を設定します。中の wave もこの属性を持ちます(None で削除)。self を返します。
 
 ### `Folder.make`
 
@@ -36,7 +36,7 @@ Set attributes of this folder, which its waves have too (None removes one). Retu
 make(name, data=None, **options)
 ```
 
-Create a wave in this folder. Same options as ``op.make``.
+このフォルダに wave を作ります。オプションは ``op.make`` と同じです。
 
 ### `Folder.wave`
 
@@ -72,7 +72,7 @@ new_folder(name)
 rename(new_path)
 ```
 
-Rename or move the folder, with everything in it.
+フォルダの名前を変える、または中身ごと移動します。
 
 ### `Folder.kill`
 
@@ -80,7 +80,7 @@ Rename or move the folder, with everything in it.
 kill()
 ```
 
-Delete the folder and the waves in it.
+フォルダと中の wave を削除します。
 
 ## `new_folder`
 
@@ -88,7 +88,7 @@ Delete the folder and the waves in it.
 op.new_folder(path)
 ```
 
-Create a data folder, e.g. ``op.new_folder("run1")`` or ``"run1:raw"``.
+データフォルダを作ります。例: ``op.new_folder("run1")``、``"run1:raw"``。
 
 ## `folder`
 
@@ -96,7 +96,7 @@ Create a data folder, e.g. ``op.new_folder("run1")`` or ``"run1:raw"``.
 op.folder(path='')
 ```
 
-An existing data folder; root with no argument.
+既存のデータフォルダ。引数なしならルート。
 
 **明示的な例外** · `OresmeError`
 
@@ -106,7 +106,7 @@ An existing data folder; root with no argument.
 op.folders()
 ```
 
-Every data folder below root.
+ルートより下のすべてのデータフォルダ。
 
 ## `set_attributes`
 
@@ -114,20 +114,14 @@ Every data folder below root.
 op.set_attributes(target, values=None, **named)
 ```
 
-Set attributes of a sample: a data folder or a wave.
+試料(データフォルダか wave)に属性を設定します。
 
-``target`` is a wave, a folder (``op.folder("run1")``), a wave's name, or
-a folder's path followed by a colon (``"run1:"``). The attributes are
-given as a dict, keywords, or both: names of letters, digits and _,
-values that are numbers or text; None removes an attribute. A folder's
-attributes are those of every wave in it, below its own:
+``target`` は wave、フォルダ(``op.folder("run1")``)、wave の名前、またはフォルダのパスの末尾にコロンを付けたもの(``"run1:"``)です。属性は dict、キーワード引数、またはその両方で渡します。名前は英字・数字・_、値は数値か文字で、None はその属性を削除します。フォルダの属性は、その中のすべての wave が(wave 自身の属性の下に)持ちます:
 
     op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")
     op.wave("run1:spectrum").set_attributes(cycle=3)
 
-Results have the attributes of the wave they read, so
-``op.results_table()`` and ``op.plot_results()`` can set them beside the
-parameters.
+結果は読んだ wave の属性を持つので、``op.results_table()`` と ``op.plot_results()`` で属性とパラメータを並べられます。
 
 **明示的な例外** · `TypeError`
 
@@ -137,4 +131,4 @@ parameters.
 op.attributes(target, *, own=False)
 ```
 
-The attributes of a wave or a data folder: with those it has from its folders, or with ``own`` only its own.
+wave またはデータフォルダの属性。フォルダから受け継いだものを含みます。``own`` を付けると自身の属性だけ。

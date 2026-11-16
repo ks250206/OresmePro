@@ -1,7 +1,7 @@
 ---
-title: Graph API
+title: Graph
 sidebar:
-  order: 2
+  order: 4
 editUrl: false
 ---
 
@@ -343,38 +343,35 @@ rename(new_name)
 
 Give it and its window another name (see ``op.rename_window``). Returns self.
 
-## `Length`
-
-A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.
-
-As a number it is the length in points (1/72 inch), so it goes wherever
-points do (the places of a page layout's items, say); it also keeps the
-unit it was given in, as ``value`` and ``unit``, which a graph's plot
-area keeps to show it so again.
-
-## `pt`
+## `display`
 
 ```python
-op.pt(value)
+op.display(*y, x=None, name=None, style=_DEFAULT)
 ```
 
-A length of ``value`` points (1/72 inch).
+Make a new graph of the given waves (or arrays) and return it.
 
-## `cm`
+``x`` plots them against an X wave instead of their own X scaling. A text
+wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
+The graph is given the default style, if there is one (see
+``set_default_style``); ``style="paper"`` gives it another, and
+``style=None`` none.
+
+## `graph`
 
 ```python
-op.cm(value)
+op.graph(name=None)
 ```
 
-A length of ``value`` centimetres.
+A graph by name; with no name, the frontmost graph.
 
-## `inch`
+**Explicit exceptions** · `OresmeError`
+
+## `graphs`
 
 ```python
-op.inch(value)
+op.graphs()
 ```
-
-A length of ``value`` inches (72 points).
 
 ## `Annotation`
 
@@ -409,249 +406,38 @@ Change several properties at once. Returns self.
 
 **Explicit exceptions** · `AttributeError`
 
-## `Style`
+## `Length`
+
+A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.
+
+As a number it is the length in points (1/72 inch), so it goes wherever
+points do (the places of a page layout's items, say); it also keeps the
+unit it was given in, as ``value`` and ``unit``, which a graph's plot
+area keeps to show it so again.
+
+## `pt`
 
 ```python
-op.Style(name)
+op.pt(value)
 ```
 
-A graph style: the look of a graph kept in the experiment under a name.
+A length of ``value`` points (1/72 inch).
 
-``data`` is what it holds, as a plain dict with any of ``"graph"``
-(``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
-the drawn graph, in pixels), ``"plot"`` (``width`` and ``height`` of the
-plot area as the document holds them: ``{"mode": "auto"}``,
-``{"mode": "absolute", "value": 8, "unit": "cm"}`` or
-``{"mode": "aspect", "factor": 0.75}``), ``"axes"`` (by ``"left"``,
-``"bottom"``, ``"right"``, ``"top"`` and ``"other"`` for added axes:
-``mirror``, ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of
-trace looks
-(``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
-``marker_size``, ``marker_fill``) that the traces of a graph take in
-turn, starting again from the first when there are more traces. A style
-changes only what it holds.
-
-**Properties**
-
-- `name` (read-only)
-- `data` (read-only) · What the style holds, as a dict (a copy: change it with ``op.set_style``).
-
-### `Style.apply`
+## `cm`
 
 ```python
-apply(graphs=None)
+op.cm(value)
 ```
 
-Give graphs this look; every graph when ``graphs`` is None.
+A length of ``value`` centimetres.
 
-### `Style.rename`
+## `inch`
 
 ```python
-rename(new_name)
+op.inch(value)
 ```
 
-### `Style.remove`
-
-```python
-remove()
-```
-
-Delete the style. Graphs keep the look it gave them.
-
-## `display`
-
-```python
-op.display(*y, x=None, name=None, style=_DEFAULT)
-```
-
-Make a new graph of the given waves (or arrays) and return it.
-
-``x`` plots them against an X wave instead of their own X scaling. A text
-wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
-The graph is given the default style, if there is one (see
-``set_default_style``); ``style="paper"`` gives it another, and
-``style=None`` none.
-
-## `graph`
-
-```python
-op.graph(name=None)
-```
-
-A graph by name; with no name, the frontmost graph.
-
-**Explicit exceptions** · `OresmeError`
-
-## `graphs`
-
-```python
-op.graphs()
-```
-
-## `style`
-
-```python
-op.style(name)
-```
-
-The style with this name.
-
-**Explicit exceptions** · `OresmeError`
-
-## `styles`
-
-```python
-op.styles()
-```
-
-Every style of the experiment.
-
-## `set_style`
-
-```python
-op.set_style(name, data)
-```
-
-Define a style from a dict (see ``Style``) or copy another Style; returns it.
-
-A style of that name is replaced. Unknown keys and bad values are refused.
-
-## `apply_style`
-
-```python
-op.apply_style(style, graphs=None)
-```
-
-Give graphs the look of a style; every graph when ``graphs`` is None.
-
-It is one step to undo, however many graphs it changes.
-
-## `set_default_style`
-
-```python
-op.set_default_style(style)
-```
-
-Give new graphs this style (a name or a Style); None to give them none.
-
-## `default_style`
-
-```python
-op.default_style()
-```
-
-The Style new graphs are given, or None.
-
-## `GraphTemplate`
-
-```python
-op.GraphTemplate(name)
-```
-
-A graph template: a graph kept with its waves taken out, to make the
-same graph of other data.
-
-Where the graph had a wave, the template has a slot, named after what
-the wave was for: ``"y"`` and ``"x"``, ``"yerr"`` and ``"xerr"`` for
-error bars, ``"color"`` for a color wave and ``"z"`` for an image or
-contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
-``slots`` lists them. Make a graph by giving a wave for each slot::
-
-    t = op.graph_template(op.graph("Graph0"), "IV")
-    t.make(y="s2_I", x="s2_V")
-
-Text in annotations and axis labels can name what fills a slot:
-``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
-slot ``y``. Where the graph's text named one of its waves, or a unit
-in parentheses (``"Current (A)"``), the template has such a reference
-instead, so a graph of another sample shows that sample's name and unit.
-
-``data`` is what the template holds, as a dict: ``"style"`` (the look
-and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``
-and the units of the wave it was made from), ``"traces"``, ``"images"``,
-``"contours"``, ``"axes"`` and ``"annotations"`` as in a graph, with
-slot names where the graph has wave names. ``op.set_graph_template``
-defines one from such a dict.
-
-**Properties**
-
-- `name` (read-only)
-- `data` (read-only) · What the template holds, as a dict (a copy: change it with ``op.set_graph_template``).
-- `slots` (read-only) · The names of the slots, in the order of the graph.
-
-### `GraphTemplate.make`
-
-```python
-make(name=None, **slots)
-```
-
-Make a graph of the waves given for the slots, and return it.
-
-Give a wave (a Wave or a name) for each slot:
-``t.make(y=current, x=voltage)``. A slot of X, error bars or a color
-wave may be left out; the graph then goes without it. Lists make
-several graphs, one for each item, and return a list of them:
-``t.make(y=[a, b, c], x=voltage)`` makes three graphs, all against
-``voltage``. ``name`` names the graph (a list, the
-graphs); left out, names are chosen.
-
-Where a wave's unit differs from that of the wave the template was
-made from, a warning says so, and the graph is made all the same.
-All the graphs are made or, if one cannot be, none; and they are one
-step to undo.
-
-**Explicit exceptions** · `OresmeError`
-
-### `GraphTemplate.rename`
-
-```python
-rename(new_name)
-```
-
-Give the template another name. Returns self.
-
-### `GraphTemplate.remove`
-
-```python
-remove()
-```
-
-Delete the template. Graphs made from it stay as they are.
-
-## `graph_template`
-
-```python
-op.graph_template(source, name=None, fixed=())
-```
-
-A graph template: the one named ``source``, or one made from a graph.
-
-``op.graph_template("IV")`` is the template named IV.
-``op.graph_template(g, "IV")`` keeps the graph ``g`` (a Graph or a
-graph name) as a template named IV and returns it; see
-``Graph.save_template`` for ``fixed``.
-
-**Explicit exceptions** · `OresmeError`
-
-## `graph_templates`
-
-```python
-op.graph_templates()
-```
-
-Every graph template of the experiment.
-
-## `set_graph_template`
-
-```python
-op.set_graph_template(name, data)
-```
-
-Define a graph template from a dict (see ``GraphTemplate``) or copy another; returns it.
-
-A template of that name is replaced. What the dict leaves out is as in a
-new graph; unknown keys, bad values and references to slots or axes the
-template does not have are refused.
+A length of ``value`` inches (72 points).
 
 ## `link_graphs`
 

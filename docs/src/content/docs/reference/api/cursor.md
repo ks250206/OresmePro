@@ -1,7 +1,7 @@
 ---
-title: Cursor API
+title: カーソル
 sidebar:
-  order: 6
+  order: 8
 editUrl: false
 ---
 
@@ -15,7 +15,7 @@ editUrl: false
 op.Cursor(graph, name)
 ```
 
-Cursor A or B of a graph: a marker on one point of a trace.
+グラフのカーソル A または B。トレースの 1 点に置く印です。
 
 `graph.cursor("A", trace, 10)` は点番号 10 にカーソルを置きます。`is_set` で確認してから座標や点番号を読みます。未設定のカーソルで読み取ると `OresmeError` が発生します。
 
@@ -24,7 +24,7 @@ Cursor A or B of a graph: a marker on one point of a trace.
 - `name` (read-only)
 - `is_set` (read-only)
 - `trace` (read-only)
-- `point` (read/write) · Index of the point the cursor is on. Assign to move the cursor.
+- `point` (read/write) · カーソルが置かれた点の番号。代入するとカーソルが動きます。
 - `x` (read-only)
 - `y` (read-only)
 

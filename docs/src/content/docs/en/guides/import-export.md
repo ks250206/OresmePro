@@ -38,4 +38,4 @@ op.load_hdf5("scan.h5", datasets="/run1")
 - Copy columns from a table or call `table.to_dataframe().to_csv("export.csv", index=False)`. Download Python-created files under **Files** in the Data Browser.
 - To transfer data, graphs, and scripts together, [save the experiment](../experiments/).
 
-[CSV tutorial](../../getting-started/import-csv/) · [Import functions](../../reference/api/global/#load_text)
+[CSV tutorial](../../getting-started/import-csv/) · [Import functions](../../reference/api/files/#load_text)

@@ -1,7 +1,7 @@
 ---
-title: Image / Contour API
+title: 画像と等高線
 sidebar:
-  order: 5
+  order: 7
 editUrl: false
 ---
 
@@ -15,7 +15,7 @@ editUrl: false
 op.Image(graph, name)
 ```
 
-A 2-D wave shown as an image in a graph.
+グラフに画像として表示した 2 次元の wave。
 
 **プロパティ**
 
@@ -35,7 +35,7 @@ remove()
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 **明示的な例外** · `AttributeError`
 
@@ -45,7 +45,7 @@ Change several properties at once. Returns self.
 op.Contour(graph, name)
 ```
 
-Contour lines of a 2-D wave in a graph.
+グラフに描いた 2 次元 wave の等高線。
 
 **プロパティ**
 
@@ -65,7 +65,7 @@ remove()
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 **明示的な例外** · `AttributeError`
 
@@ -75,7 +75,7 @@ Change several properties at once. Returns self.
 op.image(wave_, *, name=None, **props)
 ```
 
-Make a new graph showing a 2-D wave as an image, and return the graph.
+2 次元 wave を画像として表示する新しいグラフを作り、そのグラフを返します。
 
 ## `contour`
 
@@ -83,4 +83,4 @@ Make a new graph showing a 2-D wave as an image, and return the graph.
 op.contour(wave_, *, name=None, **props)
 ```
 
-Make a new graph of the contour lines of a 2-D wave, and return the graph.
+2 次元 wave の等高線の新しいグラフを作り、そのグラフを返します。

@@ -1,5 +1,5 @@
 ---
-title: Wave API
+title: Wave
 sidebar:
   order: 1
 editUrl: false

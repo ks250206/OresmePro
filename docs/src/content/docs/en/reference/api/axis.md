@@ -1,7 +1,7 @@
 ---
-title: Axis API
+title: Axis
 sidebar:
-  order: 4
+  order: 6
 editUrl: false
 ---
 
@@ -34,6 +34,10 @@ makes what follows 14 high, ``\u`` puts the units there. Write such
 labels as raw strings (``r"..."``), or Python reads ``\f`` and ``\u``
 as its own escapes.
 
+``label_rotation`` turns the axis label from where its side sets it, in
+degrees clockwise, as Igor's lblRot: a left axis's label reads upwards, a
+right axis's downwards, and 180 turns either round.
+
 ``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
 (tick labels and the axis label), ``"axis only"`` (the axis label, no
 tick labels) or ``"off"`` (neither). The axis line and ticks stay.
@@ -46,7 +50,7 @@ Get an axis with `graph.axis(name)` or use a shortcut such as `graph.left`. Assi
 - `range` (read/write) · (min, max); None for a limit that follows the data.
 - `side` (read-only)
 
-**Configurable properties** · `label`, `label_size`, `label_style`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**Configurable properties** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 

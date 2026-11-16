@@ -1,7 +1,7 @@
 ---
-title: Graph API
+title: グラフ
 sidebar:
-  order: 2
+  order: 4
 editUrl: false
 ---
 
@@ -15,23 +15,22 @@ editUrl: false
 op.Graph(name)
 ```
 
-A graph window.
+グラフのウィンドウ。
 
-``width`` and ``height`` size its plot area, the rectangle the axes
-enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
+``width`` と ``height`` で、プロット領域(軸で囲まれた長方形)の大きさを決めます。Igor の ModifyGraph width / height に当たります(``Graph.set`` を参照)。
 
 `op.display(...)` で作成し、`op.graph(name)` で既存グラフを取得します。`display` の既定値 `style=_DEFAULT` は保存済みの既定スタイルを使う指定です。スタイルなしで作るには `style=None` を渡します。
 
 **プロパティ**
 
 - `name` (read-only)
-- `link` (read-only) · How this graph is linked to others (see ``op.link_graphs``), or None. A dict of ``graphs`` (all of the group, this one too), ``axes`` ("x" or "xy") and ``cursors``.
+- `link` (read-only) · このグラフがどのグラフと連動しているか(``op.link_graphs`` を参照)。連動していなければ None。 ``graphs``(このグラフを含むグループの全グラフ)、``axes``("x" か "xy")、``cursors`` の dict です。
 - `traces` (read-only)
 - `axes` (read-only)
 - `images` (read-only)
 - `contours` (read-only)
 - `annotations` (read-only)
-- `style` (read-only) · The Style last given to the graph, or None. Traces added later follow it.
+- `style` (read-only) · 最後にこのグラフに適用したスタイル。なければ None。あとから追加したトレースもこれに従います。
 - `left` (read-only)
 - `bottom` (read-only)
 - `right` (read-only)
@@ -45,41 +44,21 @@ enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
-``font_size``, ``font_family`` and ``show_info`` (the cursor bar);
-``width`` and ``height`` size the plot area, each one of:
+``font_size``、``font_family``、``show_info``(カーソル情報の欄)。``width`` と ``height`` はプロット領域の大きさで、それぞれ次のどれかです:
 
-- ``"auto"``: what the window leaves after the margins (the default).
-- a length: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)`` or a
-  number of points.
-- ``("aspect", f)``: f times the other side.
-- ``("plan", f, haxis, vaxis)``: one unit of the horizontal axis
-  ``haxis`` is f times as long as one unit of the vertical axis
-  ``vaxis`` (the axes default to ``"bottom"`` and ``"left"``); for
-  the height, one unit of ``vaxis`` is f times one of ``haxis``.
-  ``("plan", 1)`` scales X and Y alike, as a Nyquist plot needs.
-- ``("per_unit", n, unit, axis)``: n of ``unit`` ("pt", "cm",
-  "inch") for each unit of the axis; ``("per_unit", op.cm(2),
-  "bottom")`` says the same. A unit of a log axis is a decade.
+- ``"auto"``: ウィンドウから余白を除いた残り(既定)。
+- 長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``、または pt の数値。
+- ``("aspect", f)``: もう一方の辺の f 倍。
+- ``("plan", f, haxis, vaxis)``: 横軸 ``haxis`` の 1 単位が、縦軸 ``vaxis`` の 1 単位の f 倍の長さになる(軸の既定は ``"bottom"`` と ``"left"``)。高さでは ``vaxis`` の 1 単位が ``haxis`` の 1 単位の f 倍。``("plan", 1)`` で X と Y を同じ縮尺にします(Nyquist 図など)。
+- ``("per_unit", n, unit, axis)``: 軸の 1 単位あたり n ``unit``("pt"、"cm"、"inch")。``("per_unit", op.cm(2), "bottom")`` も同じ意味。対数軸の 1 単位は 1 桁です。
 
-A side that is not auto makes the figure the plot area plus the
-margins, and the window fits it. The two sides cannot both use
-aspect or plan. Reading ``width`` or ``height`` gives the same forms
-back.
+auto でない辺があると、図の大きさはプロット領域に余白を足したものになり、ウィンドウもそれに合わせます。両方の辺を aspect か plan にはできません。``width`` や ``height`` を読むと、同じ形で返ります。
 
-``margin_left``, ``margin_bottom``, ``margin_right`` and
-``margin_top`` fix the margins around the plot area, as Igor's
-ModifyGraph margin: a length (``op.cm(1.5)`` or a number of points,
-0 to 360) or ``"auto"`` (``None``), as wide as the axes and their
-labels need. ``margins=`` sets all four: ``"auto"``, one length, or
-``(left, bottom, right, top)``. Reading a margin gives points, or
-``None`` for auto.
+``margin_left``、``margin_bottom``、``margin_right``、``margin_top`` はプロット領域の周りの余白を固定します(Igor の ModifyGraph margin)。長さ(``op.cm(1.5)`` か 0〜360 の pt の数値)か ``"auto"``(``None``)で、auto は軸とラベルに必要なだけの幅になります。``margins=`` で 4 辺をまとめて設定します: ``"auto"``、長さ 1 つ、または ``(left, bottom, right, top)``。余白を読むと pt で返り、auto なら ``None`` です。
 
-``magnification`` draws the graph bigger or smaller in its window,
-as Igor's expand: 2 doubles it, 1 is none (from 0.125 to 8). The
-window grows with it; the figure, and what is exported, keep their
-size.
+``magnification`` はウィンドウの中でグラフを拡大・縮小して表示します(Igor の expand)。2 で 2 倍、1 で等倍(0.125〜8)。ウィンドウも一緒に大きさを変え、図そのものと書き出しの大きさは変わりません。
 
 **明示的な例外** · `ValueError`
 
@@ -89,7 +68,7 @@ size.
 unlink()
 ```
 
-Take this graph out of the graphs it is linked to.
+このグラフを、連動しているグラフから外します。
 
 ### `Graph.append`
 
@@ -97,7 +76,7 @@ Take this graph out of the graphs it is linked to.
 append(*y, x=None, axis='left', haxis='bottom')
 ```
 
-Add traces against the named vertical (``axis``) and horizontal (``haxis``) axes.
+トレースを追加します。縦軸は ``axis``、横軸は ``haxis`` で名前を指定します。
 
 ### `Graph.remove`
 
@@ -111,7 +90,7 @@ remove(*traces)
 trace(name=None)
 ```
 
-A trace by name; with no name, the only trace of the graph.
+名前でトレースを取得します。名前を省くと、グラフにトレースが 1 つだけのときそのトレース。
 
 **明示的な例外** · `OresmeError`
 
@@ -131,7 +110,7 @@ axis(name)
 add_axis(name, side)
 ```
 
-Add another axis on a side ("left", "bottom", "right" or "top").
+辺("left"、"bottom"、"right"、"top")に軸を追加します。
 
 ### `Graph.remove_axis`
 
@@ -145,9 +124,9 @@ remove_axis(name)
 append_image(wave_, *, axis='left', haxis='bottom', **props)
 ```
 
-Show a wave as an image. ``color_table``, ``z_min``, ``z_max``, ``reverse``.
+wave を画像として表示します。``color_table``、``z_min``、``z_max``、``reverse``。
 
-For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
+3 次元・4 次元の wave では、``layer`` と ``chunk`` で面を選びます。
 
 ### `Graph.append_contour`
 
@@ -155,9 +134,9 @@ For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
 append_contour(wave_, *, axis='left', haxis='bottom', **props)
 ```
 
-Draw contour lines. ``levels``, ``labels``, ``color``, ``line_size``, ``color_table``.
+等高線を描きます。``levels``、``labels``、``color``、``line_size``、``color_table``。
 
-For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
+3 次元・4 次元の wave では、``layer`` と ``chunk`` で面を選びます。
 
 ### `Graph.image`
 
@@ -181,7 +160,7 @@ contour(name=None)
 cursor(name, trace=None, point=None)
 ```
 
-Cursor "A" or "B". With a trace and point, puts the cursor there first.
+カーソル "A" か "B"。トレースと点を渡すと、先にそこへカーソルを置きます。
 
 ### `Graph.colorscale`
 
@@ -189,7 +168,7 @@ Cursor "A" or "B". With a trace and point, puts the cursor there first.
 colorscale(image='', *, anchor='RC', frame=True)
 ```
 
-Add a color scale bar for an image (the first one by default).
+画像(既定では 1 つ目)のカラースケールを追加します。
 
 ### `Graph.save`
 
@@ -197,9 +176,9 @@ Add a color scale bar for an image (the first one by default).
 save(filename, cursors=False)
 ```
 
-Download the graph as a file: .pdf, .svg or .png, chosen by the name.
+グラフをファイルとしてダウンロードします。名前の拡張子で .pdf、.svg、.png を選びます。
 
-Cursors are left out unless ``cursors=True``.
+``cursors=True`` でない限り、カーソルは含めません。
 
 ### `Graph.script`
 
@@ -207,10 +186,9 @@ Cursors are left out unless ``cursors=True``.
 script()
 ```
 
-Python that draws this graph again, as text.
+このグラフを描き直す Python(文字列)。
 
-Like Igor's window recreation macro: paste it into a procedure to
-keep a graph's look, or to apply it to other waves.
+Igor のウィンドウ再作成マクロに当たります。Procedure に貼り付けて、グラフの見た目を残したり、別の wave に使ったりします。
 
 ### `Graph.autoscale`
 
@@ -218,7 +196,7 @@ keep a graph's look, or to apply it to other waves.
 autoscale()
 ```
 
-Autoscale every axis.
+すべての軸を自動範囲にします。
 
 ### `Graph.legend`
 
@@ -226,12 +204,9 @@ Autoscale every axis.
 legend(text='', *, anchor='RT', frame=True, x=0, y=0)
 ```
 
-Add a legend. With no text it lists every trace.
+凡例を追加します。テキストを省くと、すべてのトレースを並べます。
 
-In custom text, ``\s(traceName)`` draws that trace's symbol.
-``anchor`` is two letters: L/M/R then T/C/B. ``x`` and ``y`` move
-it from there, as fractions of the plot area (dragging it with the
-mouse sets them).
+自分で書くテキストでは、``\s(traceName)`` でそのトレースの記号を描きます。``anchor`` は 2 文字で、L/M/R のあとに T/C/B。``x`` と ``y`` はそこからの移動量(プロット領域に対する割合)で、マウスでドラッグしても設定されます。
 
 ### `Graph.textbox`
 
@@ -239,7 +214,7 @@ mouse sets them).
 textbox(text, *, anchor='RT', frame=True, x=0, y=0)
 ```
 
-Add a text box. ``^{...}`` and ``_{...}`` give super- and subscripts.
+テキストボックスを追加します。``^{...}`` と ``_{...}`` で上付き・下付き。
 
 ### `Graph.tag`
 
@@ -247,11 +222,9 @@ Add a text box. ``^{...}`` and ``_{...}`` give super- and subscripts.
 tag(trace, point, text='', *, frame=True, x=None, y=None)
 ```
 
-Attach a label to one point of a trace; it follows the point.
+トレースの 1 点にラベルを付けます。ラベルは点に追従します。
 
-In the text, ``{x}``, ``{y}`` and ``{point}`` stand for the point's
-values; with no text the tag shows ``x, y``. ``x`` and ``y`` say where
-the box sits relative to the point, as fractions of the plot area.
+テキストの ``{x}``、``{y}``、``{point}`` はその点の値になります。テキストを省くと ``x, y`` を表示します。``x`` と ``y`` は点に対する枠の位置(プロット領域に対する割合)です。
 
 ### `Graph.annotation`
 
@@ -265,15 +238,9 @@ annotation(name)
 save_style(name, size=False)
 ```
 
-Keep this graph's look as a style named ``name`` and return it.
+このグラフの見た目を ``name`` という名前のスタイルとして残し、返します。
 
-The style holds the fonts, the look of the axes (ticks, mirror, grid)
-and of the traces in order (color, line, markers), not the data; with
-``size=True`` also the size the graph is drawn at, and how its plot
-area is sized where that is look (``"auto"``, a length or
-``("aspect", f)``; a plan or a per unit size follows the data, so the
-style keeps the size it gave instead). A style of that name is
-replaced.
+スタイルが持つのは、フォント、軸の見た目(目盛り・ミラー・グリッド)、順に並べたトレースの見た目(色・線・マーカー)で、データは持ちません。``size=True`` なら描画の大きさと、プロット領域の大きさのうち見た目に当たるもの(``"auto"``、長さ、``("aspect", f)``)も持ちます(plan と per unit はデータに従うので、その結果の大きさを持ちます)。同じ名前のスタイルは置き換えます。
 
 ### `Graph.save_template`
 
@@ -281,16 +248,9 @@ replaced.
 save_template(name, fixed=())
 ```
 
-Keep this graph as a graph template named ``name`` and return it.
+このグラフを ``name`` という名前のグラフテンプレートとして残し、返します。
 
-Each wave the graph plots becomes a slot of the template (see
-``GraphTemplate``); the traces, axes, look, text and size are kept,
-with how the plot area is sized (``width`` and ``height``, plan and
-per unit too).
-An axis keeps its range only if it is named in ``fixed`` (a name or
-a list of names; ``True`` for every axis): the others follow the
-data of each graph made from the template. A template of that name
-is replaced.
+グラフが描く各 wave はテンプレートのスロットになります(``GraphTemplate`` を参照)。トレース・軸・見た目・テキスト・大きさを、プロット領域の大きさの決め方(``width`` と ``height``、plan と per unit も)とともに残します。軸の範囲は ``fixed``(名前、名前のリスト、すべての軸なら ``True``)で指定した軸だけ残し、ほかはテンプレートから作る各グラフのデータに従います。同じ名前のテンプレートは置き換えます。
 
 ### `Graph.apply_style`
 
@@ -298,7 +258,7 @@ is replaced.
 apply_style(style)
 ```
 
-Give this graph the look of a style (a name or a Style). Returns self.
+このグラフにスタイル(名前か Style)の見た目を適用します。self を返します。
 
 ### `Graph.svg`
 
@@ -306,10 +266,9 @@ Give this graph the look of a style (a name or a Style). Returns self.
 svg(width=None, height=None, cursors=False)
 ```
 
-The graph as an SVG document; by default at its window's size.
+グラフを SVG 文書として返します。既定ではウィンドウの大きさ。
 
-A side of the plot area sized other than ``"auto"`` keeps its own size
-whatever ``width`` and ``height`` say.
+``"auto"`` 以外で大きさを決めたプロット領域の辺は、``width`` と ``height`` にかかわらずその大きさを保ちます。
 
 ### `Graph.kill`
 
@@ -317,7 +276,7 @@ whatever ``width`` and ``height`` say.
 kill()
 ```
 
-Kill the window and what it shows (see ``op.kill_window``).
+ウィンドウとその中身を削除します(``op.kill_window`` を参照)。
 
 ### `Graph.close`
 
@@ -325,7 +284,7 @@ Kill the window and what it shows (see ``op.kill_window``).
 close()
 ```
 
-Close the window, keeping what it shows to reopen (see ``op.close_window``).
+ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。
 
 ### `Graph.reopen`
 
@@ -333,7 +292,7 @@ Close the window, keeping what it shows to reopen (see ``op.close_window``).
 reopen()
 ```
 
-Open the window again after ``close()``, in front of the others.
+``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。
 
 ### `Graph.rename`
 
@@ -341,40 +300,33 @@ Open the window again after ``close()``, in front of the others.
 rename(new_name)
 ```
 
-Give it and its window another name (see ``op.rename_window``). Returns self.
+自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。
 
-## `Length`
-
-A length on paper: ``op.cm(8)``, ``op.inch(3)``, ``op.pt(200)``.
-
-As a number it is the length in points (1/72 inch), so it goes wherever
-points do (the places of a page layout's items, say); it also keeps the
-unit it was given in, as ``value`` and ``unit``, which a graph's plot
-area keeps to show it so again.
-
-## `pt`
+## `display`
 
 ```python
-op.pt(value)
+op.display(*y, x=None, name=None, style=_DEFAULT)
 ```
 
-A length of ``value`` points (1/72 inch).
+渡した wave(または配列)の新しいグラフを作り、返します。
 
-## `cm`
+``x`` を渡すと、wave 自身の X スケーリングでなく X wave に対して描きます。テキスト wave を ``x`` にするとカテゴリのグラフになります(トレースに ``mode="bars"`` を試してください)。既定のスタイルがあればそれを適用します(``set_default_style`` を参照)。``style="paper"`` で別のスタイル、``style=None`` でスタイルなし。
+
+## `graph`
 
 ```python
-op.cm(value)
+op.graph(name=None)
 ```
 
-A length of ``value`` centimetres.
+名前でグラフを取得します。名前を省くと最前面のグラフ。
 
-## `inch`
+**明示的な例外** · `OresmeError`
+
+## `graphs`
 
 ```python
-op.inch(value)
+op.graphs()
 ```
-
-A length of ``value`` inches (72 points).
 
 ## `Annotation`
 
@@ -382,10 +334,9 @@ A length of ``value`` inches (72 points).
 op.Annotation(graph, name)
 ```
 
-A legend, text box, color scale or tag in a graph.
+グラフの凡例・テキストボックス・カラースケール・タグ。
 
-``x`` and ``y`` are how far it has been moved from its anchor (for a tag:
-from its point), as fractions of the plot area.
+``x`` と ``y`` は、アンカー(タグなら点)からどれだけ動かしたか(プロット領域に対する割合)です。
 
 **プロパティ**
 
@@ -405,253 +356,39 @@ remove()
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 **明示的な例外** · `AttributeError`
 
-## `Style`
+## `Length`
+
+紙の上の長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``。
+
+数としては pt(1/72 inch)単位の長さなので、pt を受け取る所(ページレイアウトの項目の位置など)にそのまま使えます。また、指定した単位を ``value`` と ``unit`` として覚えていて、グラフのプロット領域はそれを同じ形で表示し直します。
+
+## `pt`
 
 ```python
-op.Style(name)
+op.pt(value)
 ```
 
-A graph style: the look of a graph kept in the experiment under a name.
+``value`` pt(1/72 inch)の長さ。
 
-``data`` is what it holds, as a plain dict with any of ``"graph"``
-(``font_size``, ``font_family``), ``"size"`` (``width`` and ``height`` of
-the drawn graph, in pixels), ``"plot"`` (``width`` and ``height`` of the
-plot area as the document holds them: ``{"mode": "auto"}``,
-``{"mode": "absolute", "value": 8, "unit": "cm"}`` or
-``{"mode": "aspect", "factor": 0.75}``), ``"axes"`` (by ``"left"``,
-``"bottom"``, ``"right"``, ``"top"`` and ``"other"`` for added axes:
-``mirror``, ``ticks``, ``minor``, ``grid``) and ``"traces"``: a list of
-trace looks
-(``mode``, ``color``, ``line_size``, ``line_style``, ``marker``,
-``marker_size``, ``marker_fill``) that the traces of a graph take in
-turn, starting again from the first when there are more traces. A style
-changes only what it holds.
-
-**プロパティ**
-
-- `name` (read-only)
-- `data` (read-only) · What the style holds, as a dict (a copy: change it with ``op.set_style``).
-
-### `Style.apply`
+## `cm`
 
 ```python
-apply(graphs=None)
+op.cm(value)
 ```
 
-Give graphs this look; every graph when ``graphs`` is None.
+``value`` cm の長さ。
 
-### `Style.rename`
+## `inch`
 
 ```python
-rename(new_name)
+op.inch(value)
 ```
 
-### `Style.remove`
-
-```python
-remove()
-```
-
-Delete the style. Graphs keep the look it gave them.
-
-## `display`
-
-```python
-op.display(*y, x=None, name=None, style=_DEFAULT)
-```
-
-Make a new graph of the given waves (or arrays) and return it.
-
-``x`` plots them against an X wave instead of their own X scaling. A text
-wave as ``x`` makes a category plot (try ``mode="bars"`` on the traces).
-The graph is given the default style, if there is one (see
-``set_default_style``); ``style="paper"`` gives it another, and
-``style=None`` none.
-
-## `graph`
-
-```python
-op.graph(name=None)
-```
-
-A graph by name; with no name, the frontmost graph.
-
-**明示的な例外** · `OresmeError`
-
-## `graphs`
-
-```python
-op.graphs()
-```
-
-## `style`
-
-```python
-op.style(name)
-```
-
-The style with this name.
-
-**明示的な例外** · `OresmeError`
-
-## `styles`
-
-```python
-op.styles()
-```
-
-Every style of the experiment.
-
-## `set_style`
-
-```python
-op.set_style(name, data)
-```
-
-Define a style from a dict (see ``Style``) or copy another Style; returns it.
-
-A style of that name is replaced. Unknown keys and bad values are refused.
-
-## `apply_style`
-
-```python
-op.apply_style(style, graphs=None)
-```
-
-Give graphs the look of a style; every graph when ``graphs`` is None.
-
-It is one step to undo, however many graphs it changes.
-
-## `set_default_style`
-
-```python
-op.set_default_style(style)
-```
-
-Give new graphs this style (a name or a Style); None to give them none.
-
-## `default_style`
-
-```python
-op.default_style()
-```
-
-The Style new graphs are given, or None.
-
-## `GraphTemplate`
-
-```python
-op.GraphTemplate(name)
-```
-
-A graph template: a graph kept with its waves taken out, to make the
-same graph of other data.
-
-Where the graph had a wave, the template has a slot, named after what
-the wave was for: ``"y"`` and ``"x"``, ``"yerr"`` and ``"xerr"`` for
-error bars, ``"color"`` for a color wave and ``"z"`` for an image or
-contours, numbered by trace (``"y1"``, ``"y2"``) when there are several.
-``slots`` lists them. Make a graph by giving a wave for each slot::
-
-    t = op.graph_template(op.graph("Graph0"), "IV")
-    t.make(y="s2_I", x="s2_V")
-
-Text in annotations and axis labels can name what fills a slot:
-``{y.name}`` and ``{y.unit}`` are the name and the unit of the wave in
-slot ``y``. Where the graph's text named one of its waves, or a unit
-in parentheses (``"Current (A)"``), the template has such a reference
-instead, so a graph of another sample shows that sample's name and unit.
-
-``data`` is what the template holds, as a dict: ``"style"`` (the look
-and size, as a ``Style`` holds them), ``"slots"`` (``name``, ``role``
-and the units of the wave it was made from), ``"traces"``, ``"images"``,
-``"contours"``, ``"axes"`` and ``"annotations"`` as in a graph, with
-slot names where the graph has wave names. ``op.set_graph_template``
-defines one from such a dict.
-
-**プロパティ**
-
-- `name` (read-only)
-- `data` (read-only) · What the template holds, as a dict (a copy: change it with ``op.set_graph_template``).
-- `slots` (read-only) · The names of the slots, in the order of the graph.
-
-### `GraphTemplate.make`
-
-```python
-make(name=None, **slots)
-```
-
-Make a graph of the waves given for the slots, and return it.
-
-Give a wave (a Wave or a name) for each slot:
-``t.make(y=current, x=voltage)``. A slot of X, error bars or a color
-wave may be left out; the graph then goes without it. Lists make
-several graphs, one for each item, and return a list of them:
-``t.make(y=[a, b, c], x=voltage)`` makes three graphs, all against
-``voltage``. ``name`` names the graph (a list, the
-graphs); left out, names are chosen.
-
-Where a wave's unit differs from that of the wave the template was
-made from, a warning says so, and the graph is made all the same.
-All the graphs are made or, if one cannot be, none; and they are one
-step to undo.
-
-**明示的な例外** · `OresmeError`
-
-### `GraphTemplate.rename`
-
-```python
-rename(new_name)
-```
-
-Give the template another name. Returns self.
-
-### `GraphTemplate.remove`
-
-```python
-remove()
-```
-
-Delete the template. Graphs made from it stay as they are.
-
-## `graph_template`
-
-```python
-op.graph_template(source, name=None, fixed=())
-```
-
-A graph template: the one named ``source``, or one made from a graph.
-
-``op.graph_template("IV")`` is the template named IV.
-``op.graph_template(g, "IV")`` keeps the graph ``g`` (a Graph or a
-graph name) as a template named IV and returns it; see
-``Graph.save_template`` for ``fixed``.
-
-**明示的な例外** · `OresmeError`
-
-## `graph_templates`
-
-```python
-op.graph_templates()
-```
-
-Every graph template of the experiment.
-
-## `set_graph_template`
-
-```python
-op.set_graph_template(name, data)
-```
-
-Define a graph template from a dict (see ``GraphTemplate``) or copy another; returns it.
-
-A template of that name is replaced. What the dict leaves out is as in a
-new graph; unknown keys, bad values and references to slots or axes the
-template does not have are refused.
+``value`` inch(72 pt)の長さ。
 
 ## `link_graphs`
 
@@ -659,13 +396,9 @@ template does not have are refused.
 op.link_graphs(*graphs, axes='x', cursors=True)
 ```
 
-Link graphs so that zooming or panning one zooms the others alike.
+グラフを連動させ、1 つを拡大・移動すると、ほかも同じように拡大・移動するようにします。
 
-``axes="x"`` links the bottom axes, ``"xy"`` the left ones too. With
-``cursors``, a cursor set on one graph is set on the others at the point
-nearest the same X: the same moment of a charge curve, a current and a
-temperature shown apart. The graphs start at the first one's range and
-leave any graphs they were linked to before. Returns the group's name.
+``axes="x"`` で下の軸を、``"xy"`` で左の軸も連動させます。``cursors`` を付けると、1 つのグラフに置いたカーソルが、ほかのグラフでも同じ X に最も近い点に置かれます(別々に表示した充放電曲線・電流・温度の同じ時刻など)。グラフは 1 つ目のグラフの範囲から始まり、それまでの連動からは外れます。グループの名前を返します。
 
 ## `unlink_graphs`
 
@@ -673,4 +406,4 @@ leave any graphs they were linked to before. Returns the group's name.
 op.unlink_graphs(*graphs)
 ```
 
-Take graphs out of the graphs they are linked to (see ``link_graphs``).
+グラフを連動から外します(``link_graphs`` を参照)。

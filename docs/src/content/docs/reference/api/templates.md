@@ -1,7 +1,7 @@
 ---
-title: Templates API
+title: 解析テンプレート
 sidebar:
-  order: 12
+  order: 14
 editUrl: false
 ---
 
@@ -15,15 +15,9 @@ editUrl: false
 op.Template(name)
 ```
 
-An analysis template: steps of actions to do to one sample after another.
+解析テンプレート: 試料に順に行う Action の手順。
 
-``data`` is what it holds, as a dict: ``"description"``, ``"inputs"``
-(the slots a wave is given for in each sample: ``name``, ``title`` and
-``kind``, which is ``"wave"``) and ``"steps"``, in order. A step has an
-``id``, the ``action`` it calls with its ``version``, and ``args`` by
-parameter name. An argument is a fixed value, the wave given for a slot
-(``{"$input": "spectrum"}``), or something an earlier step returned
-(``{"$step": "bg", "output": "subtracted"}``)::
+``data`` はその中身(dict)です: ``"description"``、``"inputs"``(各試料で wave を渡すスロット: ``name``、``title``、``kind``(``"wave"``))、``"steps"``(順に)。段は ``id``、呼ぶ ``action`` とその ``version``、パラメータ名ごとの ``args`` を持ちます。引数は固定の値、スロットに渡した wave(``{"$input": "spectrum"}``)、または前の段が返したもの(``{"$step": "bg", "output": "subtracted"}``)です::
 
     t = op.set_template("XPS", {
         "inputs": ["spectrum"],
@@ -36,22 +30,15 @@ parameter name. An argument is a fixed value, the wave given for a slot
     })
     run = t.run(["s1", "s2", "s3"])
 
-What a step returns is what its action returns, as ``op.invoke`` gives it
-to the application: the keys of a dict (a fit's ``"wave"``,
-``"residuals"``, ...), the fields of a named tuple (``op.background`` with
-``subtract=True``: ``"background"`` and ``"subtracted"``), ``"wave"`` for
-a wave, ``"0"``, ``"1"``, ... for a list, and ``"value"`` for anything
-else (a number, say). A step that keeps an
-analysis result also gives the waves the result made, by role (``"fit"``,
-``"residuals"``, ``"peak1"``, ...). A wave stands for its name.
+段が返すものは、その Action が返すもの(``op.invoke`` がアプリに渡す形)です: dict のキー(フィットの ``"wave"``、``"residuals"``…)、名前付きタプルのフィールド(``subtract=True`` の ``op.background`` なら ``"background"`` と ``"subtracted"``)、wave なら ``"wave"``、リストなら ``"0"``、``"1"``…、それ以外(数など)は ``"value"``。解析の結果を残す段は、その結果が作った wave も役割ごと(``"fit"``、``"residuals"``、``"peak1"``…)に返します。wave はその名前を表します。
 
 **プロパティ**
 
 - `name` (read-only)
-- `data` (read-only) · What the template holds, as a dict (a copy: change it with ``op.set_template``).
+- `data` (read-only) · テンプレートの中身(dict のコピー。変えるには ``op.set_template``)。
 - `description` (read-only)
-- `inputs` (read-only) · The names of the slots, the waves each sample is given for.
-- `steps` (read-only) · The steps, in order, as dicts: id, action, version and args.
+- `inputs` (read-only) · スロットの名前。各試料で wave を渡すもの。
+- `steps` (read-only) · 段を順に並べた dict のリスト: id、action、version、args。
 
 ### `Template.run`
 
@@ -59,35 +46,15 @@ analysis result also gives the waves the result made, by role (``"fit"``,
 run(inputs, on_error='continue', *, name=None, quiet=False)
 ```
 
-Do the steps to each sample, and return the record of it all (a ``Run``).
+各試料に段を行い、その記録(``Run``)を返します。
 
-``inputs`` gives the waves of each sample: a list with a dict for
-each sample, ``[{"spectrum": "s1"}, {"spectrum": "s2"}]``; for a
-template of one input, a list of waves, ``["s1", "s2"]``; or a dict
-of lists by input, ``{"spectrum": ["s1", "s2"], "energy": "E"}``,
-where a single wave goes with every sample.
+``inputs`` は各試料の wave です: 試料ごとの dict のリスト ``[{"spectrum": "s1"}, {"spectrum": "s2"}]``、入力が 1 つのテンプレートなら wave のリスト ``["s1", "s2"]``、または入力ごとのリストの dict ``{"spectrum": ["s1", "s2"], "energy": "E"}``(wave 1 つならすべての試料に使う)。
 
-The steps of each sample run in one ``op.atomic()`` block: a sample
-that fails leaves nothing, and one that succeeds goes into the
-experiment at once, recorded in the run as it finishes. With
-``on_error="continue"`` the other samples go on; with ``"stop"``
-the run stops at the first sample that fails, and the rest stay
-pending. Interrupting Python stops it too: the samples done stay, the
-one being done and those not begun are marked cancelled.
-``run.retry()`` does again only the samples that did not succeed.
+各試料の段は 1 つの ``op.atomic()`` ブロックで行います。失敗した試料は何も残さず、成功した試料はすぐ実験に入り、終わるごとに Run に記録されます。``on_error="continue"`` ならほかの試料を続け、``"stop"`` なら最初に失敗した試料で止め、残りは未実行のままです。Python を中断しても止まり、終わった試料は残り、実行中と未着手の試料は中断と記録されます。``run.retry()`` は成功しなかった試料だけをやり直します。
 
-A wave a step makes under the name of a wave that was there before
-the sample began is made under a new name instead, ``<name>_1``
-(``_2``, ...): a run does not replace waves. ``W_coef``,
-``W_sigma`` and ``W_peaks``, which hold the latest fit, are written
-as usual.
+試料を始める前からある wave と同じ名前で段が wave を作ると、代わりに新しい名前 ``<name>_1``(``_2``…)で作ります。Run は wave を置き換えません。最新のフィットを持つ ``W_coef``、``W_sigma``、``W_peaks`` はいつもどおり書き込みます。
 
-The template is checked against the actions before anything is done:
-an action that is not registered, an argument it does not take or a
-fixed value of the wrong type refuses the whole run. ``name`` names
-the run (Run0, Run1, ... by default). With ``quiet`` it prints
-nothing; otherwise a line for each sample that did not succeed and
-a count at the end.
+何かする前に、テンプレートを Action と照らし合わせます。登録されていない Action、受け取らない引数、型の違う固定値があれば、Run 全体を拒否します。``name`` は Run の名前(既定は Run0、Run1…)です。``quiet`` なら何も表示せず、そうでなければ成功しなかった試料ごとに 1 行と、最後に件数を表示します。
 
 ### `Template.rename`
 
@@ -95,7 +62,7 @@ a count at the end.
 rename(new_name)
 ```
 
-Give the template another name. Returns self. Runs keep the name it had.
+テンプレートの名前を変えます。self を返します。Run は元の名前を持ち続けます。
 
 ### `Template.remove`
 
@@ -103,7 +70,7 @@ Give the template another name. Returns self. Runs keep the name it had.
 remove()
 ```
 
-Delete the template. Runs made from it keep their copy of it.
+テンプレートを削除します。それから作った Run は自分の写しを持ち続けます。
 
 ## `template`
 
@@ -111,7 +78,7 @@ Delete the template. Runs made from it keep their copy of it.
 op.template(name)
 ```
 
-The analysis template with this name.
+この名前の解析テンプレート。
 
 **明示的な例外** · `OresmeError`
 
@@ -121,7 +88,7 @@ The analysis template with this name.
 op.templates()
 ```
 
-Every analysis template of the experiment.
+実験のすべての解析テンプレート。
 
 ## `set_template`
 
@@ -129,15 +96,9 @@ Every analysis template of the experiment.
 op.set_template(name, data)
 ```
 
-Define an analysis template from a dict (see ``Template``) or copy another; returns it.
+dict(``Template`` を参照)から解析テンプレートを定義する、またはほかのテンプレートを複製し、返します。
 
-A template of that name is replaced. Inputs may be given by name alone
-(``"inputs": ["spectrum"]``). A step without an ``id`` is named
-``step1``, ``step2``, ... by its place; one without a ``version`` gets
-the highest version of its action registered now. Names, the shape of
-each argument, and references to slots that do not exist or to steps
-that are not earlier are refused here; whether the actions take the
-arguments is checked when the template is run.
+同じ名前のテンプレートは置き換えます。入力は名前だけでも書けます(``"inputs": ["spectrum"]``)。``id`` のない段は位置から ``step1``、``step2``… と名付け、``version`` のない段にはいま登録されている Action の最新版を付けます。名前、各引数の形、存在しないスロットや前にない段への参照はここで拒否します。Action が引数を受け取るかは、テンプレートを実行するときに確かめます。
 
 **明示的な例外** · `OresmeError`
 
@@ -147,27 +108,20 @@ arguments is checked when the template is run.
 op.Run(name)
 ```
 
-The record of a template run on samples: kept in the experiment under a name.
+テンプレートを試料に実行した記録。名前を付けて実験に残ります。
 
-``copy`` is the template as it was when the run was made, which a retry
-uses whatever the template says now. ``samples`` lists each sample:
-``inputs`` (a wave by slot), ``fingerprints`` (of each input as it was
-when the sample was last done), ``state`` (``"pending"``,
-``"succeeded"``, ``"failed"`` or ``"cancelled"``), ``error``,
-``results`` (the analysis results its steps kept), ``waves`` (those they
-made), ``attempts``, ``finished`` (milliseconds since the epoch) and
-``changed`` (inputs that are no longer what they were then).
+``copy`` は Run を作ったときのテンプレート(やり直しはテンプレートが今どうなっていてもこれを使います)。``samples`` は試料ごとの一覧で、``inputs``(スロットごとの wave)、``fingerprints``(最後に行ったときの各入力の指紋)、``state``(``"pending"``、``"succeeded"``、``"failed"``、``"cancelled"``)、``error``、``results``(段が残した解析結果)、``waves``(段が作った wave)、``attempts``、``finished``(エポックからのミリ秒)、``changed``(当時から変わった入力)を持ちます。
 
 **プロパティ**
 
 - `name` (read-only)
-- `data` (read-only) · The whole record, as a dict (a copy).
-- `template` (read-only) · The name of the template the run was made from.
-- `copy` (read-only) · The template as it was when the run was made, as a dict.
+- `data` (read-only) · 記録全体(dict のコピー)。
+- `template` (read-only) · Run を作ったテンプレートの名前。
+- `copy` (read-only) · Run を作ったときのテンプレート(dict)。
 - `on_error` (read-only)
 - `samples` (read-only)
-- `states` (read-only) · The state of each sample, in order.
-- `counts` (read-only) · How many samples are in each state.
+- `states` (read-only) · 各試料の状態(順に)。
+- `counts` (read-only) · 状態ごとの試料の数。
 
 ### `Run.retry`
 
@@ -175,12 +129,9 @@ made), ``attempts``, ``finished`` (milliseconds since the epoch) and
 retry(on_error=None, *, quiet=False)
 ```
 
-Do again the samples that did not succeed, with the run's own copy of the template.
+成功しなかった試料を、Run 自身が持つテンプレートの写しでやり直します。
 
-Only failed, cancelled and pending samples are done; those that
-succeeded stay as they are. The outcome goes into this run, sample by
-sample (``attempts`` counts the times each was done). ``on_error`` is
-the run's own unless given. Returns self.
+行うのは失敗・中断・未実行の試料だけで、成功した試料はそのままです。結果は試料ごとにこの Run に入ります(``attempts`` は各試料を行った回数)。``on_error`` は指定しなければ Run 自身のものです。self を返します。
 
 ### `Run.table`
 
@@ -188,18 +139,9 @@ the run's own unless given. Returns self.
 table(name=None, sigma=True)
 ```
 
-Put the samples side by side in a table, failed ones too, and return it.
+試料を(失敗したものも)テーブルに並べ、返します。
 
-A row for each sample: ``<name>_sample`` (its number), the input
-waves (``<name>_<input>``), ``<name>_state``, ``<name>_error`` and
-``<name>_result`` (the results kept), then a column for each
-parameter of the results (``<name>_<parameter>``, with ``_sd`` for
-the standard deviation if ``sigma``) and ``<name>_chisq``. A sample
-that did not succeed has NaN for numbers. Where a sample kept more
-than one result with a parameter of the same name, the last step's
-is shown. An input or parameter whose column would have the name of
-another (an input called ``state``, say) gets ``_2``, ``_3``, ...
-``name`` is the run's name by default.
+試料ごとに 1 行です: ``<name>_sample``(番号)、入力の wave(``<name>_<入力>``)、``<name>_state``、``<name>_error``、``<name>_result``(残した結果)、続いて結果のパラメータごとの列(``<name>_<パラメータ>``。``sigma`` 付きなら標準偏差の ``_sd`` も)と ``<name>_chisq``。成功しなかった試料の数値は NaN です。1 つの試料が同じ名前のパラメータを持つ結果を複数残したときは、最後の段のものを表示します。入力やパラメータの列名がほかと重なるとき(``state`` という入力など)は ``_2``、``_3``… を付けます。``name`` の既定は Run の名前です。
 
 ### `Run.remove`
 
@@ -207,7 +149,7 @@ another (an input called ``state``, say) gets ``_2``, ``_3``, ...
 remove()
 ```
 
-Forget the run. The waves and results its samples made stay.
+Run を消します。試料が作った wave と結果は残ります。
 
 ## `run`
 
@@ -215,7 +157,7 @@ Forget the run. The waves and results its samples made stay.
 op.run(name=None)
 ```
 
-A run by name; with no name, the latest.
+名前で Run を取得します。名前を省くと最新のもの。
 
 **明示的な例外** · `OresmeError`
 
@@ -225,4 +167,4 @@ A run by name; with no name, the latest.
 op.runs()
 ```
 
-Every run of the experiment, oldest first.
+実験のすべての Run(古い順)。

@@ -23,6 +23,12 @@ g.axis("bottom").labels = "axis only"
 g.axis("left").set(labels="off")
 ```
 
+軸ラベルの向きは軸の側で決まります。左軸は下から上へ、右軸は上から下へ読む向き(文字の上が軸の外側)、上下の軸は横書きです。**Modify Axis** の **turned … °** で、そこから時計回りに回せます(Igor Pro の ModifyGraph `lblRot` に当たります)。右軸を左軸と同じ下から上の向きにするなら 180 です。範囲は −360〜360 度で、回した分だけ自動の余白が広がります。
+
+```python
+g.axis("right").label_rotation = 180
+```
+
 - `g.legend()` はトレースの凡例を追加します。`anchor="LT"` で左上を指定できます。
 - `g.textbox("Run 1")` はグラフ上に固定したテキストを追加します。
 - `g.tag(trace, point, "Y = {y}")` は指定点に追従するラベルを追加します。点番号は0始まりです。

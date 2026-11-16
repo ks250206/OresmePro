@@ -1,7 +1,7 @@
 ---
-title: Image / Contour API
+title: Image and Contour
 sidebar:
-  order: 5
+  order: 7
 editUrl: false
 ---
 

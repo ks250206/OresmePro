@@ -1,7 +1,7 @@
 ---
-title: Analysis API
+title: 解析
 sidebar:
-  order: 9
+  order: 13
 editUrl: false
 ---
 
@@ -15,12 +15,12 @@ editUrl: false
 op.FitResult(function, names, coef, sigma, chisq, points, wave, converged, held=(), residuals=None, band=None, *, reason='', covariance=None, freedom=None, name=None)
 ```
 
-The outcome of ``op.fit``: coefficients, their uncertainties and the fit wave.
+``op.fit`` の結果: 係数、その不確かさ、フィットの wave。
 
 **プロパティ**
 
-- `correlation` (read-only) · The correlation of the parameters: 1 on the diagonal, NaN for held ones.
-- `result` (read-only) · The fit as it is kept in the experiment: ``.rerun()``, ``.apply(waves)``, ``.remove()``.
+- `correlation` (read-only) · パラメータの相関。対角は 1、hold したパラメータは NaN。
+- `result` (read-only) · 実験に残ったフィットの記録: ``.rerun()``、``.apply(waves)``、``.remove()``。
 
 **インスタンス属性** · `band`, `chisq`, `coef`, `converged`, `covariance`, `freedom`, `function`, `held`, `lmfit`, `name`, `names`, `points`, `reason`, `residuals`, `sigma`, `wave`
 
@@ -30,7 +30,7 @@ The outcome of ``op.fit``: coefficients, their uncertainties and the fit wave.
 rerun(**changes)
 ```
 
-Fit again with the same settings; see ``Result.rerun``.
+同じ設定でフィットし直します。``Result.rerun`` を参照。
 
 ### `FitResult.apply`
 
@@ -38,7 +38,7 @@ Fit again with the same settings; see ``Result.rerun``.
 apply(waves, **changes)
 ```
 
-Fit other waves with the same settings; see ``Result.apply``.
+同じ設定でほかの wave をフィットします。``Result.apply`` を参照。
 
 ### `FitResult.template`
 
@@ -46,7 +46,7 @@ Fit other waves with the same settings; see ``Result.apply``.
 template(name, description='')
 ```
 
-Keep this fit as an analysis template; see ``Result.template``.
+このフィットを解析テンプレートとして残します。``Result.template`` を参照。
 
 ### `FitResult.__getitem__`
 
@@ -60,11 +60,11 @@ __getitem__(name)
 op.PeakFitResult(shape, peaks, baseline, chisq, points, wave, components, converged, columns=(), reason='', name=None)
 ```
 
-The outcome of ``op.fit_peaks``: one row per peak, and the waves it made.
+``op.fit_peaks`` の結果: ピークごとに 1 行と、作った wave。
 
 **プロパティ**
 
-- `result` (read-only) · The fit as it is kept in the experiment: ``.rerun()``, ``.apply(waves)``, ``.remove()``.
+- `result` (read-only) · 実験に残ったフィットの記録: ``.rerun()``、``.apply(waves)``、``.remove()``。
 
 **インスタンス属性** · `baseline`, `chisq`, `columns`, `components`, `converged`, `name`, `peaks`, `points`, `reason`, `shape`, `wave`
 
@@ -74,7 +74,7 @@ The outcome of ``op.fit_peaks``: one row per peak, and the waves it made.
 template(name, description='')
 ```
 
-Keep this fit as an analysis template; see ``Result.template``.
+このフィットを解析テンプレートとして残します。``Result.template`` を参照。
 
 ### `PeakFitResult.__len__`
 
@@ -94,12 +94,9 @@ __getitem__(index)
 op.Result(name)
 ```
 
-An analysis kept in the experiment: what was asked for and what came out.
+実験に残った解析: 何を指定し、何が得られたか。
 
-``names``, ``coef`` and ``sigma`` are the parameters; ``settings`` is what
-the analysis was told; ``changed`` lists the waves it read that are no
-longer what they were then. ``rerun()`` does it again and ``apply(waves)``
-does the same to other waves.
+``names``、``coef``、``sigma`` はパラメータ、``settings`` は解析に渡した設定、``changed`` は読んだ wave のうち当時から変わったものです。``rerun()`` でやり直し、``apply(waves)`` でほかの wave に同じことをします。
 
 **プロパティ**
 
@@ -107,9 +104,9 @@ does the same to other waves.
 - `chisq` (read-only)
 - `covariance` (read-only)
 - `correlation` (read-only)
-- `created` (read-only) · When the analysis was done, as a ``datetime`` in UTC.
-- `outputs` (read-only) · The waves the analysis made, by role ("fit", "residuals", ...); those since deleted are left out. These are the analysis's own names (``fit_signal``), which fitting the same wave again makes anew: they show the latest. ``kept`` is what this result made.
-- `kept` (read-only) · This result's own copies of what it made, by role, in the data folder ``results:<name>``. They stay as the analysis made them when the same wave is fitted again, so results can be compared curve by curve. Removing the result removes them, unless a graph or table shows them.
+- `created` (read-only) · 解析した日時(UTC の ``datetime``)。
+- `outputs` (read-only) · 解析が作った wave(役割 "fit"、"residuals" などごと)。その後削除されたものは除きます。 これは解析が付けた名前(``fit_signal``)で、同じ wave をフィットし直すと作り直されるので、最新のものを指します。この結果が作ったものは ``kept`` です。
+- `kept` (read-only) · この結果が作ったもののコピー(役割ごと)。データフォルダ ``results:<名前>`` にあります。 同じ wave をフィットし直しても解析が作ったときのまま残るので、結果どうしを曲線ごと比べられます。結果を削除するとコピーも消えます(グラフやテーブルが表示しているものは残ります)。
 - `kind` (read-only)
 - `label` (read-only)
 - `names` (read-only)
@@ -129,9 +126,9 @@ does the same to other waves.
 show()
 ```
 
-Graph the data this result read with the curves it made (its kept copies).
+この結果が読んだデータと、作った曲線(残したコピー)をグラフにします。
 
-Returns the graph. For a fit of several waves, each with its curve.
+グラフを返します。複数の wave のフィットでは、それぞれの曲線を描きます。
 
 **明示的な例外** · `OresmeError`
 
@@ -149,11 +146,9 @@ __getitem__(name)
 rerun(replace=False, **changes)
 ```
 
-Do the analysis again with the same settings, on the data as it is now.
+同じ設定で、今のデータに対して解析をやり直します。
 
-Keyword arguments change settings (``rerun(hold={"y0": 0})``). The
-outcome is kept as a new result, so that both can be compared, unless
-``replace=True``.
+キーワード引数で設定を変えられます(``rerun(hold={"y0": 0})``)。結果は新しい結果として残るので両方を比べられます。``replace=True`` なら置き換えます。
 
 **明示的な例外** · `OresmeError`
 
@@ -163,11 +158,9 @@ outcome is kept as a new result, so that both can be compared, unless
 apply(waves, table=True, **changes)
 ```
 
-Do the same analysis on other waves; returns the list of outcomes.
+ほかの wave に同じ解析をし、結果のリストを返します。
 
-Each wave takes the place of the one analysed (``y``); everything
-else stays, an X wave included. With ``table`` the outcomes are also
-put side by side in a table (see ``op.results_table``).
+各 wave が解析した wave(``y``)の代わりになり、ほかの設定は X wave を含めてそのままです。``table`` を付けると、結果を表にも並べます(``op.results_table`` を参照)。
 
 **明示的な例外** · `OresmeError`
 
@@ -177,7 +170,7 @@ put side by side in a table (see ``op.results_table``).
 template(name, description='')
 ```
 
-Keep this analysis as a template, to do to other samples; see ``op.make_template``.
+この解析を、ほかの試料に使うテンプレートとして残します。``op.make_template`` を参照。
 
 ### `Result.rename`
 
@@ -191,7 +184,7 @@ rename(name)
 remove()
 ```
 
-Forget the result. The waves it made stay.
+結果を消します。作った wave は残ります。
 
 ## `result`
 
@@ -199,7 +192,7 @@ Forget the result. The waves it made stay.
 op.result(name=None)
 ```
 
-A result by name; with no name, the latest.
+名前で結果を取得します。名前を省くと最新のもの。
 
 **明示的な例外** · `OresmeError`
 
@@ -209,7 +202,7 @@ A result by name; with no name, the latest.
 op.results()
 ```
 
-Every analysis kept in the experiment, oldest first.
+実験に残ったすべての解析(古い順)。
 
 ## `results_table`
 
@@ -217,16 +210,9 @@ Every analysis kept in the experiment, oldest first.
 op.results_table(results_=None, name='Results', sigma=True)
 ```
 
-Put results side by side: a row for each, a column for each parameter.
+結果を並べます: 結果ごとに 1 行、パラメータごとに 1 列。
 
-``results_`` is a list of results (names, or what the fits returned);
-all of them if left out. Makes text waves ``<name>_result`` and
-``<name>_data`` (which result, and the wave it was about), a wave for
-each attribute of the samples (see ``op.set_attributes``; numbers, or
-text where any is text), and, for each parameter, ``<name>_<parameter>``
-and (with ``sigma``) ``<name>_<parameter>_sd``, then ``<name>_chisq``,
-and shows them in a table, which is returned. A parameter or attribute a
-result does not have is NaN (or empty text).
+``results_`` は結果(名前、またはフィットの戻り値)のリストで、省くと全部です。テキスト wave ``<name>_result`` と ``<name>_data``(どの結果か、何の wave についてか)、試料の属性ごとの wave(``op.set_attributes`` を参照。数値、文字が混じれば文字)、パラメータごとに ``<name>_<パラメータ>`` と(``sigma`` 付きなら)``<name>_<パラメータ>_sd``、最後に ``<name>_chisq`` を作り、テーブルに表示して返します。結果が持たないパラメータや属性は NaN(または空文字)です。
 
 **明示的な例外** · `OresmeError`
 
@@ -236,15 +222,9 @@ result does not have is NaN (or empty text).
 op.plot_results(y, x=None, results_=None, *, name='ResultsPlot', sigma=True)
 ```
 
-Plot a parameter of results against an attribute of their samples, or another parameter.
+結果のパラメータを、試料の属性(または別のパラメータ)に対してプロットします。
 
-``y`` is a parameter's name (``"A"``); ``x`` an attribute of the samples
-(``"thickness"``, see ``op.set_attributes``), another parameter, or None
-for the results in order. ``results_`` are the results to plot, all of
-them if left out; those without ``y``, or without a number for ``x``, are
-left out. Makes ``<name>_x``, ``<name>_y`` and (with ``sigma``)
-``<name>_y_sd``, graphs them as markers with error bars, and returns the
-graph:
+``y`` はパラメータの名前(``"A"``)、``x`` は試料の属性(``"thickness"``、``op.set_attributes`` を参照)、別のパラメータ、または None(結果の順)です。``results_`` はプロットする結果で、省くと全部です。``y`` を持たない結果や、``x`` が数値でない結果は除きます。``<name>_x``、``<name>_y`` と(``sigma`` 付きなら)``<name>_y_sd`` を作り、誤差棒付きのマーカーでグラフにして、そのグラフを返します:
 
     op.set_attributes("run1:", thickness=10); ...
     op.plot_results("A", "thickness")
@@ -257,20 +237,9 @@ graph:
 op.make_template(name, results_, description='')
 ```
 
-Keep analyses as a template: their steps and settings, with the waves taken out.
+解析をテンプレートとして残します: 手順と設定を、wave を抜いて残します。
 
-``results_`` is a list of results (names, or what the fits returned), in
-the order they were done; each becomes a step that calls its action
-(``core.fit``, ``core.fit_peaks``) with the settings it was done with,
-``hold``, ``bounds`` and ``exclude`` included.
-A wave an analysis read becomes an input of the template, named after
-the argument (``"y"``, ``"x"``, ``"mask"``); a wave an earlier result
-made becomes a reference to that step's output instead, so that results
-done one after the other become a template of several steps. Steps are
-quiet. Settings the action cannot take (data given as an array, say)
-are left out with a warning. A
-fit of several waves at once (``op.fit_global``) has no action and
-cannot be in a template. Returns the template (see ``op.Template``).
+``results_`` は行った順に並べた結果(名前、またはフィットの戻り値)のリストで、それぞれがその Action(``core.fit``、``core.fit_peaks``)を、行ったときの設定(``hold``、``bounds``、``exclude`` を含む)で呼ぶ段になります。解析が読んだ wave はテンプレートの入力になり、引数の名前(``"y"``、``"x"``、``"mask"``)が付きます。前の結果が作った wave は、その段の出力への参照になるので、続けて行った解析は複数段のテンプレートになります。段は出力を抑えます(quiet)。Action が受け取れない設定(配列で渡したデータなど)は警告して除きます。複数の wave を同時にフィットしたもの(``op.fit_global``)には Action がなく、テンプレートにできません。テンプレートを返します(``op.Template`` を参照)。
 
 **明示的な例外** · `OresmeError`
 
@@ -280,52 +249,25 @@ cannot be in a template. Returns the template (see ``op.Template``).
 op.fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, range=None, xrange=None, exclude=None, mask=None, cursors=False, graph=None, name=None, quiet=False, residuals=False, band=None, result=None, record=True, params=None)
 ```
 
-Fit a function to a wave by least squares.
+最小二乗法で wave に関数をフィットします。
 
-``function`` is the name of a built-in function (see ``op.fit_functions()``),
-``"polyN"`` for a polynomial with N terms, or your own
-``f(x, p1, p2, ...)`` together with ``guess=[...]``.
+``function`` は組み込みの関数の名前(``op.fit_functions()`` を参照)、N 項の多項式なら ``"polyN"``、または自分の ``f(x, p1, p2, ...)`` と ``guess=[...]`` の組です。
 
-It can also be a model of the lmfit package, such as
-``lmfit.models.GaussianModel() + lmfit.models.LinearModel()``. lmfit then
-does the fitting (with its expressions and constraints), starting from
-``params=`` (``model.make_params(...)``) or else from the model's own
-guess, and everything else works as for the built-in functions: the
-choice of points, weights, the curve on the graph, residuals, the band,
-and the result kept in the experiment. ``r.lmfit`` is lmfit's own result.
+lmfit のモデル(``lmfit.models.GaussianModel() + lmfit.models.LinearModel()`` など)も使えます。そのときは lmfit がフィットし(その式と制約も使えます)、``params=``(``model.make_params(...)``)か、なければモデル自身の推定から始めます。ほかは組み込みの関数と同じです: 点の選び方、重み、グラフの曲線、残差、信頼帯、実験に残る結果。``r.lmfit`` は lmfit 自身の結果です。
 
-``hold`` keeps parameters fixed: ``hold={"y0": 0}`` at a value, or
-``hold=["y0"]`` at its starting guess. ``bounds={"A": (0, None)}`` keeps a
-parameter within limits (None for no limit on that side).
+``hold`` はパラメータを固定します: ``hold={"y0": 0}`` で値に、``hold=["y0"]`` で初期値に。``bounds={"A": (0, None)}`` はパラメータを範囲内に保ちます(None はその側に制限なし)。
 
-``sigma`` weights the points by their standard deviations: a wave or array
-with one value per point, or a single number. The parameter uncertainties
-are then taken from those; without ``sigma`` they are estimated from the
-scatter of the data around the fit.
+``sigma`` は点の標準偏差で重みを付けます: 点ごとの値の wave か配列、または 1 つの数。パラメータの不確かさはそこから求めます。``sigma`` がなければ、フィットのまわりのデータのばらつきから推定します。
 
-``x`` is an X wave; without it the wave's X scaling is used.
+``x`` は X wave です。省くと wave の X スケーリングを使います。
 
-Which points are fitted, the wave itself staying as it is:
-``range=(a, b)`` takes points a..b inclusive, ``xrange=(x1, x2)`` those
-with X in that span, ``cursors=True`` the points between cursors A and B
-of the graph. ``exclude=(x1, x2)`` or ``exclude=[(x1, x2), ...]`` leaves
-out the points with X in those spans, and ``mask`` (a wave or array with
-one value per point) leaves out the points where it is zero. They combine.
+フィットする点の選び方(wave 自体は変わりません): ``range=(a, b)`` は点 a〜b(両端を含む)、``xrange=(x1, x2)`` は X がその範囲の点、``cursors=True`` はグラフのカーソル A と B の間の点です。``exclude=(x1, x2)`` や ``exclude=[(x1, x2), ...]`` はその範囲の X の点を除き、``mask``(点ごとの値の wave か配列)は 0 の点を除きます。組み合わせられます。
 
-``residuals=True`` also makes ``res_<name>`` (data minus fit) and shows it
-on an axis of its own above the data. ``band=0.95`` makes
-``fit_<name>_lo`` and ``fit_<name>_hi``, the confidence band of the fitted
-curve at that level, drawn as a shaded band.
+``residuals=True`` で ``res_<name>``(データ − フィット)も作り、データの上に専用の軸で表示します。``band=0.95`` で、その水準のフィット曲線の信頼帯 ``fit_<name>_lo`` と ``fit_<name>_hi`` を作り、塗った帯で描きます。
 
-Makes a wave ``fit_<name>`` with the fitted curve and adds it to the graph
-showing the data, and stores the coefficients in ``W_coef`` and their
-standard deviations in ``W_sigma``. Returns a ``FitResult``, which also
-has the covariance and correlation of the parameters and why the fit
-stopped.
+フィット曲線の wave ``fit_<name>`` を作ってデータのグラフに加え、係数を ``W_coef``、その標準偏差を ``W_sigma`` に入れます。``FitResult`` を返し、それはパラメータの共分散と相関、フィットが止まった理由も持ちます。
 
-The fit is kept among the experiment's results (``op.results()``) with
-its settings, as ``Fit0``, ``Fit1``, ...; ``result="name"`` names it,
-replacing a result of that name, and ``record=False`` keeps nothing.
+フィットは設定とともに実験の結果(``op.results()``)に ``Fit0``、``Fit1``… として残ります。``result="name"`` で名前を付け(同じ名前の結果は置き換え)、``record=False`` なら何も残しません。
 
 **明示的な例外** · `OresmeError`
 
@@ -335,11 +277,9 @@ replacing a result of that name, and ``record=False`` keeps nothing.
 op.fit_batch(function, waves, *, table=True, quiet=True, **options)
 ```
 
-Fit the same function to several waves, one after another.
+同じ関数を複数の wave に順にフィットします。
 
-Takes the options of ``op.fit`` (the same ``x`` wave, ranges, holds and
-bounds for all). Returns the list of ``FitResult``; with ``table`` they
-are also put side by side in a table (see ``op.results_table``).
+``op.fit`` のオプション(すべてに同じ ``x`` wave、範囲、hold、bounds)を使えます。``FitResult`` のリストを返します。``table`` を付けると表にも並べます(``op.results_table`` を参照)。
 
 ## `fit_global`
 
@@ -347,20 +287,13 @@ are also put side by side in a table (see ``op.results_table``).
 op.fit_global(function, ys, xs=None, *, shared=(), guess=None, hold=None, bounds=None, quiet=False, result=None, record=True)
 ```
 
-Fit one function to several waves at once, with some parameters common to all.
+1 つの関数を複数の wave に同時にフィットし、一部のパラメータを全 wave で共通にします。
 
-``ys`` is a list of waves. ``shared`` names the parameters that have one
-value for all of them (a time constant, a peak position); the others are
-fitted for each wave. ``xs`` is an X wave for all, or a list with one
-for each; without it each wave's X scaling is used.
+``ys`` は wave のリストです。``shared`` は全 wave で 1 つの値を持つパラメータ(時定数、ピーク位置など)の名前で、ほかは wave ごとにフィットします。``xs`` は全 wave に共通の X wave か、wave ごとのリストで、省くと各 wave の X スケーリングを使います。
 
-``guess`` is a list with a starting value per parameter, used for every
-wave (needed for a function of your own). ``hold={"y0": 0}`` fixes a
-parameter for every wave, and ``bounds={"A": (0, None)}`` limits it.
+``guess`` はパラメータごとの初期値のリストで、すべての wave に使います(自分の関数には必要)。``hold={"y0": 0}`` はパラメータを全 wave で固定し、``bounds={"A": (0, None)}`` は範囲を制限します。
 
-Makes ``fit_<name>`` for each wave and adds it to the graph showing the
-wave. Returns a ``GlobalFitResult``; the fit is kept among the
-experiment's results as ``Global0``, ``Global1``, ....
+wave ごとに ``fit_<name>`` を作り、その wave のグラフに加えます。``GlobalFitResult`` を返します。フィットは実験の結果に ``Global0``、``Global1``… として残ります。
 
 **明示的な例外** · `OresmeError`
 
@@ -370,15 +303,13 @@ experiment's results as ``Global0``, ``Global1``, ....
 op.GlobalFitResult(function, names, shared, held, data, coef, sigma, chisq, points, converged, reason, waves, name=None)
 ```
 
-The outcome of ``op.fit_global``: one row of coefficients per wave.
+``op.fit_global`` の結果: wave ごとに 1 行の係数。
 
-``coef`` and ``sigma`` have a row for each wave and a column for each
-parameter, in the order of ``names``; a shared parameter has the same
-value in every row. ``waves`` are the fitted curves.
+``coef`` と ``sigma`` は wave ごとの行と、``names`` の順のパラメータごとの列を持ちます。共通のパラメータはどの行も同じ値です。``waves`` はフィット曲線です。
 
 **プロパティ**
 
-- `result` (read-only) · The fit as it is kept in the experiment: ``.rerun()``, ``.remove()``.
+- `result` (read-only) · 実験に残ったフィットの記録: ``.rerun()``、``.remove()``。
 
 **インスタンス属性** · `chisq`, `coef`, `converged`, `data`, `function`, `held`, `name`, `names`, `points`, `reason`, `shared`, `sigma`, `waves`
 
@@ -388,7 +319,7 @@ value in every row. ``waves`` are the fitted curves.
 __getitem__(name)
 ```
 
-A shared parameter as a number, any other as an array with a value per wave.
+共通のパラメータは数、それ以外は wave ごとの値の配列。
 
 ## `fit_functions`
 
@@ -396,7 +327,7 @@ A shared parameter as a number, any other as an array with a value per wave.
 op.fit_functions()
 ```
 
-The built-in fit functions and their formulas. ``polyN`` fits a polynomial.
+組み込みのフィット関数とその式。``polyN`` は多項式をフィットします。
 
 ## `find_peaks`
 
@@ -404,16 +335,11 @@ The built-in fit functions and their formulas. ``polyN`` fits a polynomial.
 op.find_peaks(wave_, x=None, *, min_height=None, min_prominence=None, smooth=0, negative=False)
 ```
 
-Find the peaks of a 1-D wave. Returns a list of dicts, tallest first.
+1 次元 wave のピークを探します。高い順の dict のリストを返します。
 
-Each has ``point``, ``x``, ``height`` (above the surrounding baseline, its
-prominence) and ``width`` (the full width at half that height).
+各 dict は ``point``、``x``、``height``(周りのベースラインからの高さ=プロミネンス)、``width``(その高さの半分での全幅)を持ちます。
 
-``min_prominence`` is how far a peak must stand above the higher of the
-valleys beside it; by default four times the noise (estimated from the
-point-to-point scatter), and at least 2% of the wave's range. ``min_height`` is a floor for the value itself.
-``smooth`` box-smooths over that many points first, which steadies the
-search in noisy data. ``negative=True`` finds dips instead.
+``min_prominence`` は、ピークが両隣の谷の高い方からどれだけ突き出ている必要があるかです。既定は雑音(隣り合う点のばらつきから推定)の 4 倍、かつ wave の範囲の 2% 以上。``min_height`` は値そのものの下限です。``smooth`` はその点数でまず移動平均をかけ、雑音の多いデータでの探索を安定させます。``negative=True`` なら谷を探します。
 
 **明示的な例外** · `OresmeError`
 
@@ -423,39 +349,23 @@ search in noisy data. ``negative=True`` finds dips instead.
 op.fit_peaks(y, x=None, *, peaks=None, shape='gauss', baseline='constant', range=None, xrange=None, exclude=None, mask=None, cursors=False, graph=None, components=True, same_width=False, spacing=None, area_ratio=None, quiet=False, result=None, record=True, **find)
 ```
 
-Fit several peaks at once: a sum of peaks of one shape on a baseline.
+複数のピークを同時にフィットします: ベースラインの上に、同じ形のピークを足し合わせたもの。
 
-``peaks`` says where to start: nothing to find them (see ``op.find_peaks``,
-whose options can be given here), a number to take that many of the
-tallest, or a list of X positions. ``baseline`` is ``"constant"``,
-``"linear"`` or ``None``.
+``peaks`` は始め方です: 省くと自動で探す(``op.find_peaks`` を参照。そのオプションもここで渡せます)、数なら高い順にその数、X の位置のリストならそこから。``baseline`` は ``"constant"``、``"linear"``、``None`` のいずれか。
 
-``shape`` is ``"gauss"``, ``"lor"``, ``"voigt"`` or ``"pseudo_voigt"``.
-A Voigt peak (a Gaussian convolved with a Lorentzian) has a Gaussian and
-a Lorentzian width of its own, both fitted; each peak also reports their
-FWHMs as ``gauss_fwhm`` and ``lorentz_fwhm``. A pseudo-Voigt peak is
-``eta * Lorentzian + (1 - eta) * Gaussian`` with one FWHM, and reports
-``eta`` (kept within 0..1).
+``shape`` は ``"gauss"``、``"lor"``、``"voigt"``、``"pseudo_voigt"``。Voigt(ガウス関数とローレンツ関数の畳み込み)はガウス幅とローレンツ幅を別々に持ち、両方をフィットします。各ピークはその半値全幅も ``gauss_fwhm`` と ``lorentz_fwhm`` として報告します。pseudo-Voigt は 1 つの半値全幅で ``eta * ローレンツ + (1 - eta) * ガウス`` とし、``eta``(0〜1 に保つ)を報告します。
 
-Peaks can be tied to each other, as the lines of a multiplet are. Peaks
-are numbered from 1, left to right as they start out:
+多重項の線のように、ピークどうしを結び付けられます。ピークは始めの位置で左から 1 番から数えます:
 
-- ``same_width=True`` gives every peak the width (all width parameters) of the first;
-- ``spacing={(1, 2): 1.2}`` keeps peak 2 at 1.2 to the right of peak 1;
-- ``area_ratio={(1, 2): 0.5}`` keeps the area of peak 2 at half that of peak 1.
+- ``same_width=True`` はすべてのピークの幅(すべての幅のパラメータ)を 1 番目と同じにする。
+- ``spacing={(1, 2): 1.2}`` はピーク 2 をピーク 1 の 1.2 右に保つ。
+- ``area_ratio={(1, 2): 0.5}`` はピーク 2 の面積をピーク 1 の半分に保つ。
 
-A tied quantity is not fitted: it follows the peak it is tied to, and its
-uncertainty is carried over from that peak's.
+結び付けた量はフィットせず、相手のピークに従い、不確かさも相手から引き継ぎます。
 
-``range``, ``xrange``, ``exclude``, ``mask`` and ``cursors`` choose the
-points, as for ``op.fit``.
+``range``、``xrange``、``exclude``、``mask``、``cursors`` で、``op.fit`` と同じように点を選びます。
 
-Makes ``fit_<name>`` (the sum), ``fit_<name>_p1``, ``_p2``, ... (each peak
-on the baseline, if ``components``), and ``W_peaks``: one row per peak with
-position, height, full width at half maximum and area, then the columns
-the shape adds. Returns a ``PeakFitResult`` listing the peaks from left to
-right. The fit is kept among the experiment's results as ``Peaks0``,
-``Peaks1``, ... (see ``op.results()``), unless ``record=False``.
+``fit_<name>``(合計)、``fit_<name>_p1``、``_p2``…(``components`` 付きなら、ベースラインの上の各ピーク)、``W_peaks``(ピークごとに位置・高さ・半値全幅・面積と、形が加える列)を作ります。左から順にピークを並べた ``PeakFitResult`` を返します。``record=False`` でない限り、フィットは実験の結果に ``Peaks0``、``Peaks1``… として残ります(``op.results()`` を参照)。
 
 **明示的な例外** · `OresmeError`
 
@@ -465,13 +375,9 @@ right. The fit is kept among the experiment's results as ``Peaks0``,
 op.interpolate(wave_, x=None, *, n=None, at=None, kind='linear', name=None)
 ```
 
-Values between the points of a wave, as a new wave ``<name>_interp``.
+wave の点の間の値を、新しい wave ``<name>_interp`` として返します。
 
-With ``n``, the result has n evenly spaced points over the same X range,
-which also turns XY data into a wave with X scaling. With ``at`` (a wave
-or array of X values) it has one point at each of those. ``kind`` is
-``"linear"`` or ``"cubic"`` (a natural spline). Outside the data the
-result is NaN.
+``n`` を渡すと、同じ X 範囲に等間隔の n 点の結果になります(XY データを X スケーリング付きの wave にするのにも使えます)。``at``(X の値の wave か配列)を渡すと、その各点の値になります。``kind`` は ``"linear"`` か ``"cubic"``(自然スプライン)。データの外は NaN です。
 
 **明示的な例外** · `OresmeError`
 
@@ -481,12 +387,9 @@ result is NaN.
 op.filter_image(wave_, kind='gauss', size=3, name=None)
 ```
 
-Smooth or sharpen a 2-D wave; the result is ``<name>_filt``.
+2 次元 wave を平滑化または鮮鋭化します。結果は ``<name>_filt`` です。
 
-``kind`` is ``"gauss"`` (``size`` is the standard deviation in pixels),
-``"mean"`` or ``"median"`` (``size`` is the side of a square window, an
-odd number), or ``"sharpen"`` (unsharp mask; ``size`` is the blur's
-standard deviation). Edges are handled by repeating the border.
+``kind`` は ``"gauss"``(``size`` はピクセル単位の標準偏差)、``"mean"`` か ``"median"``(``size`` は正方形の窓の辺、奇数)、``"sharpen"``(アンシャープマスク。``size`` はぼかしの標準偏差)。端は境界の値を繰り返して扱います。
 
 **明示的な例外** · `OresmeError`
 
@@ -496,11 +399,9 @@ standard deviation). Edges are handled by repeating the border.
 op.line_profile(wave_, start, end, n=None, name=None)
 ```
 
-The values of a 2-D wave along a straight line, as ``<name>_prof``.
+2 次元 wave の直線に沿った値を ``<name>_prof`` として返します。
 
-``start`` and ``end`` are (x, y) in the wave's scaled coordinates. The
-profile has ``n`` points (by default one per pixel crossed), bilinearly
-interpolated, with X scaling that is the distance along the line.
+``start`` と ``end`` は wave のスケーリングした座標の (x, y) です。プロファイルは ``n`` 点(既定は横切るピクセルごとに 1 点)で双一次補間し、X スケーリングは直線に沿った距離です。
 
 **明示的な例外** · `OresmeError`
 
@@ -510,7 +411,7 @@ interpolated, with X scaling that is the distance along the line.
 op.stats(wave_, quiet=False)
 ```
 
-Summary statistics of a wave, printed and returned as a dict.
+wave の要約統計量。表示し、dict で返します。
 
 **明示的な例外** · `OresmeError`
 
@@ -520,21 +421,11 @@ Summary statistics of a wave, printed and returned as a dict.
 op.differentiate(wave_, name=None, *, x=None)
 ```
 
-The derivative with respect to X, as a new wave ``<name>_DIF``.
+X による微分を、新しい wave ``<name>_DIF`` として返します。
 
-Central differences inside, one-sided at the two ends. ``x`` (a wave or an
-array with one value per point) differentiates against those values
-instead of the X scaling, e.g. ``op.differentiate(capacity, x=voltage)``
-for dQ/dV. The spacing may be uneven and X may turn back: each point uses
-the three-point formula for uneven steps, which is second-order accurate
-(``np.gradient(y, x)``, first order at the ends as without ``x``). Where
-two neighbouring X values are equal, or X turns back to the value it had
-two points before, the slope has no value and the result is NaN there.
-The result is then a plain wave with one point per point of the data,
-meant to be plotted against the same X wave.
+内側は中心差分、両端は片側差分です。``x``(点ごとの値の wave か配列)を渡すと、X スケーリングの代わりにその値で微分します。例: dQ/dV なら ``op.differentiate(capacity, x=voltage)``。間隔は不均一でも、X が折り返してもかまいません。各点で不均一な刻み用の 3 点公式(2 次精度。``np.gradient(y, x)``、両端は 1 次精度)を使います。隣り合う X が等しい所や、X が 2 点前の値に戻る所は傾きが決まらず NaN になります。このとき結果はデータと同じ点数の普通の wave で、同じ X wave に対して描く想定です。
 
-A NaN in the data leaves NaN in the derivative at it and its neighbours.
-The unit is ``Y/X`` when both units are known.
+データの NaN は、その点と隣の点の微分を NaN にします。両方の単位が分かれば、単位は ``Y/X`` です。
 
 **明示的な例外** · `OresmeError`
 
@@ -544,18 +435,11 @@ The unit is ``Y/X`` when both units are known.
 op.integrate(wave_, name=None, *, x=None)
 ```
 
-The running integral over X (trapezoidal), as a new wave ``<name>_INT``.
+X による累積積分(台形公式)を、新しい wave ``<name>_INT`` として返します。
 
-It starts at 0 at the first point. ``x`` (a wave or an array with one
-value per point) integrates against those values instead of the X
-scaling, e.g. ``op.integrate(current, x=time)`` for the charge. X may be
-unevenly spaced and need not increase: where it goes back, the area
-counts negative, as in a charge-discharge loop. The result is then a
-plain wave with one point per point of the data, meant to be plotted
-against the same X wave.
+最初の点で 0 から始まります。``x``(点ごとの値の wave か配列)を渡すと、X スケーリングの代わりにその値で積分します。例: 電荷なら ``op.integrate(current, x=time)``。X は不均一でも、増加していなくてもかまいません。X が戻る所では面積が負に数えられます(充放電のループなど)。このとき結果はデータと同じ点数の普通の wave で、同じ X wave に対して描く想定です。
 
-A NaN in the data makes the running integral NaN from there on. The unit
-is ``Y·X`` when both units are known.
+データの NaN は、そこから先の累積積分を NaN にします。両方の単位が分かれば、単位は ``Y·X`` です。
 
 **明示的な例外** · `OresmeError`
 
@@ -565,7 +449,7 @@ is ``Y·X`` when both units are known.
 op.smooth(wave_, n=5, name=None)
 ```
 
-A moving average over ``n`` points (odd), as a new wave ``<name>_smth``.
+``n`` 点(奇数)の移動平均を、新しい wave ``<name>_smth`` として返します。
 
 ## `fft`
 
@@ -573,13 +457,9 @@ A moving average over ``n`` points (odd), as a new wave ``<name>_smth``.
 op.fft(wave_, name=None, output='magnitude')
 ```
 
-The spectrum of a wave, as a new wave ``<name>_FFT`` scaled in frequency.
+wave のスペクトルを、周波数でスケーリングした新しい wave ``<name>_FFT`` として返します。
 
-``output="magnitude"`` gives the amplitude of each frequency component:
-``A*cos(2*pi*f*x)`` shows as A at f, and a constant offset as its value at 0.
-``output="complex"`` keeps the spectrum itself as a complex wave: the
-non-negative frequencies, not normalized (``np.fft.rfft``), which
-``op.ifft`` turns back into the signal.
+``output="magnitude"`` は各周波数成分の振幅です: ``A*cos(2*pi*f*x)`` は f の所に A として、定数のオフセットは 0 の所にその値として出ます。``output="complex"`` はスペクトルそのものを複素数の wave として残します(非負の周波数、正規化なし。``np.fft.rfft``)。``op.ifft`` で信号に戻せます。
 
 **明示的な例外** · `OresmeError`
 
@@ -589,10 +469,9 @@ non-negative frequencies, not normalized (``np.fft.rfft``), which
 op.ifft(wave_, name=None, n=None)
 ```
 
-The signal whose spectrum a complex wave holds, as ``<name>_IFFT``.
+複素数の wave がスペクトルとして持つ信号を、``<name>_IFFT`` として返します。
 
-The inverse of ``op.fft(w, output="complex")``. ``n`` is the number of
-points of the result; by default the number the spectrum was made from.
+``op.fft(w, output="complex")`` の逆です。``n`` は結果の点数で、既定はスペクトルを作ったときの点数です。
 
 **明示的な例外** · `OresmeError`
 
@@ -602,7 +481,7 @@ points of the result; by default the number the spectrum was made from.
 op.histogram(wave_, bins=50, name=None)
 ```
 
-Counts of the values in ``bins`` equal bins, as a new wave ``<name>_Hist``.
+値を ``bins`` 個の等しい区間で数え、新しい wave ``<name>_Hist`` として返します。
 
 ## `background`
 
@@ -610,41 +489,17 @@ Counts of the values in ``bins`` equal bins, as a new wave ``<name>_Hist``.
 op.background(wave_, method='shirley', *, x=None, range=None, cursors=False, graph=None, average=5, subtract=False, energy=None, B=2866.0, C=1643.0, scale=True, tolerance=1e-06, name=None)
 ```
 
-The background under the peaks of a spectrum, as a new wave ``<name>_bg``.
+スペクトルのピークの下の背景を、新しい wave ``<name>_bg`` として返します。
 
-``method`` is ``"shirley"``, ``"tougaard"`` or ``"linear"``. The
-background is made over ``range=(x1, x2)``, the points with X from x1 to
-x2 (X values, not point numbers), or between cursors A and B with
-``cursors=True``, or else over the whole wave. Its two end levels are the
-means of ``average`` points at each end of that range. Outside the range
-the result is NaN. It has the scaling of the data; ``x`` is an X wave (or
-array) for XY data, which must run one way across the range.
+``method`` は ``"shirley"``、``"tougaard"``、``"linear"`` のいずれか。背景を作る範囲は ``range=(x1, x2)``(X が x1〜x2 の点。点番号でなく X の値)、``cursors=True`` ならカーソル A と B の間、どちらもなければ wave 全体です。両端の高さは、範囲の両端の ``average`` 点の平均です。範囲の外は NaN です。結果はデータと同じスケーリングを持ちます。``x`` は XY データの X wave(または配列)で、範囲内で一方向に進む必要があります。
 
-``"linear"`` is the straight line through the two averaged ends.
+``"linear"`` は、平均した両端を結ぶ直線です。
 
-``"shirley"`` changes from the level at one end to the level at the other
-in proportion to the peak area (data above the background) passed on the
-way, which it finds by iterating until it moves by less than
-``tolerance`` times the step between the levels. It rises toward the end
-where the data is higher: in XPS, the high binding energy (low kinetic
-energy) side, where inelastically scattered electrons accumulate. Since
-this rule gives the same background counted from either end, it does not
-matter which way X runs.
+``"shirley"`` は、途中で通過したピーク面積(背景より上のデータ)に比例して、一方の端の高さからもう一方の端の高さへ変わります。動きが両端の高さの差の ``tolerance`` 倍未満になるまで反復して求めます。データの高い端に向かって上がります(XPS では、非弾性散乱した電子がたまる結合エネルギーの高い側=運動エネルギーの低い側)。どちらの端から数えても同じ背景になるので、X の向きは問いません。
 
-``"tougaard"`` adds, to the level at the end where electrons have lost no
-energy, the electrons lost from every point on that side:
-``B * integral of T/(C + T^2)^2 * (data - level)`` over the energy loss T,
-with Tougaard's universal cross-section, ``B = 2866`` and ``C = 1643``
-eV^2. X must be in eV. With ``scale=True`` (the usual practice) B is then
-scaled so that the background meets the data at the far end, averaged
-over the same points as the level there. ``energy`` says which way
-electrons lose energy: ``"binding"`` (toward higher X) or ``"kinetic"``
-(toward lower X); by default, toward the end where the data is higher.
-The B used is written in the note of the background wave.
+``"tougaard"`` は、電子がエネルギーを失っていない側の端の高さに、その側のすべての点から失われた電子を足します: エネルギー損失 T について ``B * ∫ T/(C + T^2)^2 * (data - level)``。Tougaard の普遍的な断面積で ``B = 2866``、``C = 1643`` eV^2 です。X は eV である必要があります。``scale=True``(通常の使い方)なら、反対の端(そこの高さと同じ点数で平均)で背景がデータに合うよう B を調整します。``energy`` は電子がエネルギーを失う向きです: ``"binding"``(X が大きい方へ)か ``"kinetic"``(X が小さい方へ)。既定はデータの高い端の方へ。使った B は背景 wave のノートに書きます。
 
-``subtract=True`` also makes ``<name>_sub``, the data minus the
-background, and returns (background, subtracted), a named tuple whose
-fields are also ``.background`` and ``.subtracted``.
+``subtract=True`` なら ``<name>_sub``(データ − 背景)も作り、(background, subtracted) を返します。名前付きタプルで、``.background`` と ``.subtracted`` でも取れます。
 
 **明示的な例外** · `OresmeError`
 
@@ -654,7 +509,7 @@ fields are also ``.background`` and ``.subtracted``.
 op.OnsetResult(name, x, x_sigma, y, edge, baseline, x_unit='', waves=())
 ```
 
-The outcome of ``op.onset``: where the edge line crosses the baseline, and both lines.
+``op.onset`` の結果: 立ち上がりの直線がベースラインと交わる位置と、2 本の直線。
 
 **インスタンス属性** · `baseline`, `edge`, `name`, `waves`, `x`, `x_sigma`, `x_unit`, `y`
 
@@ -664,26 +519,12 @@ The outcome of ``op.onset``: where the edge line crosses the baseline, and both 
 op.onset(wave_, x=None, *, edge, baseline=None, graph=None, quiet=False)
 ```
 
-Where a rising or falling edge starts, by extrapolating it to the baseline.
+立ち上がり(または立ち下がり)の開始点を、ベースラインまで外挿して求めます。
 
-For thresholds such as the secondary-electron cutoff or the HOMO and
-LUMO onsets of UPS and LEIPS spectra. A straight line is fitted to the
-points with X in ``edge=(x1, x2)``, and another to those in
-``baseline=(x3, x4)``; ``baseline`` may instead be a number, a constant
-level, and is 0 if left out. The ranges are X values, not point numbers.
-``x`` is an X wave (or array) for XY data.
+二次電子のカットオフや、UPS・LEIPS スペクトルの HOMO・LUMO の立ち上がりなどのしきい値に使います。X が ``edge=(x1, x2)`` の点に直線を、``baseline=(x3, x4)`` の点にもう 1 本の直線をフィットします。``baseline`` は数(一定の高さ)でもよく、省くと 0 です。範囲は点番号でなく X の値です。``x`` は XY データの X wave(または配列)です。
 
-The uncertainty of the crossing propagates those of the two lines,
-taken from the scatter of the points about each (each point independent,
-with the same scatter throughout its range), to first order: it is the
-spread of the two lines where they cross, divided by the difference of
-their slopes. It holds while that is small next to the ranges, and says
-nothing of how the ranges were chosen, which often matters more.
+交点の不確かさは、各直線のまわりの点のばらつき(各点は独立で、範囲内でばらつきは一定と仮定)から得た 2 本の直線の不確かさを 1 次まで伝播したもので、交点での 2 本の直線の広がりを傾きの差で割ったものです。これは範囲に比べて小さい間だけ成り立ち、範囲の選び方(たいていこちらの方が効きます)については何も言いません。
 
-Nothing is drawn unless ``graph`` is given: a graph (or its name), or
-True for the frontmost graph showing the wave. The two lines are then
-added as ``<name>_edge`` and ``<name>_base``, each over its range and on
-past the crossing, and the crossing as ``<name>_onset``, a marker with a
-tag. Returns an ``OnsetResult``; ``r.x`` is the crossing.
+``graph`` を渡さない限り何も描きません。グラフ(か名前)、または True でその wave を表示する最前面のグラフに描きます。そのとき 2 本の直線を ``<name>_edge`` と ``<name>_base``(それぞれの範囲から交点の先まで)、交点を ``<name>_onset``(タグ付きのマーカー)として加えます。``OnsetResult`` を返し、``r.x`` が交点です。
 
 **明示的な例外** · `OresmeError`

@@ -1,7 +1,7 @@
 ---
-title: Folder API
+title: Data Folders and Attributes
 sidebar:
-  order: 8
+  order: 2
 editUrl: false
 ---
 

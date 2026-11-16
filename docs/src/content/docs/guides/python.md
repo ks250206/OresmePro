@@ -100,4 +100,4 @@ def normalize(wave, to=1.0):
 
 画面から呼んだ Action は、同じ意味の Python(`op.fit("gauss", op.wave("signal"))` など)として履歴に残ります。パネルのボタンも Action を呼びます([パネル](../panels/))。
 
-[Python API の使い方](../../reference/) · [Procedure](../../reference/api/global/#procedure) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)
+[Python API の使い方](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)

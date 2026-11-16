@@ -23,6 +23,12 @@ g.axis("bottom").labels = "axis only"
 g.axis("left").set(labels="off")
 ```
 
+An axis label's direction is set by its side: a left axis's label reads upwards, a right axis's downwards (the tops of its letters face out), and top and bottom labels read across. **turned … °** in **Modify Axis** turns it clockwise from there, as Igor Pro's ModifyGraph `lblRot` does; 180 makes a right axis's label read upwards as a left one does. It takes −360 to 360 degrees, and an automatic margin widens to fit the turned label.
+
+```python
+g.axis("right").label_rotation = 180
+```
+
 - `g.legend()` adds a trace legend. Use `anchor="LT"` to position it in the upper left.
 - `g.textbox("Run 1")` adds text anchored to the graph.
 - `g.tag(trace, point, "Y = {y}")` adds a label attached to a point. Point indices start at zero.

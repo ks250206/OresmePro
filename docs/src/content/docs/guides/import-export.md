@@ -38,4 +38,4 @@ op.load_hdf5("scan.h5", datasets="/run1")
 - 列データだけを取り出すにはテーブルからコピーするか、`table.to_dataframe().to_csv("export.csv", index=False)` を実行します。Python が作ったファイルは Data Browser の **Files** からダウンロードできます。
 - データ、グラフ、スクリプトを一緒に移すには [Experiment を保存](../experiments/) します。
 
-[CSV 入門](../../getting-started/import-csv/) · [読み込み関数](../../reference/api/global/#load_text)
+[CSV 入門](../../getting-started/import-csv/) · [読み込み関数](../../reference/api/files/#load_text)

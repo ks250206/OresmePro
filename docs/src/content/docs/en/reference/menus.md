@@ -62,20 +62,20 @@ The items of the menu bar, menu by menu. Most of what is done on screen is writt
 
 These act on the frontmost graph.
 
-| Item                                             | Does                                                               | Python                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------ |
-| Append Traces… / Append Image… / Append Contour… | Adds traces, an image or contours                                  | `g.append(y)`, `g.append_image(m)`         |
-| Add Axis…                                        | Adds a free axis                                                   | `g.add_axis("right2", "right")`            |
-| Modify Trace Appearance…                         | Lines, markers, colors, error bars, fills                          | `g.trace().set(color="red")`               |
-| Modify Axis…                                     | Range, log, ticks, label, which labels show (on / axis only / off) | `g.axis("left").set(log=True)`             |
-| Modify Graph…                                    | Font, plot area size, margins, magnification                       | `g.set(width=op.cm(8))`                    |
-| Autoscale Axes                                   | Every axis back to automatic (**Ctrl+A** / **⌘A**)                 | `g.axis("left").autoscale()`               |
-| Show Cursor Info                                 | Shows or hides the cursor readout (**Ctrl+I** / **⌘I**)            | `g.show_info = True`                       |
-| Add Legend / Add Text… / Add Color Scale         | Puts a legend, text or a color scale                               | `g.legend()`, `g.textbox("...")`           |
-| Styles…                                          | Saves, gives and sets the default graph style                      | `op.set_style(...)`, `op.apply_style(...)` |
-| Save as Template… / Make Graphs from Template…   | Keeps a graph template and makes graphs of other data from it      | `op.graph_template("T").make(...)`         |
-| Recreation Script…                               | Shows the Python that makes this graph again                       | `g.script()`                               |
-| Link Graphs…                                     | Links the axes and cursors of graphs                               | `op.link_graphs(g1, g2)`                   |
+| Item                                             | Does                                                                                | Python                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------ |
+| Append Traces… / Append Image… / Append Contour… | Adds traces, an image or contours                                                   | `g.append(y)`, `g.append_image(m)`         |
+| Add Axis…                                        | Adds a free axis                                                                    | `g.add_axis("right2", "right")`            |
+| Modify Trace Appearance…                         | Lines, markers, colors, error bars, fills                                           | `g.trace().set(color="red")`               |
+| Modify Axis…                                     | Range, log, ticks, label, which labels show (on / axis only / off), label direction | `g.axis("left").set(log=True)`             |
+| Modify Graph…                                    | Font, plot area size, margins, magnification                                        | `g.set(width=op.cm(8))`                    |
+| Autoscale Axes                                   | Every axis back to automatic (**Ctrl+A** / **⌘A**)                                  | `g.axis("left").autoscale()`               |
+| Show Cursor Info                                 | Shows or hides the cursor readout (**Ctrl+I** / **⌘I**)                             | `g.show_info = True`                       |
+| Add Legend / Add Text… / Add Color Scale         | Puts a legend, text or a color scale                                                | `g.legend()`, `g.textbox("...")`           |
+| Styles…                                          | Saves, gives and sets the default graph style                                       | `op.set_style(...)`, `op.apply_style(...)` |
+| Save as Template… / Make Graphs from Template…   | Keeps a graph template and makes graphs of other data from it                       | `op.graph_template("T").make(...)`         |
+| Recreation Script…                               | Shows the Python that makes this graph again                                        | `g.script()`                               |
+| Link Graphs…                                     | Links the axes and cursors of graphs                                                | `op.link_graphs(g1, g2)`                   |
 
 ## Layout
 
