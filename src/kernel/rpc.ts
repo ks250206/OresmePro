@@ -41,6 +41,15 @@ export interface RpcContext {
   pluginCatalog?: () => readonly unknown[];
   /** Hears which packages Python has installed and imported (see PackagesStatus). */
   packagesStatus?: (status: PackagesStatus) => void;
+  /** Hears what the user's variables are, after an input that changed them (see VariablesStatus). */
+  variablesStatus?: (status: VariablesStatus) => void;
+}
+
+/** The user's variables in Python, as it says after each input that changed them. */
+export interface VariablesStatus {
+  variables: { name: string; type: string; summary: string }[];
+  /** How many more there are than are listed. */
+  more: number;
 }
 
 /** The packages Python has now, as it says after an input that changed them. */
@@ -273,6 +282,9 @@ export function handleRpc(
       return { result: state.python };
     case "packagesStatus":
       context.packagesStatus?.(params as unknown as PackagesStatus);
+      return { result: null };
+    case "variablesStatus":
+      context.variablesStatus?.(params as unknown as VariablesStatus);
       return { result: null };
     case "attributes": {
       const target = typeof params.target === "string" ? params.target : "";

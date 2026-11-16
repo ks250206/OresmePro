@@ -40,6 +40,24 @@ Procedure ウィンドウを右クリックして **Export as 名前.py** を選
 
 コマンド入力には `np` と `op` が初期設定されています。Procedure に `import numpy as np` と `import oresme as op` を書いておくと依存が明確です。SciPy、pandas、scikit-learn、lmfit は利用時に読み込まれます。長い処理を止めるには **Python → Interrupt** を使います。Python を再起動するとセッション変数は消えますが、Experiment の Wave はアプリ側に残ります。
 
+### Procedure Browser
+
+**Python → Procedure Browser** で、実験の Procedure と、その中で定義したクラス・関数を、入れ子のまま一覧できます(Igor の Procedure Browser に当たります)。
+
+- **Signatures** をオンにすると、引数(`(r, *, pi=3.14)`)と戻り値の注釈も表示します
+- 関数やクラスをクリックすると、その Procedure を開いて(閉じていれば開き直して)、定義の行にカーソルを置きます
+- ファイルを選んで **Export**(`name.py` として保存)、**Run**(実行)できます。**New…** と **Import…** もここから使えます。右クリックで名前の変更もできます
+- 一覧はエディタと同じ構文解析で作るので、Python が動いていなくても、文法の誤りがあっても読める範囲で表示します
+
+## 変数を見る・消す
+
+**Python → Variables** で、コマンド入力や Procedure が作った変数を、名前・型・値の概要とともに一覧できます(変数エクスプローラー)。入力を実行するたびに更新します。
+
+- 配列は形と型(`2×3 float64`)、リストや dict は要素数と先頭、関数は引数を表示します
+- ダブルクリック(または右クリックの **Show Value**)で、値をコマンドウィンドウに表示します
+- チェックを付けて **Drop** すると、`del a, b` を実行してその変数を消します。**Drop All…** は確認のあとで、一覧の変数をすべて消します。どちらも履歴に残ります
+- 起動時からある `np`、`op`、IPython の名前、`_` で始まる名前、モジュールは一覧に出ないので、誤って消して Python が使えなくなることはありません
+
 ## パッケージを追加する
 
 NumPy・SciPy・pandas・scikit-learn・lmfit など、Pyodide に同梱されたパッケージは `import` するだけで読み込まれます。

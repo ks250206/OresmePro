@@ -14,7 +14,7 @@ import { toSvg } from "../core/plot/svg";
 import excelWorkbook from "../core/io/testdata/excel.xlsx?inline";
 import { igorFixture } from "../core/io/testdata/igor";
 import { bootPython, type PythonKernel } from "./boot";
-import { answerRpc } from "./rpc";
+import { answerRpc, type VariablesStatus } from "./rpc";
 
 /**
  * Runs the real Python package inside Pyodide against a real document. Only
@@ -33,6 +33,8 @@ const exported: string[] = [];
 let beforeRpc: ((method: string) => void) | null = null;
 /** The catalogs of actions Python has sent, the latest last. */
 const catalogs: ActionSpec[][] = [];
+/** What Python last said the user's variables are. */
+let variables: VariablesStatus | null = null;
 
 async function run(code: string): Promise<boolean> {
   stdout = "";
@@ -82,6 +84,9 @@ beforeAll(async () => {
           exportPage: (name, filename) => exported.push(`${name}:${filename}`),
           measureText: (text, size) => text.length * size * 0.55,
           importPresets: () => [{ name: "bench", settings: { decimal: ",", skip: 1 } }],
+          variablesStatus: (status) => {
+            variables = status;
+          },
         },
         method,
         paramsJson,
@@ -736,6 +741,40 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("names LB 14 0 False\n");
     expect(await run('t.text_anchor = "XX"')).toBe(false);
     expect(errors[0]).toMatch(/textAnchor must be one of/);
+  });
+
+  it("tells the app the user's variables after each input, and drops them with del", async () => {
+    expect(
+      await run(
+        [
+          "vx = np.zeros((2, 3))",
+          "vname = 'hello'",
+          "def vf(a, b=1):",
+          "    return a",
+          "class VKlass:",
+          "    pass",
+          "vlist = [1, 2, 3]",
+          "_hidden = 1",
+          "import math",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    const listed = (prefix: string) =>
+      (variables?.variables ?? []).filter((item) => item.name.toLowerCase().startsWith(prefix));
+    expect(listed("v")).toEqual([
+      { name: "vf", type: "function", summary: "vf(a, b=1)" },
+      { name: "VKlass", type: "class", summary: "VKlass" },
+      { name: "vlist", type: "list", summary: "3 items: [1, 2, 3]" },
+      { name: "vname", type: "str", summary: "'hello'" },
+      { name: "vx", type: "ndarray", summary: "2×3 float64" },
+    ]);
+    // What Python starts with, private names and modules are not the user's variables.
+    const names = (variables?.variables ?? []).map((item) => item.name);
+    for (const name of ["np", "op", "_hidden", "math", "In", "Out", "get_ipython"]) {
+      expect(names).not.toContain(name);
+    }
+    expect(await run("del vx, vname, vf, VKlass, vlist")).toBe(true);
+    expect(listed("v")).toEqual([]);
   });
 
   it("keeps notes of Markdown text", async () => {

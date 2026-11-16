@@ -40,6 +40,24 @@ Imported code **does not run**. It also comes in with running when the experimen
 
 The command session starts with `np` and `op` preloaded. Include `import numpy as np` and `import oresme as op` in a procedure to make its dependencies clear. SciPy, pandas, scikit-learn, and lmfit load on first use. Use **Python → Interrupt** for a long-running command. Restarting Python clears session variables and leaves the experiment's waves in the app.
 
+### Procedure Browser
+
+**Python → Procedure Browser** lists the experiment's procedures and the classes and functions defined in them, nested as written, as Igor's Procedure Browser does.
+
+- With **Signatures** on, it shows parameters (`(r, *, pi=3.14)`) and return annotations too
+- Clicking a function or class opens its procedure (reopening it if it is closed) with the cursor on the line where it is defined
+- Select a file to **Export** it (as `name.py`) or **Run** it; **New…** and **Import…** are there too, and right-click renames it
+- The list comes from the editor's own parser: it needs no running Python, and a file with errors shows what can be read of it
+
+## See and drop variables
+
+**Python → Variables** lists the variables your commands and procedures have made, with their types and a short look at their values: a variable explorer. It is refreshed after each input.
+
+- Arrays show their shape and type (`2×3 float64`), lists and dicts their length and first items, functions their parameters
+- Double-click a variable (or right-click → **Show Value**) to show its value in the Command Window
+- Tick variables and **Drop** them to run `del a, b`; **Drop All…** asks, then drops every variable listed. Both are written in the history
+- What Python starts with (`np`, `op`, IPython's names), names starting with `_` and modules are never listed, so they cannot be dropped by mistake and leave Python unusable
+
 ## Add packages
 
 Packages of the Pyodide distribution (NumPy, SciPy, pandas, scikit-learn, lmfit and more) load when they are imported.

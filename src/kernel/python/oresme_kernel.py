@@ -118,6 +118,16 @@ import _oresme_packages  # noqa: E402
 shell.input_transformers_cleanup.append(_oresme_packages.pip_lines)
 shell.run_cell("import numpy as np\nimport oresme as op", store_history=False, silent=True)
 
+# What the user's variables are, for the Variables window: all that is in the
+# namespace now is Python's own, not the user's.
+import _oresme_variables  # noqa: E402
+
+_oresme_variables.start(shell.user_ns)
+
+
+def _report_variables():
+    _oresme_variables.report(shell.user_ns, oresme._call)
+
 
 # Python works in a directory of its own. What is in it belongs to the
 # experiment: the application keeps a copy of every file, saves it with the
@@ -387,6 +397,7 @@ async def execute(code):
         finally:
             _sync(_push)
             _sync(_oresme_packages.report)
+            _sync(_report_variables)
     except asyncio.CancelledError:
         _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
         return False

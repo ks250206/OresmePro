@@ -106,6 +106,8 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 | -------------------------------------- | ------------------------------------------------------------------------------ | ------------------- |
 | Interrupt                              | Stops Python (**Ctrl+C**); again restarts it                                   |                     |
 | Restart Python                         | Restarts Python; waves, graphs and tables stay                                 |                     |
+| Variables                              | Your Python variables; drop those picked (`del`)                               |                     |
+| Procedure Browser                      | The procedures and the classes and functions in them; click to go to one       |                     |
 | Packages…                              | The experiment's packages, everything in Python, installing and removing       | `%pip install name` |
 | Plugins…                               | Installs, manages and runs plugins                                             |                     |
 | Plugin Actions                         | Opens the form of an action of a plugin turned on, in a window you can move    |                     |

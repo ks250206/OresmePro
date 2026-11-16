@@ -15,7 +15,7 @@ import { PresetStore } from "./importPresets";
 import { PluginHost } from "./plugins/host";
 import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
-import type { PackagesStatus } from "../kernel/rpc";
+import type { PackagesStatus, VariablesStatus } from "../kernel/rpc";
 import { createStore, useStore } from "./store";
 import { useEffect, useSyncExternalStore } from "react";
 import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
@@ -346,6 +346,12 @@ export const plugins = new PluginHost({ store: pluginStore, doc, pyodideURL: PYO
  */
 export const pythonPackages = createStore<{ status: PackagesStatus | null }>({ status: null });
 
+/**
+ * The user's variables in Python, as it last said (see VariablesStatus); null
+ * until it has said, and again when it restarts.
+ */
+export const pythonVariables = createStore<{ status: VariablesStatus | null }>({ status: null });
+
 export const kernel: KernelClient = new KernelClient({
   doc,
   history,
@@ -354,9 +360,11 @@ export const kernel: KernelClient = new KernelClient({
   invokePlugin: (action, args, writer) => plugins.run(action, args as ActionArgs, writer),
   onStart: () => {
     pythonPackages.set({ status: null });
+    pythonVariables.set({ status: null });
     runProcedures();
   },
   packagesStatus: (status) => pythonPackages.set({ status }),
+  variablesStatus: (status) => pythonVariables.set({ status }),
   onExecute: () => flushEchoes(),
   renderSvg: renderGraphSvg,
   exportGraph: (graph, filename, cursors) => exportHandler(graph, filename, cursors),

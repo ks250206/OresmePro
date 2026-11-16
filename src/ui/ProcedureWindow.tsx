@@ -54,7 +54,7 @@ import {
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
 import { useEffect, useRef, useState } from "react";
-import { exportProcedure, importProcedures } from "../app/procedures";
+import { exportProcedure, importProcedures, procedureJump } from "../app/procedures";
 import { useStore } from "../app/store";
 import {
   doc,
@@ -266,6 +266,20 @@ function ProcedureEditor({ name }: { name: string }) {
   // Text set from elsewhere (Python's p.code = ..., a script added from a
   // dialog) replaces what the editor shows. Only what differs is replaced,
   // so the cursor stays where it was, and it can be undone like an edit.
+  // Asked to go to a line (by the Procedure Browser): show it and put the cursor there.
+  const jump = useStore(procedureJump, (state) => state.jump);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !jump || jump.name !== name) return;
+    procedureJump.set({ jump: null });
+    const line = view.state.doc.line(Math.max(1, Math.min(jump.line, view.state.doc.lines)));
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: EditorView.scrollIntoView(line.from, { y: "start", yMargin: 24 }),
+    });
+    view.focus();
+  }, [jump, name]);
+
   const code = procedure.code;
   useEffect(() => {
     const view = viewRef.current;
