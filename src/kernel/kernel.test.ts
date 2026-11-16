@@ -2101,7 +2101,7 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe(
       [
-        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'tick_label_size': None}",
+        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'tick_label_size': None, 'labels': 'on'}",
         "15 Style('stPaper') [3, 1, 3] on",
         "22 22 #ff0000 4",
         "22 Style('stTalk') Style('stTalk')",
@@ -2181,6 +2181,61 @@ describe("oresme Python API", () => {
     };
     expect(await run(echoPython({ op: "modifyGraph", graph: "PlotSize", props })!)).toBe(true);
     expect(doc.getState().graphs.PlotSize).toMatchObject(props);
+  });
+
+  it("sets which labels an axis shows, a graph's margins and its magnification", async () => {
+    const ok = await run(
+      [
+        'gm = op.display(op.make("gm_y", [0.0, 2.0, 1.0]), name="Margins")',
+        'gm.axis("left").labels = "axis only"',
+        'gm.axis("bottom").set(labels="off")',
+        'print(gm.axis("left").labels, gm.axis("bottom").labels)',
+        "gm.set(margin_left=op.inch(1), margin_top=10)",
+        "print(gm.margin_left, gm.margin_top, gm.margin_right)",
+        'gm.margin_left = "auto"',
+        "gm.set(margins=(1, 2, 3, 4))",
+        "print(gm.margin_left, gm.margin_bottom, gm.margin_right, gm.margin_top)",
+        'gm.set(margins="auto", margin_top=5)',
+        "print(gm.margin_left, gm.margin_top)",
+        "gm.magnification = 2",
+        "print(gm.magnification)",
+        "for bad in ({'margin_left': -1}, {'margin_left': 'wide'}, {'margins': (1, 2)}, {'magnification': 20}):",
+        "    try:",
+        "        gm.set(**bad)",
+        "    except (op.OresmeError, ValueError, TypeError) as error:",
+        "        print(type(error).__name__, str(error).split('.')[0][:60])",
+        'for bad in ("none",):',
+        "    try:",
+        '        gm.axis("left").labels = bad',
+        "    except op.OresmeError as error:",
+        "        print(type(error).__name__, str(error)[:40])",
+      ].join("\n"),
+    );
+    expect(ok).toBe(true);
+    expect(stdout).toBe(
+      [
+        "axis only off",
+        "72 10 None",
+        "1 2 3 4",
+        "None 5",
+        "2",
+        "OresmeError marginLeft must be between 0 and 360 points, or None for aut",
+        'ValueError margin_left must be "auto", a length or a number of points, ',
+        "ValueError margins must be (left, bottom, right, top)",
+        "OresmeError magnification must be between 0",
+        "OresmeError labels must be one of: on, axis only, of",
+        "",
+      ].join("\n"),
+    );
+    const graph = doc.getState().graphs.Margins!;
+    expect(graph).toMatchObject({ marginLeft: null, marginTop: 5, magnification: 2 });
+    // What the dialogs write into the history does the same when it is run.
+    const props = { marginLeft: 36, marginBottom: null, magnification: 0.5 };
+    expect(await run(echoPython({ op: "modifyGraph", graph: "Margins", props })!)).toBe(true);
+    expect(doc.getState().graphs.Margins).toMatchObject(props);
+    const axis = { op: "modifyAxis", graph: "Margins", axis: "left", props: { labels: "on" } };
+    expect(await run(echoPython(axis as Command)!)).toBe(true);
+    expect(doc.getState().graphs.Margins!.axes.left!.labels).toBe("on");
   });
 
   it("keeps a graph as a template and makes graphs of other samples from it", async () => {

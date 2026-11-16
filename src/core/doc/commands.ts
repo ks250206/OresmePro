@@ -50,6 +50,10 @@ import {
   GRAPH_LOOK,
   GRID_MODES,
   LABEL_STYLES,
+  AXIS_LABEL_MODES,
+  MAX_MAGNIFICATION,
+  MAX_MARGIN,
+  MIN_MAGNIFICATION,
   LENGTH_UNITS,
   LINE_STYLES,
   MARKER_SHAPES,
@@ -72,6 +76,8 @@ import {
   defaultAxis,
   defaultTraceStyle,
   infoBarHeight,
+  figureSize,
+  windowSizeFor,
   dependsOnOther,
   sizeAxes,
   AUTO_SIZE,
@@ -733,6 +739,7 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     labelSize: (value) => (value === null ? null : fontSize(value, "labelSize")),
     labelStyle: (value) => oneOf(value, LABEL_STYLES, "labelStyle"),
     tickLabelSize: (value) => (value === null ? null : fontSize(value, "tickLabelSize")),
+    labels: (value) => oneOf(value, AXIS_LABEL_MODES, "labels"),
     min: nullableNumber("min"),
     max: nullableNumber("max"),
     log: (value) => bool(value, "log"),
@@ -759,6 +766,16 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     },
   };
 
+/** A margin in points, from 0 to {@link MAX_MARGIN}, or null for automatic. */
+function margin(value: unknown, what: string): number | null {
+  if (value === null) return null;
+  const points = typeof value === "number" ? value : NaN;
+  if (!(points >= 0 && points <= MAX_MARGIN)) {
+    throw new DocError(`${what} must be between 0 and ${MAX_MARGIN} points, or None for auto.`);
+  }
+  return points;
+}
+
 const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyle[K] } = {
   fontSize: (value) => fontSize(value, "fontSize"),
   fontFamily: (value) => {
@@ -766,6 +783,19 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
     return value;
   },
   showInfo: (value) => bool(value, "showInfo"),
+  marginLeft: (value) => margin(value, "marginLeft"),
+  marginBottom: (value) => margin(value, "marginBottom"),
+  marginRight: (value) => margin(value, "marginRight"),
+  marginTop: (value) => margin(value, "marginTop"),
+  magnification: (value) => {
+    const factor = positive(value, "magnification");
+    if (factor < MIN_MAGNIFICATION - 1e-9 || factor > MAX_MAGNIFICATION + 1e-9) {
+      throw new DocError(
+        `magnification must be between ${MIN_MAGNIFICATION} and ${MAX_MAGNIFICATION} (1 is none).`,
+      );
+    }
+    return factor;
+  },
 };
 
 /** The longest and the shortest a plot area can be given, in points. */
@@ -1734,6 +1764,11 @@ function emptyGraph(name: string): GraphSpec {
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
     showInfo: false,
+    marginLeft: null,
+    marginBottom: null,
+    marginRight: null,
+    marginTop: null,
+    magnification: 1,
     width: AUTO_SIZE,
     height: AUTO_SIZE,
     style: null,
@@ -2201,12 +2236,15 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       // shrinks the window back, so the figure keeps its size (as in Igor).
       // The window grows downwards, past the desktop if need be, as it does
       // when a style with a size is given; undo gives the old size back.
-      const grow = infoBarHeight(next) - infoBarHeight(graph);
+      // Magnifying the graph grows its window by as much, so the figure
+      // keeps its size and is drawn bigger (as Igor's expand does).
       const windows =
-        grow === 0
+        infoBarHeight(next) === infoBarHeight(graph) && next.magnification === graph.magnification
           ? state.windows
           : state.windows.map((window) =>
-              window.name === graph.name ? { ...window, h: window.h + grow } : window,
+              window.name === graph.name
+                ? { ...window, ...windowSizeFor(figureSize(window, graph), next) }
+                : window,
             );
       return { state: { ...putGraph(state, next), windows }, result: null };
     }

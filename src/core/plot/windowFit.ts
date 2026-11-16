@@ -1,10 +1,9 @@
 import type { Command } from "../doc/commands";
 import {
-  infoBarHeight,
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
-  TITLE_BAR_HEIGHT,
   figureSize,
+  windowSizeFor,
   type DocState,
   type GraphSpec,
   type WindowState,
@@ -41,8 +40,8 @@ export const fixedSides = (graph: GraphSpec): { width: boolean; height: boolean 
 /**
  * The size a graph's window needs to show its figure whole, as Igor sizes a
  * graph window to a plot area that is not auto: in a fixed side, the figure
- * (the plot area and the margins) plus, across, the title bar and the cursor
- * bar when shown; a side that follows the window keeps the window's size. A
+ * (the plot area and the margins) at the graph's magnification plus, across,
+ * the title bar and the cursor bar when shown; a side that follows the window keeps the window's size. A
  * window cannot be smaller than {@link MIN_WINDOW_WIDTH} by
  * {@link MIN_WINDOW_HEIGHT}; a smaller figure leaves room beside it. Null
  * when the window shows something else or fits already.
@@ -61,12 +60,10 @@ export function fittedWindowSize(
     timeZone: state.timeZone,
     sizeOnly: true,
   });
-  // The window holds the title bar, the figure and the cursor readout bar (see infoBarHeight).
-  const info = infoBarHeight(graph);
-  const w = fixed.width ? Math.max(MIN_WINDOW_WIDTH, figure.width) : window.w;
-  const h = fixed.height
-    ? Math.max(MIN_WINDOW_HEIGHT, figure.height + TITLE_BAR_HEIGHT + info)
-    : window.h;
+  // The window holds the title bar, the figure magnified and the cursor readout bar.
+  const needed = windowSizeFor(figure, graph);
+  const w = fixed.width ? Math.max(MIN_WINDOW_WIDTH, needed.w) : window.w;
+  const h = fixed.height ? Math.max(MIN_WINDOW_HEIGHT, needed.h) : window.h;
   return w === window.w && h === window.h ? null : { w, h };
 }
 

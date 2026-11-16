@@ -36,7 +36,7 @@ Create a graph with `op.display(...)` and retrieve an existing graph with `op.gr
 - `right` (read-only)
 - `top` (read-only)
 
-**Configurable properties** · `font_size`, `font_family`, `show_info`, `width`, `height`
+**Configurable properties** · `font_size`, `font_family`, `show_info`, `width`, `height`, `margin_left`, `margin_bottom`, `margin_right`, `margin_top`, `magnification`
 
 ### `Graph.set`
 
@@ -62,10 +62,25 @@ Change several properties at once. Returns self.
   "inch") for each unit of the axis; ``("per_unit", op.cm(2),
   "bottom")`` says the same. A unit of a log axis is a decade.
 
-The margins stay automatic: a side that is not auto makes the
-figure the plot area plus the margins, and the window fits it.
-The two sides cannot both use aspect or plan. Reading ``width`` or
-``height`` gives the same forms back.
+A side that is not auto makes the figure the plot area plus the
+margins, and the window fits it. The two sides cannot both use
+aspect or plan. Reading ``width`` or ``height`` gives the same forms
+back.
+
+``margin_left``, ``margin_bottom``, ``margin_right`` and
+``margin_top`` fix the margins around the plot area, as Igor's
+ModifyGraph margin: a length (``op.cm(1.5)`` or a number of points,
+0 to 360) or ``"auto"`` (``None``), as wide as the axes and their
+labels need. ``margins=`` sets all four: ``"auto"``, one length, or
+``(left, bottom, right, top)``. Reading a margin gives points, or
+``None`` for auto.
+
+``magnification`` draws the graph bigger or smaller in its window,
+as Igor's expand: 2 doubles it, 1 is none (from 0.125 to 8). The
+window grows with it; the figure, and what is exported, keep their
+size.
+
+**Explicit exceptions** · `ValueError`
 
 ### `Graph.append`
 
