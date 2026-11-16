@@ -290,7 +290,13 @@ _imports_seen = {}
 
 # Functions of oresme that import a package of the distribution when they run,
 # where it could not be waited for: code that calls them needs the package.
-_PACKAGES_OF_CALLS = {"load_parquet": "pyarrow", "load_hdf5": "h5py"}
+_PACKAGES_OF_CALLS = {
+    "load_parquet": "pyarrow",
+    "load_hdf5": "h5py",
+    # Tables become data frames and back with pandas, imported where they are made.
+    "to_dataframe": "pandas",
+    "from_dataframe": "pandas",
+}
 _CALLS = re.compile(r"\b(" + "|".join(_PACKAGES_OF_CALLS) + r")\s*\(")
 
 

@@ -110,7 +110,10 @@ export function Dialog({
   width?: number;
   /** More buttons for the footer, on the left as in Igor ("To Cmd Line"). */
   buttons?: ReactNode;
-  /** The page of the documentation about this dialog ("guides/curve-fitting/"), linked in its footer. */
+  /**
+   * The page of the documentation about this dialog ("guides/curve-fitting/"),
+   * linked in its footer: in English, as the app's own words are.
+   */
   help?: string;
 }) {
   const ref = useRef<HTMLFormElement>(null);
@@ -152,7 +155,7 @@ export function Dialog({
         <div className="flex justify-end gap-2 border-t border-line-soft px-3 py-2">
           {help !== undefined ? (
             <a
-              href={docsUrl(help)}
+              href={docsUrl(help, false)}
               target="_blank"
               rel="noopener noreferrer"
               title="Open the documentation for this dialog"
