@@ -6,6 +6,14 @@ sidebar:
 
 Choose **Windows → New Table…** and select waves as columns. Editing cells updates the waves in the experiment and refreshes any graph using them. Column waves can have different lengths.
 
+Columns can be added and taken out afterwards: **Table → Append Columns to Table…** and **Remove Columns from Table…** (also in the table's right-click menu) act on the frontmost table. In the Data Browser, right-click waves and choose a table under **Append to Table**. Taking a column out leaves its wave in the experiment.
+
+```python
+t = op.table("Table0")
+t.append("b", "c")
+t.remove("a")
+```
+
 ## Enter and copy data
 
 - Select cells to edit, copy, or paste a range. The clipboard uses tab-separated text when exchanging data with a spreadsheet.

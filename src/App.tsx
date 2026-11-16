@@ -114,6 +114,8 @@ function useMenus(): MenuDefinition[] {
   const pageSelection = useUi((state) => state.pageSelection);
   const top = frontWindow(windows);
   const graph = top?.kind === "graph" ? top.name : null;
+  // The Table menu acts on the frontmost window when it is a table.
+  const table = top?.kind === "table" ? top.name : null;
   const spec = graph ? graphs[graph] : undefined;
   // The Layout menu acts on the frontmost window when it is a page layout.
   const page = top?.kind === "page" && Object.hasOwn(pages, top.name) ? pages[top.name] : undefined;
@@ -311,6 +313,25 @@ function useMenus(): MenuDefinition[] {
         {
           label: "Link Graphs…",
           onSelect: () => ui.set({ dialog: { kind: "linkGraphs", graph: graph ?? undefined } }),
+        },
+      ],
+    },
+    {
+      title: "Table",
+      items: [
+        { label: "New Table…", onSelect: open({ kind: "newTable" }) },
+        { separator: true },
+        {
+          label: "Append Columns to Table…",
+          disabled: !table,
+          onSelect: () =>
+            table && ui.set({ dialog: { kind: "tableColumns", table, mode: "append" } }),
+        },
+        {
+          label: "Remove Columns from Table…",
+          disabled: !table,
+          onSelect: () =>
+            table && ui.set({ dialog: { kind: "tableColumns", table, mode: "remove" } }),
         },
       ],
     },

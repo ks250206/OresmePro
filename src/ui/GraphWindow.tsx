@@ -134,25 +134,116 @@ function cursorValues(
   };
 }
 
+/**
+ * Where a cursor is, to change in the readout: the wave it is on (a click
+ * or right-click lists the graph's traces) and its point, typed.
+ */
+function CursorPlace({
+  graph,
+  name,
+  values,
+}: {
+  graph: GraphSpec;
+  name: CursorName;
+  values: CursorValues | null;
+}) {
+  const waves = useDoc((state) => state.waves);
+  // What is being typed in the point field; null while it shows the cursor's own.
+  const [typed, setTyped] = useState<string | null>(null);
+  const lengthOf = (trace: string): number => {
+    const spec = graph.traces.find((item) => item.name === trace);
+    const position = spec && tracePosition(spec, waves);
+    return position ? position.y.data.length : 0;
+  };
+  const place = (trace: string, point: number) => {
+    const length = lengthOf(trace);
+    if (length === 0) return;
+    const clamped = Math.min(length - 1, Math.max(0, Math.round(point)));
+    runGui({ op: "setCursor", graph: graph.name, cursor: name, trace, point: clamped });
+  };
+  const chooseTrace = (event: React.MouseEvent) => {
+    event.preventDefault();
+    const items: MenuItem[] = graph.traces
+      .filter((trace) => lengthOf(trace.name) > 0)
+      .map((trace) => ({
+        label: trace.name,
+        checked: trace.name === values?.trace,
+        onSelect: () => place(trace.name, values?.point ?? 0),
+      }));
+    if (graph.cursors[name]) {
+      items.push(
+        { separator: true },
+        {
+          label: `Remove Cursor ${name}`,
+          onSelect: () => runGui({ op: "removeCursor", graph: graph.name, cursor: name }),
+        },
+      );
+    }
+    openContextMenu(event, items);
+  };
+  const commit = () => {
+    if (typed === null || !values) return;
+    const point = Number(typed.trim());
+    setTyped(null);
+    if (typed.trim() !== "" && Number.isFinite(point)) place(values.trace, point);
+  };
+  const last = values ? lengthOf(values.trace) - 1 : 0;
+  return (
+    <span className="flex min-w-0 items-center">
+      <button
+        type="button"
+        aria-label={`Cursor ${name} wave`}
+        title="Choose the wave the cursor is on (click or right-click)"
+        className="min-w-0 truncate rounded px-0.5 text-left hover:bg-paper hover:text-ink"
+        onClick={chooseTrace}
+        onContextMenu={chooseTrace}
+      >
+        {values ? values.trace : <span className="text-muted">place on a trace…</span>}
+      </button>
+      {values ? (
+        <>
+          [
+          <input
+            aria-label={`Cursor ${name} point`}
+            title={`The point the cursor is on, 0 to ${last}`}
+            inputMode="numeric"
+            className="h-[15px] w-[6ch] rounded border border-line bg-paper px-0.5 text-right font-mono text-[11px] outline-none focus:border-accent"
+            value={typed ?? String(values.point)}
+            onChange={(event) => setTyped(event.target.value)}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commit();
+              } else if (event.key === "Escape") {
+                setTyped(null);
+              }
+            }}
+          />
+          ]
+        </>
+      ) : null}
+    </span>
+  );
+}
+
 /** The readout under a graph: where cursors A and B are, and the difference. */
 function CursorInfo({ graph }: { graph: GraphSpec }) {
   const waves = useDoc((state) => state.waves);
   const zone = timeZone(useDoc((state) => state.timeZone));
   const a = cursorValues(graph, waves, "A", zone);
   const b = cursorValues(graph, waves, "B", zone);
-  const row = (label: string, values: CursorValues | null) => (
+  const row = (label: CursorName, values: CursorValues | null) => (
     <>
       <b>{label}</b>
+      <CursorPlace graph={graph} name={label} values={values} />
       {values ? (
         <>
-          <span className="truncate">
-            {values.trace}[{values.point}]
-          </span>
           <span>X: {values.xText}</span>
           <span>Y: {values.yText}</span>
         </>
       ) : (
-        <span className="col-span-3 text-muted">right-click a trace to place</span>
+        <span className="col-span-2 text-muted">or right-click a trace</span>
       )}
     </>
   );

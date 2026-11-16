@@ -394,6 +394,14 @@ export function TableWindow({ name }: { name: string }) {
       },
       { separator: true },
       {
+        label: "Append Columns to Table…",
+        onSelect: () => ui.set({ dialog: { kind: "tableColumns", table: name, mode: "append" } }),
+      },
+      {
+        label: "Remove Columns from Table…",
+        onSelect: () => ui.set({ dialog: { kind: "tableColumns", table: name, mode: "remove" } }),
+      },
+      {
         label: "Rename Table…",
         onSelect: () => ui.set({ dialog: { kind: "renameWindow", name } }),
       },
