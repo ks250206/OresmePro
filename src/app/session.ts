@@ -64,6 +64,8 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** The attributes of samples, as a table: of `targets` (keys, see ../core/doc/attributes), or every data folder. */
+  | { kind: "attributes"; targets?: string[] }
   /** This experiment could not be saved before opening `target`: what to do. */
   | { kind: "unsavedLeave"; target: string }
   /** Asks for the file name to save the experiment as. */

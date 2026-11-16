@@ -1491,6 +1491,42 @@ describe("oresme Python API", () => {
     }
   });
 
+  it("gives samples attributes, and sets results beside and against them", async () => {
+    expect(
+      await run(
+        [
+          "sx = np.linspace(-4, 4, 81)",
+          "for i, (thick, height) in enumerate([(10, 2.0), (20, 3.0), (30, 4.0)], 1):",
+          '    op.new_folder(f"attr{i}")',
+          '    op.make(f"attr{i}:spectrum", 0.5 + height * np.exp(-sx**2), x0=-4, dx=0.1)',
+          '    op.set_attributes(f"attr{i}:", thickness=thick, instrument="XPS-2")',
+          '    op.fit("gauss", op.wave(f"attr{i}:spectrum"), quiet=True, result=f"AttrFit{i}")',
+          'op.wave("attr2:spectrum").set_attributes(cycle=3)',
+          'print(op.wave("attr2:spectrum").attributes, op.attributes("attr2:spectrum", own=True))',
+          'print(op.folder("attr1").attributes)',
+          'op.set_attributes("attr1:", instrument=None)',
+          'print(op.folder("attr1").attributes)',
+          'names = ["AttrFit1", "AttrFit2", "AttrFit3"]',
+          'op.results_table(names, name="AttrTable")',
+          'print(op.wave("AttrTable_thickness").data.tolist(), [str(v) for v in op.wave("AttrTable_instrument").data])',
+          'g = op.plot_results("A", "thickness", names, name="AttrPlot")',
+          'print(np.round(op.wave("AttrPlot_x").data, 3).tolist(), np.round(op.wave("AttrPlot_y").data, 3).tolist(), g.traces[0].y_error)',
+          // The attributes follow a renamed folder.
+          'op.folder("attr3").rename("attr3b")',
+          'print(op.folder("attr3b").attributes["thickness"])',
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.trim().split("\n")).toEqual([
+      "{'thickness': 20, 'instrument': 'XPS-2', 'cycle': 3} {'cycle': 3}",
+      "{'thickness': 10, 'instrument': 'XPS-2'}",
+      "{'thickness': 10}",
+      "[10.0, 20.0, 30.0] ['', 'XPS-2', 'XPS-2']",
+      "[10.0, 20.0, 30.0] [2.0, 3.0, 4.0] AttrPlot_y_sd",
+      "30",
+    ]);
+  });
+
   it("keeps each fit's own curve, whatever fits the wave again", async () => {
     expect(
       await run(

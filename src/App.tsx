@@ -195,6 +195,7 @@ function useMenus(): MenuDefinition[] {
         { label: "Load Igor Files…", onSelect: loadIgorFiles },
         { label: "Load Parquet or HDF5 Files…", onSelect: loadParquetHdf5Files },
         { label: "New Data Folder…", onSelect: open({ kind: "newFolder", parent: "" }) },
+        { label: "Sample Attributes…", onSelect: open({ kind: "attributes" }) },
         { label: "Time Zone for Dates…", onSelect: open({ kind: "timeZone" }) },
         { separator: true },
         {

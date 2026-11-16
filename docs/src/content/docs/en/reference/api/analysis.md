@@ -221,10 +221,33 @@ Put results side by side: a row for each, a column for each parameter.
 
 ``results_`` is a list of results (names, or what the fits returned);
 all of them if left out. Makes text waves ``<name>_result`` and
-``<name>_data`` (which result, and the wave it was about) and, for each
-parameter, ``<name>_<parameter>`` and (with ``sigma``)
-``<name>_<parameter>_sd``, then ``<name>_chisq``, and shows them in a
-table, which is returned. A parameter a result does not have is NaN.
+``<name>_data`` (which result, and the wave it was about), a wave for
+each attribute of the samples (see ``op.set_attributes``; numbers, or
+text where any is text), and, for each parameter, ``<name>_<parameter>``
+and (with ``sigma``) ``<name>_<parameter>_sd``, then ``<name>_chisq``,
+and shows them in a table, which is returned. A parameter or attribute a
+result does not have is NaN (or empty text).
+
+**Explicit exceptions** · `OresmeError`
+
+## `plot_results`
+
+```python
+op.plot_results(y, x=None, results_=None, *, name='ResultsPlot', sigma=True)
+```
+
+Plot a parameter of results against an attribute of their samples, or another parameter.
+
+``y`` is a parameter's name (``"A"``); ``x`` an attribute of the samples
+(``"thickness"``, see ``op.set_attributes``), another parameter, or None
+for the results in order. ``results_`` are the results to plot, all of
+them if left out; those without ``y``, or without a number for ``x``, are
+left out. Makes ``<name>_x``, ``<name>_y`` and (with ``sigma``)
+``<name>_y_sd``, graphs them as markers with error bars, and returns the
+graph:
+
+    op.set_attributes("run1:", thickness=10); ...
+    op.plot_results("A", "thickness")
 
 **Explicit exceptions** · `OresmeError`
 

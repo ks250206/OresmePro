@@ -21,6 +21,22 @@ sidebar:
 
 [ガウシアン](../../examples/gaussian/) · [指数関数](../../examples/exponential/) · [Analysis API](../../reference/api/analysis/#fit)
 
+## 試料の条件と結果を比べる
+
+組成・膜厚・温度・サイクル数・装置などの**試料の属性**を、データフォルダ(試料ごとのフォルダ)か wave に付けられます。
+**Data → Sample Attributes…** の表で、行(試料)ごとに数値か文字を入力します。フォルダの属性はその中の wave すべてに付き、wave 自身の属性が上書きします。
+Data Browser のフォルダ・wave の右クリック **Attributes…** でも開けます。
+
+結果は、読んだ wave の試料の属性を持ちます。**Analysis → Results…** では属性が列に並び、**Plot…** で「膜厚を横軸、A を縦軸」のように、
+パラメータを属性(または別のパラメータ)に対してプロットできます(標準偏差は誤差棒)。`op.results_table()` も属性の列を作ります。
+
+```python
+op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")   # フォルダ(末尾に :)
+op.wave("run1:spectrum").set_attributes(cycle=3)                         # wave
+op.wave("run1:spectrum").attributes      # {'thickness': 12.5, 'Mg': 0.3, 'instrument': 'XPS-2', 'cycle': 3}
+op.plot_results("A", "thickness")        # A を膜厚に対してプロット
+```
+
 ## 同じ手順を多くの試料に適用する
 
 1 つの試料で決めた解析を、**解析テンプレート**として名前を付けて残し、多くの試料に順に適用できます。

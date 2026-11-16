@@ -77,6 +77,8 @@ __all__ = [
     "table",
     "tables",
     "kill_window",
+    "set_attributes",
+    "attributes",
     "Procedure",
     "new_procedure",
     "close_window",
@@ -580,6 +582,20 @@ class Wave(np.lib.mixins.NDArrayOperatorsMixin):
     @note.setter
     def note(self, value):
         _dispatch({"op": "setWaveMeta", "name": self._name, "note": str(value)})
+
+    @property
+    def attributes(self):
+        """The attributes of the sample this wave is: those of its data folders, then its own.
+
+        A dict of name to number or text, such as ``{"thickness": 12.5,
+        "instrument": "XPS-2"}``; see ``op.set_attributes``.
+        """
+        return attributes(self)
+
+    def set_attributes(self, values=None, **named):
+        """Set attributes of this wave itself (None removes one). Returns self."""
+        set_attributes(self, values, **named)
+        return self
 
     def set_scale(self, x0=None, dx=None, unit=None, *, y0=None, dy=None, y_unit=None):
         """Set the scaling: start, step and unit along X (and Y for a 2-D wave)."""
@@ -2033,6 +2049,16 @@ class Folder:
     def _join(self, name):
         return f"{self._path}:{name}" if self._path else name
 
+    @property
+    def attributes(self):
+        """The attributes of the sample this folder is: those of the folders it is in, then its own."""
+        return attributes(self)
+
+    def set_attributes(self, values=None, **named):
+        """Set attributes of this folder, which its waves have too (None removes one). Returns self."""
+        set_attributes(self, values, **named)
+        return self
+
     def make(self, name, data=None, **options):
         """Create a wave in this folder. Same options as ``op.make``."""
         return make(self._join(name), data, **options)
@@ -2983,6 +3009,51 @@ def set_time_zone(zone):
     this zone.
     """
     _dispatch({"op": "setTimeZone", "zone": str(zone)})
+
+
+def _attribute_target(target):
+    """A wave by name, or a data folder as "path:"; from a Wave or a Folder too."""
+    if isinstance(target, Folder):
+        if not target.path:
+            raise OresmeError("Root has no attributes: give them to a data folder or a wave.")
+        return f"{target.path}:"
+    if isinstance(target, Wave):
+        return target.name
+    if isinstance(target, str) and target:
+        return target
+    raise TypeError("Give a wave, a data folder (op.folder('run1') or 'run1:'), or a name.")
+
+
+def set_attributes(target, values=None, **named):
+    """Set attributes of a sample: a data folder or a wave.
+
+    ``target`` is a wave, a folder (``op.folder("run1")``), a wave's name, or
+    a folder's path followed by a colon (``"run1:"``). The attributes are
+    given as a dict, keywords, or both: names of letters, digits and _,
+    values that are numbers or text; None removes an attribute. A folder's
+    attributes are those of every wave in it, below its own:
+
+        op.set_attributes("run1:", thickness=12.5, Mg=0.3, instrument="XPS-2")
+        op.wave("run1:spectrum").set_attributes(cycle=3)
+
+    Results have the attributes of the wave they read, so
+    ``op.results_table()`` and ``op.plot_results()`` can set them beside the
+    parameters.
+    """
+    given = {**(values or {}), **named}
+    plain = {}
+    for key, value in given.items():
+        if value is not None and not isinstance(value, str):
+            if not _is_number(value):
+                raise TypeError(f"{key} must be a number, text or None, not {value!r}.")
+            value = int(value) if _is_integer(value) and not isinstance(value, float) else float(value)
+        plain[str(key)] = value
+    _dispatch({"op": "setAttributes", "target": _attribute_target(target), "values": plain})
+
+
+def attributes(target, *, own=False):
+    """The attributes of a wave or a data folder: with those it has from its folders, or with ``own`` only its own."""
+    return _call("attributes", {"target": _attribute_target(target), "own": bool(own)})[0]
 
 
 def kill_window(name):

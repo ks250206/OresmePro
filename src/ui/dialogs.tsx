@@ -82,6 +82,7 @@ import {
   Select,
   TextInput,
 } from "./controls";
+import { AttributesDialog } from "./AttributesDialog";
 import { ExperimentsDialog } from "./ExperimentsDialog";
 import { TemplateEditorDialog } from "./TemplateEditor";
 import {
@@ -3282,6 +3283,8 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "attributes":
+      return <AttributesDialog targets={dialog.targets} />;
     case "editTemplate":
       return <TemplateEditorDialog template={dialog.template} />;
     case "saveExperiment":

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { pyName, runPython } from "../app/actions";
 import { doc, runGui, ui, useDoc } from "../app/session";
+import { waveAttributes } from "../core/doc/attributes";
 import { changedInputs, type AnalysisResult, type Json } from "../core/doc/results";
 import { checkName, uniqueName } from "../core/doc/commands";
 import { Button, Dialog, NameList, TextInput } from "./controls";
@@ -130,6 +131,29 @@ export function ResultsDialog({ focus }: { focus?: string }) {
     () => new Map(list.map((result) => [result.name, changedInputs(state, result)])),
     [list, state],
   );
+  // The attributes of each result's sample (of the first wave it read), and a column for each.
+  const samples = useMemo(
+    () =>
+      new Map(
+        list.map((result) => [
+          result.name,
+          result.inputs[0] && result.inputs[0].wave in state.waves
+            ? waveAttributes(state, result.inputs[0].wave)
+            : {},
+        ]),
+      ),
+    [list, state],
+  );
+  const attributeNames = useMemo(() => {
+    const keys: string[] = [];
+    for (const found of samples.values()) {
+      for (const key of Object.keys(found)) if (!keys.includes(key)) keys.push(key);
+    }
+    return keys;
+  }, [samples]);
+  const [plotting, setPlotting] = useState(false);
+  const [plotY, setPlotY] = useState("");
+  const [plotX, setPlotX] = useState("");
   const close = () => ui.set({ dialog: null });
   const run = (code: string) => {
     runPython(code);
@@ -162,11 +186,13 @@ export function ResultsDialog({ focus }: { focus?: string }) {
           <table className="border-separate border-spacing-0 text-left">
             <thead className="sticky top-0 z-10 bg-chrome">
               <tr>
-                {["", "Result", "Analysis", "χ²", ...parameters].map((title, index) => (
-                  <th key={index} className={`${cell} border-line font-semibold`}>
-                    {title}
-                  </th>
-                ))}
+                {["", "Result", "Analysis", ...attributeNames, "χ²", ...parameters].map(
+                  (title, index) => (
+                    <th key={index} className={`${cell} border-line font-semibold`}>
+                      {title}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
@@ -213,6 +239,18 @@ export function ResultsDialog({ focus }: { focus?: string }) {
                       {result.label}
                       {result.converged ? "" : " (did not converge)"}
                     </td>
+                    {attributeNames.map((key) => {
+                      const value = samples.get(result.name)?.[key];
+                      return (
+                        <td key={`attribute:${key}`} className={`${cell} text-[11px]`}>
+                          {value === undefined
+                            ? ""
+                            : typeof value === "number"
+                              ? show(value)
+                              : value}
+                        </td>
+                      );
+                    })}
                     <td className={`${cell} font-mono text-[11px]`}>{show(result.chisq)}</td>
                     {parameters.map((name) => {
                       const at = result.names.indexOf(name);
@@ -257,6 +295,66 @@ export function ResultsDialog({ focus }: { focus?: string }) {
               Fit {targets.length || ""} Wave{targets.length === 1 ? "" : "s"}
             </Button>
           </div>
+        </div>
+      ) : null}
+      {plotting ? (
+        <div role="group" aria-label="Plot results" className="flex flex-wrap items-center gap-1.5">
+          <span className="text-muted">Plot</span>
+          <select
+            aria-label="Plot parameter"
+            className="h-6 rounded border border-line bg-paper px-1"
+            value={plotY}
+            onChange={(event) => setPlotY(event.target.value)}
+          >
+            {parameters.map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+          <span className="text-muted">against</span>
+          <select
+            aria-label="Plot against"
+            className="h-6 rounded border border-line bg-paper px-1"
+            value={plotX}
+            onChange={(event) => setPlotX(event.target.value)}
+          >
+            <option value="">the results, in order</option>
+            {attributeNames.length > 0 ? (
+              <optgroup label="Attributes of the samples">
+                {attributeNames.map((name) => (
+                  <option key={`a:${name}`} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            <optgroup label="Parameters">
+              {parameters
+                .filter((name) => name !== plotY)
+                .map((name) => (
+                  <option key={`p:${name}`} value={name}>
+                    {name}
+                  </option>
+                ))}
+            </optgroup>
+          </select>
+          <Button
+            primary
+            disabled={!plotY}
+            onClick={() =>
+              run(
+                `op.plot_results(${pyName(plotY)}${plotX ? `, ${pyName(plotX)}` : ", None"}${
+                  chosen.length > 0 ? `, [${names}]` : ""
+                })`,
+              )
+            }
+          >
+            Plot
+          </Button>
+          <span className="text-[11px] text-muted">
+            {attributeNames.length === 0
+              ? "Give the samples attributes in Data › Sample Attributes… to plot against them."
+              : "With the standard deviations as error bars."}
+          </span>
         </div>
       ) : null}
       {templateName !== null && chosen.length > 0 ? (
@@ -332,6 +430,17 @@ export function ResultsDialog({ focus }: { focus?: string }) {
           }
         >
           Make Template…
+        </Button>
+        <Button
+          disabled={list.length === 0 || parameters.length === 0}
+          title="Plot a parameter of the selected results (or all) against an attribute of their samples, or another parameter."
+          onClick={() => {
+            setPlotting(!plotting);
+            if (!plotY) setPlotY(parameters[0] ?? "");
+            if (!plotX) setPlotX(attributeNames[0] ?? "");
+          }}
+        >
+          Plot…
         </Button>
         <Button
           disabled={list.length === 0}
