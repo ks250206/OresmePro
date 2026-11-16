@@ -380,6 +380,7 @@ export function TemplateEditorDialog({ template: initial }: { template?: string 
   return (
     <Dialog
       title={existing ? `Edit Template — ${initial}` : "New Template"}
+      help="guides/curve-fitting/"
       width={880}
       onClose={close}
       submitLabel="Save"
