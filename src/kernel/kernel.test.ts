@@ -3848,3 +3848,68 @@ describe("analysis templates", () => {
     expect(doc.getState().runs.Halted).toBeUndefined();
   });
 });
+
+// Last: it leaves waves, windows, a procedure and pandas behind, which the tests above do not expect.
+describe("the documentation", () => {
+  // The examples of the Python cheat sheet (docs/.../reference/python-cheatsheet.md), but
+  // those that need files or the network: they must go on running as the page says.
+  it("runs the examples of the Python cheat sheet", async () => {
+    const ok = await run(String.raw`
+x = np.linspace(0, 10, 501)
+y = op.make("signal", np.sin(x), dx=x[1] - x[0], x_unit="s", unit="V")
+y = op.wave("signal")
+y.data
+y.data = y.data * 2
+y.x
+y.set_scale(0, 0.02, "s")
+y.unit = "mV"; y.note = "run 1"
+op.make("ca", [1.0, 2.0]); op.make("cb", [2.0, 4.0])
+op.set_formula("ratio", "ca / cb")
+op.new_folder("run1")
+op.folder("run1").make("spectrum", np.exp(-np.linspace(-3, 3, 61) ** 2) + 0.1)
+op.set_attributes("run1:", thickness=12.5, Mg=0.3)
+print(op.wave("run1:spectrum").attributes)
+t = op.edit(y, name="CheatRaw")
+df = op.table("CheatRaw").to_dataframe()
+op.from_dataframe(df)
+xw = op.make("cheat_x", x)
+g = op.display(y, x=xw, name="CheatSpectrum")
+g.append(op.make("y2", np.cos(x)))
+g.trace("signal").set(mode="markers", color="#ab1831", marker="circle")
+g.axis("left").set(range=(0, 1), log=False, label="Intensity")
+g.axis("bottom").autoscale()
+g.axis("left").labels = "axis only"
+g.set(width=op.cm(8), height=("aspect", 0.75))
+g.set(margins=(60, 40, 10, 10), magnification=1.5)
+g.legend(); g.textbox("Run 1")
+g.cursor("A", g.trace("signal"), 10)
+print(g.script()[:10])
+op.display(op.make("cheat_b", np.arange(5.0)), name="CheatG2")
+op.link_graphs("CheatSpectrum", "CheatG2")
+m = op.make("cheat_m", np.random.rand(10, 10))
+op.image(m); op.contour(m)
+op.rename_window("CheatG2", "CheatG3")
+op.close_window("CheatG3"); op.reopen_window("CheatG3"); op.kill_window("CheatG3")
+op.windows("graph")
+s = op.wave("run1:spectrum")
+r = op.fit("gauss", s, quiet=True)
+r = op.fit("exp", op.make("dec", 1 + 3*np.exp(-np.linspace(0,6,61)/1.5), dx=0.1), hold={"y0": 1}, bounds={"tau": (0, None)}, xrange=(1, 5), quiet=True)
+r.coef, r.sigma, r.converged, r["tau"]
+pk = op.make("pk", np.exp(-(np.linspace(0,10,201)-3)**2/0.2) + np.exp(-(np.linspace(0,10,201)-6)**2/0.3) + np.exp(-(np.linspace(0,10,201)-8)**2/0.2), dx=0.05)
+op.fit_peaks(pk, peaks=3, shape="voigt", quiet=True)
+op.background(s, "shirley", subtract=True)
+op.onset(op.make("edge", np.r_[np.zeros(20), np.linspace(0, 1, 20)], dx=0.05), edge=(1.2, 1.8), baseline=(0.0, 0.8))
+op.stats(s); op.differentiate(s); op.integrate(s)
+op.smooth(s, 5); op.fft(s); op.histogram(s, bins=50)
+op.results(); op.results_table()
+with op.atomic():
+    a = op.make("cheat_a", np.arange(10))
+    op.display(a)
+op.packages()
+p = op.new_procedure("cheattools", "def twice(x):\n    return 2 * x\n")
+p.run()
+`);
+    expect(errors).toEqual([]);
+    expect(ok).toBe(true);
+  });
+});

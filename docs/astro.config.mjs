@@ -32,6 +32,17 @@ export default defineConfig({
           items: [{ autogenerate: { directory: "guides" } }],
         },
         {
+          label: "リファレンス",
+          translations: { en: "Reference" },
+          items: [
+            "reference/menus",
+            "reference/mouse-and-keys",
+            "reference/python-cheatsheet",
+            "reference/glossary",
+            "reference/troubleshooting",
+          ],
+        },
+        {
           label: "Python API リファレンス",
           translations: { en: "Python API Reference" },
           items: ["reference", { autogenerate: { directory: "reference/api" } }],

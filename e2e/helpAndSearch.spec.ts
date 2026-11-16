@@ -27,7 +27,10 @@ test.describe("help and finding waves", () => {
     const help = page.getByRole("dialog", { name: /Modify Graph/ }).getByRole("link", {
       name: "Help",
     });
-    await expect(help).toHaveAttribute("href", /\/docs\/(en\/)?guides\/graphs\/$/);
+    await expect(help).toHaveAttribute(
+      "href",
+      "https://ks250206.github.io/OresmePro/docs/en/guides/graphs/",
+    );
   });
 
   test("the search box narrows the waves, and the arrow keys walk them", async ({ app, page }) => {
