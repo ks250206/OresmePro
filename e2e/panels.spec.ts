@@ -145,4 +145,100 @@ test.describe("panels", () => {
     await panel.getByRole("button", { name: "Edit slow" }).click();
     await expect(panel.getByText("Contains code", { exact: true })).toBeVisible();
   });
+
+  test("controls are dragged to a place of their own, sized, colored and stacked, and undone in one step", async ({
+    app,
+    page,
+  }) => {
+    await app.run(
+      [
+        PEAK,
+        'g = op.display(op.wave("sig"), name="G0")',
+        'p = op.panel("free", title="Free")',
+        'p.heading("top", "Spectra")',
+        'p.list("ws", "Waves", dims=1)',
+        'p.button("go", "Go", action="core.fit")',
+      ].join("\n"),
+    );
+    const control = (name: string) =>
+      page.evaluate(
+        (control) =>
+          globalThis.oresme.doc
+            .getState()
+            .panels.free!.controls.find((item) => item.name === control) as unknown as Record<
+            string,
+            unknown
+          >,
+        name,
+      );
+    const panel = app.window("free");
+    // The wave list lists the 1D waves, and a click selects them as its value.
+    await panel.getByRole("option", { name: "sig2" }).click();
+    await expect.poll(() => values(app, "free")).toMatchObject({ ws: ["sig2"] });
+
+    await panel.getByRole("button", { name: "Edit free" }).click();
+    const go = panel.getByRole("button", { name: "Button go" });
+    const area = (await panel.getByRole("group", { name: "free controls" }).boundingBox())!;
+    const from = (await go.boundingBox())!;
+    await go.hover();
+    await page.mouse.down();
+    await page.mouse.move(from.x + 60, from.y + 40, { steps: 5 });
+    await page.mouse.move(area.x + 200 + from.width / 2, area.y + 150 + from.height / 2, {
+      steps: 5,
+    });
+    await page.mouse.up();
+    // A drag is one change: the button has a place of its own, out of its line.
+    await expect
+      .poll(async () => [(await control("go")).x, (await control("go")).y])
+      .toEqual([expect.any(Number), expect.any(Number)]);
+    const placed = await control("go");
+    expect(Math.abs((placed.x as number) - 200)).toBeLessThan(6);
+    expect(Math.abs((placed.y as number) - 150)).toBeLessThan(6);
+    await expect
+      .poll(async () => (await app.lastEntry()).code)
+      .toMatch(/^op\.panel\("free"\)\.control\("go"\)\.set\(x=\d+, y=\d+\)$/);
+    // The arrow keys move it a pixel, Shift ten.
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect
+      .poll(async () => [(await control("go")).x, (await control("go")).y])
+      .toEqual([(placed.x as number) + 1, (placed.y as number) + 10]);
+
+    // Its colors and size, from the form.
+    const form = panel.getByRole("group", { name: "go properties" });
+    await form.getByLabel("Width").fill("120");
+    await form.getByLabel("Width").press("Enter");
+    await form.getByLabel("Background", { exact: true }).fill("#ff8800");
+    await expect.poll(async () => (await control("go")).background).toBe("#ff8800");
+    expect((await control("go")).w).toBe(120);
+    // Sent behind the others, then brought in front again.
+    await panel.getByRole("button", { name: "Back", exact: true }).click();
+    expect((await control("go")).z).toBe(-1);
+    await panel.getByRole("button", { name: "Front", exact: true }).click();
+    expect((await control("go")).z).toBe(1);
+
+    // A plot, made with the waves of the frontmost graph.
+    await panel.getByRole("button", { name: "Add ▾" }).click();
+    await page.getByRole("menuitem", { name: "Plot", exact: true }).click();
+    expect((await control("plot0")).traces).toEqual([{ y: "sig", x: null }]);
+    await panel.getByRole("button", { name: "Done" }).click();
+    await expect(panel.getByRole("img", { name: "plot0 plot" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Go" })).toHaveCSS(
+      "background-color",
+      "rgb(255, 136, 0)",
+    );
+
+    // Undo takes the plot back, then the stacking, one step at a time.
+    await page.evaluate(() => globalThis.oresme.doc.undo());
+    expect(await control("plot0")).toBeUndefined();
+    await page.evaluate(() => globalThis.oresme.doc.undo());
+    expect((await control("go")).z).toBe(-1);
+
+    // What was placed comes back when the experiment is opened again.
+    await expect(page.getByRole("group", { name: "Saving" })).toHaveText(/^Saved \d/);
+    await page.reload();
+    await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
+    await expect.poll(async () => (await control("go"))?.background).toBe("#ff8800");
+    expect(await control("go")).toMatchObject({ w: 120, x: (placed.x as number) + 1 });
+  });
 });

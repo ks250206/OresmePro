@@ -31,7 +31,8 @@ Procedures and the command line are different: they run in the app's Python, whi
 
 ## Use
 
-- Select a plugin in **Python → Plugins…** to see a form for its actions. Choose waves and values and click **Run**
+- Select a plugin in **Python → Plugins…** and press **Open** by an action: its form opens in a window of its own. **Python → Plugin Actions** opens it directly too. Choose waves and values and click **Run**
+- The window is not modal: graphs, tables and the command window go on working while it is open, and it moves wherever you drag its title bar. It runs as often as you like and keeps what you entered until it is closed. It is not saved with the experiment
 - From Python, call `op.invoke("plugin.<plugin>.<action>", {...})`. It also works inside `op.atomic()`
 - Returned waves are made next to the first input wave and named `<input>_<role>`. An existing wave is never overwritten; `_1` and so on is added instead
 - A result the plugin returns is kept in **Analysis → Results…** like a fit, with the plugin, version, source, and commit that made it

@@ -28,10 +28,23 @@ test.describe("plugins", () => {
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });
     await expect(dialog.getByRole("option", { name: "Scale", exact: true })).toBeVisible();
-    await dialog.getByRole("combobox", { name: /^Wave/ }).selectOption("signal");
-    await dialog.getByLabel("Factor", { exact: true }).fill("3");
-    await dialog.getByRole("button", { name: "Run" }).click();
-    await expect(dialog.getByRole("button", { name: "Run" })).toBeEnabled({ timeout: 90_000 });
+    // The action's form opens in a window that is not modal and can be moved.
+    await dialog.getByRole("button", { name: "Open Scale a wave" }).click();
+    await expect(dialog).toHaveCount(0);
+    const form = page.getByRole("dialog", { name: "Scale a wave" });
+    const before = (await form.boundingBox())!;
+    const bar = (await form.getByText("Scale a wave", { exact: true }).boundingBox())!;
+    await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bar.x + bar.width / 2 + 140, bar.y + bar.height / 2 + 90, { steps: 4 });
+    await page.mouse.up();
+    const after = (await form.boundingBox())!;
+    expect(Math.round(after.x - before.x)).toBeGreaterThan(80);
+    expect(Math.round(after.y - before.y)).toBeGreaterThan(40);
+    await form.getByRole("combobox", { name: /^Wave/ }).selectOption("signal");
+    await form.getByLabel("Factor", { exact: true }).fill("3");
+    await form.getByRole("button", { name: "Run" }).click();
+    await expect(form.getByRole("button", { name: "Run" })).toBeEnabled({ timeout: 90_000 });
 
     const made = await page.evaluate(() => {
       const state = globalThis.oresme.doc.getState();
@@ -67,7 +80,18 @@ test.describe("plugins", () => {
     expect(fromPython.output).toContain("scaling signal by 10");
     expect(fromPython.output).toContain("{'scaled': 'signal_scaled_1'} Plugin1");
 
+    // The rest of the app works while it is open, and the menu opens it again.
+    await app.run('op.make("other", [5.0])');
+    await expect(form.getByRole("combobox", { name: /^Wave/ })).toHaveValue("signal");
+    await form.getByRole("button", { name: "Close Scale a wave" }).click();
+    await expect(form).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Python", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Plugin Actions" }).hover();
+    await page.getByRole("menuitem", { name: "Scale a wave", exact: true }).click();
+    await expect(form).toBeVisible();
+
     // Its style comes into the experiment on request.
+    await app.menu("Python", "Plugins…");
     await dialog.getByRole("button", { name: "Add Styles to Experiment" }).click();
     await expect
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().styles)))
@@ -79,6 +103,8 @@ test.describe("plugins", () => {
     page.once("dialog", (confirm) => void confirm.accept());
     await dialog.getByRole("button", { name: "Remove…" }).click();
     await expect(dialog.getByText("No plugins installed yet.")).toBeVisible();
+    // Its windows go with it.
+    await expect(form).toHaveCount(0);
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
 
     const rerun = await app.run('op.result("Plugin0").rerun()');

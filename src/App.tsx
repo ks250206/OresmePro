@@ -1,4 +1,10 @@
-import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { openActionWindow } from "./app/actionWindows";
 import {
   activeGraph,
   addFilesForPython,
@@ -119,6 +125,17 @@ function useMenus(): MenuDefinition[] {
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
   const kernelState = useKernelState();
+  const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
+  // The actions of the plugins turned on, each opening its form in a window of its own.
+  const pluginActions: MenuItem[] = installed
+    .filter((plugin) => plugin.enabled && plugin.manifest.actions.length > 0)
+    .flatMap((plugin, index, all) => [
+      ...(index > 0 ? [{ separator: true } as MenuItem] : []),
+      ...plugin.manifest.actions.map((action) => ({
+        label: all.length > 1 ? `${action.title} (${plugin.manifest.title})` : action.title,
+        onSelect: () => openActionWindow(plugin.manifest.name, action.name),
+      })),
+    ]);
   const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
     ui.set({ dialog });
   const graphItem = (
@@ -353,6 +370,11 @@ function useMenus(): MenuDefinition[] {
         { label: "Packages…", onSelect: open({ kind: "packages" }) },
         // Plugins are Python packages that add actions, templates and loaders.
         { label: "Plugins…", onSelect: open({ kind: "plugins" }) },
+        {
+          label: "Plugin Actions",
+          disabled: pluginActions.length === 0,
+          submenu: pluginActions,
+        },
         {
           label: "Keep Optional Packages for Offline Use",
           onSelect: () =>
