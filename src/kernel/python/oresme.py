@@ -855,6 +855,10 @@ class Axis(_Props):
     makes what follows 14 high, ``\\u`` puts the units there. Write such
     labels as raw strings (``r"..."``), or Python reads ``\\f`` and ``\\u``
     as its own escapes.
+
+    ``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
+    (tick labels and the axis label), ``"axis only"`` (the axis label, no
+    tick labels) or ``"off"`` (neither). The axis line and ticks stay.
     """
 
     _props = (
@@ -862,6 +866,7 @@ class Axis(_Props):
         "label_size",
         "label_style",
         "tick_label_size",
+        "labels",
         "min",
         "max",
         "log",
@@ -1191,6 +1196,19 @@ def _plot_dimension_value(data):
     return "auto"
 
 
+_MARGIN_SIDES = ("left", "bottom", "right", "top")
+
+
+def _margin(value, what):
+    """A margin as Python writes it, in points or None for auto."""
+    if value is None or (isinstance(value, str) and value == "auto"):
+        return None
+    if isinstance(value, str):
+        raise ValueError(f'{what} must be "auto", a length or a number of points, not {value!r}.')
+    number, unit = _length_parts(value, what)
+    return number * _POINTS_PER[unit]
+
+
 class Graph(_Props):
     """A graph window.
 
@@ -1198,7 +1216,18 @@ class Graph(_Props):
     enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
     """
 
-    _props = ("font_size", "font_family", "show_info", "width", "height")
+    _props = (
+        "font_size",
+        "font_family",
+        "show_info",
+        "width",
+        "height",
+        "margin_left",
+        "margin_bottom",
+        "margin_right",
+        "margin_top",
+        "magnification",
+    )
 
     def __init__(self, name):
         self._name = name
@@ -1222,14 +1251,40 @@ class Graph(_Props):
           "inch") for each unit of the axis; ``("per_unit", op.cm(2),
           "bottom")`` says the same. A unit of a log axis is a decade.
 
-        The margins stay automatic: a side that is not auto makes the
-        figure the plot area plus the margins, and the window fits it.
-        The two sides cannot both use aspect or plan. Reading ``width`` or
-        ``height`` gives the same forms back.
+        A side that is not auto makes the figure the plot area plus the
+        margins, and the window fits it. The two sides cannot both use
+        aspect or plan. Reading ``width`` or ``height`` gives the same forms
+        back.
+
+        ``margin_left``, ``margin_bottom``, ``margin_right`` and
+        ``margin_top`` fix the margins around the plot area, as Igor's
+        ModifyGraph margin: a length (``op.cm(1.5)`` or a number of points,
+        0 to 360) or ``"auto"`` (``None``), as wide as the axes and their
+        labels need. ``margins=`` sets all four: ``"auto"``, one length, or
+        ``(left, bottom, right, top)``. Reading a margin gives points, or
+        ``None`` for auto.
+
+        ``magnification`` draws the graph bigger or smaller in its window,
+        as Igor's expand: 2 doubles it, 1 is none (from 0.125 to 8). The
+        window grows with it; the figure, and what is exported, keep their
+        size.
         """
+        if "margins" in props:
+            margins = props.pop("margins")
+            if isinstance(margins, (tuple, list)):
+                if len(margins) != 4:
+                    raise ValueError("margins must be (left, bottom, right, top).")
+            else:
+                margins = (margins,) * 4
+            for side, value in zip(_MARGIN_SIDES, margins):
+                props.setdefault(f"margin_{side}", value)
         for key in ("width", "height"):
             if key in props:
                 props[key] = _plot_dimension(props[key], key)
+        for side in _MARGIN_SIDES:
+            key = f"margin_{side}"
+            if key in props:
+                props[key] = _margin(props[key], key)
         return super().set(**props)
 
     def __getattr__(self, key):

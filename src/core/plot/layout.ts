@@ -1,5 +1,6 @@
 import {
   AXIS_SIDES,
+  MARGIN_PROPS,
   DATE_UNIT,
   isVerticalSide,
   type Anchor,
@@ -135,6 +136,9 @@ export interface LayoutOptions {
   /** The time zone date axes are labelled in (see DocState.timeZone); UTC if left out. */
   timeZone?: string;
 }
+
+/** Whether an axis writes its tick labels: not when its labels are axis only or off. */
+const showsTickLabels = (spec: AxisSpec): boolean => spec.labels === "on";
 
 const OPPOSITE: Record<AxisSide, AxisSide> = {
   left: "right",
@@ -1170,11 +1174,23 @@ export function layoutGraph(
   const tickOut = (spec: AxisSpec): number =>
     spec.ticks !== "none" && spec.ticks !== "inside" ? MAJOR_TICK : 0;
   const labelExtent = (axis: AxisInfo): number =>
-    axis.vertical
-      ? Math.max(0, ...axis.labels.map((label) => label.width))
-      : Math.max(axis.tickSize * CAP_HEIGHT, ...axis.labels.map((label) => label.ascent));
+    !showsTickLabels(axis.spec)
+      ? 0
+      : axis.vertical
+        ? Math.max(0, ...axis.labels.map((label) => label.width))
+        : Math.max(axis.tickSize * CAP_HEIGHT, ...axis.labels.map((label) => label.ascent));
 
   const margins: Record<AxisSide, number> = { left: 48, right: 12, top: 12, bottom: 36 };
+  // Margins given in points stay as they are, whatever the axes need.
+  const unitsPerPoint = options.unitsPerPoint ?? SCREEN_UNITS_PER_POINT;
+  const fixedMargins = AXIS_SIDES.flatMap((side) => {
+    const points = graph[MARGIN_PROPS[side]];
+    return points === null ? [] : [[side, Math.round(points * unitsPerPoint)] as const];
+  });
+  const holdMargins = () => {
+    for (const [side, value] of fixedMargins) margins[side] = value;
+  };
+  holdMargins();
   let plot: Rect = { x: 0, y: 0, w: 0, h: 0 };
   const laneOffsets = new Map<AxisSide, number[]>();
 
@@ -1200,7 +1216,7 @@ export function layoutGraph(
       available: { width: availableWidth, height: availableHeight },
       margins,
       axis: extentOfAxis,
-      unitsPerPoint: options.unitsPerPoint ?? SCREEN_UNITS_PER_POINT,
+      unitsPerPoint,
     });
     plot = {
       x: Math.round(margins.left),
@@ -1252,7 +1268,7 @@ export function layoutGraph(
       const unitText =
         axis.kind === "date" ? (ticks.context ?? "") : axis.kind === "category" ? "" : axis.unit;
       axis.title = layoutText(
-        axisLabelText(axis.spec.label, ticks.exponent, unitText),
+        axis.spec.labels === "off" ? "" : axisLabelText(axis.spec.label, ticks.exponent, unitText),
         axis.spec.labelSize ?? size,
         family,
         measure,
@@ -1260,8 +1276,7 @@ export function layoutGraph(
       );
       axis.depth =
         tickOut(axis.spec) +
-        TICK_LABEL_GAP +
-        labelExtent(axis) +
+        (showsTickLabels(axis.spec) ? TICK_LABEL_GAP + labelExtent(axis) : 0) +
         (axis.title.width > 0 ? AXIS_LABEL_GAP + axis.title.ascent + axis.title.descent : 0);
     }
 
@@ -1282,13 +1297,16 @@ export function layoutGraph(
         const need =
           standoff +
           (showTicks ? tickOut(source.spec) : 0) +
-          (source.spec.mirror === "labels" ? TICK_LABEL_GAP + labelExtent(source) : 0);
+          (source.spec.mirror === "labels" && showsTickLabels(source.spec)
+            ? TICK_LABEL_GAP + labelExtent(source)
+            : 0);
         margin = Math.max(margin, need);
       }
       margins[side] = Math.ceil(OUTER_PAD + margin);
     }
     // Labels at the ends of an axis stick out past the plot corners.
     for (const axis of axisList) {
+      if (!showsTickLabels(axis.spec)) continue;
       axis.ticks.major.forEach((tick, index) => {
         const label = axis.labels[index]!;
         const pixel = axis.scale.toPixel(tick.value);
@@ -1307,6 +1325,7 @@ export function layoutGraph(
         }
       });
     }
+    holdMargins();
   }
 
   // A fixed side makes the figure the plot area and the margins as they ended up.
@@ -1792,7 +1811,7 @@ export function layoutGraph(
     prims.push({ kind: "segments", points: segments, stroke: INK, width: 1, crisp: true });
 
     let at = line + out * (show.ticks ? tickOut(axis.spec) : 0);
-    if (show.labels) {
+    if (show.labels && showsTickLabels(axis.spec)) {
       at += out * TICK_LABEL_GAP;
       const extent = labelExtent(axis);
       axis.ticks.major.forEach((tick, index) => {

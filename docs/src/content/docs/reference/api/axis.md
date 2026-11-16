@@ -34,6 +34,10 @@ makes what follows 14 high, ``\u`` puts the units there. Write such
 labels as raw strings (``r"..."``), or Python reads ``\f`` and ``\u``
 as its own escapes.
 
+``labels`` says which labels are drawn, as Igor's noLabel: ``"on"``
+(tick labels and the axis label), ``"axis only"`` (the axis label, no
+tick labels) or ``"off"`` (neither). The axis line and ticks stay.
+
 `graph.axis(name)` で取得するか、`graph.left` などを使います。`axis.range = (0, 10)` で表示範囲を固定し、`axis.autoscale()` で自動設定に戻せます。
 
 **プロパティ**
@@ -42,7 +46,7 @@ as its own escapes.
 - `range` (read/write) · (min, max); None for a limit that follows the data.
 - `side` (read-only)
 
-**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `tick_label_size`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 

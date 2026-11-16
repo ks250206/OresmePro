@@ -36,6 +36,7 @@ import {
 import { graphScript } from "../core/doc/recreate";
 import {
   ANCHORS,
+  AXIS_LABEL_MODES,
   AXIS_SIDES,
   COLOR_TABLES,
   COMPLEX_PARTS,
@@ -43,7 +44,10 @@ import {
   GRID_MODES,
   LABEL_STYLES,
   LINE_STYLES,
+  MAGNIFICATIONS,
+  MARGIN_PROPS,
   MARKER_SHAPES,
+  MAX_MARGIN,
   MIRROR_MODES,
   TICK_MODES,
   TRACE_COLORS,
@@ -51,6 +55,8 @@ import {
   WAVE_TYPES,
   isVerticalSide,
   leafName,
+  type AxisLabelMode,
+  type AxisSide,
   type AxisSpec,
   type ContourSpec,
   type ErrorSource,
@@ -62,6 +68,7 @@ import {
   type WaveType,
 } from "../core/doc/types";
 import { traceX } from "../core/plot/layout";
+import { SCREEN_UNITS_PER_POINT } from "../core/plot/plotSize";
 import { formatNumber, isTimeZone, timeZone } from "../core/plot/ticks";
 import {
   Button,
@@ -832,6 +839,16 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
   );
 }
 
+/** The margins in Igor's order, in two columns: left and bottom, then right and top. */
+const MARGIN_ORDER: readonly AxisSide[] = ["left", "bottom", "right", "top"];
+
+/** What each choice of labels shows, beside it in Modify Axis. */
+const LABEL_MODE_HINTS: Record<AxisLabelMode, string> = {
+  on: "tick labels and the axis label",
+  "axis only": "the axis label, no tick labels",
+  off: "no labels; the axis and ticks stay",
+};
+
 function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; axis?: string }) {
   const graph = useDoc((state) => state.graphs[graphName]);
   const used = new Set<string>(
@@ -992,6 +1009,18 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
             <option key={style}>{style}</option>
           ))}
         </Select>
+      </Field>
+      <Field label="Show labels">
+        <Select
+          aria-label="Show labels"
+          value={current.labels}
+          onChange={(event) => set({ labels: event.target.value as AxisLabelMode })}
+        >
+          {AXIS_LABEL_MODES.map((mode) => (
+            <option key={mode}>{mode}</option>
+          ))}
+        </Select>
+        <span className="text-muted">{LABEL_MODE_HINTS[current.labels]}</span>
       </Field>
       <Field label="Range">
         <TextInput
@@ -1369,11 +1398,55 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
       height: plotSideDraft(graph, "height", plot.h),
     };
   });
+  // Each margin as typed, in points, or null for auto.
+  const [margins, setMargins] = useState<Record<AxisSide, string | null>>(() => {
+    const draft = { left: null, bottom: null, right: null, top: null } as Record<
+      AxisSide,
+      string | null
+    >;
+    for (const side of AXIS_SIDES) {
+      const points = graph?.[MARGIN_PROPS[side]] ?? null;
+      draft[side] = points === null ? null : formatNumber(points, 6);
+    }
+    return draft;
+  });
+  const [magnification, setMagnification] = useState(() => graph?.magnification ?? 1);
   if (!graph || !sides) return null;
   const fontSize = parseNumber(size);
   const props: Record<string, unknown> = {};
   if (fontSize !== null && fontSize !== graph.fontSize) props.fontSize = fontSize;
   if (family !== graph.fontFamily) props.fontFamily = family;
+  const marginOf = (side: AxisSide): number | null | undefined => {
+    const text = margins[side];
+    if (text === null) return null;
+    const points = parseNumber(text);
+    return points !== null && points >= 0 && points <= MAX_MARGIN ? points : undefined;
+  };
+  const marginInvalid = AXIS_SIDES.some((side) => marginOf(side) === undefined);
+  for (const side of AXIS_SIDES) {
+    const points = marginOf(side);
+    if (points !== undefined && points !== graph[MARGIN_PROPS[side]]) {
+      props[MARGIN_PROPS[side]] = points;
+    }
+  }
+  if (magnification !== graph.magnification) props.magnification = magnification;
+  /** The margin a side has now, in points: where unticking Auto starts from. */
+  const marginNow = (side: AxisSide): number => {
+    const layout = exportLayout(graphName, null, null);
+    const { plot } = layout;
+    const units = {
+      left: plot.x,
+      top: plot.y,
+      right: layout.width - plot.x - plot.w,
+      bottom: layout.height - plot.y - plot.h,
+    }[side];
+    return Math.round(units / SCREEN_UNITS_PER_POINT);
+  };
+  const magnifications: number[] = [...MAGNIFICATIONS];
+  if (!magnifications.includes(magnification)) {
+    magnifications.push(magnification);
+    magnifications.sort((a, b) => a - b);
+  }
   const width = plotSideOf(sides.width);
   const height = plotSideOf(sides.height);
   const sizeProblem = plotSizeProblem(width, height);
@@ -1384,7 +1457,12 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
       title={`Modify Graph — ${graphName}`}
       onClose={close}
       width={520}
-      submitDisabled={fontSize === null || sizeProblem !== null || Object.keys(props).length === 0}
+      submitDisabled={
+        fontSize === null ||
+        sizeProblem !== null ||
+        marginInvalid ||
+        Object.keys(props).length === 0
+      }
       onSubmit={() => submit({ op: "modifyGraph", graph: graphName, props })}
     >
       <Field label="Font">
@@ -1431,6 +1509,62 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
         <div className={`text-[11px] ${sizeProblem ? "text-danger" : "text-muted"}`}>
           {sizeProblem ?? PLOT_SIZE_HINT}
         </div>
+      </div>
+      <div role="group" aria-label="Margins" className="flex flex-col gap-2">
+        <div className="mt-1 border-t border-line pt-2 font-medium">Margins</div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          {MARGIN_ORDER.map((side) => {
+            const text = margins[side];
+            const label = `${side[0]!.toUpperCase()}${side.slice(1)}`;
+            return (
+              <div key={side} className="flex items-center gap-2">
+                <span className="w-14 shrink-0 text-right text-muted">{label}</span>
+                <TextInput
+                  aria-label={`${label} margin`}
+                  aria-invalid={marginOf(side) === undefined}
+                  className="w-16"
+                  disabled={text === null}
+                  placeholder={text === null ? "auto" : ""}
+                  value={text ?? ""}
+                  onChange={(event) => setMargins({ ...margins, [side]: event.target.value })}
+                />
+                <span className="text-muted">pt</span>
+                <Checkbox
+                  label="Auto"
+                  aria-label={`${label} margin auto`}
+                  checked={text === null}
+                  onChange={(event) =>
+                    setMargins({
+                      ...margins,
+                      [side]: event.target.checked ? null : String(marginNow(side)),
+                    })
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div className={`text-[11px] ${marginInvalid ? "text-danger" : "text-muted"}`}>
+          {marginInvalid
+            ? `A margin is a number of points from 0 to ${MAX_MARGIN}.`
+            : "Auto is as wide as the axes and their labels need. A fixed margin keeps its width and may cut labels off."}
+        </div>
+      </div>
+      <div className="border-t border-line pt-2">
+        <Field label="Magnification">
+          <Select
+            aria-label="Magnification"
+            value={String(magnification)}
+            onChange={(event) => setMagnification(Number(event.target.value))}
+          >
+            {magnifications.map((factor) => (
+              <option key={factor} value={String(factor)}>
+                {factor === 1 ? "None" : String(factor)}
+              </option>
+            ))}
+          </Select>
+          <span className="text-muted">on screen only; exports keep the graph&apos;s size</span>
+        </Field>
       </div>
     </Dialog>
   );

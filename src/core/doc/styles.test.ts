@@ -131,7 +131,14 @@ describe("graph styles", () => {
     doc.dispatch({ op: "saveStyle", name: "paper", graph: "A" });
     const style = doc.getState().styles.paper!;
     expect(Object.keys(style)).toEqual(["graph", "axes", "traces"]);
-    expect(style.graph).toEqual({ fontSize: 16, fontFamily: "Times" });
+    expect(style.graph).toEqual({
+      fontSize: 16,
+      fontFamily: "Times",
+      marginLeft: null,
+      marginBottom: null,
+      marginRight: null,
+      marginTop: null,
+    });
     expect(style.axes?.left).toEqual({
       mirror: "ticks",
       ticks: "inside",
@@ -140,6 +147,7 @@ describe("graph styles", () => {
       labelSize: 20,
       labelStyle: "italic",
       tickLabelSize: null,
+      labels: "on",
     });
     expect(style.axes?.bottom).toMatchObject({ labelSize: null, tickLabelSize: 10 });
     expect(style.axes?.other).toBeUndefined();

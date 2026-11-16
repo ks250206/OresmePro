@@ -337,6 +337,13 @@ export const GRID_MODES = ["off", "major", "all"] as const;
 export type GridMode = (typeof GRID_MODES)[number];
 export const LABEL_STYLES = ["plain", "italic", "bold", "bold italic"] as const;
 export type LabelStyle = (typeof LABEL_STYLES)[number];
+/**
+ * Which labels an axis shows, as Igor's noLabel: on, both the tick labels and
+ * the axis label (noLabel=0); axis only, the axis label without tick labels
+ * (noLabel=1); off, neither (noLabel=2). The axis line and its ticks stay.
+ */
+export const AXIS_LABEL_MODES = ["on", "axis only", "off"] as const;
+export type AxisLabelMode = (typeof AXIS_LABEL_MODES)[number];
 
 export interface AxisSpec {
   /** Which edge of the plot the axis belongs to. Fixed when the axis is made. */
@@ -349,6 +356,8 @@ export interface AxisSpec {
   labelStyle: LabelStyle;
   /** Font size of the tick labels; null is the graph's. */
   tickLabelSize: number | null;
+  /** Which labels are drawn: all, the axis label only, or none (see {@link AXIS_LABEL_MODES}). */
+  labels: AxisLabelMode;
   /** null means autoscale to the data. */
   min: number | null;
   max: number | null;
@@ -422,7 +431,39 @@ export interface GraphStyle {
   fontFamily: string;
   /** Shows the cursor readout bar under the graph. */
   showInfo: boolean;
+  /**
+   * The margins around the plot area, in points, as Igor's ModifyGraph
+   * margin: null leaves a side automatic, as wide as its axes and their
+   * labels need. A fixed margin may cut labels off, or leave room to spare.
+   */
+  marginLeft: number | null;
+  marginBottom: number | null;
+  marginRight: number | null;
+  marginTop: number | null;
+  /**
+   * How much bigger the graph is drawn in its window than it is, as Igor's
+   * ModifyGraph expand: 2 shows it twice as big. Only the window shows it;
+   * the graph's figure, and what is exported, keep their own size.
+   */
+  magnification: number;
 }
+
+/** The margins of a graph by side, as they are named in its properties. */
+export const MARGIN_PROPS = {
+  left: "marginLeft",
+  bottom: "marginBottom",
+  right: "marginRight",
+  top: "marginTop",
+} as const satisfies Record<AxisSide, keyof GraphStyle>;
+
+/** The magnifications the Modify Graph dialog offers, as Igor's; 1 is none. */
+export const MAGNIFICATIONS = [
+  0.125, 0.25, 0.5, 0.667, 0.75, 1, 1.333, 1.5, 1.75, 2, 3, 4, 5, 8,
+] as const;
+export const MIN_MAGNIFICATION = 0.125;
+export const MAX_MAGNIFICATION = 8;
+/** The longest a margin can be, in points (5 inches). */
+export const MAX_MARGIN = 360;
 
 /** The units a length on paper is given in: points (1/72 inch), centimetres and inches. */
 export const LENGTH_UNITS = ["pt", "cm", "inch"] as const;
@@ -501,7 +542,14 @@ export interface GraphSpec extends GraphStyle {
  */
 
 /** The graph-wide properties a style can hold. */
-export const GRAPH_LOOK = ["fontSize", "fontFamily"] as const;
+export const GRAPH_LOOK = [
+  "fontSize",
+  "fontFamily",
+  "marginLeft",
+  "marginBottom",
+  "marginRight",
+  "marginTop",
+] as const;
 /** The properties of an axis a style can hold. */
 export const AXIS_LOOK = [
   "mirror",
@@ -511,6 +559,7 @@ export const AXIS_LOOK = [
   "labelSize",
   "labelStyle",
   "tickLabelSize",
+  "labels",
 ] as const;
 /** The properties of a trace a style can hold, for each place in its cycle. */
 export const TRACE_LOOK = [
@@ -918,10 +967,31 @@ export const MIN_WINDOW_HEIGHT = 120;
  * The size a graph's window offers it, and the size it is exported at when
  * its plot area follows the window. A side of the plot area that is not
  * auto makes the figure as big as it needs to be instead, and the window is
- * fitted to it (see ../plot/windowFit).
+ * fitted to it (see ../plot/windowFit). A magnified graph's window shows a
+ * figure that much smaller, drawn that much bigger.
  */
 export function figureSize(window: WindowState, graph: GraphSpec | undefined): FigureSize {
-  return { width: window.w, height: window.h - TITLE_BAR_HEIGHT - infoBarHeight(graph) };
+  const magnification = graph?.magnification ?? 1;
+  return {
+    width: Math.round(window.w / magnification),
+    height: Math.round((window.h - TITLE_BAR_HEIGHT - infoBarHeight(graph)) / magnification),
+  };
+}
+
+/**
+ * The size of the window that shows a figure of this size whole: the
+ * figure magnified, the title bar and the cursor bar. The reverse of
+ * {@link figureSize}.
+ */
+export function windowSizeFor(
+  figure: FigureSize,
+  graph: GraphSpec | undefined,
+): { w: number; h: number } {
+  const magnification = graph?.magnification ?? 1;
+  return {
+    w: Math.round(figure.width * magnification),
+    h: Math.round(figure.height * magnification) + TITLE_BAR_HEIGHT + infoBarHeight(graph),
+  };
 }
 
 export class DocError extends Error {
@@ -939,6 +1009,7 @@ export const defaultAxis = (side: AxisSide): AxisSpec => ({
   labelSize: null,
   labelStyle: "plain",
   tickLabelSize: null,
+  labels: "on",
   min: null,
   max: null,
   log: false,

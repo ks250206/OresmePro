@@ -28,7 +28,7 @@ By default the plot area (the rectangle the axes enclose) is what the window lea
 | Plan     | One unit of the horizontal axis is f times as long as one unit of the vertical axis (the other way round for the height); f = 1 scales both alike, as a Nyquist plot needs |
 | Per unit | A length for each unit of an axis (2 cm per volt, say)                                                                                                                     |
 
-The margins stay automatic. In a side that is not Auto, the figure is the plot area plus the margins and the window is resized to fit it; resizing the window by hand does not change that side. Plan and Per unit follow the axes' ranges, so the size changes when a range or the autoscale does. A unit of a log axis is a decade. The width and the height cannot both be Aspect or Plan.
+The margins are automatic unless fixed (see Margins below). In a side that is not Auto, the figure is the plot area plus the margins and the window is resized to fit it; resizing the window by hand does not change that side. Plan and Per unit follow the axes' ranges, so the size changes when a range or the autoscale does. A unit of a log axis is a decade. The width and the height cannot both be Aspect or Plan.
 
 One layout unit is a CSS pixel (1/96 inch) on screen and in SVG and PNG files, and a graph's PDF is written at 0.75 pt to the unit, so 8 cm is 8 cm on screen and in the PDF (rounded to whole pixels, within 0.13 mm). Absolute lengths go from 12 to 3000 pt, and computed sizes are held between 16 and 4000 pixels. In a page layout the plot area has the same length on paper, drawn from the top left of the graph's box. A style saved with its size keeps Auto, Absolute and Aspect; graph templates and `g.script()` keep every mode.
 
@@ -38,6 +38,29 @@ g.set(width=("plan", 1, "bottom", "left"), height=op.cm(6))
 g.set(width=("per_unit", 2, "cm", "bottom"))
 g.set(width="auto")
 g.width   # read back in the same form: op.cm(8), ('aspect', 0.75), ...
+```
+
+## Margins
+
+By default the margins around the plot area are as wide as the axes, their tick labels and their labels need. Under **Margins** in **Modify Graph**, fix the left, bottom, right and top margins in points, or set each back to **Auto**, as Igor Pro's ModifyGraph `margin` does. Unticking Auto fills in the width the margin has now, so pressing OK straight away changes nothing.
+
+A fixed margin keeps its width whatever the labels need: too narrow and labels are cut off, too wide and room is left over. That lines the axes of several graphs up. Margins go from 0 to 360 pt (5 inches), have the same length on paper in a page layout, and are kept by styles and graph templates.
+
+```python
+g.set(margin_left=op.cm(2), margin_bottom=40)   # a length, or a number of points
+g.margin_left = "auto"                          # or None
+g.set(margins=(60, 40, 10, 10))                 # left, bottom, right, top at once
+g.set(margins="auto")
+g.margin_bottom   # 40 (points), or None when auto
+```
+
+## Magnification
+
+**Magnification** in **Modify Graph** draws the graph bigger or smaller in its window, as Igor Pro's ModifyGraph `expand` does, from 0.125 to 8 times (None is no magnification). The window is resized by as much, and the figure itself (the plot area, the margins and the text) keeps its size. Exported SVG, PNG and PDF files, a style's size and page layouts all use the graph at its own size.
+
+```python
+g.magnification = 2     # show it twice as big
+g.set(magnification=1)  # back to its own size
 ```
 
 ## Reuse and export

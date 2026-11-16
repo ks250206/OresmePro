@@ -3,11 +3,10 @@ import {
   AXIS_LOOK,
   AXIS_SIDES,
   GRAPH_LOOK,
-  TITLE_BAR_HEIGHT,
   TRACE_LOOK,
   dependsOnOther,
   figureSize,
-  infoBarHeight,
+  windowSizeFor,
   type AxisLook,
   type AxisRole,
   type AxisSpec,
@@ -124,8 +123,6 @@ export function styledWindows(
   const { size } = style;
   if (!size) return windows;
   return windows.map((window) =>
-    window.name === graph.name
-      ? { ...window, w: size.width, h: size.height + TITLE_BAR_HEIGHT + infoBarHeight(graph) }
-      : window,
+    window.name === graph.name ? { ...window, ...windowSizeFor(size, graph) } : window,
   );
 }

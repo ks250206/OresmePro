@@ -232,12 +232,19 @@ export function GraphWindow({ name }: { name: string }) {
 
   // Re-layout only when this graph's own waves change, not on every edit elsewhere.
   const waveKey = graph ? graphWaveKey(graph, waves) : "";
+  // A magnified graph is laid out at its own size and drawn bigger.
+  const magnification = graph?.magnification ?? 1;
   const layout = useMemo(
     () =>
       graph && size.w > 0 && size.h > 0
-        ? layoutGraph(graph, doc.getState().waves, size.w, size.h, measureText, {
-            timeZone: zoneName,
-          })
+        ? layoutGraph(
+            graph,
+            doc.getState().waves,
+            Math.round(size.w / magnification),
+            Math.round(size.h / magnification),
+            measureText,
+            { timeZone: zoneName },
+          )
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- waveKey stands in for the wave data
     [graph, waveKey, size.w, size.h, zoneName],
@@ -246,13 +253,14 @@ export function GraphWindow({ name }: { name: string }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !layout) return;
-    canvas.width = Math.round(layout.width * dpr);
-    canvas.height = Math.round(layout.height * dpr);
+    const scale = dpr * magnification;
+    canvas.width = Math.round(layout.width * scale);
+    canvas.height = Math.round(layout.height * scale);
     const context = canvas.getContext("2d");
     if (!context) return;
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawPrims(context, layout.prims, dpr);
-  }, [layout, dpr]);
+    context.setTransform(scale, 0, 0, scale, 0, 0);
+    drawPrims(context, layout.prims, scale);
+  }, [layout, dpr, magnification]);
 
   // The marquee stays up while its menu is open and goes away with it.
   useEffect(() => {
@@ -262,8 +270,12 @@ export function GraphWindow({ name }: { name: string }) {
   if (!graph) return null;
 
   const position = (event: { clientX: number; clientY: number }) => {
+    // In the figure's own units, whatever it is magnified by.
     const box = hostRef.current!.getBoundingClientRect();
-    return { x: event.clientX - box.left, y: event.clientY - box.top };
+    return {
+      x: (event.clientX - box.left) / magnification,
+      y: (event.clientY - box.top) / magnification,
+    };
   };
 
   /** Applies view changes from a continuous gesture, echoing once at the end. */
@@ -464,7 +476,7 @@ export function GraphWindow({ name }: { name: string }) {
     if (axis) {
       ui.set({ dialog: { kind: "modifyAxis", graph: name, axis } });
     } else if (inside(layout.plot, x, y)) {
-      const trace = nearestTrace(layout, x, y, 6) ?? undefined;
+      const trace = nearestTrace(layout, x, y, 6 / magnification) ?? undefined;
       const image = graph.images.at(-1);
       const contour = graph.contours.at(-1);
       if (trace || (graph.traces.length > 0 && !image && !contour)) {
@@ -520,7 +532,7 @@ export function GraphWindow({ name }: { name: string }) {
       return;
     }
     const axis = axisAt(layout, x, y) ?? undefined;
-    const trace = nearestTrace(layout, x, y, 6) ?? undefined;
+    const trace = nearestTrace(layout, x, y, 6 / magnification) ?? undefined;
     const point = trace ? pointAt(trace, x) : null;
     const items: MenuItem[] = [
       { label: "Autoscale Axes", shortcut: "Ctrl+A", onSelect: () => autoscaleGraph(name) },
@@ -660,13 +672,21 @@ export function GraphWindow({ name }: { name: string }) {
               .join(", ") || "empty graph"
           }`}
           // A fixed plot area draws the figure at its own size, whatever the window's.
-          style={{ width: layout?.width ?? size.w, height: layout?.height ?? size.h }}
+          style={{
+            width: layout ? layout.width * magnification : size.w,
+            height: layout ? layout.height * magnification : size.h,
+          }}
           className="block"
         />
         {marquee ? (
           <div
             className="pointer-events-none absolute border border-dashed border-black/70 bg-black/[0.04]"
-            style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+            style={{
+              left: marquee.x * magnification,
+              top: marquee.y * magnification,
+              width: marquee.w * magnification,
+              height: marquee.h * magnification,
+            }}
           />
         ) : null}
         {layout && layout.missing.length > 0 ? (

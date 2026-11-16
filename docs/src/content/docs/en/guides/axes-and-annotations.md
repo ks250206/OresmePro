@@ -8,6 +8,21 @@ sidebar:
 
 Use a name such as `g.axis("left")` to get an axis. Set `range` to fix its limits and call `autoscale()` to restore automatic scaling. For a series with a different unit, create another axis and specify its name when appending the trace.
 
+**Show labels** in **Modify Axis** chooses which labels an axis draws, as Igor Pro's ModifyGraph `noLabel` does. The axis line and its ticks stay in every case.
+
+| Setting   | Draws                                           |
+| --------- | ----------------------------------------------- |
+| on        | The tick labels and the axis label (default)    |
+| axis only | The axis label only, without tick label numbers |
+| off       | Neither                                         |
+
+An automatic margin narrows by what is no longer drawn. Use it to take the numbers off inner axes of stacked plots, for example.
+
+```python
+g.axis("bottom").labels = "axis only"
+g.axis("left").set(labels="off")
+```
+
 - `g.legend()` adds a trace legend. Use `anchor="LT"` to position it in the upper left.
 - `g.textbox("Run 1")` adds text anchored to the graph.
 - `g.tag(trace, point, "Y = {y}")` adds a label attached to a point. Point indices start at zero.
