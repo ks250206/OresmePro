@@ -23,6 +23,7 @@ export function graphWaveKey(graph: GraphSpec, waves: DocState["waves"]): string
       trace.yError,
       trace.xError,
       trace.colorWave,
+      trace.textMarker,
     ]),
     ...graph.images.map((image) => image.wave),
     ...graph.contours.map((contour) => contour.wave),

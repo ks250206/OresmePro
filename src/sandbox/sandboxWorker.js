@@ -150,6 +150,10 @@ function run(message) {
   outcome.destroy();
   const transfer = [];
   for (const wave of Object.values(result.waves)) {
+    if (wave.dtype === "text") {
+      wave.text = JSON.parse(wave.text);
+      continue;
+    }
     // Copied out of Python's memory, so it can be handed over.
     wave.data = wave.data.slice().buffer;
     transfer.push(wave.data);
@@ -165,6 +169,7 @@ function run(message) {
       ok: true,
       waves: result.waves,
       values: JSON.parse(result.values),
+      graph: JSON.parse(result.graph),
       log,
     },
     transfer,

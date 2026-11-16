@@ -27,6 +27,8 @@ op.Axis(graph, name)
 
 ``labels`` は描くラベルを選びます(Igor の noLabel): ``"on"``(目盛りラベルと軸ラベル)、``"axis only"``(軸ラベルだけで目盛りの数値なし)、``"off"``(どちらもなし)。軸線と目盛りは残ります。
 
+``line=False`` で軸線そのものを描きません。``ticks="none"`` と ``labels="off"`` も指定すると、その軸は何も描かれません。3元相図のように、表示しない軸の上にトレースで描く図に使います。
+
 `graph.axis(name)` で取得するか、`graph.left` などを使います。`axis.range = (0, 10)` で表示範囲を固定し、`axis.autoscale()` で自動設定に戻せます。
 
 **プロパティ**
@@ -35,7 +37,7 @@ op.Axis(graph, name)
 - `range` (read/write) · (min, max)。データに従う端は None。
 - `side` (read-only)
 
-**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
+**設定可能なプロパティ** · `label`, `label_size`, `label_style`, `label_rotation`, `tick_label_size`, `labels`, `min`, `max`, `log`, `mirror`, `line`, `ticks`, `minor`, `grid`, `span`, `reverse`, `tick_step`, `tick_format`
 
 ### `Axis.set`
 

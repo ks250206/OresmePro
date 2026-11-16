@@ -69,6 +69,33 @@ g = op.display(y)`);
     expect(await svg()).toMatch(/rotate\(270 [^"]*"[^>]*>A</);
   });
 
+  test("Text markers in Modify Trace write a wave's values at the points; the axis line can go", async ({
+    app,
+    page,
+  }) => {
+    await app.run(`g.trace("y").mode = "markers"
+op.make("tags", [f"p{i}" for i in range(61)])`);
+    const svg = async () => (await app.run("print(g.svg())")).output;
+    expect(await svg()).not.toMatch(/>p10</);
+
+    await app.menu("Graph", "Modify Trace Appearance…");
+    const trace = page.getByRole("dialog", { name: /Modify Trace Appearance/ });
+    await trace.getByLabel("Text markers").selectOption("tags");
+    await trace.getByLabel("Text anchor").selectOption("LB");
+    await app.doIt();
+    expect((await app.lastEntry()).code).toBe(
+      'op.graph("Graph0").trace("y").set(text_marker="tags", text_anchor="LB")',
+    );
+    expect(await svg()).toMatch(/>p10</);
+
+    await app.menu("Graph", "Modify Axis…");
+    const axis = page.getByRole("dialog", { name: /Modify Axis/ });
+    await expect(axis.getByLabel("Draw the axis line")).toBeChecked();
+    await axis.getByLabel("Draw the axis line").uncheck();
+    await app.doIt();
+    expect((await app.lastEntry()).code).toBe('op.graph("Graph0").axis("left").set(line=False)');
+  });
+
   test("Margins in Modify Graph fix a side in points and go back to auto", async ({
     app,
     page,

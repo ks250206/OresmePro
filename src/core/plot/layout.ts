@@ -1568,6 +1568,20 @@ export function layoutGraph(
     }
     const binColor = (bin: number): string =>
       bin < 0 ? spec.color : colorAt(spec.colorTable, (bin + 0.5) / COLOR_BINS);
+
+    // The labels of text markers, when a wave gives them: text, or numbers written out.
+    const labelWave = spec.textMarker === null ? undefined : waves[spec.textMarker];
+    let labelOf: ((index: number) => string) | null = null;
+    if (labelWave && labelWave.shape.length === 1) {
+      labelOf = labelWave.text
+        ? (index) => labelWave.text![index] ?? ""
+        : (index) => {
+            const value = labelWave.data[index];
+            return value === undefined || Number.isNaN(value) ? "" : formatNumber(value);
+          };
+    } else if (spec.textMarker !== null) {
+      missing.add(spec.textMarker);
+    }
     /** Splits points (x, y pairs or longer groups of `stride` numbers) by color. */
     const byColor = (points: ArrayLike<number>, indices: readonly number[], stride: number) => {
       const groups = new Map<number, number[]>();
@@ -1778,6 +1792,34 @@ export function layoutGraph(
             stroke: color,
             width: 0,
           });
+        } else if (labelOf) {
+          // Text markers: each point's label, placed by its anchor and turned about it.
+          const textSize = spec.textSize ?? size;
+          const degrees = spec.textRotation;
+          const angle = (degrees * Math.PI) / 180;
+          const [across, up] = spec.textAnchor;
+          const align = across === "L" ? 0 : across === "R" ? 1 : 0.5;
+          for (let at = 0; at < shownIndices.length; at += 1) {
+            const index = shownIndices[at]!;
+            if (binOf && binColor(binOf(index)) !== color) continue;
+            const label = labelOf(index);
+            if (!label) continue;
+            const block = layoutText(label, textSize, family, measure);
+            // How far the baseline is below the anchor point, in the label's own frame.
+            const below =
+              up === "T"
+                ? block.ascent
+                : up === "B"
+                  ? -block.descent
+                  : (block.ascent - block.descent) / 2;
+            emitText(
+              children,
+              block,
+              shown[at * 2]! - Math.sin(angle) * below,
+              shown[at * 2 + 1]! + Math.cos(angle) * below,
+              { align, ...(degrees % 360 !== 0 ? { rotate: degrees } : {}), family, fill: color },
+            );
+          }
         } else {
           children.push({
             kind: "markers",
@@ -1809,9 +1851,11 @@ export function layoutGraph(
     // The line reaches a neighbouring axis so corners close.
     const reach = (neighbour: AxisSide, atPlotEdge: boolean): number =>
       atPlotEdge && axis.lane === 0 && occupied(neighbour) ? standoff : 0;
-    const segments: number[] = axis.vertical
-      ? [line, low - reach("top", low === plot.y), line, high + reach("bottom", high === bottom)]
-      : [low - reach("left", low === plot.x), line, high + reach("right", high === right), line];
+    const segments: number[] = !axis.spec.line
+      ? []
+      : axis.vertical
+        ? [line, low - reach("top", low === plot.y), line, high + reach("bottom", high === bottom)]
+        : [low - reach("left", low === plot.x), line, high + reach("right", high === right), line];
 
     if (show.ticks && axis.spec.ticks !== "none") {
       const mode = axis.spec.ticks;
@@ -1825,7 +1869,9 @@ export function layoutGraph(
       for (const tick of axis.ticks.major) addTick(tick.value, MAJOR_TICK);
       for (const value of axis.ticks.minor) addTick(value, MINOR_TICK);
     }
-    prims.push({ kind: "segments", points: segments, stroke: INK, width: 1, crisp: true });
+    if (segments.length > 0) {
+      prims.push({ kind: "segments", points: segments, stroke: INK, width: 1, crisp: true });
+    }
 
     let at = line + out * (show.ticks ? tickOut(axis.spec) : 0);
     if (show.labels && showsTickLabels(axis.spec)) {

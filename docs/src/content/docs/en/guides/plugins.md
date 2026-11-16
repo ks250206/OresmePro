@@ -87,4 +87,33 @@ def scale(y, factor=2.0):
 
 Wave arguments arrive as `Wave` objects (`.data` is a read-only NumPy array; `.x`, `.dx`, `.unit` and others are there too). Put `names`, `coef`, and `sigma` under `result` in `values` to keep an analysis result.
 
-An example plugin for electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits) is in [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem).
+A list of strings (or a NumPy array of them) given to `wave(...)` makes a text wave: the labels of text markers, say.
+
+### Return a graph
+
+Besides `waves` and `values`, an action may return `"graph"`. The app makes that graph from the waves the action returned, named by their roles.
+
+```python
+return {
+    "waves": {"x": wave(x), "y": wave(y), "label": wave(["P1", "P2"])},
+    "graph": {
+        "name": "Peaks",
+        "traces": [
+            {"y": "y", "x": "x", "mode": "markers", "legend": "Peaks"},
+            {"y": "y", "x": "x", "mode": "markers", "text_marker": "label", "text_anchor": "LB"},
+        ],
+        "axes": {"left": {"label": "Intensity"}, "bottom": {"min": 0}},
+        "graph": {"margin_left": 40},
+        "annotations": [{"kind": "legend", "anchor": "RT"}],
+    },
+}
+```
+
+- A trace takes the properties of the app's traces (`mode`, `color`, `line_size`, `marker`, `text_marker`, ...), with roles where they name waves. `axis` and `haxis` choose the sides of its axes, and traces given a `legend` are listed in a legend
+- `axes` and `graph` take the properties of axes and of the graph, in snake_case as in Python
+- The app checks all of it as it checks what Python asks for. A bad property leaves nothing of the run behind
+
+Two example plugins:
+
+- Electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
+- Ternary diagrams: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary). The frame, grid, tick labels and corner names are ordinary traces and text markers, returned as a graph

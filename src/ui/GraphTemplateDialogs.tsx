@@ -48,6 +48,7 @@ const ROLE_TEXT: Record<SlotRole, string> = {
   yError: "Y error",
   xError: "X error",
   color: "color wave",
+  text: "labels",
   z: "image",
 };
 
@@ -184,8 +185,8 @@ export function SaveGraphTemplateDialog({ graph: graphName }: { graph: string })
 function fits(wave: Wave, role: SlotRole): boolean {
   if (role === "z") return !wave.text && wave.shape.length >= 2;
   if (wave.shape.length !== 1) return false;
-  // A text wave is X for a category plot, and nothing else.
-  return role === "x" || !wave.text;
+  // A text wave is X for a category plot, or the labels of text markers.
+  return role === "x" || role === "text" || !wave.text;
 }
 
 type Row = Record<string, string>;

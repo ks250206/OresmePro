@@ -271,6 +271,18 @@ export interface TraceStyle {
   colorMax: number | null;
   /** For a complex Y wave: the part of each value that is plotted. */
   part: ComplexPart;
+  /**
+   * A wave with one value per point (text, or numbers that are written out)
+   * whose values are drawn at the points instead of markers, as Igor's text
+   * markers are: labels placed in data coordinates.
+   */
+  textMarker: string | null;
+  /** Which point of each label sits on its data point: "MC" centres it, "RC" puts it to the left. */
+  textAnchor: Anchor;
+  /** The size of the labels; null is the graph's font size. */
+  textSize: number | null;
+  /** Degrees clockwise the labels are turned about their anchor. */
+  textRotation: number;
 }
 
 export interface TraceSpec extends TraceStyle {
@@ -371,6 +383,12 @@ export interface AxisSpec {
   log: boolean;
   /** off: no opposite axis; on: plain line; ticks: line with ticks; labels: ticks and labels. */
   mirror: MirrorMode;
+  /**
+   * Draws the axis line. Off, only its ticks and labels are drawn: with no
+   * ticks and labels "off" too, the axis is not drawn at all, as for a
+   * ternary diagram drawn with traces.
+   */
+  line: boolean;
   ticks: TickMode;
   minor: boolean;
   grid: GridMode;
@@ -574,6 +592,7 @@ export const GRAPH_LOOK = [
 /** The properties of an axis a style can hold. */
 export const AXIS_LOOK = [
   "mirror",
+  "line",
   "ticks",
   "minor",
   "grid",
@@ -648,7 +667,7 @@ export interface StyleSpec {
  */
 
 /** What a wave fills in a graph template. */
-export const SLOT_ROLES = ["y", "x", "yError", "xError", "color", "z"] as const;
+export const SLOT_ROLES = ["y", "x", "yError", "xError", "color", "text", "z"] as const;
 export type SlotRole = (typeof SLOT_ROLES)[number];
 
 export interface TemplateSlot {
@@ -679,6 +698,10 @@ export const TRACE_DATA = [
   "colorMin",
   "colorMax",
   "part",
+  "textMarker",
+  "textAnchor",
+  "textSize",
+  "textRotation",
 ] as const;
 
 /** A trace of a template: slot names where the trace has wave names. */
@@ -1121,6 +1144,7 @@ export const defaultAxis = (side: AxisSide): AxisSpec => ({
   max: null,
   log: false,
   mirror: "off",
+  line: true,
   ticks: "outside",
   minor: false,
   grid: "off",
@@ -1163,6 +1187,10 @@ export const defaultTraceStyle = (index: number): TraceStyle => ({
   colorMin: null,
   colorMax: null,
   part: "real",
+  textMarker: null,
+  textAnchor: "MC",
+  textSize: null,
+  textRotation: 0,
 });
 
 /** The last component of a wave or folder path. */

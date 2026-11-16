@@ -1,0 +1,99 @@
+{
+  "format": "oresme-panel",
+  "version": 1,
+  "name": "TernaryDiagram",
+  "title": "Ternary Diagram",
+  "controls": [
+    { "kind": "heading", "name": "title", "label": "Ternary diagram", "inline": false },
+    {
+      "kind": "text",
+      "name": "about",
+      "label": "Choose the waves of the three components (fractions, percentages or amounts: each point is scaled to 100 %), then Draw. A is at the top, B at the bottom right and C at the bottom left.",
+      "inline": false
+    },
+    {
+      "kind": "wave",
+      "name": "a",
+      "label": "A (top)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "wave",
+      "name": "b",
+      "label": "B (bottom right)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "wave",
+      "name": "c",
+      "label": "C (bottom left)",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": ""
+    },
+    {
+      "kind": "string",
+      "name": "names",
+      "label": "Corner names",
+      "inline": false,
+      "value": "A, B, C"
+    },
+    {
+      "kind": "number",
+      "name": "step",
+      "label": "Grid step (%)",
+      "inline": false,
+      "value": 10,
+      "min": 1,
+      "max": 50,
+      "step": 5
+    },
+    {
+      "kind": "checkbox",
+      "name": "grid",
+      "label": "Grid",
+      "inline": true,
+      "value": true
+    },
+    {
+      "kind": "choice",
+      "name": "ticks",
+      "label": "Tick labels",
+      "inline": false,
+      "value": "clockwise",
+      "options": ["clockwise", "counterclockwise", "none"]
+    },
+    {
+      "kind": "string",
+      "name": "legend",
+      "label": "Legend",
+      "inline": false,
+      "value": ""
+    },
+    {
+      "kind": "button",
+      "name": "draw",
+      "label": "Draw",
+      "inline": false,
+      "action": "plugin.ternary.ternary",
+      "version": null,
+      "args": {
+        "a": { "$control": "a" },
+        "b": { "$control": "b" },
+        "c": { "$control": "c" },
+        "names": { "$control": "names" },
+        "step": { "$control": "step" },
+        "grid": { "$control": "grid" },
+        "ticks": { "$control": "ticks" },
+        "legend": { "$control": "legend" }
+      }
+    }
+  ]
+}

@@ -19,6 +19,34 @@ Results, compared, run again), put ``"result": {"names": [...], "coef":
 [...], "sigma": [...]}`` among the values; ``chisq``, ``points``,
 ``converged`` and ``reason`` may go with them.
 
+A wave of text (a list of strings, or a NumPy array of them) is a text wave:
+labels for text markers, say.
+
+To show what it made, an action may also return ``"graph"``: a graph for the
+application to make from the waves it returned, named by their roles::
+
+    "graph": {
+        "name": "Ternary",
+        "traces": [
+            {"y": "frame_y", "x": "frame_x", "color": "#808080"},
+            {"y": "y", "x": "x", "mode": "markers", "marker": "square",
+             "legend": "Samples"},
+            {"y": "tick_y", "x": "tick_x", "mode": "markers",
+             "text_marker": "tick_text", "text_anchor": "RC"},
+        ],
+        "axes": {"left": {"line": False, "ticks": "none", "labels": "off"}},
+        "graph": {"width": {"mode": "aspect", "aspect": 0.866}},
+        "annotations": [{"kind": "legend", "anchor": "RT"}],
+    }
+
+A trace takes the properties of the application's traces (``mode``,
+``color``, ``line_size``, ``line_style``, ``marker``, ``text_marker``, ...),
+with roles where they name waves, and ``axis`` and ``haxis`` (sides) to plot
+against; ``legend`` puts it in a legend with that text. ``axes`` and
+``graph`` take the properties of axes and of the graph. The application
+checks all of it as it checks what Python asks for, and makes the graph only
+from the waves the action returned.
+
 The sandbox has no network and no storage: only the packages the plugin
 declares (numpy, scipy, ...) and its own files.
 """
@@ -163,6 +191,23 @@ def _output(role, value):
     if not isinstance(value, Wave):
         value = wave(value)
     data = np.asarray(value.data)
+    if data.dtype.kind in "USO":
+        items = data.tolist() if data.ndim == 1 else None
+        if items is None or not all(isinstance(item, str) for item in items):
+            raise PluginError(f"Wave {role!r} must be numbers, or one dimension of text.")
+        return {
+            "dtype": "text",
+            "shape": [len(items)],
+            "text": json.dumps(items),
+            "x0": float(value.x0),
+            "dx": float(value.dx),
+            "xUnit": str(value.x_unit),
+            "y0": float(value.y0),
+            "dy": float(value.dy),
+            "yUnit": str(value.y_unit),
+            "unit": str(value.unit),
+            "note": str(value.note),
+        }
     if data.dtype.kind == "b":
         data = data.astype(np.uint8)
     elif data.dtype.kind in "iu" and data.dtype.name not in _TYPES:
@@ -228,11 +273,14 @@ def _run(name, inputs, params_json):
     if outcome is None:
         outcome = {}
     if not isinstance(outcome, dict):
-        raise PluginError("An action returns a dict with 'waves' and 'values'.")
-    unknown = set(outcome) - {"waves", "values"}
+        raise PluginError("An action returns a dict with 'waves', 'values' and 'graph'.")
+    unknown = set(outcome) - {"waves", "values", "graph"}
     if unknown:
-        raise PluginError(f"An action returns only 'waves' and 'values', not {sorted(unknown)}.")
+        raise PluginError(
+            f"An action returns only 'waves', 'values' and 'graph', not {sorted(unknown)}."
+        )
     waves = {str(role): _output(str(role), value) for role, value in (outcome.get("waves") or {}).items()}
     # As JSON text: converted to JavaScript, None would become undefined, not null.
     values = json.dumps(_plain(outcome.get("values") or {}), allow_nan=False)
-    return {"waves": waves, "values": values}
+    graph = json.dumps(_plain(outcome.get("graph")), allow_nan=False)
+    return {"waves": waves, "values": values, "graph": graph}

@@ -141,6 +141,7 @@ describe("graph styles", () => {
     });
     expect(style.axes?.left).toEqual({
       mirror: "ticks",
+      line: true,
       ticks: "inside",
       minor: true,
       grid: "major",

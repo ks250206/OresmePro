@@ -102,6 +102,12 @@ export const SANDBOX_LIMITS = {
   valuesBytes: 1024 * 1024,
   /** How deeply values may nest. */
   valuesDepth: 16,
+  /** Points of a text wave. */
+  textPoints: 100_000,
+  /** Characters of one value of a text wave. */
+  label: 400,
+  /** Traces, or annotations, of a graph a run asks for. */
+  graphItems: 64,
   /** Characters of output kept from one run. */
   log: 64 * 1024,
 } as const;

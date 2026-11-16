@@ -19,13 +19,15 @@ op.Trace(graph, name)
 
 ``fill="zero"`` は 0 までの面積を、``fill="next"`` は次のトレースとの間の帯を塗ります。``fill_color`` と ``fill_opacity`` で塗りの見た目を決めます。``x_offset`` と ``y_offset`` は wave を変えずに描く位置をずらします。``color_wave`` は別の wave の値で点ごとに色を付けます(``color_table`` を使い、``color_min``〜``color_max``、省くとその wave の範囲)。複素数の wave では ``part`` で描くものを選びます: ``"real"``、``"imag"``、``"magnitude"``、``"phase"``(ラジアン)。
 
+``text_marker`` は、マーカーの代わりに別の wave の値(文字、または数値)を各点に描きます。Igor の文字マーカーと同じで、データ座標に置くラベルになります。``text_anchor`` はラベルのどの点をデータ点に合わせるか("MC" は中央、"RC" は点の左、"MT" は点の下)、``text_size`` は文字の大きさ(None: グラフのフォントサイズ)、``text_rotation`` は時計回りの回転角(度)です。モードはマーカーを描くもの("markers" か "lines+markers")にします。
+
 **プロパティ**
 
 - `name` (read-only)
 - `y` (read-only) · Y 用の Wave。
 - `x` (read-only) · X 用の Wave。Y Wave のスケーリングで描く場合は `None`。
 
-**設定可能なプロパティ** · `mode`, `color`, `line_size`, `line_style`, `marker`, `marker_size`, `marker_fill`, `hidden`, `y_error`, `x_error`, `fill`, `fill_color`, `fill_opacity`, `x_offset`, `y_offset`, `color_wave`, `color_table`, `color_min`, `color_max`, `part`
+**設定可能なプロパティ** · `mode`, `color`, `line_size`, `line_style`, `marker`, `marker_size`, `marker_fill`, `hidden`, `y_error`, `x_error`, `fill`, `fill_color`, `fill_opacity`, `x_offset`, `y_offset`, `color_wave`, `color_table`, `color_min`, `color_max`, `part`, `text_marker`, `text_anchor`, `text_size`, `text_rotation`
 
 ### `Trace.remove`
 
