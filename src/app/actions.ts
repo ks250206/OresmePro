@@ -329,9 +329,21 @@ export async function loadWithPython(file: PendingData): Promise<void> {
   runPython(pythonLoader(path)!);
 }
 
-/** Shows another of the browser's experiments in this tab, saving this one first. */
+/**
+ * Shows another of the browser's experiments in this tab, saving this one
+ * first. If it cannot be saved (the browser's storage is full, say), the
+ * tab stays and asks what to do, rather than lose what is unsaved.
+ */
 export async function switchExperiment(id: string): Promise<void> {
-  await experiment.flush();
+  if (!(await experiment.flush())) {
+    ui.set({ dialog: { kind: "unsavedLeave", target: id } });
+    return;
+  }
+  leaveFor(id);
+}
+
+/** Goes to another of the browser's experiments without saving this one again. */
+export function leaveFor(id: string): void {
   location.hash = `#e=${id}`;
   location.reload();
 }

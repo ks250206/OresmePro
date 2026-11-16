@@ -25,6 +25,7 @@ import {
   openLaunchedFiles,
 } from "./app/isolate";
 import { importPanels, newPanel } from "./app/panels";
+import { docsUrl, GITHUB_URL, openLink } from "./app/links";
 import { importProcedures } from "./app/procedures";
 import { windowListItems } from "./app/windowMenu";
 import { frontWindow } from "./core/doc/types";
@@ -361,10 +362,15 @@ function useMenus(): MenuDefinition[] {
     {
       title: "Help",
       items: [
+        { label: "Documentation", onSelect: () => openLink(docsUrl()) },
+        { label: "Python API Reference", onSelect: () => openLink(docsUrl("reference/")) },
         {
           label: "Put an Example in the Command Line",
           onSelect: () => requestCommandLine(EXAMPLE),
         },
+        { separator: true },
+        { label: "OresmePro on GitHub", onSelect: () => openLink(GITHUB_URL) },
+        { label: "Report a Problem…", onSelect: () => openLink(`${GITHUB_URL}/issues/new`) },
         { label: "About OresmePro", onSelect: open({ kind: "about" }) },
       ],
     },

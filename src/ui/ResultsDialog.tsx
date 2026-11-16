@@ -147,7 +147,7 @@ export function ResultsDialog({ focus }: { focus?: string }) {
   });
   const cell = "border-b border-r border-line-soft px-1.5 py-0.5 whitespace-nowrap";
   return (
-    <Dialog title="Analysis Results" width={940} onClose={close}>
+    <Dialog title="Analysis Results" help="guides/curve-fitting/" width={940} onClose={close}>
       {list.length === 0 ? (
         <p className="m-0 text-muted">
           No results yet. Each fit (Analysis › Curve Fitting…, <code>op.fit</code>,{" "}

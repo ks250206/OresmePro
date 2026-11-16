@@ -450,14 +450,67 @@ def _least_squares(model, x, y, start, weights=None, lower=None, upper=None, max
                 break
         jacobian = jacobian_at(params)
         freedom = max(1, len(y) - len(params))
-        try:
-            covariance = np.linalg.inv(jacobian.T @ jacobian)
-            # Without per-point uncertainties, they are estimated from the scatter.
-            if weights is None:
-                covariance = covariance * chi / freedom
-        except np.linalg.LinAlgError:
-            covariance = np.full((len(params), len(params)), np.nan)
+        covariance = _covariance(jacobian)
+        # Without per-point uncertainties, they are estimated from the scatter.
+        if weights is None:
+            covariance = covariance * chi / freedom
+        if not np.all(np.isfinite(covariance)):
+            # Reached or not, the answer does not pin each parameter down.
+            reason += "; the uncertainties could not be estimated (the parameters are not independent there)"
     return params, covariance, chi, converged, reason
+
+
+def _covariance(jacobian):
+    """The inverse of J^T J, the covariance of the parameters before scaling by the scatter.
+
+    Worked out from the singular values of J with its columns scaled to unit
+    length, never by forming and inverting J^T J: that squares the condition
+    number, so a fit against X far from zero (dates are seconds since 1970)
+    lost all its digits and gave NaN or wrong uncertainties. All NaN where a
+    parameter is not determined (a column of zeros, or columns that depend
+    on each other within the rounding).
+    """
+    count = jacobian.shape[1]
+    undetermined = np.full((count, count), np.nan)
+    if not np.all(np.isfinite(jacobian)):
+        return undetermined
+    norms = np.sqrt(np.sum(jacobian**2, axis=0))
+    if not np.all(norms > 0):
+        return undetermined
+    _, singular, vt = np.linalg.svd(jacobian / norms, full_matrices=False)
+    if not singular[-1] > singular[0] * max(jacobian.shape) * np.finfo(float).eps:
+        return undetermined
+    inner = (vt.T / singular**2) @ vt
+    return inner / np.outer(norms, norms)
+
+
+def _centred_polynomial(x, y, count, weights):
+    """Fits the ``count`` coefficients of a polynomial in X (lowest power first).
+
+    Solved in u = (X - centre) / half of the range, then turned back into
+    coefficients of X with their covariance, which is exact algebra: the
+    coefficients of X are only as well determined as they are, but none of
+    the digits is lost on the way.
+    """
+    low, high = float(np.min(x)), float(np.max(x))
+    centre = 0.5 * (low + high)
+    half = 0.5 * (high - low) or 1.0
+    # coefficients of X = transform @ coefficients of u
+    transform = np.zeros((count, count))
+    for power in range(count):
+        for lower in range(power + 1):
+            transform[lower, power] = (
+                math.comb(power, lower) * (-centre) ** (power - lower) / half**power
+            )
+
+    def in_u(x_, *values):
+        return np.vander((x_ - centre) / half, count, increasing=True) @ np.asarray(values)
+
+    design = np.vander((x - centre) / half, count, increasing=True)
+    solved, covariance, chisq, converged, reason = _least_squares(
+        in_u, x, y, np.zeros(count), weights, design=design
+    )
+    return transform @ solved, transform @ covariance @ transform.T, chisq, converged, reason
 
 
 def _index_of(names, name, what):
@@ -944,12 +997,21 @@ def fit(function, y, x=None, *, guess=None, hold=None, bounds=None, sigma=None, 
             return model(x_, *trial)
 
         design = None
-        if isinstance(function, str) and (function == "line" or function.startswith("poly")):
+        polynomial = isinstance(function, str) and (function == "line" or function.startswith("poly"))
+        if polynomial:
             # a + b*x and K0 + K1*x + ... are linear in their parameters.
             design = np.vander(x_fit, len(names), increasing=True)[:, free]
-        best, free_covariance, chisq, converged, reason = _least_squares(
-            reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
-        )
+        if polynomial and not held and np.all(np.isinf(lower)) and np.all(np.isinf(upper)):
+            # Powers of X far from zero hardly differ: fit in X centred and
+            # scaled to [-1, 1], where they are independent, and carry the
+            # answer back. Held or bounded coefficients are of X itself.
+            best, free_covariance, chisq, converged, reason = _centred_polynomial(
+                x_fit, y_fit, len(names), weights
+            )
+        else:
+            best, free_covariance, chisq, converged, reason = _least_squares(
+                reduced, x_fit, y_fit, full[free], weights, lower[free], upper[free], design=design
+            )
     # From here on `params` is the fitted coefficients, in the order of `names`.
     params = full.copy()
     params[free] = best
