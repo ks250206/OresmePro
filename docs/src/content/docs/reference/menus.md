@@ -77,6 +77,10 @@ sidebar:
 | Recreation Script…                               | このグラフを作り直す Python を表示する                                           | `g.script()`                               |
 | Link Graphs…                                     | 複数グラフの軸とカーソルを連動させる                                             | `op.link_graphs(g1, g2)`                   |
 
+## Table
+
+最前面のテーブルに対して働きます。**New Table…**、**Append Columns to Table…**(wave を列として足す)、**Remove Columns from Table…**(列を外す。wave は残る)があります。Python では `t.append(...)`、`t.remove(...)` です。
+
 ## Layout
 
 最前面のページレイアウトに対して働きます。グラフ・テキストの追加、選択した項目の整列(左右上下・中央)、等間隔配置、同じ幅・高さ・大きさへの統一、**Arrange in Grid…**(格子状の配置)、**Select All** があります。Python では `op.new_layout()` と `Layout` のメソッドを使います。
@@ -113,11 +117,11 @@ sidebar:
 
 ## ウィンドウの右クリック
 
-| 場所             | 主な項目                                                                                                                                                               |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| グラフ           | Modify Trace / Axis / Graph、Rename Graph…、Link Graphs…、Apply Style、カーソルの設置、範囲の拡大・縮小                                                                |
-| テーブル         | Display、Set Wave Values…、Change Wave Scaling…、Rename or Move…、行の挿入・削除、Rename Table…                                                                        |
-| Procedure        | 編集・整形・検索、Run Procedure、Run Selection、Run When the Experiment Opens、Rename Procedure…、Export as name.py、Import Procedure…                                 |
-| Note             | Rename Note…、Export as name.md、Import Markdown…                                                                                                                      |
-| ページレイアウト | Layout メニューと同じ項目、項目の編集・削除                                                                                                                            |
-| Data Browser     | wave: Display・Edit・Attributes…・Change Wave Scaling…・Rename or Move…・Duplicate…・Kill。フォルダ: Make Waves…・New Data Folder…・Attributes…・Rename or Move…・Kill |
+| 場所             | 主な項目                                                                                                                                                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| グラフ           | Modify Trace / Axis / Graph、Rename Graph…、Link Graphs…、Apply Style、カーソルの設置、範囲の拡大・縮小                                                                                                                 |
+| テーブル         | Display、Set Wave Values…、Change Wave Scaling…、Rename or Move…、行の挿入・削除、Append / Remove Columns…、Rename Table…                                                                                               |
+| Procedure        | 編集・整形・検索、Run Procedure、Run Selection、Run When the Experiment Opens、Rename Procedure…、Export as name.py、Import Procedure…                                                                                  |
+| Note             | Rename Note…、Export as name.md、Import Markdown…                                                                                                                                                                       |
+| ページレイアウト | Layout メニューと同じ項目、項目の編集・削除                                                                                                                                                                             |
+| Data Browser     | wave: Display・Edit・Append to Table・Copy Full Path・Attributes…・Change Wave Scaling…・Rename or Move…・Duplicate…・Kill。フォルダ: Make Waves…・New Data Folder…・Copy Full Path・Attributes…・Rename or Move…・Kill |

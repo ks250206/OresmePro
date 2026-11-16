@@ -4,6 +4,7 @@ import {
   files,
   requestCommandLine,
   runGui,
+  showError,
   ui,
   useDoc,
   useFiles,
@@ -350,6 +351,17 @@ export function waveMatches(wave: Wave, query: string): boolean {
     .every((word) => haystack.includes(word));
 }
 
+/** The full path of a wave or a folder, as Igor writes it: "root:run1:signal", "root:run1:". */
+export const fullPath = (name: string, folder = false): string =>
+  folder ? (name ? `root:${name}:` : "root:") : `root:${name}`;
+
+/** Puts text on the clipboard, saying so if the browser will not. */
+function copyText(text: string): void {
+  navigator.clipboard
+    .writeText(text)
+    .catch((error: unknown) => showError("Could not copy to the clipboard", error));
+}
+
 export function DataBrowser() {
   const order = useDoc((state) => state.waveOrder);
   const waves = useDoc((state) => state.waves);
@@ -487,6 +499,17 @@ export function DataBrowser() {
       );
     }
     items.push({ label: "Edit in Table", onSelect: () => runGui({ op: "edit", waves: targets }) });
+    const tableNames = Object.keys(state.tables).sort((a, b) => a.localeCompare(b));
+    items.push({
+      label: "Append to Table",
+      disabled: tableNames.length === 0,
+      submenu: tableNames.map((table) => ({
+        label: state.windows.find((window) => window.name === table)?.hidden
+          ? `${table} (closed)`
+          : table,
+        onSelect: () => runGui({ op: "appendToTable", table, waves: targets }),
+      })),
+    });
     if (single && allCurves) {
       items.push({ label: "Curve Fitting…", onSelect: open({ kind: "curveFit", wave: name }) });
     }
@@ -536,6 +559,10 @@ export function DataBrowser() {
         disabled: !single,
         onSelect: open({ kind: "duplicateWave", wave: name }),
       },
+      {
+        label: single ? "Copy Full Path" : "Copy Full Paths",
+        onSelect: () => copyText(targets.map((target) => fullPath(target)).join("\n")),
+      },
       { separator: true },
       {
         label: single ? `Kill ${leafName(name)}` : `Kill ${targets.length} Waves`,
@@ -557,6 +584,7 @@ export function DataBrowser() {
         label: "New Data Folder…",
         onSelect: () => ui.set({ dialog: { kind: "newFolder", parent: folder } }),
       },
+      { label: "Copy Full Path", onSelect: () => copyText(fullPath(folder, true)) },
     ];
     if (folder) {
       items.push(

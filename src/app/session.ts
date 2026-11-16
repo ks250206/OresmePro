@@ -78,6 +78,8 @@ export type DialogRequest =
   /** Asks whether to close a window (keeping what it shows) or kill it. */
   | { kind: "closeWindow"; name: string }
   | { kind: "renameWindow"; name: string }
+  /** Adds waves to a table as columns, or takes columns out. */
+  | { kind: "tableColumns"; table: string; mode: "append" | "remove" }
   | { kind: "newProcedure" }
   /** Installing, managing and running plugins. */
   | { kind: "plugins" }

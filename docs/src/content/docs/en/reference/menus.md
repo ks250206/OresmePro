@@ -77,6 +77,10 @@ These act on the frontmost graph.
 | Recreation Script…                               | Shows the Python that makes this graph again                                                   | `g.script()`                               |
 | Link Graphs…                                     | Links the axes and cursors of graphs                                                           | `op.link_graphs(g1, g2)`                   |
 
+## Table
+
+These act on the frontmost table: **New Table…**, **Append Columns to Table…** (adds waves as columns) and **Remove Columns from Table…** (takes columns out; the waves stay). In Python, `t.append(...)` and `t.remove(...)`.
+
 ## Layout
 
 These act on the frontmost page layout: adding graphs and text, aligning the items selected (edges and centers), distributing them, making them the same width, height or size, **Arrange in Grid…** and **Select All**. In Python, use `op.new_layout()` and the methods of `Layout`.
@@ -113,11 +117,11 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 
 ## Right-click menus of windows
 
-| Where        | Main items                                                                                                                                                             |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph        | Modify Trace / Axis / Graph, Rename Graph…, Link Graphs…, Apply Style, cursors, zooming in and out                                                                     |
-| Table        | Display, Set Wave Values…, Change Wave Scaling…, Rename or Move…, insert and delete rows, Rename Table…                                                                |
-| Procedure    | Editing, formatting, find, Run Procedure, Run Selection, Run When the Experiment Opens, Rename Procedure…, Export as name.py, Import Procedure…                        |
-| Note         | Rename Note…, Export as name.md, Import Markdown…                                                                                                                      |
-| Page layout  | The items of the Layout menu, editing and removing items                                                                                                               |
-| Data Browser | Waves: Display, Edit, Attributes…, Change Wave Scaling…, Rename or Move…, Duplicate…, Kill. Folders: Make Waves…, New Data Folder…, Attributes…, Rename or Move…, Kill |
+| Where        | Main items                                                                                                                                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Graph        | Modify Trace / Axis / Graph, Rename Graph…, Link Graphs…, Apply Style, cursors, zooming in and out                                                                                                                      |
+| Table        | Display, Set Wave Values…, Change Wave Scaling…, Rename or Move…, insert and delete rows, Append / Remove Columns…, Rename Table…                                                                                       |
+| Procedure    | Editing, formatting, find, Run Procedure, Run Selection, Run When the Experiment Opens, Rename Procedure…, Export as name.py, Import Procedure…                                                                         |
+| Note         | Rename Note…, Export as name.md, Import Markdown…                                                                                                                                                                       |
+| Page layout  | The items of the Layout menu, editing and removing items                                                                                                                                                                |
+| Data Browser | Waves: Display, Edit, Append to Table, Copy Full Path, Attributes…, Change Wave Scaling…, Rename or Move…, Duplicate…, Kill. Folders: Make Waves…, New Data Folder…, Copy Full Path, Attributes…, Rename or Move…, Kill |

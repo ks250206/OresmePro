@@ -374,6 +374,46 @@ function NewTableDialog() {
   );
 }
 
+/**
+ * Adds waves to a table as columns, or takes some of its columns out (the
+ * waves stay), as Igor's AppendToTable and RemoveFromTable do.
+ */
+function TableColumnsDialog({ table, mode }: { table: string; mode: "append" | "remove" }) {
+  const columns = useDoc((state) => state.tables[table]?.columns);
+  const order = useDoc((state) => state.waveOrder);
+  const preselected = useUi((state) => state.selectedWaves);
+  const choices =
+    mode === "remove" ? [...(columns ?? [])] : order.filter((name) => !columns?.includes(name));
+  const [waves, setWaves] = useState<string[]>(() =>
+    mode === "append" ? preselected.filter((name) => choices.includes(name)) : [],
+  );
+  if (!columns) return null;
+  const picked = waves.filter((name) => choices.includes(name));
+  return (
+    <Dialog
+      title={mode === "append" ? `Append Columns to ${table}` : `Remove Columns from ${table}`}
+      help="guides/tables/"
+      onClose={close}
+      submitLabel={mode === "append" ? "Append" : "Remove"}
+      submitDisabled={picked.length === 0}
+      onSubmit={() =>
+        submit(
+          mode === "append"
+            ? { op: "appendToTable", table, waves: picked }
+            : { op: "removeFromTable", table, waves: picked },
+        )
+      }
+    >
+      <div className="text-muted">
+        {mode === "append"
+          ? "Waves to add as columns"
+          : "Columns to take out of the table (the waves stay)"}
+      </div>
+      <NameList label="Columns" names={choices} selected={picked} onChange={setWaves} />
+    </Dialog>
+  );
+}
+
 const DIMENSIONS = ["Rows", "Columns", "Layers", "Chunks"] as const;
 
 /** Makes empty waves, several alike at once, as Igor's Make Waves dialog does. */
@@ -3274,6 +3314,8 @@ function renderDialog(dialog: DialogRequest) {
       return <MatrixPlotDialog plot={dialog.plot} graph={dialog.graph} />;
     case "newTable":
       return <NewTableDialog />;
+    case "tableColumns":
+      return <TableColumnsDialog table={dialog.table} mode={dialog.mode} />;
     case "makeWaves":
       return <MakeWavesDialog folder={dialog.folder} />;
     case "modifyTrace":

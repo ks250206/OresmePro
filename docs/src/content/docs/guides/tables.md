@@ -6,6 +6,14 @@ sidebar:
 
 **Windows → New Table…** で Wave を列として選びます。セルを編集すると Experiment 内の Wave が更新され、同じ Wave を使うグラフにも反映されます。列ごとの Wave は異なる長さを持てます。
 
+列はあとから足したり外したりできます。**Table → Append Columns to Table…** と **Remove Columns from Table…**(テーブルの右クリックにもあります)が最前面のテーブルに働きます。Data Browser で wave を右クリックし、**Append to Table** から既存のテーブルを選んでも足せます。列を外しても wave は残ります。
+
+```python
+t = op.table("Table0")
+t.append("b", "c")
+t.remove("a")
+```
+
 ## 入力とコピー
 
 - セルを選択して編集し、範囲を選んでコピー・ペーストします。表計算ソフトとの間ではタブ区切りのテキストを受け渡せます。
