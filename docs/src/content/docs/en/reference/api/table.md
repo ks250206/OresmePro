@@ -1,7 +1,7 @@
 ---
-title: Table API
+title: Table
 sidebar:
-  order: 7
+  order: 10
 editUrl: false
 ---
 

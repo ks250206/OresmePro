@@ -1,7 +1,7 @@
 ---
-title: Actions API
+title: Actions
 sidebar:
-  order: 10
+  order: 15
 editUrl: false
 ---
 
@@ -52,6 +52,9 @@ the function's own default. The types are:
 - ``"choice"``: one of ``choices``, a list of strings or numbers;
 - ``"samples"``: a list of dicts, each giving the name of a wave for
   each input of a template (see ``Template.run``).
+- ``"json"``: a value with a structure of its own (dicts, lists, text,
+  numbers, True/False, and None inside), which the function checks
+  itself: a fit's ``hold``, ``bounds`` or ``exclude``, say.
 
 An argument that is left out is not passed, so the function's default
 applies. None (null) is never a value: leave the argument out instead.

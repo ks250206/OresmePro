@@ -49,6 +49,26 @@ g = op.display(y)`);
     expect(await svg()).not.toMatch(/>V</);
   });
 
+  test("turned … ° in Modify Axis turns the axis label round", async ({ app, page }) => {
+    await app.run(`g.append(op.make("z", np.arange(61.0), unit="A"), axis="right")`);
+    const svg = async () => (await app.run("print(g.svg())")).output;
+    expect(await svg()).toMatch(/rotate\(-90 [^"]*"[^>]*>V</);
+    expect(await svg()).toMatch(/rotate\(90 [^"]*"[^>]*>A</);
+
+    await app.menu("Graph", "Modify Axis…");
+    const dialog = page.getByRole("dialog", { name: /Modify Axis/ });
+    await expect(dialog.getByLabel("Label rotation")).toHaveValue("0");
+    await dialog.getByLabel("Label rotation").fill("180");
+    await app.doIt();
+    expect((await app.lastEntry()).code).toBe(
+      'op.graph("Graph0").axis("left").set(label_rotation=180)',
+    );
+    expect(await svg()).toMatch(/rotate\(90 [^"]*"[^>]*>V</);
+
+    await app.run('g.axis("right").label_rotation = 180');
+    expect(await svg()).toMatch(/rotate\(270 [^"]*"[^>]*>A</);
+  });
+
   test("Margins in Modify Graph fix a side in points and go back to auto", async ({
     app,
     page,

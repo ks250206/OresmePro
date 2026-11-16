@@ -1,7 +1,7 @@
 ---
-title: Templates API
+title: Analysis Templates
 sidebar:
-  order: 12
+  order: 14
 editUrl: false
 ---
 

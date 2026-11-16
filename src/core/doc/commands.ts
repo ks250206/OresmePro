@@ -967,6 +967,13 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
     },
     labelSize: (value) => (value === null ? null : fontSize(value, "labelSize")),
     labelStyle: (value) => oneOf(value, LABEL_STYLES, "labelStyle"),
+    labelRotation: (value) => {
+      const degrees = finite(value, "labelRotation");
+      if (degrees < -360 || degrees > 360) {
+        throw new DocError("labelRotation must be between -360 and 360 degrees.");
+      }
+      return degrees;
+    },
     tickLabelSize: (value) => (value === null ? null : fontSize(value, "tickLabelSize")),
     labels: (value) => oneOf(value, AXIS_LABEL_MODES, "labels"),
     min: nullableNumber("min"),

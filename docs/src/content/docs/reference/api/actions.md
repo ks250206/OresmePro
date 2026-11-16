@@ -1,7 +1,7 @@
 ---
-title: Actions API
+title: Action
 sidebar:
-  order: 10
+  order: 15
 editUrl: false
 ---
 
@@ -15,7 +15,7 @@ editUrl: false
 op.action(id, *, version=1, title, params, description=None)
 ```
 
-Register a function as an action: called by name, with arguments of known types.
+関数を Action として登録します: 名前と、型の決まった引数で呼ぶもの。
 
 ::
 
@@ -26,40 +26,24 @@ Register a function as an action: called by name, with arguments of known types.
     def normalize(wave, to=1.0):
         return op.make(f"{wave.name}_norm", wave.data / np.nanmax(wave.data) * to)
 
-Panels, templates and plugins call actions with plain values (JSON)
-instead of Python code; from Python, ``op.invoke("lab.normalize",
-{"wave": "signal"})`` does the same. The arguments are checked against
-``params`` before the function is called, and the call runs in an
-``op.atomic()`` block, so a call that fails changes nothing.
+パネル・テンプレート・プラグインは、Python のコードではなく普通の値(JSON)で Action を呼びます。Python からは ``op.invoke("lab.normalize", {"wave": "signal"})`` で同じことができます。引数は関数を呼ぶ前に ``params`` と照らし合わせて検査し、呼び出しは ``op.atomic()`` ブロックの中で動くので、失敗した呼び出しは何も変えません。
 
-``id`` is a lowercase dotted name such as ``"lab.normalize"``. Ids that
-start with ``core.`` are the application's own analyses, and ``plugin.``
-is kept for plugins: a procedure cannot register those. Registering the
-same id and version again replaces it, as running a procedure again
-does. A new ``version`` of an action can be registered beside the old
-one: a caller that names a version gets it, others get the highest.
+``id`` は ``"lab.normalize"`` のような小文字の点区切りの名前です。``core.`` で始まる id はアプリ自身の解析、``plugin.`` はプラグイン用なので、Procedure からは登録できません。同じ id と版をもう一度登録すると置き換わります(Procedure をもう一度実行したときなど)。新しい ``version`` は古い版と並べて登録でき、版を指定した呼び出しはその版、それ以外は最新版を使います。
 
-``params`` maps each argument's name to a dict that describes it: its
-``type``, and optionally a ``title``, a ``description``,
-``optional=True``, and a ``default``, which makes it optional and must be
-the function's own default. The types are:
+``params`` は各引数の名前から、その説明の dict への対応です: ``type`` と、必要なら ``title``、``description``、``optional=True``、``default``(付けると省略可能になり、関数自身の既定値と同じである必要があります)。型は次のとおりです:
 
-- ``"wave"``: the name of an existing wave, passed as an ``op.Wave``;
-- ``"waves"``: a list of names of waves, passed as a list of ``op.Wave``;
-- ``"number"``, ``"integer"``: with ``min`` and ``max`` if wanted (inclusive);
-- ``"numbers"``: a list of numbers, with ``min``, ``max`` and ``length`` if wanted;
-- ``"string"``, ``"boolean"``;
-- ``"choice"``: one of ``choices``, a list of strings or numbers;
-- ``"samples"``: a list of dicts, each giving the name of a wave for
-  each input of a template (see ``Template.run``).
+- ``"wave"``: 既存の wave の名前。``op.Wave`` として渡す。
+- ``"waves"``: wave の名前のリスト。``op.Wave`` のリストとして渡す。
+- ``"number"``、``"integer"``: 必要なら ``min`` と ``max``(両端を含む)。
+- ``"numbers"``: 数のリスト。必要なら ``min``、``max``、``length``。
+- ``"string"``、``"boolean"``。
+- ``"choice"``: ``choices``(文字列か数のリスト)のどれか。
+- ``"samples"``: dict のリストで、各 dict はテンプレートの入力ごとに wave の名前を与える(``Template.run`` を参照)。
+- ``"json"``: 独自の構造を持つ値(dict、リスト、文字列、数、True/False と、その中の None)。中身は関数自身が検査する。フィットの ``hold``、``bounds``、``exclude`` など。
 
-An argument that is left out is not passed, so the function's default
-applies. None (null) is never a value: leave the argument out instead.
-``arg`` passes an argument as the parameter of that name. Two optional
-arguments may be passed as the same parameter (a number of peaks or
-their positions, say); at most one of them can then be given.
+省いた引数は渡さないので、関数の既定値が使われます。None(null)は値として使えません。代わりに引数を省いてください。``arg`` は引数をその名前のパラメータとして渡します。2 つの省略可能な引数を同じパラメータとして渡すこともでき(ピークの数か位置か、など)、そのときはどちらか一方しか指定できません。
 
-Returns the function unchanged.
+関数をそのまま返します。
 
 ## `actions`
 
@@ -67,11 +51,9 @@ Returns the function unchanged.
 op.actions()
 ```
 
-The registered actions, as plain dicts: id, version, title, description and params.
+登録された Action を普通の dict で返します: id、version、title、description、params。
 
-Every version of each action is listed, ordered by id and then version.
-``params`` maps each argument's name to its description (see ``op.action``),
-with ``optional`` always given.
+各 Action のすべての版を、id、版の順に並べます。``params`` は各引数の名前からその説明(``op.action`` を参照)への対応で、``optional`` は常に入っています。
 
 ## `invoke`
 
@@ -79,14 +61,10 @@ with ``optional`` always given.
 op.invoke(id, args=None, *, version=None)
 ```
 
-Call an action by its id with a dict of plain values, as the application does.
+id と普通の値の dict で Action を呼びます(アプリと同じ呼び方)。
 
 ::
 
     r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})
 
-The arguments are checked against the action's parameters first (see
-``op.action``); a call that is refused raises ``OresmeError`` and does
-nothing. Waves may be given by name or as ``op.Wave``. ``version`` picks
-a version of the action, the highest by default. The call runs in an
-``op.atomic()`` block and returns what the function returns.
+引数はまず Action のパラメータと照らし合わせます(``op.action`` を参照)。拒否された呼び出しは ``OresmeError`` になり、何もしません。wave は名前でも ``op.Wave`` でも渡せます。``version`` で Action の版を選びます(既定は最新)。呼び出しは ``op.atomic()`` ブロックの中で動き、関数の戻り値を返します。

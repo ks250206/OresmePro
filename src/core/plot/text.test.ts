@@ -397,6 +397,8 @@ function inkBox(prim: Extract<Prim, { kind: "text" }>): Rect {
   const up = prim.size * CAP_HEIGHT;
   const down = prim.size * 0.22;
   if (prim.rotate === -90) return { x: prim.x - up, y: prim.y - w, w: up + down, h: w };
+  // Turned the other way: reads downwards, the tops of the letters to the right.
+  if (prim.rotate === 90) return { x: prim.x - down, y: prim.y, w: up + down, h: w };
   return { x: prim.x, y: prim.y - up, w, h: up + down };
 }
 
@@ -464,11 +466,56 @@ describe("room for large axis labels", () => {
       }
       expect(meets(inkBox(tick), after.plot), tick.text).toBe(false);
     }
-    // Left and right labels read upwards, as before.
+    // The left label reads upwards and the right one downwards, as in Igor.
     expect(titles.filter((prim) => prim.rotate === -90).map((prim) => prim.text)).toEqual([
       "Leftside",
+    ]);
+    expect(titles.filter((prim) => prim.rotate === 90).map((prim) => prim.text)).toEqual([
       "Rightside",
     ]);
+  });
+
+  it("turns an axis label as asked, and keeps it clear of the plot at any angle", () => {
+    const doc = fourSides({ labelSize: 24 });
+    const graph = () => doc.getState().graphs.Graph0!;
+    const lay = () => layoutGraph(graph(), doc.getState().waves, 600, 450, measure);
+    const title = (text: string) => textPrims(lay().prims).find((prim) => prim.text === text)!;
+    // 180 turns the right label round, to read upwards as the left one does.
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "right",
+      props: { labelRotation: 180 },
+    });
+    expect(title("Rightside").rotate).toBe(270);
+    for (const [axis, degrees, text] of [
+      ["bottom", 90, "Bottomside"],
+      ["left", 90, "Leftside"],
+      ["top", 45, "Topside"],
+    ] as const) {
+      const before = lay().plot;
+      doc.dispatch({ op: "modifyAxis", graph: "Graph0", axis, props: { labelRotation: degrees } });
+      const after = lay();
+      expect(title(text).rotate, text).toBe((axis === "left" ? -90 : 0) + degrees || undefined);
+      // A label across the axis takes its length of room, not its height.
+      if (axis === "bottom")
+        expect(450 - after.plot.y - after.plot.h).toBeGreaterThan(450 - before.y - before.h);
+    }
+    doc.dispatch({
+      op: "modifyAxis",
+      graph: "Graph0",
+      axis: "left",
+      props: { labelRotation: -90 },
+    });
+    expect(title("Leftside").rotate).toBe(-180);
+    expect(() =>
+      doc.dispatch({
+        op: "modifyAxis",
+        graph: "Graph0",
+        axis: "left",
+        props: { labelRotation: 400 },
+      }),
+    ).toThrow(/between -360 and 360/);
   });
 
   it("makes room for large tick labels on a mirrored axis and on stacked axes", () => {

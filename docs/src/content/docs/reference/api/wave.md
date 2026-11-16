@@ -1,5 +1,5 @@
 ---
-title: Wave API
+title: Wave
 sidebar:
   order: 1
 editUrl: false
@@ -15,36 +15,35 @@ editUrl: false
 op.Wave(name)
 ```
 
-A named array with scaling, stored in the application.
+スケーリングを持つ名前付きの配列。アプリ側に保存されます。
 
-Arithmetic and NumPy functions work on a wave directly and give ordinary
-arrays: ``np.sqrt(w)``, ``w * 2``, ``w.data.mean()``.
+算術演算や NumPy の関数は wave にそのまま使え、結果は通常の配列になります: ``np.sqrt(w)``、``w * 2``、``w.data.mean()``。
 
-A wave is numeric with 1 to 4 dimensions, or a 1-D list of text.
+wave は 1〜4 次元の数値か、1 次元のテキストの並びです。
 
 **プロパティ**
 
 - `name` (read-only)
-- `data` (read/write) · The values as a read-only array. Assign to replace them all.
-- `dtype` (read-only) · The wave's number type, as a NumPy dtype.
+- `data` (read/write) · 値(読み取り専用の配列)。代入するとすべての値を置き換えます。
+- `dtype` (read-only) · wave の数値の型(NumPy の dtype)。
 - `is_complex` (read-only)
 - `shape` (read-only) · 各次元の点数のタプル。
 - `ndim` (read-only) · 次元数。
 - `is_text` (read-only)
-- `x` (read-only) · The X value of every index along the first dimension, from the scaling.
-- `y` (read-only) · The Y value of every index along the second dimension of a 2-D wave.
+- `x` (read-only) · 第 1 次元の各点の X の値。スケーリングから計算します。
+- `y` (read-only) · 2 次元 wave の第 2 次元の各点の Y の値。
 - `y0` (read-only)
 - `dy` (read-only)
 - `y_unit` (read-only)
 - `x0` (read/write)
 - `dx` (read/write)
 - `x_unit` (read/write)
-- `unit` (read/write) · Unit of the stored values, shown on axes.
+- `unit` (read/write) · 値の単位。軸に表示されます。
 - `note` (read/write)
-- `attributes` (read-only) · The attributes of the sample this wave is: those of its data folders, then its own. A dict of name to number or text, such as ``{"thickness": 12.5, "instrument": "XPS-2"}``; see ``op.set_attributes``.
-- `formula` (read/write) · The formula the values are computed from, as text; None if there is none. Assigning one computes it now and keeps it up to date as its waves change: ``r.formula = "V / I"`` (see ``op.set_formula`` for the language, and for a formula computed only when asked). Assigning None removes the formula and keeps the values.
-- `formula_info` (read-only) · How the formula stands, as a dict; None if there is none. ``expr`` and ``auto`` are as set; ``inputs`` names the waves it reads; ``status`` is ``"ok"``, ``"stale"`` (a manual formula whose inputs changed since it was computed), ``"error"`` (the last computation failed and the values are from before it) or ``"missing"`` (one of its waves does not exist), with ``message`` saying more; ``zero_divisions`` counts the points that were divided by zero and so are NaN.
-- `flat` (read-only) · The points in storage order, whatever the shape: ``w.flat[6:9] = 0``.
+- `attributes` (read-only) · この wave が表す試料の属性。データフォルダの属性に、wave 自身の属性を重ねたものです。 名前から数値か文字への dict です(例: ``{"thickness": 12.5, "instrument": "XPS-2"}``)。``op.set_attributes`` も見てください。
+- `formula` (read/write) · 値を計算する数式(文字列)。なければ None。 代入するとすぐに計算し、式が読む wave が変わるたびに計算し直します: ``r.formula = "V / I"``(式の書き方と、求めたときだけ計算する式は ``op.set_formula`` を参照)。None を代入すると式を外し、値はそのまま残します。
+- `formula_info` (read-only) · 数式の状態(dict)。式がなければ None。 ``expr`` と ``auto`` は設定した値、``inputs`` は式が読む wave の名前です。``status`` は ``"ok"``、``"stale"``(手動の式で、計算後に入力が変わった)、``"error"``(前回の計算が失敗し、値はその前のまま)、``"missing"``(式が読む wave がない)のいずれかで、``message`` に詳しい説明が入ります。``zero_divisions`` は 0 で割って NaN になった点の数です。
+- `flat` (read-only) · 形にかかわらず、保存順に並べた点: ``w.flat[6:9] = 0``。
 
 ### `Wave.redimension`
 
@@ -52,11 +51,9 @@ A wave is numeric with 1 to 4 dimensions, or a 1-D list of text.
 redimension(dtype)
 ```
 
-Change the number type, converting the values (Igor's Redimension).
+数値の型を変え、値を変換します(Igor の Redimension)。
 
-Into an integer type they are rounded and held at the ends of its
-range. A real wave made complex gets zero imaginary parts; a complex
-wave made real keeps its real parts.
+整数型にすると丸められ、範囲の外の値は端の値になります。実数の wave を複素数にすると虚部は 0、複素数を実数にすると実部が残ります。
 
 ### `Wave.set_attributes`
 
@@ -64,7 +61,7 @@ wave made real keeps its real parts.
 set_attributes(values=None, **named)
 ```
 
-Set attributes of this wave itself (None removes one). Returns self.
+この wave 自身に属性を設定します(None で削除)。self を返します。
 
 ### `Wave.set_scale`
 
@@ -72,7 +69,7 @@ Set attributes of this wave itself (None removes one). Returns self.
 set_scale(x0=None, dx=None, unit=None, *, y0=None, dy=None, y_unit=None)
 ```
 
-Set the scaling: start, step and unit along X (and Y for a 2-D wave).
+スケーリング(X の開始値・刻み・単位。2 次元 wave では Y も)を設定します。
 
 ### `Wave.rename`
 
@@ -80,7 +77,7 @@ Set the scaling: start, step and unit along X (and Y for a 2-D wave).
 rename(new_name)
 ```
 
-Rename the wave. A name with a folder ("run1:signal") moves it there.
+wave の名前を変えます。フォルダ付きの名前("run1:signal")ならそこへ移します。
 
 ### `Wave.duplicate`
 
@@ -88,7 +85,7 @@ Rename the wave. A name with a folder ("run1:signal") moves it there.
 duplicate(new_name)
 ```
 
-Copy this wave, with its scaling, to a new wave.
+この wave をスケーリングごと新しい wave に複製します。
 
 ### `Wave.insert_points`
 
@@ -96,7 +93,7 @@ Copy this wave, with its scaling, to a new wave.
 insert_points(at, count=1)
 ```
 
-Insert ``count`` NaN points before point ``at``.
+点 ``at`` の前に、NaN の点を ``count`` 個挿入します。
 
 ### `Wave.delete_points`
 
@@ -142,19 +139,11 @@ __setitem__(key, value)
 op.make(name, data=None, *, n=128, dtype=None, x0=None, dx=None, x_unit=None, y0=None, dy=None, y_unit=None, unit=None, note=None, overwrite=True)
 ```
 
-Create a wave (or replace an existing one) and return it.
+wave を作り(あれば置き換え)、返します。
 
-``data`` may be numbers with up to 4 dimensions, or a list of strings for
-a text wave. Without ``data`` the wave has ``n`` zeros; ``n=(rows,
-columns)``, with up to 4 sizes, makes a matrix of zeros. An existing wave
-keeps its scaling and units unless new ones are given; with
-``overwrite=False`` making one is refused instead.
+``data`` は 4 次元までの数値か、テキスト wave にする文字列のリストです。``data`` を省くと 0 が ``n`` 個の wave になり、``n=(rows, columns)``(4 つまで)で 0 の行列になります。既存の wave は、新しく指定しない限りスケーリングと単位を引き継ぎます。``overwrite=False`` なら既存の wave があると作りません。
 
-The wave takes the type of the data when it is one a wave can have:
-float64 or float32, int8 to int32 and uint8 to uint32, complex128 or
-complex64. Plain whole numbers (a list of them, ``np.arange(10)``) are
-float64, like any other numbers. ``dtype`` asks for a type by name:
-``dtype="int32"``.
+データの型が wave の持てる型なら、その型になります: float64、float32、int8〜int32、uint8〜uint32、complex128、complex64。ただの整数(そのリストや ``np.arange(10)``)は、ほかの数と同じく float64 です。型を名前で指定するには ``dtype`` を使います: ``dtype="int32"``。
 
 ## `wave`
 
@@ -162,7 +151,7 @@ float64, like any other numbers. ``dtype`` asks for a type by name:
 op.wave(name)
 ```
 
-The existing wave with this name.
+この名前の既存の wave。
 
 ## `waves`
 
@@ -170,7 +159,7 @@ The existing wave with this name.
 op.waves(folder=None)
 ```
 
-Every wave, in creation order; or only those directly in a folder.
+すべての wave(作った順)。フォルダを指定すると、その直下の wave だけ。
 
 ## `exists`
 
@@ -184,7 +173,7 @@ op.exists(name)
 op.kill(*waves_)
 ```
 
-Delete waves. A wave shown in a graph or table cannot be killed.
+wave を削除します。グラフやテーブルが表示している wave は削除できません。
 
 ## `set_formula`
 
@@ -192,40 +181,22 @@ Delete waves. A wave shown in a graph or table cannot be killed.
 op.set_formula(wave, expr, *, auto=True)
 ```
 
-Compute a wave's values from other waves with a formula, and return it.
+数式で、ほかの wave から wave の値を計算し、その wave を返します。
 
 ::
 
     op.set_formula("R", "V / I")
     op.set_formula("ratio", "run1:A / run2:A", auto=False)
 
-The wave is made if it does not exist, with the length and X scaling of
-the waves in the formula. The values are computed now, as float64, and
-with ``auto=True`` again whenever one of those waves changes, in the
-same undo step as the change; with ``auto=False`` only by
-``op.recalculate()``, the wave being marked out of date meanwhile.
-Values written into the wave itself are replaced by the formula's (or
-mark it out of date); ``w.formula = None`` removes the formula first.
+wave がなければ、式の wave と同じ長さと X スケーリングで作ります。値はすぐに float64 で計算します。``auto=True`` なら式の wave が変わるたびに、その変更と同じ Undo の単位で計算し直します。``auto=False`` なら ``op.recalculate()`` のときだけ計算し、それまでは「古い」と印を付けます。wave 自体に書き込んだ値は式の値で置き換えられます(または古いと印が付きます)。式を外すには ``w.formula = None`` です。
 
-The formula is not Python. It works point by point on 1-D numeric waves
-with the same number of points and the same X scaling (nothing is
-interpolated), and knows only:
+式は Python ではありません。点数と X スケーリングが同じ 1 次元の数値 wave に、点ごとに働きます(補間はしません)。使えるのは次のものだけです:
 
-- numbers, wave names (``run1:V`` in a data folder; ``'x'`` in quotes
-  for a wave named like one of the words below), ``p`` (the point
-  number), ``x`` (its X value), ``pi``, ``e``, ``nan``, ``inf``
-- ``+ - * / ^`` (``^`` is a power, ``-2^2`` is -4), comparisons
-  ``< <= > >= == !=``, ``&& || !`` and ``test ? a : b``
-- ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh
-  cosh tanh floor ceil round min max pow hypot sign isnan``; ``log`` is
-  the common logarithm, as in Igor
+- 数、wave の名前(データフォルダ内は ``run1:V``。下の語と同じ名前の wave は ``'x'`` のように引用符で囲む)、``p``(点番号)、``x``(その X の値)、``pi``、``e``、``nan``、``inf``
+- ``+ - * / ^``(``^`` はべき乗。``-2^2`` は -4)、比較 ``< <= > >= == !=``、``&& || !``、``test ? a : b``
+- ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh cosh tanh floor ceil round min max pow hypot sign isnan``。``log`` は Igor と同じく常用対数
 
-Division by zero gives NaN; a warning says how many points it took.
-NaN goes through everything but ``isnan``: ``isnan(V) ? 0 : V``. A
-formula that cannot be computed, or that would make a wave depend on
-itself, raises ``OresmeError`` saying where, and changes nothing. When
-an automatic recomputation fails later (an input deleted or of another
-length), the values stay as they were and ``w.formula_info`` says why.
+0 で割ると NaN になり、何点そうなったかを警告します。NaN は ``isnan`` 以外のすべてを通り抜けます: ``isnan(V) ? 0 : V``。計算できない式や、wave が自分自身に依存することになる式は、どこが問題かを示す ``OresmeError`` になり、何も変えません。あとで自動の再計算が失敗したとき(入力が削除された、長さが変わったなど)は、値はそのまま残り、``w.formula_info`` が理由を示します。
 
 ## `recalculate`
 
@@ -233,11 +204,9 @@ length), the values stay as they were and ``w.formula_info`` says why.
 op.recalculate(waves=None)
 ```
 
-Compute formulas again: those of the given waves, or all.
+数式を計算し直します。指定した wave の式、または全部。
 
-Only formulas that are out of date (manual ones whose waves changed) or
-whose last computation failed are computed, inputs before the waves
-computed from them. A warning names those that still fail.
+計算するのは、古くなった式(入力が変わった手動の式)と前回の計算が失敗した式だけで、入力の wave を先に計算します。まだ失敗する式は警告で示します。
 
 ## `WAVE_TYPES`
 

@@ -1,7 +1,7 @@
 ---
-title: Panel API
+title: Panels
 sidebar:
-  order: 11
+  order: 18
 editUrl: false
 ---
 

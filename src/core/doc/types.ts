@@ -355,6 +355,12 @@ export interface AxisSpec {
   labelSize: number | null;
   /** The style the whole label is set in, before any codes in it. */
   labelStyle: LabelStyle;
+  /**
+   * How far the axis label is turned from where its side sets it, in degrees
+   * (Igor's lblRot), clockwise: the label of a left axis reads upwards, of a
+   * right axis downwards, of a bottom or top axis across. 180 turns it round.
+   */
+  labelRotation: number;
   /** Font size of the tick labels; null is the graph's. */
   tickLabelSize: number | null;
   /** Which labels are drawn: all, the axis label only, or none (see {@link AXIS_LABEL_MODES}). */
@@ -573,6 +579,7 @@ export const AXIS_LOOK = [
   "grid",
   "labelSize",
   "labelStyle",
+  "labelRotation",
   "tickLabelSize",
   "labels",
 ] as const;
@@ -1046,6 +1053,7 @@ export const defaultAxis = (side: AxisSide): AxisSpec => ({
   label: null,
   labelSize: null,
   labelStyle: "plain",
+  labelRotation: 0,
   tickLabelSize: null,
   labels: "on",
   min: null,

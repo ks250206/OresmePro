@@ -1,7 +1,7 @@
 ---
-title: Trace API
+title: Trace
 sidebar:
-  order: 3
+  order: 5
 editUrl: false
 ---
 

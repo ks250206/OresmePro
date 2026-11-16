@@ -3,6 +3,7 @@
 import argparse
 import ast
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -12,39 +13,63 @@ SOURCE = DOCS.parent / "src/kernel/python"
 CONTENT = DOCS / "src/content/docs"
 OUTPUT = Path("reference/api")
 REPOSITORY = "https://github.com/ks250206/OresmePro/blob/main/src/kernel/python"
+# The Japanese of each description (see Japanese).
+JAPANESE = DOCS / "scripts/api-ja.json"
 
-# __all__ defines the public module surface. Each export must have one home.
+# __all__ defines the public module surface. Each export must have one home:
+# a page of its own, by what it is for. Each page has an English and a
+# Japanese title.
 SECTIONS = {
-    "wave": (
-        "Wave API",
-        "Wave make wave waves exists kill set_formula recalculate WAVE_TYPES",
+    "wave": ("Wave", "Wave", "Wave make wave waves exists kill set_formula recalculate WAVE_TYPES"),
+    "folder": (
+        "Data Folders and Attributes",
+        "データフォルダと属性",
+        "Folder new_folder folder folders set_attributes attributes",
+    ),
+    "files": (
+        "Loading Files",
+        "ファイルの読み込み",
+        "load_text load_excel load_igor load_parquet load_hdf5",
     ),
     "graph": (
-        "Graph API",
+        "Graph",
+        "グラフ",
+        "Graph display graph graphs Annotation Length pt cm inch link_graphs unlink_graphs",
+    ),
+    "trace": ("Trace", "トレース", "Trace"),
+    "axis": ("Axis", "軸", "Axis"),
+    "image-contour": ("Image and Contour", "画像と等高線", "Image Contour image contour"),
+    "cursor": ("Cursor", "カーソル", "Cursor"),
+    "styles": (
+        "Styles and Graph Templates",
+        "スタイルとグラフテンプレート",
         (
-            "Graph Length pt cm inch Annotation Style display graph graphs style styles set_style "
-            "apply_style set_default_style default_style "
-            "GraphTemplate graph_template graph_templates set_graph_template link_graphs unlink_graphs"
+            "Style style styles set_style apply_style set_default_style default_style "
+            "GraphTemplate graph_template graph_templates set_graph_template"
         ),
     ),
-    "trace": ("Trace API", "Trace"),
-    "axis": ("Axis API", "Axis"),
-    "image-contour": ("Image / Contour API", "Image Contour image contour"),
-    "cursor": ("Cursor API", "Cursor"),
-    "table": ("Table API", "Table edit table tables to_dataframe from_dataframe"),
-    "folder": ("Folder API", "Folder new_folder folder folders set_attributes attributes"),
-    "analysis": ("Analysis API", None),  # All exports of _oresme_analysis.py.
-    "actions": ("Actions API", "action actions invoke"),
-    "panel": ("Panel API", "Panel Control panel panels new_panel set_panel control"),
-    "templates": ("Templates API", "Template template templates set_template Run run runs"),
-    "global": (
-        "Global Functions",
-        (
-            "OresmeError atomic load_text load_excel load_igor load_parquet load_hdf5 kill_window close_window reopen_window rename_window windows "
-            "Procedure new_procedure procedure procedures time_zone set_time_zone "
-            "Layout LayoutItem new_layout layout layouts install uninstall packages"
-        ),
+    "table": ("Table", "テーブル", "Table edit table tables to_dataframe from_dataframe"),
+    "layout": ("Page Layout", "ページレイアウト", "Layout LayoutItem new_layout layout layouts"),
+    "windows": (
+        "Windows",
+        "ウィンドウ",
+        "windows rename_window close_window reopen_window kill_window",
     ),
+    "analysis": ("Analysis", "解析", None),  # All exports of _oresme_analysis.py.
+    "templates": (
+        "Analysis Templates",
+        "解析テンプレート",
+        "Template template templates set_template Run run runs",
+    ),
+    "actions": ("Actions", "Action", "action actions invoke"),
+    "procedure": (
+        "Procedures",
+        "Procedure",
+        "Procedure new_procedure procedure procedures",
+    ),
+    "packages": ("Packages", "パッケージ", "install uninstall packages"),
+    "panel": ("Panels", "パネル", "Panel Control panel panels new_panel set_panel control"),
+    "global": ("General", "全般", "OresmeError atomic time_zone set_time_zone"),
 }
 
 # Python protocols intentionally exposed to users.
@@ -116,7 +141,36 @@ def fenced(source):
     return f"```python\n{source}\n```"
 
 
-def render_symbol(name, node, inherited_set, notes, japanese):
+class Japanese:
+    """The Japanese of the descriptions, from api-ja.json, by the name they describe.
+
+    Each entry keeps a hash of the English it translates: when the docstring
+    changes, the translation is out of date until it is checked again.
+    Signatures, arguments and code stay as they are.
+    """
+
+    def __init__(self, entries):
+        self.entries = entries
+        self.missing = {}
+
+    @staticmethod
+    def source(english):
+        return hashlib.sha256(english.encode("utf-8")).hexdigest()[:12]
+
+    def __call__(self, key, english):
+        if not english:
+            return english
+        entry = self.entries.get(key)
+        if entry and entry.get("source") == self.source(english):
+            return entry["ja"]
+        self.missing[key] = english
+        return english
+
+
+def render_symbol(name, node, inherited_set, notes, japanese, translate=None):
+    def text(key, english):
+        return translate(key, english) if japanese and translate else english
+
     out = [f"## `{name}`"]
     if isinstance(node, FUNCTIONS):
         out.append(fenced(signature(node, f"op.{name}")))
@@ -130,7 +184,7 @@ def render_symbol(name, node, inherited_set, notes, japanese):
         if initializer:
             out.append(fenced(signature(initializer, f"op.{name}", method=True)))
     if not isinstance(node, ast.Assign) and docstring(node):
-        out.append(docstring(node))
+        out.append(text(name, docstring(node)))
     if name in notes:
         out.append(notes[name]["ja" if japanese else "en"])
     if isinstance(node, FUNCTIONS):
@@ -172,7 +226,7 @@ def render_symbol(name, node, inherited_set, notes, japanese):
         for key, member in properties.items():
             access = "read/write" if key in writable else "read-only"
             description = docstring(member) if member else ""
-            detail = " ".join(description.split()) or notes.get(
+            detail = " ".join(text(f"{name}.{key}", description).split()) or notes.get(
                 f"{name}.{key}", {}
             ).get("ja" if japanese else "en", "")
             rows.append(f"- `{key}` ({access})" + (f" · {detail}" if detail else ""))
@@ -191,9 +245,9 @@ def render_symbol(name, node, inherited_set, notes, japanese):
         if key in properties or (key.startswith("_") and key not in PROTOCOLS):
             continue
         out.extend([f"### `{name}.{key}`", fenced(signature(method, key, method=True))])
-        description = docstring(method) or notes.get(f"{name}.{key}", {}).get(
-            "ja" if japanese else "en", ""
-        )
+        description = text(f"{name}.{key}", docstring(method)) or notes.get(
+            f"{name}.{key}", {}
+        ).get("ja" if japanese else "en", "")
         if description:
             out.append(description)
         raised = exceptions(method)
@@ -222,7 +276,7 @@ def generate():
             symbols[name] = (file, nodes[name])
     categorized = [
         name
-        for _, group in SECTIONS.values()
+        for _, _, group in SECTIONS.values()
         for name in (group.split() if group else exports(modules[1]))
     ]
     if len(set(categorized)) != len(categorized) or set(categorized) != symbols.keys():
@@ -240,8 +294,9 @@ def generate():
         node for node in base.body if isinstance(node, FUNCTIONS) and node.name == "set"
     )
     notes = json.loads((DOCS / "scripts/api-notes.json").read_text(encoding="utf-8"))
+    translate = Japanese(json.loads(JAPANESE.read_text(encoding="utf-8")) if JAPANESE.is_file() else {})
     pages = {}
-    for index, (slug, (title, group)) in enumerate(SECTIONS.items(), start=1):
+    for index, (slug, (title, japanese_title, group)) in enumerate(SECTIONS.items(), start=1):
         names = group.split() if group else exports(modules[1])
         source_links = ", ".join(
             f"[`{file}`]({REPOSITORY}/{file})"
@@ -250,7 +305,7 @@ def generate():
         for japanese in (True, False):
             prefix = Path() if japanese else Path("en")
             out = [
-                f"---\ntitle: {title}\nsidebar:\n  order: {index}\neditUrl: false\n---",
+                f"---\ntitle: {japanese_title if japanese else title}\nsidebar:\n  order: {index}\neditUrl: false\n---",
                 "<!-- Generated by scripts/generate-api.py. -->",
                 f"[API の使い方](../../) · {source_links}"
                 if japanese
@@ -259,11 +314,11 @@ def generate():
             for name in names:
                 out.extend(
                     render_symbol(
-                        name, symbols[name][1], inherited_set, notes, japanese
+                        name, symbols[name][1], inherited_set, notes, japanese, translate
                     )
                 )
             pages[CONTENT / prefix / OUTPUT / f"{slug}.md"] = "\n\n".join(out) + "\n"
-    return pages
+    return pages, translate.missing
 
 
 def main():
@@ -271,8 +326,22 @@ def main():
     parser.add_argument(
         "--check", action="store_true", help="fail if checked-in files differ"
     )
+    parser.add_argument(
+        "--untranslated",
+        metavar="FILE",
+        help="write the English of the descriptions without Japanese (or with outdated Japanese) to FILE",
+    )
     args = parser.parse_args()
-    pages = generate()
+    pages, missing = generate()
+    if args.untranslated:
+        Path(args.untranslated).write_text(
+            json.dumps(
+                {key: {"source": Japanese.source(english), "en": english} for key, english in missing.items()},
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
     existing = set((CONTENT / OUTPUT).glob("*.md")) | set(
         (CONTENT / "en" / OUTPUT).glob("*.md")
     )
@@ -292,6 +361,14 @@ def main():
         for path in sorted(mismatches):
             print(path.relative_to(DOCS))
         parser.exit(1, "API reference is out of date. Run pnpm docs:api.\n")
+    if missing and args.check:
+        for key in sorted(missing):
+            print(key)
+        parser.exit(
+            1,
+            f"{len(missing)} descriptions have no Japanese, or Japanese of an older docstring, in "
+            "scripts/api-ja.json. Write --untranslated FILE to list them.\n",
+        )
     print(
         f"{'Checked' if args.check else 'Generated'} {len(pages)} API reference pages."
     )

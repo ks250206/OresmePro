@@ -896,6 +896,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const [step, setStep] = useState<string | null>(null);
   const [labelSize, setLabelSize] = useState<string | null>(null);
   const [tickSize, setTickSize] = useState<string | null>(null);
+  const [rotation, setRotation] = useState<string | null>(null);
   const labelField = useRef<HTMLInputElement>(null);
   const base = graph?.axes[axis];
   if (!graph || !base) return null;
@@ -938,6 +939,14 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
   const parsedTickSize = fontSize(tickSize);
   const tickSizeInvalid = sizeInvalid(tickSize, parsedTickSize);
   if (parsedTickSize !== undefined && !tickSizeInvalid) props.tickLabelSize = parsedTickSize;
+  // The label's turn, in degrees: 180 reads the other way round.
+  const parsedRotation = rotation === null ? undefined : parseNumber(rotation);
+  const rotationInvalid =
+    rotation !== null &&
+    !(parsedRotation !== null && parsedRotation! >= -360 && parsedRotation! <= 360);
+  if (parsedRotation !== undefined && parsedRotation !== null && !rotationInvalid) {
+    props.labelRotation = parsedRotation;
+  }
   const formats: [string, string][] = [
     ["", "Automatic"],
     [".0f", "0 decimals"],
@@ -961,6 +970,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
     setStep(null);
     setLabelSize(null);
     setTickSize(null);
+    setRotation(null);
   };
 
   return (
@@ -974,6 +984,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         stepInvalid ||
         labelSizeInvalid ||
         tickSizeInvalid ||
+        rotationInvalid ||
         Object.keys(props).length === 0
       }
       onSubmit={() => submit({ op: "modifyAxis", graph: graphName, axis, props })}
@@ -1039,6 +1050,15 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
             <option key={style}>{style}</option>
           ))}
         </Select>
+        <span className="text-muted">turned</span>
+        <TextInput
+          aria-label="Label rotation"
+          aria-invalid={rotationInvalid}
+          className="w-14"
+          value={rotation ?? String(current.labelRotation)}
+          onChange={(event) => setRotation(event.target.value)}
+        />
+        <span className="text-muted">°</span>
       </Field>
       <Field label="Show labels">
         <Select

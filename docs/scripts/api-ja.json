@@ -1,0 +1,1006 @@
+{
+  "Annotation": {
+    "source": "b4c55220c0b9",
+    "ja": "グラフの凡例・テキストボックス・カラースケール・タグ。\n\n``x`` と ``y`` は、アンカー(タグなら点)からどれだけ動かしたか(プロット領域に対する割合)です。"
+  },
+  "Annotation.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Axis": {
+    "source": "32af823f8e02",
+    "ja": "グラフの軸: \"left\"、\"bottom\"、\"right\"、\"top\"、または追加した軸。\n\n``span=(low, high)`` は、軸をプロット領域の一部(0〜1 の割合)に描きます。1 つのグラフにグラフを積み重ねるときに使います。\n\n``reverse=True`` で軸を大きい値から小さい値の向きにします。``tick_step=0.25`` で主目盛りをその間隔に置きます。``tick_format`` は目盛りラベルを Python の ``format`` のように書きます: ``\".2f\"``、``\"e\"``、``\",.0f\"``、``\"%\"``。``None`` で自動に戻ります。\n\n``label_size`` と ``tick_label_size`` は軸ラベルと目盛りラベルのフォントの大きさです(``None`` でグラフの ``font_size``)。``label_style`` はラベル全体を ``\"plain\"``、``\"italic\"``、``\"bold\"``、``\"bold italic\"`` にします。ラベルの中のコードで一部を変えられます(Igor と同じ): ``r\"Voltage (\\f02V\\f00)\"`` は V だけ斜体、``\\Z14`` はそれ以降を 14 の大きさに、``\\u`` はそこに単位を入れます。こうしたラベルは raw 文字列(``r\"...\"``)で書いてください。そうしないと Python が ``\\f`` や ``\\u`` を自分のエスケープとして読みます。\n\n``label_rotation`` は軸ラベルを、辺ごとの標準の向きから時計回りに回す角度(度)です(Igor の lblRot に当たります)。左の軸のラベルは下から上へ、右の軸は上から下へ読む向きが標準で、180 でどちらも逆向きになります。\n\n``labels`` は描くラベルを選びます(Igor の noLabel): ``\"on\"``(目盛りラベルと軸ラベル)、``\"axis only\"``(軸ラベルだけで目盛りの数値なし)、``\"off\"``(どちらもなし)。軸線と目盛りは残ります。"
+  },
+  "Axis.range": {
+    "source": "90a29f89c3e3",
+    "ja": "(min, max)。データに従う端は None。"
+  },
+  "Axis.set": {
+    "source": "d5bd75fb5395",
+    "ja": "プロパティを変えます。``range=(lo, hi)`` で両端を設定し、``range=None`` で自動範囲にします。"
+  },
+  "Contour": {
+    "source": "6e7f92df8e50",
+    "ja": "グラフに描いた 2 次元 wave の等高線。"
+  },
+  "Contour.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Control": {
+    "source": "760c964645fa",
+    "ja": "パネルの部品: 見出し、文章、入力欄、選択欄、ボタン。\n\n``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。"
+  },
+  "Control.move": {
+    "source": "361a2ff47c96",
+    "ja": "部品をパネルの中の位置(上から 0 で数える)に移します。"
+  },
+  "Control.press": {
+    "source": "5493f4b34b0a",
+    "ja": "ボタンを押します: ``Panel.press`` を参照。"
+  },
+  "Control.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Cursor": {
+    "source": "edb0c6563ef1",
+    "ja": "グラフのカーソル A または B。トレースの 1 点に置く印です。"
+  },
+  "Cursor.point": {
+    "source": "92127b34d9bc",
+    "ja": "カーソルが置かれた点の番号。代入するとカーソルが動きます。"
+  },
+  "FitResult": {
+    "source": "867cfcd53bd7",
+    "ja": "``op.fit`` の結果: 係数、その不確かさ、フィットの wave。"
+  },
+  "FitResult.apply": {
+    "source": "341bac416427",
+    "ja": "同じ設定でほかの wave をフィットします。``Result.apply`` を参照。"
+  },
+  "FitResult.correlation": {
+    "source": "cd8a07584281",
+    "ja": "パラメータの相関。対角は 1、hold したパラメータは NaN。"
+  },
+  "FitResult.rerun": {
+    "source": "1e486be09399",
+    "ja": "同じ設定でフィットし直します。``Result.rerun`` を参照。"
+  },
+  "FitResult.result": {
+    "source": "caca407c56d7",
+    "ja": "実験に残ったフィットの記録: ``.rerun()``、``.apply(waves)``、``.remove()``。"
+  },
+  "FitResult.template": {
+    "source": "0291781efb51",
+    "ja": "このフィットを解析テンプレートとして残します。``Result.template`` を参照。"
+  },
+  "Folder": {
+    "source": "fe074019a5d8",
+    "ja": "データフォルダ。``Folder(\"\")`` はルートです。"
+  },
+  "Folder.attributes": {
+    "source": "56ee3eb8349a",
+    "ja": "このフォルダが表す試料の属性。上位のフォルダの属性に、このフォルダ自身の属性を重ねたものです。"
+  },
+  "Folder.kill": {
+    "source": "a31479161181",
+    "ja": "フォルダと中の wave を削除します。"
+  },
+  "Folder.make": {
+    "source": "3f8313b56a24",
+    "ja": "このフォルダに wave を作ります。オプションは ``op.make`` と同じです。"
+  },
+  "Folder.rename": {
+    "source": "53bc08b94c18",
+    "ja": "フォルダの名前を変える、または中身ごと移動します。"
+  },
+  "Folder.set_attributes": {
+    "source": "25cb5fb4158a",
+    "ja": "このフォルダに属性を設定します。中の wave もこの属性を持ちます(None で削除)。self を返します。"
+  },
+  "GlobalFitResult": {
+    "source": "96496c0ff217",
+    "ja": "``op.fit_global`` の結果: wave ごとに 1 行の係数。\n\n``coef`` と ``sigma`` は wave ごとの行と、``names`` の順のパラメータごとの列を持ちます。共通のパラメータはどの行も同じ値です。``waves`` はフィット曲線です。"
+  },
+  "GlobalFitResult.__getitem__": {
+    "source": "5ba7d4422ce4",
+    "ja": "共通のパラメータは数、それ以外は wave ごとの値の配列。"
+  },
+  "GlobalFitResult.result": {
+    "source": "1287719309ab",
+    "ja": "実験に残ったフィットの記録: ``.rerun()``、``.remove()``。"
+  },
+  "Graph": {
+    "source": "93089648c159",
+    "ja": "グラフのウィンドウ。\n\n``width`` と ``height`` で、プロット領域(軸で囲まれた長方形)の大きさを決めます。Igor の ModifyGraph width / height に当たります(``Graph.set`` を参照)。"
+  },
+  "Graph.add_axis": {
+    "source": "ee30e8f55e28",
+    "ja": "辺(\"left\"、\"bottom\"、\"right\"、\"top\")に軸を追加します。"
+  },
+  "Graph.append": {
+    "source": "4fe2acd28770",
+    "ja": "トレースを追加します。縦軸は ``axis``、横軸は ``haxis`` で名前を指定します。"
+  },
+  "Graph.append_contour": {
+    "source": "ddc2c88ee0b9",
+    "ja": "等高線を描きます。``levels``、``labels``、``color``、``line_size``、``color_table``。\n\n3 次元・4 次元の wave では、``layer`` と ``chunk`` で面を選びます。"
+  },
+  "Graph.append_image": {
+    "source": "83d265bf40fb",
+    "ja": "wave を画像として表示します。``color_table``、``z_min``、``z_max``、``reverse``。\n\n3 次元・4 次元の wave では、``layer`` と ``chunk`` で面を選びます。"
+  },
+  "Graph.apply_style": {
+    "source": "0fdb2bcaad2c",
+    "ja": "このグラフにスタイル(名前か Style)の見た目を適用します。self を返します。"
+  },
+  "Graph.autoscale": {
+    "source": "5d5e4df0f859",
+    "ja": "すべての軸を自動範囲にします。"
+  },
+  "Graph.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Graph.colorscale": {
+    "source": "fda3a8018156",
+    "ja": "画像(既定では 1 つ目)のカラースケールを追加します。"
+  },
+  "Graph.cursor": {
+    "source": "b3dac836d580",
+    "ja": "カーソル \"A\" か \"B\"。トレースと点を渡すと、先にそこへカーソルを置きます。"
+  },
+  "Graph.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Graph.legend": {
+    "source": "7af88583f74a",
+    "ja": "凡例を追加します。テキストを省くと、すべてのトレースを並べます。\n\n自分で書くテキストでは、``\\s(traceName)`` でそのトレースの記号を描きます。``anchor`` は 2 文字で、L/M/R のあとに T/C/B。``x`` と ``y`` はそこからの移動量(プロット領域に対する割合)で、マウスでドラッグしても設定されます。"
+  },
+  "Graph.link": {
+    "source": "4a95a0ee7c56",
+    "ja": "このグラフがどのグラフと連動しているか(``op.link_graphs`` を参照)。連動していなければ None。\n\n``graphs``(このグラフを含むグループの全グラフ)、``axes``(\"x\" か \"xy\")、``cursors`` の dict です。"
+  },
+  "Graph.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Graph.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Graph.save": {
+    "source": "d5381237efac",
+    "ja": "グラフをファイルとしてダウンロードします。名前の拡張子で .pdf、.svg、.png を選びます。\n\n``cursors=True`` でない限り、カーソルは含めません。"
+  },
+  "Graph.save_style": {
+    "source": "63c53be44752",
+    "ja": "このグラフの見た目を ``name`` という名前のスタイルとして残し、返します。\n\nスタイルが持つのは、フォント、軸の見た目(目盛り・ミラー・グリッド)、順に並べたトレースの見た目(色・線・マーカー)で、データは持ちません。``size=True`` なら描画の大きさと、プロット領域の大きさのうち見た目に当たるもの(``\"auto\"``、長さ、``(\"aspect\", f)``)も持ちます(plan と per unit はデータに従うので、その結果の大きさを持ちます)。同じ名前のスタイルは置き換えます。"
+  },
+  "Graph.save_template": {
+    "source": "adb5a8574651",
+    "ja": "このグラフを ``name`` という名前のグラフテンプレートとして残し、返します。\n\nグラフが描く各 wave はテンプレートのスロットになります(``GraphTemplate`` を参照)。トレース・軸・見た目・テキスト・大きさを、プロット領域の大きさの決め方(``width`` と ``height``、plan と per unit も)とともに残します。軸の範囲は ``fixed``(名前、名前のリスト、すべての軸なら ``True``)で指定した軸だけ残し、ほかはテンプレートから作る各グラフのデータに従います。同じ名前のテンプレートは置き換えます。"
+  },
+  "Graph.script": {
+    "source": "a6ea01cd4bd3",
+    "ja": "このグラフを描き直す Python(文字列)。\n\nIgor のウィンドウ再作成マクロに当たります。Procedure に貼り付けて、グラフの見た目を残したり、別の wave に使ったりします。"
+  },
+  "Graph.set": {
+    "source": "687ef982cf8d",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。\n\n``font_size``、``font_family``、``show_info``(カーソル情報の欄)。``width`` と ``height`` はプロット領域の大きさで、それぞれ次のどれかです:\n\n- ``\"auto\"``: ウィンドウから余白を除いた残り(既定)。\n- 長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``、または pt の数値。\n- ``(\"aspect\", f)``: もう一方の辺の f 倍。\n- ``(\"plan\", f, haxis, vaxis)``: 横軸 ``haxis`` の 1 単位が、縦軸 ``vaxis`` の 1 単位の f 倍の長さになる(軸の既定は ``\"bottom\"`` と ``\"left\"``)。高さでは ``vaxis`` の 1 単位が ``haxis`` の 1 単位の f 倍。``(\"plan\", 1)`` で X と Y を同じ縮尺にします(Nyquist 図など)。\n- ``(\"per_unit\", n, unit, axis)``: 軸の 1 単位あたり n ``unit``(\"pt\"、\"cm\"、\"inch\")。``(\"per_unit\", op.cm(2), \"bottom\")`` も同じ意味。対数軸の 1 単位は 1 桁です。\n\nauto でない辺があると、図の大きさはプロット領域に余白を足したものになり、ウィンドウもそれに合わせます。両方の辺を aspect か plan にはできません。``width`` や ``height`` を読むと、同じ形で返ります。\n\n``margin_left``、``margin_bottom``、``margin_right``、``margin_top`` はプロット領域の周りの余白を固定します(Igor の ModifyGraph margin)。長さ(``op.cm(1.5)`` か 0〜360 の pt の数値)か ``\"auto\"``(``None``)で、auto は軸とラベルに必要なだけの幅になります。``margins=`` で 4 辺をまとめて設定します: ``\"auto\"``、長さ 1 つ、または ``(left, bottom, right, top)``。余白を読むと pt で返り、auto なら ``None`` です。\n\n``magnification`` はウィンドウの中でグラフを拡大・縮小して表示します(Igor の expand)。2 で 2 倍、1 で等倍(0.125〜8)。ウィンドウも一緒に大きさを変え、図そのものと書き出しの大きさは変わりません。"
+  },
+  "Graph.style": {
+    "source": "53a76aad98e6",
+    "ja": "最後にこのグラフに適用したスタイル。なければ None。あとから追加したトレースもこれに従います。"
+  },
+  "Graph.svg": {
+    "source": "136cb2445180",
+    "ja": "グラフを SVG 文書として返します。既定ではウィンドウの大きさ。\n\n``\"auto\"`` 以外で大きさを決めたプロット領域の辺は、``width`` と ``height`` にかかわらずその大きさを保ちます。"
+  },
+  "Graph.tag": {
+    "source": "9b6d4c27b578",
+    "ja": "トレースの 1 点にラベルを付けます。ラベルは点に追従します。\n\nテキストの ``{x}``、``{y}``、``{point}`` はその点の値になります。テキストを省くと ``x, y`` を表示します。``x`` と ``y`` は点に対する枠の位置(プロット領域に対する割合)です。"
+  },
+  "Graph.textbox": {
+    "source": "10c476267626",
+    "ja": "テキストボックスを追加します。``^{...}`` と ``_{...}`` で上付き・下付き。"
+  },
+  "Graph.trace": {
+    "source": "c898da3fd3f0",
+    "ja": "名前でトレースを取得します。名前を省くと、グラフにトレースが 1 つだけのときそのトレース。"
+  },
+  "Graph.unlink": {
+    "source": "90b8e59b879d",
+    "ja": "このグラフを、連動しているグラフから外します。"
+  },
+  "GraphTemplate": {
+    "source": "b8959ed22c05",
+    "ja": "グラフテンプレート: wave を抜いたグラフを残し、別のデータで同じグラフを作るもの。\n\nグラフで wave があった所に、テンプレートではスロットがあります。名前は wave の役割から付きます: ``\"y\"`` と ``\"x\"``、誤差棒は ``\"yerr\"`` と ``\"xerr\"``、色の wave は ``\"color\"``、画像・等高線は ``\"z\"``。トレースが複数あれば番号付き(``\"y1\"``、``\"y2\"``)です。``slots`` で一覧できます。グラフを作るには各スロットに wave を渡します::\n\n    t = op.graph_template(op.graph(\"Graph0\"), \"IV\")\n    t.make(y=\"s2_I\", x=\"s2_V\")\n\n注釈や軸ラベルのテキストでは、スロットに入るものを指せます: ``{y.name}`` と ``{y.unit}`` はスロット ``y`` の wave の名前と単位です。元のグラフのテキストが wave の名前や括弧の中の単位(``\"Current (A)\"``)を書いていた所は、テンプレートではこうした参照になるので、別の試料のグラフにはその試料の名前と単位が出ます。\n\n``data`` はテンプレートの中身(dict)です: ``\"style\"``(見た目と大きさ。``Style`` と同じ形)、``\"slots\"``(``name``、``role``、元の wave の単位)、``\"traces\"``、``\"images\"``、``\"contours\"``、``\"axes\"``、``\"annotations\"``(グラフと同じ形で、wave の名前の代わりにスロットの名前)。``op.set_graph_template`` でこうした dict から定義できます。"
+  },
+  "GraphTemplate.data": {
+    "source": "61f2924e2cff",
+    "ja": "テンプレートの中身(dict のコピー。変えるには ``op.set_graph_template``)。"
+  },
+  "GraphTemplate.make": {
+    "source": "af413cf0bbab",
+    "ja": "スロットに渡した wave でグラフを作り、返します。\n\nスロットごとに wave(Wave か名前)を渡します: ``t.make(y=current, x=voltage)``。X・誤差棒・色の wave のスロットは省けて、そのときはそれなしのグラフになります。リストを渡すと要素ごとにグラフを作り、そのリストを返します: ``t.make(y=[a, b, c], x=voltage)`` はどれも ``voltage`` に対する 3 つのグラフを作ります。``name`` はグラフの名前(リストなら各グラフの名前)で、省くと自動で付けます。\n\nwave の単位がテンプレートの元の wave と違うときは警告しますが、グラフは作ります。グラフはすべて作るか、1 つでも作れなければ何も作りません。Undo は 1 回です。"
+  },
+  "GraphTemplate.remove": {
+    "source": "99eb337d7f53",
+    "ja": "テンプレートを削除します。それから作ったグラフはそのまま残ります。"
+  },
+  "GraphTemplate.rename": {
+    "source": "112be409aa52",
+    "ja": "テンプレートの名前を変えます。self を返します。"
+  },
+  "GraphTemplate.slots": {
+    "source": "ff55aaa26aac",
+    "ja": "スロットの名前(グラフの順)。"
+  },
+  "Image": {
+    "source": "6d124b9448d1",
+    "ja": "グラフに画像として表示した 2 次元の wave。"
+  },
+  "Image.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Layout": {
+    "source": "8a9db7b6a20a",
+    "ja": "ページレイアウト: 紙の上にグラフとテキストを並べたもの。\n\n``width`` と ``height`` は紙の大きさ(pt)です。ページはグラフをそのまま表示するので、グラフを変えるとページも変わります。"
+  },
+  "Layout.add_graph": {
+    "source": "b66e4029e460",
+    "ja": "ページにグラフを置きます。位置を省くと、すでにあるものの下に置きます。"
+  },
+  "Layout.add_text": {
+    "source": "04cd6212e010",
+    "ja": "ページにテキストを置きます。``^{...}`` と ``_{...}`` で上付き・下付き。"
+  },
+  "Layout.align": {
+    "source": "35dc0dc87024",
+    "ja": "項目をそろえます: ``\"left\"``、``\"right\"``、``\"top\"``、``\"bottom\"`` の端、または中央(``\"center\"`` は縦に並べる、``\"middle\"`` は横に並べる)。いちばん外側の項目にそろえ、項目が 1 つならページにそろえます。``items`` はこのページの項目の名前か項目です。"
+  },
+  "Layout.arrange": {
+    "source": "3dc76d2cfa31",
+    "ja": "グラフを ``rows`` 行 ``columns`` 列の格子に並べます。格子はページから ``margin`` pt を除いた範囲を埋め、セルの間は ``gap`` pt(または列の間・行の間の組)です。グラフは渡した順に行ごとにセルを埋めます。``items`` を省くと、ページのすべてのグラフを今の読み順で使います。テキストは動かさず、セルに入らないグラフはそのままです。"
+  },
+  "Layout.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Layout.distribute": {
+    "source": "90e75d5b895d",
+    "ja": "3 つ以上の項目を、間隔が等しくなるよう ``\"horizontal\"``(横)か ``\"vertical\"``(縦)に並べます。いちばん外側の項目は動きません。"
+  },
+  "Layout.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Layout.match_size": {
+    "source": "b2c5df03c454",
+    "ja": "グラフの ``\"width\"``(幅)、``\"height\"``(高さ)、``\"both\"``(両方)を、最初に指定したグラフに合わせます。\n\nテキストは文字に必要な大きさのまま変えません。"
+  },
+  "Layout.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Layout.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Layout.save": {
+    "source": "af907f5b3245",
+    "ja": "ページをファイルとしてダウンロードします: .pdf(紙の大きさ)、.svg、.png。"
+  },
+  "Layout.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Layout.svg": {
+    "source": "2638a349e17b",
+    "ja": "ページを SVG 文書として返します。"
+  },
+  "LayoutItem": {
+    "source": "0c82b3524116",
+    "ja": "ページレイアウト上のグラフまたはテキストのかたまり。\n\n``x`` と ``y`` は左上の角、``w`` と ``h`` はグラフの大きさで、どれもページの左上からの pt(1/72 inch)です。``text`` と ``size`` はテキストの項目の文字とフォントの大きさです。"
+  },
+  "LayoutItem.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Length": {
+    "source": "aca1650f4acb",
+    "ja": "紙の上の長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``。\n\n数としては pt(1/72 inch)単位の長さなので、pt を受け取る所(ページレイアウトの項目の位置など)にそのまま使えます。また、指定した単位を ``value`` と ``unit`` として覚えていて、グラフのプロット領域はそれを同じ形で表示し直します。"
+  },
+  "OnsetResult": {
+    "source": "7e5d6e0549a1",
+    "ja": "``op.onset`` の結果: 立ち上がりの直線がベースラインと交わる位置と、2 本の直線。"
+  },
+  "OresmeError": {
+    "source": "175cfdc3ff96",
+    "ja": "アプリが要求を拒否しました(不正な名前、存在しない wave など)。"
+  },
+  "Panel": {
+    "source": "35b8b95b5381",
+    "ja": "パネル: 実験のウィンドウの中で、解析を動かす部品を並べたもの。\n\n::\n\n    p = op.panel(\"quick_fit\", title=\"Quick Fit\")\n    p.wave(\"target\", label=\"Spectrum\", dims=1)\n    p.choice(\"model\", [\"gauss\", \"lor\"], label=\"Model\")\n    p.button(\"run\", \"Fit\", action=\"core.fit\",\n             args={\"function\": op.control(\"model\"), \"y\": op.control(\"target\")})\n    p[\"model\"] = \"lor\"\n\n部品を追加するメソッドは、パネル内で一意の部品の ``name`` を最初に受け取ります。同じ名前・同じ種類の部品がすでにあれば、値を保ったままそれを変えるので、パネルを作る Procedure をもう一度実行できます。``value`` は新しい部品の初期値です。``inline=True`` で前の部品と同じ行に置きます。``with p.row():`` の中で追加した部品も同じ行に並びます。\n\n``p[\"name\"]`` で部品の値を読み書きします。値は実験の一部で、一緒に保存され、ほかの変更と同じく Undo できます。ボタンは Action(``op.action`` を参照)を、普通の値と部品の値(``op.control``)で呼びます。自分の Python をボタンで動かすには、Procedure で関数を Action として登録し、その名前を指定します。"
+  },
+  "Panel.button": {
+    "source": "39bb5bfa45b0",
+    "ja": "押すと Action ``action`` を ``args`` で呼ぶボタン。\n\n各引数は普通の値(文字、数、True/False、それらのリストや dict)か、押した時点のパネルの部品の値を表す ``op.control(name)`` です。``op.control`` はテンプレートの入力のように、リストや dict の中にも置けます。``version`` を付けると、最新版でなくその版の Action を呼びます。"
+  },
+  "Panel.checkbox": {
+    "source": "5e1e8be4e652",
+    "ja": "チェックボックス: 値は True か False。"
+  },
+  "Panel.choice": {
+    "source": "f3a01ae79575",
+    "ja": "``options``(文字列か数)のメニュー。``value`` を指定しなければ最初の項目から始まります。"
+  },
+  "Panel.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Panel.data": {
+    "source": "16ac8ee1f362",
+    "ja": "パネルを普通のデータで表したもの: ``op.set_panel`` が受け取る形のタイトルと部品。"
+  },
+  "Panel.heading": {
+    "source": "51c7c24f3804",
+    "ja": "見出し: 太字の ``label``。"
+  },
+  "Panel.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Panel.number": {
+    "source": "3bda9b13f0bf",
+    "ja": "数の入力欄。``min``〜``max``(両端を含む)を指定でき、``step`` は矢印で変わる量です。"
+  },
+  "Panel.press": {
+    "source": "43ec1fce0975",
+    "ja": "ボタンを押します: クリックと同じく、今のパネルの値で Action を呼びます。\n\nAction の戻り値を返します。値が足りないとき(wave を選んでいないなど)や、Action が呼び出しを拒否したときは ``OresmeError`` になります。"
+  },
+  "Panel.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Panel.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Panel.row": {
+    "source": "5dd85031c010",
+    "ja": "ブロックの中で追加した部品を 1 行に並べます。"
+  },
+  "Panel.set": {
+    "source": "583925f96000",
+    "ja": "パネルのタイトル(ウィンドウに表示するもの。空なら名前)を変えます。self を返します。"
+  },
+  "Panel.string": {
+    "source": "032f8a99f42e",
+    "ja": "文字の入力欄。"
+  },
+  "Panel.text": {
+    "source": "3f3895d636ea",
+    "ja": "文章の段落: ``label``(複数行も可)。"
+  },
+  "Panel.wave": {
+    "source": "77320bafa735",
+    "ja": "wave の選択欄: 値は選んだ wave の名前。\n\n``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``\"*_I\"`` に合う)wave だけを並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。"
+  },
+  "PeakFitResult": {
+    "source": "2dddee9d3705",
+    "ja": "``op.fit_peaks`` の結果: ピークごとに 1 行と、作った wave。"
+  },
+  "PeakFitResult.result": {
+    "source": "caca407c56d7",
+    "ja": "実験に残ったフィットの記録: ``.rerun()``、``.apply(waves)``、``.remove()``。"
+  },
+  "PeakFitResult.template": {
+    "source": "0291781efb51",
+    "ja": "このフィットを解析テンプレートとして残します。``Result.template`` を参照。"
+  },
+  "Procedure": {
+    "source": "74fd94831089",
+    "ja": "実験に保存され、Procedure ウィンドウに表示される Python ファイル。\n\n作業ディレクトリの ``<name>.py`` です。``run()`` はコマンド入力と同じ名前空間で実行し、ほかのコードからは ``import`` できます。"
+  },
+  "Procedure.auto_run": {
+    "source": "2df1558a0333",
+    "ja": "実験を開いたときにこのファイルを実行するかどうか。"
+  },
+  "Procedure.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Procedure.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Procedure.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Procedure.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Procedure.run": {
+    "source": "b07d9843c86c",
+    "ja": "ファイルをコマンド入力と同じ名前空間で、そこに入力したように実行します。\n\n定義したものはコマンド入力から使えます。エラーで止まり、ファイル名と行とともに報告します。"
+  },
+  "Result": {
+    "source": "92992ec74870",
+    "ja": "実験に残った解析: 何を指定し、何が得られたか。\n\n``names``、``coef``、``sigma`` はパラメータ、``settings`` は解析に渡した設定、``changed`` は読んだ wave のうち当時から変わったものです。``rerun()`` でやり直し、``apply(waves)`` でほかの wave に同じことをします。"
+  },
+  "Result.apply": {
+    "source": "6477d9d3283e",
+    "ja": "ほかの wave に同じ解析をし、結果のリストを返します。\n\n各 wave が解析した wave(``y``)の代わりになり、ほかの設定は X wave を含めてそのままです。``table`` を付けると、結果を表にも並べます(``op.results_table`` を参照)。"
+  },
+  "Result.created": {
+    "source": "4a02a91f05ee",
+    "ja": "解析した日時(UTC の ``datetime``)。"
+  },
+  "Result.kept": {
+    "source": "d470f53766fb",
+    "ja": "この結果が作ったもののコピー(役割ごと)。データフォルダ ``results:<名前>`` にあります。\n\n同じ wave をフィットし直しても解析が作ったときのまま残るので、結果どうしを曲線ごと比べられます。結果を削除するとコピーも消えます(グラフやテーブルが表示しているものは残ります)。"
+  },
+  "Result.outputs": {
+    "source": "0be6abec0327",
+    "ja": "解析が作った wave(役割 \"fit\"、\"residuals\" などごと)。その後削除されたものは除きます。\n\nこれは解析が付けた名前(``fit_signal``)で、同じ wave をフィットし直すと作り直されるので、最新のものを指します。この結果が作ったものは ``kept`` です。"
+  },
+  "Result.remove": {
+    "source": "5629119f507f",
+    "ja": "結果を消します。作った wave は残ります。"
+  },
+  "Result.rerun": {
+    "source": "57fc9b84a0ce",
+    "ja": "同じ設定で、今のデータに対して解析をやり直します。\n\nキーワード引数で設定を変えられます(``rerun(hold={\"y0\": 0})``)。結果は新しい結果として残るので両方を比べられます。``replace=True`` なら置き換えます。"
+  },
+  "Result.show": {
+    "source": "22ec31de86c8",
+    "ja": "この結果が読んだデータと、作った曲線(残したコピー)をグラフにします。\n\nグラフを返します。複数の wave のフィットでは、それぞれの曲線を描きます。"
+  },
+  "Result.template": {
+    "source": "96ef6194997d",
+    "ja": "この解析を、ほかの試料に使うテンプレートとして残します。``op.make_template`` を参照。"
+  },
+  "Run": {
+    "source": "611bd379b555",
+    "ja": "テンプレートを試料に実行した記録。名前を付けて実験に残ります。\n\n``copy`` は Run を作ったときのテンプレート(やり直しはテンプレートが今どうなっていてもこれを使います)。``samples`` は試料ごとの一覧で、``inputs``(スロットごとの wave)、``fingerprints``(最後に行ったときの各入力の指紋)、``state``(``\"pending\"``、``\"succeeded\"``、``\"failed\"``、``\"cancelled\"``)、``error``、``results``(段が残した解析結果)、``waves``(段が作った wave)、``attempts``、``finished``(エポックからのミリ秒)、``changed``(当時から変わった入力)を持ちます。"
+  },
+  "Run.copy": {
+    "source": "ac46c6702a57",
+    "ja": "Run を作ったときのテンプレート(dict)。"
+  },
+  "Run.counts": {
+    "source": "f8e9610a6c3e",
+    "ja": "状態ごとの試料の数。"
+  },
+  "Run.data": {
+    "source": "bb1a4d777d29",
+    "ja": "記録全体(dict のコピー)。"
+  },
+  "Run.remove": {
+    "source": "09add296a4fd",
+    "ja": "Run を消します。試料が作った wave と結果は残ります。"
+  },
+  "Run.retry": {
+    "source": "6db96c252421",
+    "ja": "成功しなかった試料を、Run 自身が持つテンプレートの写しでやり直します。\n\n行うのは失敗・中断・未実行の試料だけで、成功した試料はそのままです。結果は試料ごとにこの Run に入ります(``attempts`` は各試料を行った回数)。``on_error`` は指定しなければ Run 自身のものです。self を返します。"
+  },
+  "Run.states": {
+    "source": "9031484ae2e4",
+    "ja": "各試料の状態(順に)。"
+  },
+  "Run.table": {
+    "source": "1dfaf3ee876f",
+    "ja": "試料を(失敗したものも)テーブルに並べ、返します。\n\n試料ごとに 1 行です: ``<name>_sample``(番号)、入力の wave(``<name>_<入力>``)、``<name>_state``、``<name>_error``、``<name>_result``(残した結果)、続いて結果のパラメータごとの列(``<name>_<パラメータ>``。``sigma`` 付きなら標準偏差の ``_sd`` も)と ``<name>_chisq``。成功しなかった試料の数値は NaN です。1 つの試料が同じ名前のパラメータを持つ結果を複数残したときは、最後の段のものを表示します。入力やパラメータの列名がほかと重なるとき(``state`` という入力など)は ``_2``、``_3``… を付けます。``name`` の既定は Run の名前です。"
+  },
+  "Run.template": {
+    "source": "db94fea32932",
+    "ja": "Run を作ったテンプレートの名前。"
+  },
+  "Style": {
+    "source": "e0aba77bc78f",
+    "ja": "グラフスタイル: グラフの見た目に名前を付けて実験に残したもの。\n\n``data`` はその中身(普通の dict)で、次のどれかを持ちます: ``\"graph\"``(``font_size``、``font_family``)、``\"size\"``(描画するグラフの ``width`` と ``height``、ピクセル)、``\"plot\"``(プロット領域の ``width`` と ``height``。``{\"mode\": \"auto\"}``、``{\"mode\": \"absolute\", \"value\": 8, \"unit\": \"cm\"}``、``{\"mode\": \"aspect\", \"factor\": 0.75}`` など)、``\"axes\"``(``\"left\"``、``\"bottom\"``、``\"right\"``、``\"top\"``、追加した軸は ``\"other\"`` ごとに ``mirror``、``ticks``、``minor``、``grid``)、``\"traces\"``(トレースの見た目のリスト。``mode``、``color``、``line_size``、``line_style``、``marker``、``marker_size``、``marker_fill``。グラフのトレースが順に使い、足りなければ最初から繰り返します)。スタイルは持っているものだけを変えます。"
+  },
+  "Style.apply": {
+    "source": "c2ef911749a3",
+    "ja": "グラフにこの見た目を適用します。``graphs`` が None ならすべてのグラフ。"
+  },
+  "Style.data": {
+    "source": "86384bc80c59",
+    "ja": "スタイルの中身(dict のコピー。変えるには ``op.set_style``)。"
+  },
+  "Style.remove": {
+    "source": "aff3d4b127c4",
+    "ja": "スタイルを削除します。グラフに適用した見た目はそのまま残ります。"
+  },
+  "Table": {
+    "source": "f88149955cec",
+    "ja": "wave を列として表示するテーブルのウィンドウ。"
+  },
+  "Table.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Table.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Table.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Table.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Table.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Table.to_dataframe": {
+    "source": "f5d6d03d2cfa",
+    "ja": "テーブルの列を pandas の DataFrame として返します(``op.to_dataframe`` を参照)。"
+  },
+  "Template": {
+    "source": "0fac1c8e31cb",
+    "ja": "解析テンプレート: 試料に順に行う Action の手順。\n\n``data`` はその中身(dict)です: ``\"description\"``、``\"inputs\"``(各試料で wave を渡すスロット: ``name``、``title``、``kind``(``\"wave\"``))、``\"steps\"``(順に)。段は ``id``、呼ぶ ``action`` とその ``version``、パラメータ名ごとの ``args`` を持ちます。引数は固定の値、スロットに渡した wave(``{\"$input\": \"spectrum\"}``)、または前の段が返したもの(``{\"$step\": \"bg\", \"output\": \"subtracted\"}``)です::\n\n    t = op.set_template(\"XPS\", {\n        \"inputs\": [\"spectrum\"],\n        \"steps\": [\n            {\"id\": \"bg\", \"action\": \"core.background\",\n             \"args\": {\"wave\": {\"$input\": \"spectrum\"}, \"subtract\": True}},\n            {\"id\": \"fit\", \"action\": \"core.fit_peaks\",\n             \"args\": {\"y\": {\"$step\": \"bg\", \"output\": \"subtracted\"}, \"quiet\": True}},\n        ],\n    })\n    run = t.run([\"s1\", \"s2\", \"s3\"])\n\n段が返すものは、その Action が返すもの(``op.invoke`` がアプリに渡す形)です: dict のキー(フィットの ``\"wave\"``、``\"residuals\"``…)、名前付きタプルのフィールド(``subtract=True`` の ``op.background`` なら ``\"background\"`` と ``\"subtracted\"``)、wave なら ``\"wave\"``、リストなら ``\"0\"``、``\"1\"``…、それ以外(数など)は ``\"value\"``。解析の結果を残す段は、その結果が作った wave も役割ごと(``\"fit\"``、``\"residuals\"``、``\"peak1\"``…)に返します。wave はその名前を表します。"
+  },
+  "Template.data": {
+    "source": "159ec785d46e",
+    "ja": "テンプレートの中身(dict のコピー。変えるには ``op.set_template``)。"
+  },
+  "Template.inputs": {
+    "source": "caea4bbcd8e9",
+    "ja": "スロットの名前。各試料で wave を渡すもの。"
+  },
+  "Template.remove": {
+    "source": "8b0e716e9db2",
+    "ja": "テンプレートを削除します。それから作った Run は自分の写しを持ち続けます。"
+  },
+  "Template.rename": {
+    "source": "2ff1a8a25ea1",
+    "ja": "テンプレートの名前を変えます。self を返します。Run は元の名前を持ち続けます。"
+  },
+  "Template.run": {
+    "source": "11666c90eb64",
+    "ja": "各試料に段を行い、その記録(``Run``)を返します。\n\n``inputs`` は各試料の wave です: 試料ごとの dict のリスト ``[{\"spectrum\": \"s1\"}, {\"spectrum\": \"s2\"}]``、入力が 1 つのテンプレートなら wave のリスト ``[\"s1\", \"s2\"]``、または入力ごとのリストの dict ``{\"spectrum\": [\"s1\", \"s2\"], \"energy\": \"E\"}``(wave 1 つならすべての試料に使う)。\n\n各試料の段は 1 つの ``op.atomic()`` ブロックで行います。失敗した試料は何も残さず、成功した試料はすぐ実験に入り、終わるごとに Run に記録されます。``on_error=\"continue\"`` ならほかの試料を続け、``\"stop\"`` なら最初に失敗した試料で止め、残りは未実行のままです。Python を中断しても止まり、終わった試料は残り、実行中と未着手の試料は中断と記録されます。``run.retry()`` は成功しなかった試料だけをやり直します。\n\n試料を始める前からある wave と同じ名前で段が wave を作ると、代わりに新しい名前 ``<name>_1``(``_2``…)で作ります。Run は wave を置き換えません。最新のフィットを持つ ``W_coef``、``W_sigma``、``W_peaks`` はいつもどおり書き込みます。\n\n何かする前に、テンプレートを Action と照らし合わせます。登録されていない Action、受け取らない引数、型の違う固定値があれば、Run 全体を拒否します。``name`` は Run の名前(既定は Run0、Run1…)です。``quiet`` なら何も表示せず、そうでなければ成功しなかった試料ごとに 1 行と、最後に件数を表示します。"
+  },
+  "Template.steps": {
+    "source": "16e2884f2aa0",
+    "ja": "段を順に並べた dict のリスト: id、action、version、args。"
+  },
+  "Trace": {
+    "source": "36e113cad057",
+    "ja": "グラフの 1 本の曲線。\n\n``fill=\"zero\"`` は 0 までの面積を、``fill=\"next\"`` は次のトレースとの間の帯を塗ります。``fill_color`` と ``fill_opacity`` で塗りの見た目を決めます。``x_offset`` と ``y_offset`` は wave を変えずに描く位置をずらします。``color_wave`` は別の wave の値で点ごとに色を付けます(``color_table`` を使い、``color_min``〜``color_max``、省くとその wave の範囲)。複素数の wave では ``part`` で描くものを選びます: ``\"real\"``、``\"imag\"``、``\"magnitude\"``、``\"phase\"``(ラジアン)。"
+  },
+  "Trace.set": {
+    "source": "1d028cfae1cb",
+    "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "Wave": {
+    "source": "03479102c7b2",
+    "ja": "スケーリングを持つ名前付きの配列。アプリ側に保存されます。\n\n算術演算や NumPy の関数は wave にそのまま使え、結果は通常の配列になります: ``np.sqrt(w)``、``w * 2``、``w.data.mean()``。\n\nwave は 1〜4 次元の数値か、1 次元のテキストの並びです。"
+  },
+  "Wave.attributes": {
+    "source": "e14246192546",
+    "ja": "この wave が表す試料の属性。データフォルダの属性に、wave 自身の属性を重ねたものです。\n\n名前から数値か文字への dict です(例: ``{\"thickness\": 12.5, \"instrument\": \"XPS-2\"}``)。``op.set_attributes`` も見てください。"
+  },
+  "Wave.data": {
+    "source": "bd1340dd9fce",
+    "ja": "値(読み取り専用の配列)。代入するとすべての値を置き換えます。"
+  },
+  "Wave.dtype": {
+    "source": "f10e83ae23da",
+    "ja": "wave の数値の型(NumPy の dtype)。"
+  },
+  "Wave.duplicate": {
+    "source": "d0b202187ff0",
+    "ja": "この wave をスケーリングごと新しい wave に複製します。"
+  },
+  "Wave.flat": {
+    "source": "6c854d00508d",
+    "ja": "形にかかわらず、保存順に並べた点: ``w.flat[6:9] = 0``。"
+  },
+  "Wave.formula": {
+    "source": "8dced544f180",
+    "ja": "値を計算する数式(文字列)。なければ None。\n\n代入するとすぐに計算し、式が読む wave が変わるたびに計算し直します: ``r.formula = \"V / I\"``(式の書き方と、求めたときだけ計算する式は ``op.set_formula`` を参照)。None を代入すると式を外し、値はそのまま残します。"
+  },
+  "Wave.formula_info": {
+    "source": "f802a3a481ea",
+    "ja": "数式の状態(dict)。式がなければ None。\n\n``expr`` と ``auto`` は設定した値、``inputs`` は式が読む wave の名前です。``status`` は ``\"ok\"``、``\"stale\"``(手動の式で、計算後に入力が変わった)、``\"error\"``(前回の計算が失敗し、値はその前のまま)、``\"missing\"``(式が読む wave がない)のいずれかで、``message`` に詳しい説明が入ります。``zero_divisions`` は 0 で割って NaN になった点の数です。"
+  },
+  "Wave.insert_points": {
+    "source": "a3a176e7fd0f",
+    "ja": "点 ``at`` の前に、NaN の点を ``count`` 個挿入します。"
+  },
+  "Wave.redimension": {
+    "source": "958f09207e38",
+    "ja": "数値の型を変え、値を変換します(Igor の Redimension)。\n\n整数型にすると丸められ、範囲の外の値は端の値になります。実数の wave を複素数にすると虚部は 0、複素数を実数にすると実部が残ります。"
+  },
+  "Wave.rename": {
+    "source": "156b30d14331",
+    "ja": "wave の名前を変えます。フォルダ付きの名前(\"run1:signal\")ならそこへ移します。"
+  },
+  "Wave.set_attributes": {
+    "source": "2050a84596e0",
+    "ja": "この wave 自身に属性を設定します(None で削除)。self を返します。"
+  },
+  "Wave.set_scale": {
+    "source": "4460023be564",
+    "ja": "スケーリング(X の開始値・刻み・単位。2 次元 wave では Y も)を設定します。"
+  },
+  "Wave.unit": {
+    "source": "87a74e794b0a",
+    "ja": "値の単位。軸に表示されます。"
+  },
+  "Wave.x": {
+    "source": "a93ec746ff69",
+    "ja": "第 1 次元の各点の X の値。スケーリングから計算します。"
+  },
+  "Wave.y": {
+    "source": "6026dc98a7ef",
+    "ja": "2 次元 wave の第 2 次元の各点の Y の値。"
+  },
+  "action": {
+    "source": "8a61dc3626e4",
+    "ja": "関数を Action として登録します: 名前と、型の決まった引数で呼ぶもの。\n\n::\n\n    @op.action(\"lab.normalize\", title=\"Normalize\", params={\n        \"wave\": {\"type\": \"wave\", \"title\": \"Wave\"},\n        \"to\": {\"type\": \"number\", \"default\": 1.0, \"min\": 0},\n    })\n    def normalize(wave, to=1.0):\n        return op.make(f\"{wave.name}_norm\", wave.data / np.nanmax(wave.data) * to)\n\nパネル・テンプレート・プラグインは、Python のコードではなく普通の値(JSON)で Action を呼びます。Python からは ``op.invoke(\"lab.normalize\", {\"wave\": \"signal\"})`` で同じことができます。引数は関数を呼ぶ前に ``params`` と照らし合わせて検査し、呼び出しは ``op.atomic()`` ブロックの中で動くので、失敗した呼び出しは何も変えません。\n\n``id`` は ``\"lab.normalize\"`` のような小文字の点区切りの名前です。``core.`` で始まる id はアプリ自身の解析、``plugin.`` はプラグイン用なので、Procedure からは登録できません。同じ id と版をもう一度登録すると置き換わります(Procedure をもう一度実行したときなど)。新しい ``version`` は古い版と並べて登録でき、版を指定した呼び出しはその版、それ以外は最新版を使います。\n\n``params`` は各引数の名前から、その説明の dict への対応です: ``type`` と、必要なら ``title``、``description``、``optional=True``、``default``(付けると省略可能になり、関数自身の既定値と同じである必要があります)。型は次のとおりです:\n\n- ``\"wave\"``: 既存の wave の名前。``op.Wave`` として渡す。\n- ``\"waves\"``: wave の名前のリスト。``op.Wave`` のリストとして渡す。\n- ``\"number\"``、``\"integer\"``: 必要なら ``min`` と ``max``(両端を含む)。\n- ``\"numbers\"``: 数のリスト。必要なら ``min``、``max``、``length``。\n- ``\"string\"``、``\"boolean\"``。\n- ``\"choice\"``: ``choices``(文字列か数のリスト)のどれか。\n- ``\"samples\"``: dict のリストで、各 dict はテンプレートの入力ごとに wave の名前を与える(``Template.run`` を参照)。\n- ``\"json\"``: 独自の構造を持つ値(dict、リスト、文字列、数、True/False と、その中の None)。中身は関数自身が検査する。フィットの ``hold``、``bounds``、``exclude`` など。\n\n省いた引数は渡さないので、関数の既定値が使われます。None(null)は値として使えません。代わりに引数を省いてください。``arg`` は引数をその名前のパラメータとして渡します。2 つの省略可能な引数を同じパラメータとして渡すこともでき(ピークの数か位置か、など)、そのときはどちらか一方しか指定できません。\n\n関数をそのまま返します。"
+  },
+  "actions": {
+    "source": "7e80010a0729",
+    "ja": "登録された Action を普通の dict で返します: id、version、title、description、params。\n\n各 Action のすべての版を、id、版の順に並べます。``params`` は各引数の名前からその説明(``op.action`` を参照)への対応で、``optional`` は常に入っています。"
+  },
+  "apply_style": {
+    "source": "9047d498dced",
+    "ja": "グラフにスタイルの見た目を適用します。``graphs`` が None ならすべてのグラフ。\n\nいくつのグラフを変えても、Undo は 1 回です。"
+  },
+  "atomic": {
+    "source": "7bc5ddfb8432",
+    "ja": "ブロックの中の変更を、まとめて実験に入れる(か、何も入れない)ようにします。\n\n::\n\n    with op.atomic():\n        corrected = op.make(\"corrected\", raw.data - background.data)\n        op.display(corrected)\n\nブロックの中の Python には自分の変更が見えますが、実験(つまり画面)にはブロックが終わるまで何も見えません。ブロックで例外が起きると何も残らず、普通に終わるとすべてが 1 回の Undo の単位として入ります。wave や結果を作る解析(``op.fit``、``op.fit_peaks``、``op.background`` など)はそれぞれ自分のブロックで動くので、途中で失敗しても何も残りません。\n\n画面は Python を待たないので、ブロックの実行中に実験が変わることがあります。その変更がブロックの変更とぶつからなければ(ウィンドウの移動、別の wave の編集など)ブロックは止まりません。しかしブロックが読んだ wave がその間に変わっていたら、そこから計算したものは古いので、何も残さず ``OresmeError`` になります。\n\nブロックは入れ子にでき、内側のブロックで例外が起きると、その変更だけが取り消されます。ブロックの中ではグラフやページレイアウトを描画・保存できません。関数に ``@op.atomic()`` を付けると、呼び出しごとにブロックになります。"
+  },
+  "attributes": {
+    "source": "37b6b027f6fc",
+    "ja": "wave またはデータフォルダの属性。フォルダから受け継いだものを含みます。``own`` を付けると自身の属性だけ。"
+  },
+  "background": {
+    "source": "7cc9fc3dd3de",
+    "ja": "スペクトルのピークの下の背景を、新しい wave ``<name>_bg`` として返します。\n\n``method`` は ``\"shirley\"``、``\"tougaard\"``、``\"linear\"`` のいずれか。背景を作る範囲は ``range=(x1, x2)``(X が x1〜x2 の点。点番号でなく X の値)、``cursors=True`` ならカーソル A と B の間、どちらもなければ wave 全体です。両端の高さは、範囲の両端の ``average`` 点の平均です。範囲の外は NaN です。結果はデータと同じスケーリングを持ちます。``x`` は XY データの X wave(または配列)で、範囲内で一方向に進む必要があります。\n\n``\"linear\"`` は、平均した両端を結ぶ直線です。\n\n``\"shirley\"`` は、途中で通過したピーク面積(背景より上のデータ)に比例して、一方の端の高さからもう一方の端の高さへ変わります。動きが両端の高さの差の ``tolerance`` 倍未満になるまで反復して求めます。データの高い端に向かって上がります(XPS では、非弾性散乱した電子がたまる結合エネルギーの高い側=運動エネルギーの低い側)。どちらの端から数えても同じ背景になるので、X の向きは問いません。\n\n``\"tougaard\"`` は、電子がエネルギーを失っていない側の端の高さに、その側のすべての点から失われた電子を足します: エネルギー損失 T について ``B * ∫ T/(C + T^2)^2 * (data - level)``。Tougaard の普遍的な断面積で ``B = 2866``、``C = 1643`` eV^2 です。X は eV である必要があります。``scale=True``(通常の使い方)なら、反対の端(そこの高さと同じ点数で平均)で背景がデータに合うよう B を調整します。``energy`` は電子がエネルギーを失う向きです: ``\"binding\"``(X が大きい方へ)か ``\"kinetic\"``(X が小さい方へ)。既定はデータの高い端の方へ。使った B は背景 wave のノートに書きます。\n\n``subtract=True`` なら ``<name>_sub``(データ − 背景)も作り、(background, subtracted) を返します。名前付きタプルで、``.background`` と ``.subtracted`` でも取れます。"
+  },
+  "close_window": {
+    "source": "579e07778906",
+    "ja": "ウィンドウを閉じますが、中身は実験に残します。\n\n閉じたグラフも wave に追従し、閉じた Procedure も import できます。``reopen_window``(または Windows メニュー)で、その時点の状態のウィンドウに戻せます。完全に削除するには ``kill_window`` です。"
+  },
+  "cm": {
+    "source": "1122a9ef3d04",
+    "ja": "``value`` cm の長さ。"
+  },
+  "contour": {
+    "source": "3c56a3907aa7",
+    "ja": "2 次元 wave の等高線の新しいグラフを作り、そのグラフを返します。"
+  },
+  "control": {
+    "source": "16b0d0993a8a",
+    "ja": "ボタンの引数として渡す、パネルの部品。\n\n::\n\n    p.button(\"run\", \"Fit\", action=\"core.fit\",\n             args={\"function\": op.control(\"model\"), \"y\": op.control(\"target\")})\n\nボタンを押したとき、引数はその時点の部品の値になります。中身は dict ``{\"$control\": name}`` で、パネルはこの形で持ちます。"
+  },
+  "default_style": {
+    "source": "62a9034f1e47",
+    "ja": "新しいグラフに適用するスタイル。なければ None。"
+  },
+  "differentiate": {
+    "source": "ba2e95608b4d",
+    "ja": "X による微分を、新しい wave ``<name>_DIF`` として返します。\n\n内側は中心差分、両端は片側差分です。``x``(点ごとの値の wave か配列)を渡すと、X スケーリングの代わりにその値で微分します。例: dQ/dV なら ``op.differentiate(capacity, x=voltage)``。間隔は不均一でも、X が折り返してもかまいません。各点で不均一な刻み用の 3 点公式(2 次精度。``np.gradient(y, x)``、両端は 1 次精度)を使います。隣り合う X が等しい所や、X が 2 点前の値に戻る所は傾きが決まらず NaN になります。このとき結果はデータと同じ点数の普通の wave で、同じ X wave に対して描く想定です。\n\nデータの NaN は、その点と隣の点の微分を NaN にします。両方の単位が分かれば、単位は ``Y/X`` です。"
+  },
+  "display": {
+    "source": "68a4409c0352",
+    "ja": "渡した wave(または配列)の新しいグラフを作り、返します。\n\n``x`` を渡すと、wave 自身の X スケーリングでなく X wave に対して描きます。テキスト wave を ``x`` にするとカテゴリのグラフになります(トレースに ``mode=\"bars\"`` を試してください)。既定のスタイルがあればそれを適用します(``set_default_style`` を参照)。``style=\"paper\"`` で別のスタイル、``style=None`` でスタイルなし。"
+  },
+  "edit": {
+    "source": "f8d024a87eae",
+    "ja": "渡した wave の新しいテーブルを作り、返します。"
+  },
+  "fft": {
+    "source": "60c19de86510",
+    "ja": "wave のスペクトルを、周波数でスケーリングした新しい wave ``<name>_FFT`` として返します。\n\n``output=\"magnitude\"`` は各周波数成分の振幅です: ``A*cos(2*pi*f*x)`` は f の所に A として、定数のオフセットは 0 の所にその値として出ます。``output=\"complex\"`` はスペクトルそのものを複素数の wave として残します(非負の周波数、正規化なし。``np.fft.rfft``)。``op.ifft`` で信号に戻せます。"
+  },
+  "filter_image": {
+    "source": "98392de2ea68",
+    "ja": "2 次元 wave を平滑化または鮮鋭化します。結果は ``<name>_filt`` です。\n\n``kind`` は ``\"gauss\"``(``size`` はピクセル単位の標準偏差)、``\"mean\"`` か ``\"median\"``(``size`` は正方形の窓の辺、奇数)、``\"sharpen\"``(アンシャープマスク。``size`` はぼかしの標準偏差)。端は境界の値を繰り返して扱います。"
+  },
+  "find_peaks": {
+    "source": "f499df533c84",
+    "ja": "1 次元 wave のピークを探します。高い順の dict のリストを返します。\n\n各 dict は ``point``、``x``、``height``(周りのベースラインからの高さ=プロミネンス)、``width``(その高さの半分での全幅)を持ちます。\n\n``min_prominence`` は、ピークが両隣の谷の高い方からどれだけ突き出ている必要があるかです。既定は雑音(隣り合う点のばらつきから推定)の 4 倍、かつ wave の範囲の 2% 以上。``min_height`` は値そのものの下限です。``smooth`` はその点数でまず移動平均をかけ、雑音の多いデータでの探索を安定させます。``negative=True`` なら谷を探します。"
+  },
+  "fit": {
+    "source": "3e287e95490e",
+    "ja": "最小二乗法で wave に関数をフィットします。\n\n``function`` は組み込みの関数の名前(``op.fit_functions()`` を参照)、N 項の多項式なら ``\"polyN\"``、または自分の ``f(x, p1, p2, ...)`` と ``guess=[...]`` の組です。\n\nlmfit のモデル(``lmfit.models.GaussianModel() + lmfit.models.LinearModel()`` など)も使えます。そのときは lmfit がフィットし(その式と制約も使えます)、``params=``(``model.make_params(...)``)か、なければモデル自身の推定から始めます。ほかは組み込みの関数と同じです: 点の選び方、重み、グラフの曲線、残差、信頼帯、実験に残る結果。``r.lmfit`` は lmfit 自身の結果です。\n\n``hold`` はパラメータを固定します: ``hold={\"y0\": 0}`` で値に、``hold=[\"y0\"]`` で初期値に。``bounds={\"A\": (0, None)}`` はパラメータを範囲内に保ちます(None はその側に制限なし)。\n\n``sigma`` は点の標準偏差で重みを付けます: 点ごとの値の wave か配列、または 1 つの数。パラメータの不確かさはそこから求めます。``sigma`` がなければ、フィットのまわりのデータのばらつきから推定します。\n\n``x`` は X wave です。省くと wave の X スケーリングを使います。\n\nフィットする点の選び方(wave 自体は変わりません): ``range=(a, b)`` は点 a〜b(両端を含む)、``xrange=(x1, x2)`` は X がその範囲の点、``cursors=True`` はグラフのカーソル A と B の間の点です。``exclude=(x1, x2)`` や ``exclude=[(x1, x2), ...]`` はその範囲の X の点を除き、``mask``(点ごとの値の wave か配列)は 0 の点を除きます。組み合わせられます。\n\n``residuals=True`` で ``res_<name>``(データ − フィット)も作り、データの上に専用の軸で表示します。``band=0.95`` で、その水準のフィット曲線の信頼帯 ``fit_<name>_lo`` と ``fit_<name>_hi`` を作り、塗った帯で描きます。\n\nフィット曲線の wave ``fit_<name>`` を作ってデータのグラフに加え、係数を ``W_coef``、その標準偏差を ``W_sigma`` に入れます。``FitResult`` を返し、それはパラメータの共分散と相関、フィットが止まった理由も持ちます。\n\nフィットは設定とともに実験の結果(``op.results()``)に ``Fit0``、``Fit1``… として残ります。``result=\"name\"`` で名前を付け(同じ名前の結果は置き換え)、``record=False`` なら何も残しません。"
+  },
+  "fit_batch": {
+    "source": "4527e7badf4b",
+    "ja": "同じ関数を複数の wave に順にフィットします。\n\n``op.fit`` のオプション(すべてに同じ ``x`` wave、範囲、hold、bounds)を使えます。``FitResult`` のリストを返します。``table`` を付けると表にも並べます(``op.results_table`` を参照)。"
+  },
+  "fit_functions": {
+    "source": "b64e5f693c9d",
+    "ja": "組み込みのフィット関数とその式。``polyN`` は多項式をフィットします。"
+  },
+  "fit_global": {
+    "source": "33d13aa95b84",
+    "ja": "1 つの関数を複数の wave に同時にフィットし、一部のパラメータを全 wave で共通にします。\n\n``ys`` は wave のリストです。``shared`` は全 wave で 1 つの値を持つパラメータ(時定数、ピーク位置など)の名前で、ほかは wave ごとにフィットします。``xs`` は全 wave に共通の X wave か、wave ごとのリストで、省くと各 wave の X スケーリングを使います。\n\n``guess`` はパラメータごとの初期値のリストで、すべての wave に使います(自分の関数には必要)。``hold={\"y0\": 0}`` はパラメータを全 wave で固定し、``bounds={\"A\": (0, None)}`` は範囲を制限します。\n\nwave ごとに ``fit_<name>`` を作り、その wave のグラフに加えます。``GlobalFitResult`` を返します。フィットは実験の結果に ``Global0``、``Global1``… として残ります。"
+  },
+  "fit_peaks": {
+    "source": "84c7f0c19e5f",
+    "ja": "複数のピークを同時にフィットします: ベースラインの上に、同じ形のピークを足し合わせたもの。\n\n``peaks`` は始め方です: 省くと自動で探す(``op.find_peaks`` を参照。そのオプションもここで渡せます)、数なら高い順にその数、X の位置のリストならそこから。``baseline`` は ``\"constant\"``、``\"linear\"``、``None`` のいずれか。\n\n``shape`` は ``\"gauss\"``、``\"lor\"``、``\"voigt\"``、``\"pseudo_voigt\"``。Voigt(ガウス関数とローレンツ関数の畳み込み)はガウス幅とローレンツ幅を別々に持ち、両方をフィットします。各ピークはその半値全幅も ``gauss_fwhm`` と ``lorentz_fwhm`` として報告します。pseudo-Voigt は 1 つの半値全幅で ``eta * ローレンツ + (1 - eta) * ガウス`` とし、``eta``(0〜1 に保つ)を報告します。\n\n多重項の線のように、ピークどうしを結び付けられます。ピークは始めの位置で左から 1 番から数えます:\n\n- ``same_width=True`` はすべてのピークの幅(すべての幅のパラメータ)を 1 番目と同じにする。\n- ``spacing={(1, 2): 1.2}`` はピーク 2 をピーク 1 の 1.2 右に保つ。\n- ``area_ratio={(1, 2): 0.5}`` はピーク 2 の面積をピーク 1 の半分に保つ。\n\n結び付けた量はフィットせず、相手のピークに従い、不確かさも相手から引き継ぎます。\n\n``range``、``xrange``、``exclude``、``mask``、``cursors`` で、``op.fit`` と同じように点を選びます。\n\n``fit_<name>``(合計)、``fit_<name>_p1``、``_p2``…(``components`` 付きなら、ベースラインの上の各ピーク)、``W_peaks``(ピークごとに位置・高さ・半値全幅・面積と、形が加える列)を作ります。左から順にピークを並べた ``PeakFitResult`` を返します。``record=False`` でない限り、フィットは実験の結果に ``Peaks0``、``Peaks1``… として残ります(``op.results()`` を参照)。"
+  },
+  "folder": {
+    "source": "72307c31db03",
+    "ja": "既存のデータフォルダ。引数なしならルート。"
+  },
+  "folders": {
+    "source": "01accc25a779",
+    "ja": "ルートより下のすべてのデータフォルダ。"
+  },
+  "from_dataframe": {
+    "source": "1979e90d9df9",
+    "ja": "pandas の DataFrame(または Series)の列ごとに wave を作り、返します。\n\n数は数値 wave、日付は日付 wave(UTC)、それ以外はテキスト wave になります。名前は列の見出しを使える wave の名前に直したもので、``prefix``(データフォルダも指定可: ``\"run1:\"``)のあとに付きます。使用中の名前には ``_1``、``_2``… を付けます。インデックスが 0, 1, 2, … でなければそれも wave にします(``index=False`` で除外、``True`` で必ず作る)。``table`` を付けると、新しい wave をテーブルに表示します。"
+  },
+  "graph": {
+    "source": "aa175ae9be5a",
+    "ja": "名前でグラフを取得します。名前を省くと最前面のグラフ。"
+  },
+  "graph_template": {
+    "source": "667ff66ea367",
+    "ja": "グラフテンプレート: ``source`` という名前のもの、またはグラフから作ったもの。\n\n``op.graph_template(\"IV\")`` は IV という名前のテンプレートです。``op.graph_template(g, \"IV\")`` はグラフ ``g``(Graph かグラフの名前)を IV という名前のテンプレートとして残し、返します。``fixed`` は ``Graph.save_template`` を参照してください。"
+  },
+  "graph_templates": {
+    "source": "dcdd7f44b944",
+    "ja": "実験のすべてのグラフテンプレート。"
+  },
+  "histogram": {
+    "source": "b96a020e9ad5",
+    "ja": "値を ``bins`` 個の等しい区間で数え、新しい wave ``<name>_Hist`` として返します。"
+  },
+  "ifft": {
+    "source": "7fda52f146dc",
+    "ja": "複素数の wave がスペクトルとして持つ信号を、``<name>_IFFT`` として返します。\n\n``op.fft(w, output=\"complex\")`` の逆です。``n`` は結果の点数で、既定はスペクトルを作ったときの点数です。"
+  },
+  "image": {
+    "source": "b242814cd972",
+    "ja": "2 次元 wave を画像として表示する新しいグラフを作り、そのグラフを返します。"
+  },
+  "inch": {
+    "source": "262e40f363cd",
+    "ja": "``value`` inch(72 pt)の長さ。"
+  },
+  "install": {
+    "source": "6d78d9dbfe01",
+    "ja": "Python のパッケージを入れ、実験に記録します。\n\n各要求はパッケージの名前(必要ならバージョン付き: ``\"pint\"``、``\"emcee==3.1.6\"``、``\"pybaselines>=1.1\"``)か、wheel のアドレスです。Pyodide 配布物のパッケージ(statsmodels、sympy、PyWavelets など)はそこから、ほかは PyPI から依存ごと入れます。入れたものは実験に記録され、実験を開くたびに入れ直されます。``await`` を付けるか、``%pip install name`` として使います::\n\n    await op.install(\"pybaselines\", \"impedance\")\n\n何も指定しなければ、実験に記録されたものを記録どおりのバージョンで入れ直します(実験を開いたときに自動で行われることです)。"
+  },
+  "integrate": {
+    "source": "a203b20867a1",
+    "ja": "X による累積積分(台形公式)を、新しい wave ``<name>_INT`` として返します。\n\n最初の点で 0 から始まります。``x``(点ごとの値の wave か配列)を渡すと、X スケーリングの代わりにその値で積分します。例: 電荷なら ``op.integrate(current, x=time)``。X は不均一でも、増加していなくてもかまいません。X が戻る所では面積が負に数えられます(充放電のループなど)。このとき結果はデータと同じ点数の普通の wave で、同じ X wave に対して描く想定です。\n\nデータの NaN は、そこから先の累積積分を NaN にします。両方の単位が分かれば、単位は ``Y·X`` です。"
+  },
+  "interpolate": {
+    "source": "fda84c42cdb8",
+    "ja": "wave の点の間の値を、新しい wave ``<name>_interp`` として返します。\n\n``n`` を渡すと、同じ X 範囲に等間隔の n 点の結果になります(XY データを X スケーリング付きの wave にするのにも使えます)。``at``(X の値の wave か配列)を渡すと、その各点の値になります。``kind`` は ``\"linear\"`` か ``\"cubic\"``(自然スプライン)。データの外は NaN です。"
+  },
+  "invoke": {
+    "source": "936da2003c3f",
+    "ja": "id と普通の値の dict で Action を呼びます(アプリと同じ呼び方)。\n\n::\n\n    r = op.invoke(\"core.fit\", {\"function\": \"gauss\", \"y\": \"signal\"})\n\n引数はまず Action のパラメータと照らし合わせます(``op.action`` を参照)。拒否された呼び出しは ``OresmeError`` になり、何もしません。wave は名前でも ``op.Wave`` でも渡せます。``version`` で Action の版を選びます(既定は最新)。呼び出しは ``op.atomic()`` ブロックの中で動き、関数の戻り値を返します。"
+  },
+  "kill": {
+    "source": "3fe56bb33e45",
+    "ja": "wave を削除します。グラフやテーブルが表示している wave は削除できません。"
+  },
+  "kill_window": {
+    "source": "d11281403e1c",
+    "ja": "グラフ・テーブル・Procedure・ページレイアウト・パネルを、ウィンドウと中身ごと削除します。\n\n表示していた wave は残ります。中身を残してウィンドウだけ閉じるには ``close_window`` を使います。"
+  },
+  "layout": {
+    "source": "0465d5b58120",
+    "ja": "名前でページレイアウトを取得します。名前を省くと最前面のもの。"
+  },
+  "line_profile": {
+    "source": "c5165749f598",
+    "ja": "2 次元 wave の直線に沿った値を ``<name>_prof`` として返します。\n\n``start`` と ``end`` は wave のスケーリングした座標の (x, y) です。プロファイルは ``n`` 点(既定は横切るピクセルごとに 1 点)で双一次補間し、X スケーリングは直線に沿った距離です。"
+  },
+  "link_graphs": {
+    "source": "2ed31b99d7bd",
+    "ja": "グラフを連動させ、1 つを拡大・移動すると、ほかも同じように拡大・移動するようにします。\n\n``axes=\"x\"`` で下の軸を、``\"xy\"`` で左の軸も連動させます。``cursors`` を付けると、1 つのグラフに置いたカーソルが、ほかのグラフでも同じ X に最も近い点に置かれます(別々に表示した充放電曲線・電流・温度の同じ時刻など)。グラフは 1 つ目のグラフの範囲から始まり、それまでの連動からは外れます。グループの名前を返します。"
+  },
+  "load_excel": {
+    "source": "b950ea9f17cd",
+    "ja": "Excel のブック(.xlsx、.xlsm)を wave として読み込みます。シート名からその wave への dict を返します。\n\n``sheets`` で読むシートを指定します(名前 1 つかリスト)。省くとセルのあるシートをすべて読みます。``skip`` は表の前の行数です。ほかのオプションは ``load_text`` と同じで、読むすべてのシートに使います。"
+  },
+  "load_hdf5": {
+    "source": "2c25862a88e5",
+    "ja": "HDF5 ファイル(.h5、.hdf5)のデータセットを wave として読み込み、リストで返します。\n\n``source`` は作業ディレクトリのファイル、ほかのパス、または ``name=`` と組にしたバイト列です。``datasets`` で読むデータセット、または中のデータセットをすべて読むグループを指定します(パス 1 つかリスト。例: ``\"/run1/signal\"``)。省くとファイルのすべてです。グループはデータフォルダになります(``/run1/signal`` は wave ``run1:signal``)。名前は使えるものに直し、使用中なら ``op.load_igor`` と同じく ``_1`` を付けます。\n\nデータセットは形(4 次元まで。``w[i, j]`` はデータセットの ``[i, j]``)と型を保ちます: 整数・浮動小数点数・複素数はその型の wave(64 ビット整数は float64、float16 は float32)、真偽値は uint8、h5py が保存した NumPy の日付は日付 wave(単位 ``dat``)、文字列はテキスト wave(行優先の順の 1 次元)。複合型のデータセットのフィールドは ``<データセット>_<フィールド>`` という名前の wave になります。文字列の属性 ``units``(または ``unit``)は wave の単位になります。\n\n各 wave のノートには、元のファイル(SHA-256 付き)、データセットのパス・型・形、丸めた 2^53 超の 64 ビット整数の数、データセットとその上のグループの属性を書きます。wave で持てないデータセット(5 次元以上、参照、空のデータセット)は読み込まず、警告で名前を示します。h5py は初めて実行するときに取得します。"
+  },
+  "load_igor": {
+    "source": "84dafef57535",
+    "ja": "Igor Pro のファイル(バイナリ wave .ibw、パックされた実験 .pxp・.pxt)の wave を読み込みます。\n\n``source`` は作業ディレクトリのファイル、ほかのパス、または ``name=``(拡張子で種類を判断)と組にしたバイト列です。作った wave をファイルの順にリストで返します。バイナリ wave なら 1 つ、実験ならすべての wave を、元のデータフォルダに入れて返します(``w.name`` は ``\"run1:signal\"`` のようになります)。値・次元・スケーリング・単位・ノートは Igor のままです。Igor では使えてもこのアプリでは使えない名前(\"raw data\")は使える名前(\"raw_data\")に直し、使用中の名前には接尾辞を付けます。各 wave のノートには、どのファイルから来たかと、Igor のとおりに保てなかったことを書きます。実験のグラフ・テーブル・Procedure・変数・履歴は読み込みません。値が保存されていない wave(式から計算されるもの)も読み込まず、警告で名前を示します。"
+  },
+  "load_parquet": {
+    "source": "af145fb26748",
+    "ja": "Parquet ファイルを列ごとの wave として読み込み、リストで返します。\n\n``source`` は作業ディレクトリのファイル(実験のファイルはここにあります)、ほかのパス、または ``name=`` と組にしたバイト列です。``columns`` で読む列を指定します(名前 1 つかリスト)。省くと全部です。列ごとにその名前の wave になります(使える名前に直し、使用中なら ``_1`` を付けます):\n\n- 整数・浮動小数点数・decimal はその型の数値 wave(64 ビット整数と decimal は float64、float16 は float32)。真偽値は 0 と 1 の uint8 wave。\n- タイムスタンプと日付は日付 wave(1970-01-01 UTC からの秒、単位 ``dat``)。時刻と時間の長さは秒(単位 ``s``)。\n- 文字列とカテゴリ(dictionary の列)はテキスト wave。\n- null は NaN(テキストでは空文字)。null を含む整数・真偽値の列は、それを持てるよう float64 にします。\n\n各 wave のノートには、元のファイル(SHA-256 付き)、列の Parquet の型、NaN にした null の数、丸めた 2^53 超の 64 ビット整数の数、列のメタデータを書きます。そのほかの種類の列(リスト、構造体、バイナリ)は読み込まず、警告で名前を示します。``table=False`` でテーブルを作りません。pyarrow は初めて実行するときに取得します。"
+  },
+  "load_text": {
+    "source": "16ff70b4d8fb",
+    "ja": "区切り文字のテキスト(CSV、TSV、空白区切り)を wave として読み込みます。\n\n``source`` は作業ディレクトリのファイル(実験のファイルはここにあります)、ほかのパス、または ``name=`` と組にしたファイルのバイト列です。列ごとに wave になり、リストで返します。指定しないものは自動で判定します:\n\n- ``encoding``: \"utf-8\"、\"shift_jis\"、\"euc-jp\"、\"utf-16le\"、\"utf-16be\"、\"windows-1252\"。\n- ``delimiter``: \"tab\"、\"comma\"、\"semicolon\"、\"space\"。\n- ``decimal``: 1,5 のように書かれた数には \",\"(このときピリオドは桁区切り)。\n- ``comment``: この文字で始まる行を読み飛ばす。指定しなければ \"#\"、\"\" で無効。\n- ``skip``: 表の前の読み飛ばす行数。\n- ``header``: 先頭行が列名なら True、データなら False。\n- ``units``: \"auto\" は \"Voltage (V)\" や \"I [mA]\" のような見出しから、\"slash\" は \"Ewe/V\" から、\"row\" は見出しの次の行から単位を取る。\"none\" は取らない。\n- ``columns``: 列番号(0 から)ごとの指定: ``{0: {\"name\": \"t\", \"unit\": \"s\"}, 3: {\"type\": \"skip\"}}``。型は \"number\"、\"date\"、\"text\"、\"skip\"。指定した型に合わないセルは NaN になり、警告します。判定に任せた列は、数でないセルが 1 つでもあればテキストになります。\n- ``graph=True`` で数値の列をグラフにします。``x`` を指定すればその列に対して描き、``errors={値の列: 不確かさの列}`` で誤差棒を付けます。\n- ``table=False`` でテーブルを作りません。\n- ``preset``: Load Data ダイアログで保存したプリセットの名前。ここで指定したものが優先されます。"
+  },
+  "make": {
+    "source": "b98c447d5ace",
+    "ja": "wave を作り(あれば置き換え)、返します。\n\n``data`` は 4 次元までの数値か、テキスト wave にする文字列のリストです。``data`` を省くと 0 が ``n`` 個の wave になり、``n=(rows, columns)``(4 つまで)で 0 の行列になります。既存の wave は、新しく指定しない限りスケーリングと単位を引き継ぎます。``overwrite=False`` なら既存の wave があると作りません。\n\nデータの型が wave の持てる型なら、その型になります: float64、float32、int8〜int32、uint8〜uint32、complex128、complex64。ただの整数(そのリストや ``np.arange(10)``)は、ほかの数と同じく float64 です。型を名前で指定するには ``dtype`` を使います: ``dtype=\"int32\"``。"
+  },
+  "make_template": {
+    "source": "421d774c4c3e",
+    "ja": "解析をテンプレートとして残します: 手順と設定を、wave を抜いて残します。\n\n``results_`` は行った順に並べた結果(名前、またはフィットの戻り値)のリストで、それぞれがその Action(``core.fit``、``core.fit_peaks``)を、行ったときの設定(``hold``、``bounds``、``exclude`` を含む)で呼ぶ段になります。解析が読んだ wave はテンプレートの入力になり、引数の名前(``\"y\"``、``\"x\"``、``\"mask\"``)が付きます。前の結果が作った wave は、その段の出力への参照になるので、続けて行った解析は複数段のテンプレートになります。段は出力を抑えます(quiet)。Action が受け取れない設定(配列で渡したデータなど)は警告して除きます。複数の wave を同時にフィットしたもの(``op.fit_global``)には Action がなく、テンプレートにできません。テンプレートを返します(``op.Template`` を参照)。"
+  },
+  "new_folder": {
+    "source": "43d2f8e16eb2",
+    "ja": "データフォルダを作ります。例: ``op.new_folder(\"run1\")``、``\"run1:raw\"``。"
+  },
+  "new_layout": {
+    "source": "00b874f10939",
+    "ja": "ページレイアウトを作ります。``size`` は用紙の名前か、pt 単位の (width, height)。"
+  },
+  "new_panel": {
+    "source": "4cc37c527f88",
+    "ja": "空のパネルをウィンドウとともに作ります。名前を省くと自動で付けます(Panel0…)。"
+  },
+  "new_procedure": {
+    "source": "017f17dd21bd",
+    "ja": "Procedure ウィンドウ(実験と一緒に保存される Python ファイル)を作ります。\n\nモジュール ``name`` になり、コマンド入力やほかの Procedure から ``import name`` できます。``Procedure.run()`` ならコマンド入力と同じ名前空間で実行します。``auto_run=False`` で、実験を開いたときに実行しないようにします(ファイルから取り込んだ Procedure はこの状態で始まります)。"
+  },
+  "onset": {
+    "source": "a96f60ada06d",
+    "ja": "立ち上がり(または立ち下がり)の開始点を、ベースラインまで外挿して求めます。\n\n二次電子のカットオフや、UPS・LEIPS スペクトルの HOMO・LUMO の立ち上がりなどのしきい値に使います。X が ``edge=(x1, x2)`` の点に直線を、``baseline=(x3, x4)`` の点にもう 1 本の直線をフィットします。``baseline`` は数(一定の高さ)でもよく、省くと 0 です。範囲は点番号でなく X の値です。``x`` は XY データの X wave(または配列)です。\n\n交点の不確かさは、各直線のまわりの点のばらつき(各点は独立で、範囲内でばらつきは一定と仮定)から得た 2 本の直線の不確かさを 1 次まで伝播したもので、交点での 2 本の直線の広がりを傾きの差で割ったものです。これは範囲に比べて小さい間だけ成り立ち、範囲の選び方(たいていこちらの方が効きます)については何も言いません。\n\n``graph`` を渡さない限り何も描きません。グラフ(か名前)、または True でその wave を表示する最前面のグラフに描きます。そのとき 2 本の直線を ``<name>_edge`` と ``<name>_base``(それぞれの範囲から交点の先まで)、交点を ``<name>_onset``(タグ付きのマーカー)として加えます。``OnsetResult`` を返し、``r.x`` が交点です。"
+  },
+  "packages": {
+    "source": "e4e49570efbc",
+    "ja": "Python の起動時に入っているもの以外のパッケージ(``everything`` を付けると全部)。\n\nそれぞれ、バージョン、入手元(配布物なら \"pyodide\"、\"pypi\")、実験に記録されているか(自分で入れたか、それが必要としたか)、import 済みかを示します。"
+  },
+  "panel": {
+    "source": "8b656721466b",
+    "ja": "``name`` という名前のパネル。なければ(ウィンドウとともに)作ります。名前を省くと最前面のもの。\n\n``title`` はウィンドウに表示するタイトルです。"
+  },
+  "panels": {
+    "source": "be544100cb5f",
+    "ja": "実験のすべてのパネル。"
+  },
+  "plot_results": {
+    "source": "f6864dbceccd",
+    "ja": "結果のパラメータを、試料の属性(または別のパラメータ)に対してプロットします。\n\n``y`` はパラメータの名前(``\"A\"``)、``x`` は試料の属性(``\"thickness\"``、``op.set_attributes`` を参照)、別のパラメータ、または None(結果の順)です。``results_`` はプロットする結果で、省くと全部です。``y`` を持たない結果や、``x`` が数値でない結果は除きます。``<name>_x``、``<name>_y`` と(``sigma`` 付きなら)``<name>_y_sd`` を作り、誤差棒付きのマーカーでグラフにして、そのグラフを返します:\n\n    op.set_attributes(\"run1:\", thickness=10); ...\n    op.plot_results(\"A\", \"thickness\")"
+  },
+  "procedure": {
+    "source": "4c0716271c13",
+    "ja": "名前で Procedure を取得します。名前を省くと最前面のもの。"
+  },
+  "pt": {
+    "source": "c716e1f81b53",
+    "ja": "``value`` pt(1/72 inch)の長さ。"
+  },
+  "recalculate": {
+    "source": "a97677de6b9c",
+    "ja": "数式を計算し直します。指定した wave の式、または全部。\n\n計算するのは、古くなった式(入力が変わった手動の式)と前回の計算が失敗した式だけで、入力の wave を先に計算します。まだ失敗する式は警告で示します。"
+  },
+  "rename_window": {
+    "source": "738c170418fe",
+    "ja": "グラフ・テーブル・Procedure・ページレイアウト・パネルの名前を変えます。\n\nウィンドウと中身の名前が一緒に変わり、名前を変えたグラフを載せたページレイアウトも追随します。Procedure の名前はモジュール名でもあるので、ASCII の英字・数字・``_`` だけ使えます。新しい名前を返します。"
+  },
+  "reopen_window": {
+    "source": "d2ac96ba24af",
+    "ja": "``close_window`` で閉じたウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "result": {
+    "source": "8fafcf2c44bb",
+    "ja": "名前で結果を取得します。名前を省くと最新のもの。"
+  },
+  "results": {
+    "source": "648c5d4317f8",
+    "ja": "実験に残ったすべての解析(古い順)。"
+  },
+  "results_table": {
+    "source": "48d2a46de249",
+    "ja": "結果を並べます: 結果ごとに 1 行、パラメータごとに 1 列。\n\n``results_`` は結果(名前、またはフィットの戻り値)のリストで、省くと全部です。テキスト wave ``<name>_result`` と ``<name>_data``(どの結果か、何の wave についてか)、試料の属性ごとの wave(``op.set_attributes`` を参照。数値、文字が混じれば文字)、パラメータごとに ``<name>_<パラメータ>`` と(``sigma`` 付きなら)``<name>_<パラメータ>_sd``、最後に ``<name>_chisq`` を作り、テーブルに表示して返します。結果が持たないパラメータや属性は NaN(または空文字)です。"
+  },
+  "run": {
+    "source": "9b3e2f7fba68",
+    "ja": "名前で Run を取得します。名前を省くと最新のもの。"
+  },
+  "runs": {
+    "source": "07123aae7299",
+    "ja": "実験のすべての Run(古い順)。"
+  },
+  "set_attributes": {
+    "source": "679c358932b7",
+    "ja": "試料(データフォルダか wave)に属性を設定します。\n\n``target`` は wave、フォルダ(``op.folder(\"run1\")``)、wave の名前、またはフォルダのパスの末尾にコロンを付けたもの(``\"run1:\"``)です。属性は dict、キーワード引数、またはその両方で渡します。名前は英字・数字・_、値は数値か文字で、None はその属性を削除します。フォルダの属性は、その中のすべての wave が(wave 自身の属性の下に)持ちます:\n\n    op.set_attributes(\"run1:\", thickness=12.5, Mg=0.3, instrument=\"XPS-2\")\n    op.wave(\"run1:spectrum\").set_attributes(cycle=3)\n\n結果は読んだ wave の属性を持つので、``op.results_table()`` と ``op.plot_results()`` で属性とパラメータを並べられます。"
+  },
+  "set_default_style": {
+    "source": "05fde5a61fb0",
+    "ja": "新しいグラフにこのスタイル(名前か Style)を適用するようにします。None で適用しないようにします。"
+  },
+  "set_formula": {
+    "source": "ef39d3326aaa",
+    "ja": "数式で、ほかの wave から wave の値を計算し、その wave を返します。\n\n::\n\n    op.set_formula(\"R\", \"V / I\")\n    op.set_formula(\"ratio\", \"run1:A / run2:A\", auto=False)\n\nwave がなければ、式の wave と同じ長さと X スケーリングで作ります。値はすぐに float64 で計算します。``auto=True`` なら式の wave が変わるたびに、その変更と同じ Undo の単位で計算し直します。``auto=False`` なら ``op.recalculate()`` のときだけ計算し、それまでは「古い」と印を付けます。wave 自体に書き込んだ値は式の値で置き換えられます(または古いと印が付きます)。式を外すには ``w.formula = None`` です。\n\n式は Python ではありません。点数と X スケーリングが同じ 1 次元の数値 wave に、点ごとに働きます(補間はしません)。使えるのは次のものだけです:\n\n- 数、wave の名前(データフォルダ内は ``run1:V``。下の語と同じ名前の wave は ``'x'`` のように引用符で囲む)、``p``(点番号)、``x``(その X の値)、``pi``、``e``、``nan``、``inf``\n- ``+ - * / ^``(``^`` はべき乗。``-2^2`` は -4)、比較 ``< <= > >= == !=``、``&& || !``、``test ? a : b``\n- ``abs sqrt exp ln log log10 sin cos tan asin acos atan atan2 sinh cosh tanh floor ceil round min max pow hypot sign isnan``。``log`` は Igor と同じく常用対数\n\n0 で割ると NaN になり、何点そうなったかを警告します。NaN は ``isnan`` 以外のすべてを通り抜けます: ``isnan(V) ? 0 : V``。計算できない式や、wave が自分自身に依存することになる式は、どこが問題かを示す ``OresmeError`` になり、何も変えません。あとで自動の再計算が失敗したとき(入力が削除された、長さが変わったなど)は、値はそのまま残り、``w.formula_info`` が理由を示します。"
+  },
+  "set_graph_template": {
+    "source": "3200e6044205",
+    "ja": "dict(``GraphTemplate`` を参照)からグラフテンプレートを定義する、またはほかのテンプレートを複製し、返します。\n\n同じ名前のテンプレートは置き換えます。dict にないものは新しいグラフと同じになります。知らないキー、不正な値、テンプレートにないスロットや軸への参照は受け付けません。"
+  },
+  "set_panel": {
+    "source": "8d38af547a44",
+    "ja": "``name`` のパネルに、dict(``p.data``、またはパネルのウィンドウから書き出したファイル)からタイトルと部品を与えます。なければ作ります。そのパネルを返します。\n\n``data`` は ``{\"title\": ..., \"controls\": [...]}`` で、各部品は ``Control.data`` が返すように、``kind``、``name``、プロパティの dict です。知らないキーや不正な値は受け付けません。"
+  },
+  "set_style": {
+    "source": "c9def276570a",
+    "ja": "dict(``Style`` を参照)からスタイルを定義する、またはほかの Style を複製し、返します。\n\n同じ名前のスタイルは置き換えます。知らないキーや不正な値は受け付けません。"
+  },
+  "set_template": {
+    "source": "edc678403cf6",
+    "ja": "dict(``Template`` を参照)から解析テンプレートを定義する、またはほかのテンプレートを複製し、返します。\n\n同じ名前のテンプレートは置き換えます。入力は名前だけでも書けます(``\"inputs\": [\"spectrum\"]``)。``id`` のない段は位置から ``step1``、``step2``… と名付け、``version`` のない段にはいま登録されている Action の最新版を付けます。名前、各引数の形、存在しないスロットや前にない段への参照はここで拒否します。Action が引数を受け取るかは、テンプレートを実行するときに確かめます。"
+  },
+  "set_time_zone": {
+    "source": "1954cdd37226",
+    "ja": "軸やテーブルの日付を、指定したタイムゾーンで表示します。\n\n``\"UTC\"``(既定)、このコンピュータのタイムゾーンなら ``\"local\"``、または ``\"Asia/Tokyo\"`` のような IANA の名前。日付 wave は 1970 年 UTC からの秒を持ち、変わりません。オフセットなしで入力・読み込んだ日付は、このタイムゾーンで解釈します。"
+  },
+  "smooth": {
+    "source": "6cf42116ecd5",
+    "ja": "``n`` 点(奇数)の移動平均を、新しい wave ``<name>_smth`` として返します。"
+  },
+  "stats": {
+    "source": "ced2c48d9560",
+    "ja": "wave の要約統計量。表示し、dict で返します。"
+  },
+  "style": {
+    "source": "5ab8f7f04be4",
+    "ja": "この名前のスタイル。"
+  },
+  "styles": {
+    "source": "d3abfc560663",
+    "ja": "実験のすべてのスタイル。"
+  },
+  "table": {
+    "source": "2abccc194f47",
+    "ja": "名前でテーブルを取得します。名前を省くと最前面のテーブル。"
+  },
+  "template": {
+    "source": "e5a392a4ff7a",
+    "ja": "この名前の解析テンプレート。"
+  },
+  "templates": {
+    "source": "3bf5f35180ab",
+    "ja": "実験のすべての解析テンプレート。"
+  },
+  "time_zone": {
+    "source": "9e02970f868d",
+    "ja": "日付を表示・入力するタイムゾーン: \"UTC\"、\"local\"、または \"Asia/Tokyo\" のような名前。"
+  },
+  "to_dataframe": {
+    "source": "647684d497c3",
+    "ja": "渡した wave を列とする pandas の DataFrame。\n\n各 wave は(データフォルダを除いた)その名前の列になります。日付 wave は ``datetime64`` の列、テキスト wave は文字列の列です。wave の代わりにテーブルを渡すと、その列を使います。長さの違う wave は末尾を NaN で埋めます。"
+  },
+  "uninstall": {
+    "source": "c8775398194c",
+    "ja": "パッケージを使うのをやめます: 実験の記録から外します。\n\nそれだけが必要としていたものも外れます。すでに import したモジュールは、Python を再起動する(Python › Restart Python)まで残ります。"
+  },
+  "unlink_graphs": {
+    "source": "1bd7bf7634a5",
+    "ja": "グラフを連動から外します(``link_graphs`` を参照)。"
+  },
+  "wave": {
+    "source": "d948bc82b524",
+    "ja": "この名前の既存の wave。"
+  },
+  "waves": {
+    "source": "f6ef88767f12",
+    "ja": "すべての wave(作った順)。フォルダを指定すると、その直下の wave だけ。"
+  },
+  "windows": {
+    "source": "5b48c0e046c3",
+    "ja": "ウィンドウの名前を、奥から手前の順に返します。すべて、または ``kind`` の種類だけ。\n\n``kind`` は \"graph\"、\"table\"、\"procedure\"、\"page\"、\"panel\"。``closed=False`` なら、閉じた(``close_window`` を参照)ウィンドウを除きます。"
+  }
+}

@@ -1,7 +1,7 @@
 ---
-title: Trace API
+title: トレース
 sidebar:
-  order: 3
+  order: 5
 editUrl: false
 ---
 
@@ -15,16 +15,9 @@ editUrl: false
 op.Trace(graph, name)
 ```
 
-One curve in a graph.
+グラフの 1 本の曲線。
 
-``fill="zero"`` fills the area down to zero and ``fill="next"`` the band
-between this trace and the next one; ``fill_color`` and ``fill_opacity``
-style it. ``x_offset`` and ``y_offset`` shift the trace where it is
-drawn without changing its waves. ``color_wave`` colors the trace point
-by point from another wave, through ``color_table`` (over ``color_min``
-to ``color_max``, or the wave's own range). For a complex wave, ``part``
-chooses what is plotted: ``"real"``, ``"imag"``, ``"magnitude"`` or
-``"phase"`` (radians).
+``fill="zero"`` は 0 までの面積を、``fill="next"`` は次のトレースとの間の帯を塗ります。``fill_color`` と ``fill_opacity`` で塗りの見た目を決めます。``x_offset`` と ``y_offset`` は wave を変えずに描く位置をずらします。``color_wave`` は別の wave の値で点ごとに色を付けます(``color_table`` を使い、``color_min``〜``color_max``、省くとその wave の範囲)。複素数の wave では ``part`` で描くものを選びます: ``"real"``、``"imag"``、``"magnitude"``、``"phase"``(ラジアン)。
 
 **プロパティ**
 
@@ -46,6 +39,6 @@ remove()
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 **明示的な例外** · `AttributeError`

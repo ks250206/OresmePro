@@ -1,7 +1,7 @@
 ---
-title: Cursor API
+title: Cursor
 sidebar:
-  order: 6
+  order: 8
 editUrl: false
 ---
 

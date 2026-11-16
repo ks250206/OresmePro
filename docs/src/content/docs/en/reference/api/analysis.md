@@ -1,7 +1,7 @@
 ---
-title: Analysis API
+title: Analysis
 sidebar:
-  order: 9
+  order: 13
 editUrl: false
 ---
 

@@ -2356,7 +2356,7 @@ describe("oresme Python API", () => {
     ).toBe(true);
     expect(stdout).toBe(
       [
-        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'tick_label_size': None, 'labels': 'on'}",
+        "Style('stPaper') 15 3 {'mirror': 'on', 'ticks': 'inside', 'minor': False, 'grid': 'off', 'label_size': None, 'label_style': 'plain', 'label_rotation': 0, 'tick_label_size': None, 'labels': 'on'}",
         "15 Style('stPaper') [3, 1, 3] on",
         "22 22 #ff0000 4",
         "22 Style('stTalk') Style('stTalk')",

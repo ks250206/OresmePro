@@ -62,20 +62,20 @@ sidebar:
 
 最前面のグラフに対して働きます。
 
-| 項目                                             | すること                                                     | Python                                     |
-| ------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------ |
-| Append Traces… / Append Image… / Append Contour… | トレース・画像・等高線を追加する                             | `g.append(y)`、`g.append_image(m)`         |
-| Add Axis…                                        | 自由軸を追加する                                             | `g.add_axis("right2", "right")`            |
-| Modify Trace Appearance…                         | 線・マーカー・色・誤差棒・塗り                               | `g.trace().set(color="red")`               |
-| Modify Axis…                                     | 範囲・対数・目盛り・ラベル・表示するラベル(on/axis only/off) | `g.axis("left").set(log=True)`             |
-| Modify Graph…                                    | フォント・プロット領域の大きさ・余白・表示倍率               | `g.set(width=op.cm(8))`                    |
-| Autoscale Axes                                   | 全軸を自動範囲に戻す(**Ctrl+A** / **⌘A**)                    | `g.axis("left").autoscale()`               |
-| Show Cursor Info                                 | カーソル情報の欄を出し入れする(**Ctrl+I** / **⌘I**)          | `g.show_info = True`                       |
-| Add Legend / Add Text… / Add Color Scale         | 凡例・テキスト・カラースケールを置く                         | `g.legend()`、`g.textbox("...")`           |
-| Styles…                                          | グラフスタイルの保存・適用・既定の設定                       | `op.set_style(...)`、`op.apply_style(...)` |
-| Save as Template… / Make Graphs from Template…   | グラフテンプレートを保存し、別のデータでグラフを作る         | `op.graph_template("T").make(...)`         |
-| Recreation Script…                               | このグラフを作り直す Python を表示する                       | `g.script()`                               |
-| Link Graphs…                                     | 複数グラフの軸とカーソルを連動させる                         | `op.link_graphs(g1, g2)`                   |
+| 項目                                             | すること                                                                   | Python                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------ |
+| Append Traces… / Append Image… / Append Contour… | トレース・画像・等高線を追加する                                           | `g.append(y)`、`g.append_image(m)`         |
+| Add Axis…                                        | 自由軸を追加する                                                           | `g.add_axis("right2", "right")`            |
+| Modify Trace Appearance…                         | 線・マーカー・色・誤差棒・塗り                                             | `g.trace().set(color="red")`               |
+| Modify Axis…                                     | 範囲・対数・目盛り・ラベル・表示するラベル(on/axis only/off)・ラベルの向き | `g.axis("left").set(log=True)`             |
+| Modify Graph…                                    | フォント・プロット領域の大きさ・余白・表示倍率                             | `g.set(width=op.cm(8))`                    |
+| Autoscale Axes                                   | 全軸を自動範囲に戻す(**Ctrl+A** / **⌘A**)                                  | `g.axis("left").autoscale()`               |
+| Show Cursor Info                                 | カーソル情報の欄を出し入れする(**Ctrl+I** / **⌘I**)                        | `g.show_info = True`                       |
+| Add Legend / Add Text… / Add Color Scale         | 凡例・テキスト・カラースケールを置く                                       | `g.legend()`、`g.textbox("...")`           |
+| Styles…                                          | グラフスタイルの保存・適用・既定の設定                                     | `op.set_style(...)`、`op.apply_style(...)` |
+| Save as Template… / Make Graphs from Template…   | グラフテンプレートを保存し、別のデータでグラフを作る                       | `op.graph_template("T").make(...)`         |
+| Recreation Script…                               | このグラフを作り直す Python を表示する                                     | `g.script()`                               |
+| Link Graphs…                                     | 複数グラフの軸とカーソルを連動させる                                       | `op.link_graphs(g1, g2)`                   |
 
 ## Layout
 

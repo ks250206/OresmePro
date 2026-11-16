@@ -1,7 +1,7 @@
 ---
-title: Panel API
+title: パネル
 sidebar:
-  order: 11
+  order: 18
 editUrl: false
 ---
 
@@ -15,7 +15,7 @@ editUrl: false
 op.Panel(name)
 ```
 
-A panel: controls that run analyses, in a window of the experiment.
+パネル: 実験のウィンドウの中で、解析を動かす部品を並べたもの。
 
 ::
 
@@ -26,24 +26,15 @@ A panel: controls that run analyses, in a window of the experiment.
              args={"function": op.control("model"), "y": op.control("target")})
     p["model"] = "lor"
 
-The methods that add controls take the control's ``name`` first, unique
-in the panel. When the panel has a control of that name and kind
-already, they change it instead and keep its value, so a procedure that
-builds a panel can run again. ``value`` is the value a new control
-starts with. ``inline=True`` puts a control on the line of the one
-before it; so does ``with p.row():`` for the controls added in it.
+部品を追加するメソッドは、パネル内で一意の部品の ``name`` を最初に受け取ります。同じ名前・同じ種類の部品がすでにあれば、値を保ったままそれを変えるので、パネルを作る Procedure をもう一度実行できます。``value`` は新しい部品の初期値です。``inline=True`` で前の部品と同じ行に置きます。``with p.row():`` の中で追加した部品も同じ行に並びます。
 
-``p["name"]`` reads and sets the value of a control; the values are part
-of the experiment, saved with it and undone like any other change.
-A button calls an action (see ``op.action``) with plain values and the
-values of controls (``op.control``). To have a button run your own
-Python, register the function as an action in a procedure and name it.
+``p["name"]`` で部品の値を読み書きします。値は実験の一部で、一緒に保存され、ほかの変更と同じく Undo できます。ボタンは Action(``op.action`` を参照)を、普通の値と部品の値(``op.control``)で呼びます。自分の Python をボタンで動かすには、Procedure で関数を Action として登録し、その名前を指定します。
 
 **プロパティ**
 
 - `name` (read-only)
 - `title` (read/write)
-- `data` (read-only) · The panel as plain data: its title and controls, as ``op.set_panel`` takes them.
+- `data` (read-only) · パネルを普通のデータで表したもの: ``op.set_panel`` が受け取る形のタイトルと部品。
 - `controls` (read-only)
 
 ### `Panel.set`
@@ -52,7 +43,7 @@ Python, register the function as an action in a procedure and name it.
 set(*, title=None)
 ```
 
-Change the panel's title (what its window shows; its name when empty). Returns self.
+パネルのタイトル(ウィンドウに表示するもの。空なら名前)を変えます。self を返します。
 
 ### `Panel.control`
 
@@ -80,7 +71,7 @@ __setitem__(name, value)
 heading(name, label=None, *, inline=None)
 ```
 
-A heading: ``label`` in bold.
+見出し: 太字の ``label``。
 
 ### `Panel.text`
 
@@ -88,7 +79,7 @@ A heading: ``label`` in bold.
 text(name, label=None, *, inline=None)
 ```
 
-A paragraph of text: ``label``, which may have several lines.
+文章の段落: ``label``(複数行も可)。
 
 ### `Panel.number`
 
@@ -96,8 +87,7 @@ A paragraph of text: ``label``, which may have several lines.
 number(name, label=None, *, value=None, min=None, max=None, step=None, inline=None)
 ```
 
-A field for a number, from ``min`` to ``max`` (inclusive) if given;
-``step`` is how much the arrows change it.
+数の入力欄。``min``〜``max``(両端を含む)を指定でき、``step`` は矢印で変わる量です。
 
 ### `Panel.string`
 
@@ -105,7 +95,7 @@ A field for a number, from ``min`` to ``max`` (inclusive) if given;
 string(name, label=None, *, value=None, inline=None)
 ```
 
-A field for text.
+文字の入力欄。
 
 ### `Panel.checkbox`
 
@@ -113,7 +103,7 @@ A field for text.
 checkbox(name, label=None, *, value=None, inline=None)
 ```
 
-A checkbox: its value is True or False.
+チェックボックス: 値は True か False。
 
 ### `Panel.choice`
 
@@ -121,7 +111,7 @@ A checkbox: its value is True or False.
 choice(name, options, *, value=None, label=None, inline=None)
 ```
 
-A menu of ``options`` (texts or numbers); it starts at the first unless ``value`` says.
+``options``(文字列か数)のメニュー。``value`` を指定しなければ最初の項目から始まります。
 
 ### `Panel.wave`
 
@@ -129,12 +119,9 @@ A menu of ``options`` (texts or numbers); it starts at the first unless ``value`
 wave(name, label=None, *, value=None, dims=None, filter=None, inline=None)
 ```
 
-A wave picker: its value is the name of the wave chosen.
+wave の選択欄: 値は選んだ wave の名前。
 
-``dims`` lists only waves of that many dimensions; ``filter`` only
-those whose names contain it, or match it as a pattern with ``*``
-(``"*_I"``). The picker follows the wave when it is renamed; when
-the wave is killed, the name stays and is shown as missing.
+``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``"*_I"`` に合う)wave だけを並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。
 
 ### `Panel.button`
 
@@ -142,13 +129,9 @@ the wave is killed, the name stays and is shown as missing.
 button(name, label=None, *, action, args=None, version=None, inline=None)
 ```
 
-A button that calls the action ``action`` with ``args`` when pressed.
+押すと Action ``action`` を ``args`` で呼ぶボタン。
 
-Each argument is a plain value (text, a number, True or False, a
-list or a dict of them) or ``op.control(name)``, the value of a
-control of the panel at the time of the press; ``op.control`` may
-also sit inside a list or dict, as in a template's inputs.
-``version`` calls that version of the action rather than the highest.
+各引数は普通の値(文字、数、True/False、それらのリストや dict)か、押した時点のパネルの部品の値を表す ``op.control(name)`` です。``op.control`` はテンプレートの入力のように、リストや dict の中にも置けます。``version`` を付けると、最新版でなくその版の Action を呼びます。
 
 ### `Panel.row`
 
@@ -156,7 +139,7 @@ also sit inside a list or dict, as in a template's inputs.
 row()
 ```
 
-Put the controls added in the block on one line.
+ブロックの中で追加した部品を 1 行に並べます。
 
 ### `Panel.press`
 
@@ -164,10 +147,9 @@ Put the controls added in the block on one line.
 press(name)
 ```
 
-Press a button: call its action with the values the panel has now, as a click does.
+ボタンを押します: クリックと同じく、今のパネルの値で Action を呼びます。
 
-Returns what the action returns. Raises ``OresmeError`` when a value
-is missing (no wave chosen, say) or the action refuses the call.
+Action の戻り値を返します。値が足りないとき(wave を選んでいないなど)や、Action が呼び出しを拒否したときは ``OresmeError`` になります。
 
 ### `Panel.kill`
 
@@ -175,7 +157,7 @@ is missing (no wave chosen, say) or the action refuses the call.
 kill()
 ```
 
-Kill the window and what it shows (see ``op.kill_window``).
+ウィンドウとその中身を削除します(``op.kill_window`` を参照)。
 
 ### `Panel.close`
 
@@ -183,7 +165,7 @@ Kill the window and what it shows (see ``op.kill_window``).
 close()
 ```
 
-Close the window, keeping what it shows to reopen (see ``op.close_window``).
+ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。
 
 ### `Panel.reopen`
 
@@ -191,7 +173,7 @@ Close the window, keeping what it shows to reopen (see ``op.close_window``).
 reopen()
 ```
 
-Open the window again after ``close()``, in front of the others.
+``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。
 
 ### `Panel.rename`
 
@@ -199,7 +181,7 @@ Open the window again after ``close()``, in front of the others.
 rename(new_name)
 ```
 
-Give it and its window another name (see ``op.rename_window``). Returns self.
+自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。
 
 ## `Control`
 
@@ -207,15 +189,9 @@ Give it and its window another name (see ``op.rename_window``). Returns self.
 op.Control(panel, name)
 ```
 
-A control of a panel: a heading, a paragraph of text, a field, a
-picker or a button.
+パネルの部品: 見出し、文章、入力欄、選択欄、ボタン。
 
-``value`` is what a field or picker holds (the name of the wave, for a
-wave picker) and ``data`` all of its properties, as the panel keeps them.
-``set(...)`` changes properties: ``label``, ``inline`` (on the line of
-the control before it), and those of its kind, as the panel's methods
-that add controls take them; ``name`` renames it, and the buttons that
-pass its value follow.
+``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。
 
 **プロパティ**
 
@@ -232,7 +208,7 @@ pass its value follow.
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 ### `Control.move`
 
@@ -240,7 +216,7 @@ Change several properties at once. Returns self.
 move(index)
 ```
 
-Put the control at a place in the panel, counted from 0 (the top).
+部品をパネルの中の位置(上から 0 で数える)に移します。
 
 ### `Control.press`
 
@@ -248,7 +224,7 @@ Put the control at a place in the panel, counted from 0 (the top).
 press()
 ```
 
-Press the button: see ``Panel.press``.
+ボタンを押します: ``Panel.press`` を参照。
 
 ### `Control.remove`
 
@@ -262,9 +238,9 @@ remove()
 op.panel(name=None, title=None)
 ```
 
-The panel named ``name``, made (with a window) if there is none; with no name, the frontmost.
+``name`` という名前のパネル。なければ(ウィンドウとともに)作ります。名前を省くと最前面のもの。
 
-``title`` gives it a title, as its window shows it.
+``title`` はウィンドウに表示するタイトルです。
 
 **明示的な例外** · `OresmeError`
 
@@ -274,7 +250,7 @@ The panel named ``name``, made (with a window) if there is none; with no name, t
 op.panels()
 ```
 
-Every panel of the experiment.
+実験のすべてのパネル。
 
 ## `new_panel`
 
@@ -282,7 +258,7 @@ Every panel of the experiment.
 op.new_panel(name=None, title=None)
 ```
 
-Make an empty panel with a window. Without a name, one is chosen (Panel0, ...).
+空のパネルをウィンドウとともに作ります。名前を省くと自動で付けます(Panel0…)。
 
 ## `set_panel`
 
@@ -290,12 +266,9 @@ Make an empty panel with a window. Without a name, one is chosen (Panel0, ...).
 op.set_panel(name, data)
 ```
 
-Give the panel ``name`` a title and controls from a dict (``p.data``, or a file
-exported from a panel window), making it if there is none. Returns it.
+``name`` のパネルに、dict(``p.data``、またはパネルのウィンドウから書き出したファイル)からタイトルと部品を与えます。なければ作ります。そのパネルを返します。
 
-``data`` is ``{"title": ..., "controls": [...]}``, where each control is
-a dict of its ``kind``, ``name`` and properties, as ``Control.data``
-gives them. Unknown keys and bad values are refused.
+``data`` は ``{"title": ..., "controls": [...]}`` で、各部品は ``Control.data`` が返すように、``kind``、``name``、プロパティの dict です。知らないキーや不正な値は受け付けません。
 
 ## `control`
 
@@ -303,12 +276,11 @@ gives them. Unknown keys and bad values are refused.
 op.control(name)
 ```
 
-A control of a panel, given as an argument of a button.
+ボタンの引数として渡す、パネルの部品。
 
 ::
 
     p.button("run", "Fit", action="core.fit",
              args={"function": op.control("model"), "y": op.control("target")})
 
-When the button is pressed, the argument is the value the control has
-then. It is the dict ``{"$control": name}``, which is how a panel keeps it.
+ボタンを押したとき、引数はその時点の部品の値になります。中身は dict ``{"$control": name}`` で、パネルはこの形で持ちます。

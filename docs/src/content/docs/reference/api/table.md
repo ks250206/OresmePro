@@ -1,7 +1,7 @@
 ---
-title: Table API
+title: テーブル
 sidebar:
-  order: 7
+  order: 10
 editUrl: false
 ---
 
@@ -15,7 +15,7 @@ editUrl: false
 op.Table(name)
 ```
 
-A table window showing waves as columns.
+wave を列として表示するテーブルのウィンドウ。
 
 `op.edit(...)` は Wave を列として表示するテーブルを作ります。テーブルで値を変更すると Wave 自体が更新されます。
 
@@ -32,7 +32,7 @@ A table window showing waves as columns.
 to_dataframe()
 ```
 
-The table's columns as a pandas DataFrame (see ``op.to_dataframe``).
+テーブルの列を pandas の DataFrame として返します(``op.to_dataframe`` を参照)。
 
 ### `Table.append`
 
@@ -56,7 +56,7 @@ remove(*waves_)
 kill()
 ```
 
-Kill the window and what it shows (see ``op.kill_window``).
+ウィンドウとその中身を削除します(``op.kill_window`` を参照)。
 
 ### `Table.close`
 
@@ -64,7 +64,7 @@ Kill the window and what it shows (see ``op.kill_window``).
 close()
 ```
 
-Close the window, keeping what it shows to reopen (see ``op.close_window``).
+ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。
 
 ### `Table.reopen`
 
@@ -72,7 +72,7 @@ Close the window, keeping what it shows to reopen (see ``op.close_window``).
 reopen()
 ```
 
-Open the window again after ``close()``, in front of the others.
+``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。
 
 ### `Table.rename`
 
@@ -80,7 +80,7 @@ Open the window again after ``close()``, in front of the others.
 rename(new_name)
 ```
 
-Give it and its window another name (see ``op.rename_window``). Returns self.
+自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。
 
 ### `Table.set`
 
@@ -88,7 +88,7 @@ Give it and its window another name (see ``op.rename_window``). Returns self.
 set(**props)
 ```
 
-Change several properties at once. Returns self.
+複数のプロパティをまとめて変えます。self を返します。
 
 **明示的な例外** · `AttributeError`
 
@@ -98,7 +98,7 @@ Change several properties at once. Returns self.
 op.edit(*waves_, name=None)
 ```
 
-Make a new table of the given waves and return it.
+渡した wave の新しいテーブルを作り、返します。
 
 ## `table`
 
@@ -106,7 +106,7 @@ Make a new table of the given waves and return it.
 op.table(name=None)
 ```
 
-A table by name; with no name, the frontmost table.
+名前でテーブルを取得します。名前を省くと最前面のテーブル。
 
 **明示的な例外** · `OresmeError`
 
@@ -122,12 +122,9 @@ op.tables()
 op.to_dataframe(*waves_)
 ```
 
-The given waves as the columns of a pandas DataFrame.
+渡した wave を列とする pandas の DataFrame。
 
-Each wave is a column named after it (without its data folder). Date
-waves become ``datetime64`` columns and text waves columns of strings. A
-table can be given in place of waves: its columns are used. Waves of
-different lengths are padded with NaN at the end.
+各 wave は(データフォルダを除いた)その名前の列になります。日付 wave は ``datetime64`` の列、テキスト wave は文字列の列です。wave の代わりにテーブルを渡すと、その列を使います。長さの違う wave は末尾を NaN で埋めます。
 
 **明示的な例外** · `OresmeError`
 
@@ -137,11 +134,6 @@ different lengths are padded with NaN at the end.
 op.from_dataframe(frame, prefix='', *, index=None, table=True)
 ```
 
-Make a wave of each column of a pandas DataFrame (or Series); returns the waves.
+pandas の DataFrame(または Series)の列ごとに wave を作り、返します。
 
-Numbers become numeric waves, dates date waves (in UTC), and anything
-else text waves. Names are the column titles made into legal wave names,
-after ``prefix`` (which may name a data folder: ``"run1:"``); a name that
-is taken gets ``_1``, ``_2``, .... The index becomes a wave too unless it
-is the plain 0, 1, 2, ... (``index=False`` leaves it out, ``True`` forces
-it). With ``table`` the new waves are shown in a table.
+数は数値 wave、日付は日付 wave(UTC)、それ以外はテキスト wave になります。名前は列の見出しを使える wave の名前に直したもので、``prefix``(データフォルダも指定可: ``"run1:"``)のあとに付きます。使用中の名前には ``_1``、``_2``… を付けます。インデックスが 0, 1, 2, … でなければそれも wave にします(``index=False`` で除外、``True`` で必ず作る)。``table`` を付けると、新しい wave をテーブルに表示します。
