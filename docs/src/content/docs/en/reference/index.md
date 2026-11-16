@@ -24,6 +24,7 @@ Use `import oresme as op` in the Command Window or a procedure. For code you use
 | Arrange graphs and text on a page                    | [Page Layout](./api/layout/)                 | [Layout menu](./menus/#layout)                                              |
 | Rename, close and reopen windows                     | [Windows](./api/windows/)                    | [Menus](./menus/#windows)                                                   |
 | Work with Python files kept in the experiment        | [Procedures](./api/procedure/)               | [Python](../guides/python/)                                                 |
+| Write notes in Markdown kept in the experiment       | [Notes](./api/notes/)                        | [Write notes](../guides/experiments/#write-notes)                           |
 | Install and list Python packages                     | [Packages](./api/packages/)                  | [Add packages](../guides/python/#add-packages)                              |
 | Errors, changes made at once, and time zones         | [General](./api/global/)                     | [Python](../guides/python/)                                                 |
 

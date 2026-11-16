@@ -755,6 +755,15 @@ export interface ProcedureSpec {
   autoRun: boolean;
 }
 
+/**
+ * Text kept in the experiment, written in Markdown and shown formatted: a
+ * notebook page for what was done and why, as Igor's notebooks are.
+ */
+export interface NoteSpec {
+  name: string;
+  text: string;
+}
+
 /** Something placed on a page layout: a graph, or a block of text. */
 export interface PageItem {
   /** Unique on its page: "graph0", "text0", ... */
@@ -906,9 +915,9 @@ export interface PanelSpec {
 }
 
 export interface WindowState {
-  /** Same as the name of the graph, table, procedure, page layout or panel it shows. */
+  /** Same as the name of the graph, table, procedure, page layout, panel or note it shows. */
   name: string;
-  kind: "graph" | "table" | "procedure" | "page" | "panel";
+  kind: "graph" | "table" | "procedure" | "page" | "panel" | "note";
   x: number;
   y: number;
   w: number;
@@ -941,6 +950,7 @@ export interface DocState {
   readonly procedures: Dict<ProcedureSpec>;
   readonly pages: Dict<PageSpec>;
   readonly panels: Dict<PanelSpec>;
+  readonly notes: Dict<NoteSpec>;
   /** Graph styles, by name. */
   readonly styles: Dict<StyleSpec>;
   /** The style new graphs are given, or null. Always one of `styles`. */
@@ -978,6 +988,7 @@ export const emptyDoc = (): DocState => ({
   procedures: dict(),
   pages: dict(),
   panels: dict(),
+  notes: dict(),
   styles: dict(),
   defaultStyle: null,
   graphTemplates: dict(),

@@ -46,6 +46,7 @@ function withDicts(state: DocState): DocState {
   const procedures = asDict(state.procedures);
   const pages = asDict(state.pages);
   const panels = asDict(state.panels);
+  const notes = asDict(state.notes);
   const styles = asDict(state.styles);
   const graphTemplates = asDict(state.graphTemplates);
   const results = asDict(state.results);
@@ -58,6 +59,7 @@ function withDicts(state: DocState): DocState {
     procedures === state.procedures &&
     pages === state.pages &&
     panels === state.panels &&
+    notes === state.notes &&
     styles === state.styles &&
     graphTemplates === state.graphTemplates &&
     results === state.results &&
@@ -73,6 +75,7 @@ function withDicts(state: DocState): DocState {
         procedures,
         pages,
         panels,
+        notes,
         styles,
         graphTemplates,
         results,
@@ -452,8 +455,8 @@ export class Doc {
 
   /**
    * Undo restores content, not what is outside its reach: where the user has
-   * since dragged windows, column widths, and the text of procedures (their
-   * editors have their own undo). Whatever exists in both states keeps its
+   * since dragged windows, column widths, and the text of procedures and
+   * notes (their editors have their own undo). Whatever exists in both states keeps its
    * current value. The one exception is a window the step itself resized (a
    * style with a size does), as long as it is still as the step left it
    * (`stepWindows`): its size is part of what is undone. A graph's window
@@ -477,10 +480,15 @@ export class Doc {
     for (const name of Object.keys(procedures)) {
       if (now.procedures[name]) procedures[name] = now.procedures[name];
     }
+    const notes = dictFrom(target.notes);
+    for (const name of Object.keys(notes)) {
+      if (now.notes[name]) notes[name] = now.notes[name];
+    }
     return {
       ...target,
       tables,
       procedures,
+      notes,
       windows: target.windows.map((window) => {
         const live = current.get(window.name);
         if (!live) return window;

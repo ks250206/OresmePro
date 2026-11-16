@@ -193,6 +193,7 @@ export function echoPython(
     case "activateWindow":
     case "resizeColumn":
     case "setProcedure":
+    case "setNote":
     // Recorded by the Python that installs or removes them (op.install, %pip).
     case "recordPackages":
     case "forgetPackages":
@@ -251,6 +252,8 @@ export function echoPython(
         code: command.code || undefined,
         autoRun: command.autoRun === false ? false : undefined,
       })})`;
+    case "newNote":
+      return `op.new_note(${keywords({ name: command.name, text: command.text || undefined })})`;
     case "modifyTable":
       return `op.table(${pyLiteral(command.table)}).set(${keywords(command.props)})`;
     case "redimension":

@@ -325,3 +325,102 @@ li[aria-selected] .cm-completionDetail {
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.14);
   max-width: 48ch;
 }
+
+/* A note shown formatted (see NoteWindow). */
+.note-preview {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-ink);
+}
+.note-preview > :first-child {
+  margin-top: 0;
+}
+.note-preview h1,
+.note-preview h2,
+.note-preview h3,
+.note-preview h4,
+.note-preview h5,
+.note-preview h6 {
+  margin: 1em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.note-preview h1 {
+  font-size: 1.6em;
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: 0.2em;
+}
+.note-preview h2 {
+  font-size: 1.3em;
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: 0.15em;
+}
+.note-preview h3 {
+  font-size: 1.12em;
+}
+.note-preview p,
+.note-preview ul,
+.note-preview ol,
+.note-preview blockquote,
+.note-preview pre,
+.note-preview table {
+  margin: 0 0 0.75em;
+}
+.note-preview ul {
+  list-style: disc;
+  padding-left: 1.5em;
+}
+.note-preview ol {
+  list-style: decimal;
+  padding-left: 1.5em;
+}
+.note-preview li > ul,
+.note-preview li > ol {
+  margin-bottom: 0;
+}
+.note-preview a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+.note-preview code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-chrome);
+  border-radius: 3px;
+  padding: 0 0.25em;
+}
+.note-preview pre {
+  background: var(--color-chrome);
+  border-radius: 4px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+}
+.note-preview pre code {
+  background: none;
+  padding: 0;
+}
+.note-preview blockquote {
+  border-left: 3px solid var(--color-line);
+  padding-left: 0.8em;
+  color: var(--color-muted);
+}
+.note-preview hr {
+  border: 0;
+  border-top: 1px solid var(--color-line);
+  margin: 1em 0;
+}
+.note-preview table {
+  border-collapse: collapse;
+}
+.note-preview th,
+.note-preview td {
+  border: 1px solid var(--color-line);
+  padding: 0.2em 0.6em;
+}
+.note-preview th {
+  background: var(--color-chrome);
+  font-weight: 600;
+}
+.note-preview img {
+  max-width: 100%;
+}

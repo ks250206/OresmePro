@@ -37,4 +37,24 @@ op.kill_window("Table0")
 op.windows("graph", closed=False)  # 開いているグラフの名前
 ```
 
+## ノートを書く
+
+**Windows → New Note** で、Markdown で書くノートのウィンドウを作ります(Igor のノートブックに当たります)。実験と一緒に保存されるので、何をどの条件で行ったか、結果の考察などを残しておけます。
+
+- **Split** は左で書き、右に整形した表示を打つそばから示します。**Edit** は書くだけ、**View** は読むだけです。中身のあるノートは View で開きます
+- 見出し、強調、リスト、引用、コード、表、リンクが使えます
+- 右クリックで **Export as name.md**(Markdown ファイルとして書き出し)、**Windows → Import Markdown as Note…** で `.md` ファイルを取り込めます
+
+他の人から受け取った実験のノートでも安全に開けるよう、表示には次の制限があります。
+
+- 文章中の HTML(`<script>` など)は文字としてそのまま表示します
+- リンクは http、https、mailto のアドレスだけが有効で、新しいタブで開きます
+- 画像はデータを文章に含むもの(`data:image/png;base64,...`)だけを表示します。アドレスで指定した画像は読み込まず、その画像へのリンクとして表示します
+
+```python
+n = op.new_note("log", "# Run 12")
+n.append(f"Peak at {r.coef[1]:.3g} eV")  # 末尾に段落を追加
+print(n.text)
+```
+
 [保存の実装](../../architecture/#opfs-による保存)

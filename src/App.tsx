@@ -24,6 +24,7 @@ import {
   keepPackagesForOffline,
   openLaunchedFiles,
 } from "./app/isolate";
+import { importNotes } from "./app/notes";
 import { importPanels, newPanel } from "./app/panels";
 import { docsUrl, GITHUB_URL, openLink } from "./app/links";
 import { importProcedures } from "./app/procedures";
@@ -307,9 +308,11 @@ function useMenus(): MenuDefinition[] {
         { label: "New Procedure…", onSelect: open({ kind: "newProcedure" }) },
         { label: "New Page Layout", onSelect: () => runGui({ op: "newLayout" }) },
         { label: "New Panel", onSelect: newPanel },
+        { label: "New Note", onSelect: () => runGui({ op: "newNote" }) },
         { separator: true },
         { label: "Import Procedure…", onSelect: importProcedures },
         { label: "Import Panel…", onSelect: importPanels },
+        { label: "Import Markdown as Note…", onSelect: importNotes },
         { separator: true },
         {
           label: "Rename Window…",

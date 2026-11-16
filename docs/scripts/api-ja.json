@@ -315,6 +315,34 @@
     "source": "aca1650f4acb",
     "ja": "紙の上の長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``。\n\n数としては pt(1/72 inch)単位の長さなので、pt を受け取る所(ページレイアウトの項目の位置など)にそのまま使えます。また、指定した単位を ``value`` と ``unit`` として覚えていて、グラフのプロット領域はそれを同じ形で表示し直します。"
   },
+  "Note": {
+    "source": "715e25ec6baa",
+    "ja": "ノート: 実験に保存される Markdown の文章。ウィンドウに整形して表示されます。\n\n::\n\n    n = op.new_note(\"log\", \"# Run 12\")\n    n.append(\"Baseline from 0 to 5 s.\")\n    n.append(f\"Peak at {r.coef[1]:.3g} eV\")\n\n文章中の HTML は文字としてそのまま表示されます。リンクは http、https、mailto のアドレスだけが有効で、画像はデータを文章に含むもの(``data:image/png;base64,...``)だけを表示します。アドレスで指定した画像は、その画像へのリンクになります。"
+  },
+  "Note.append": {
+    "source": "b9ed182b7e25",
+    "ja": "ノートの末尾に段落を追加します。self を返します。"
+  },
+  "Note.close": {
+    "source": "a1b209179e2e",
+    "ja": "ウィンドウを閉じます。中身は残り、開き直せます(``op.close_window`` を参照)。"
+  },
+  "Note.kill": {
+    "source": "a2fee301eacc",
+    "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
+  },
+  "Note.rename": {
+    "source": "a3e6c8d6508c",
+    "ja": "自身とそのウィンドウの名前を変えます(``op.rename_window`` を参照)。self を返します。"
+  },
+  "Note.reopen": {
+    "source": "07fd8378f65a",
+    "ja": "``close()`` したウィンドウを、ほかのウィンドウの前に開き直します。"
+  },
+  "Note.text": {
+    "source": "af6beba4cacb",
+    "ja": "ノートの Markdown。"
+  },
   "OnsetResult": {
     "source": "7e5d6e0549a1",
     "ja": "``op.onset`` の結果: 立ち上がりの直線がベースラインと交わる位置と、2 本の直線。"
@@ -847,6 +875,10 @@
     "source": "00b874f10939",
     "ja": "ページレイアウトを作ります。``size`` は用紙の名前か、pt 単位の (width, height)。"
   },
+  "new_note": {
+    "source": "d92d97127662",
+    "ja": "ノートのウィンドウを作ります: 実験と一緒に保存される Markdown の文章(``Note`` を参照)。\n\n名前を省くと Note0、Note1… と付けます。"
+  },
   "new_panel": {
     "source": "4cc37c527f88",
     "ja": "空のパネルをウィンドウとともに作ります。名前を省くと自動で付けます(Panel0…)。"
@@ -854,6 +886,14 @@
   "new_procedure": {
     "source": "017f17dd21bd",
     "ja": "Procedure ウィンドウ(実験と一緒に保存される Python ファイル)を作ります。\n\nモジュール ``name`` になり、コマンド入力やほかの Procedure から ``import name`` できます。``Procedure.run()`` ならコマンド入力と同じ名前空間で実行します。``auto_run=False`` で、実験を開いたときに実行しないようにします(ファイルから取り込んだ Procedure はこの状態で始まります)。"
+  },
+  "note": {
+    "source": "2d3855bfe9b3",
+    "ja": "名前でノートを取得します。名前を省くと最前面のもの。"
+  },
+  "notes": {
+    "source": "dbf29e7d895e",
+    "ja": "実験のすべてのノート。"
   },
   "onset": {
     "source": "a96f60ada06d",
@@ -1000,7 +1040,7 @@
     "ja": "すべての wave(作った順)。フォルダを指定すると、その直下の wave だけ。"
   },
   "windows": {
-    "source": "5b48c0e046c3",
-    "ja": "ウィンドウの名前を、奥から手前の順に返します。すべて、または ``kind`` の種類だけ。\n\n``kind`` は \"graph\"、\"table\"、\"procedure\"、\"page\"、\"panel\"。``closed=False`` なら、閉じた(``close_window`` を参照)ウィンドウを除きます。"
+    "source": "613459e4af7a",
+    "ja": "ウィンドウの名前(後ろから前の順): すべて、または ``kind`` の種類のもの。\n\n``kind`` は \"graph\"、\"table\"、\"procedure\"、\"page\"、\"panel\"、\"note\" のどれかです。``closed=False`` で、閉じた(``close_window`` を参照)ウィンドウを除きます。"
   }
 }

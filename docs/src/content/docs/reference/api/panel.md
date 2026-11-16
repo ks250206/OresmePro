@@ -1,7 +1,7 @@
 ---
 title: パネル
 sidebar:
-  order: 18
+  order: 19
 editUrl: false
 ---
 

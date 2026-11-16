@@ -25,6 +25,7 @@ export const KIND_WORDS: Record<WindowState["kind"], string> = {
   procedure: "procedure",
   page: "page layout",
   panel: "panel",
+  note: "note",
 };
 
 /**

@@ -15,9 +15,9 @@ editUrl: false
 op.windows(kind=None, *, closed=True)
 ```
 
-ウィンドウの名前を、奥から手前の順に返します。すべて、または ``kind`` の種類だけ。
+ウィンドウの名前(後ろから前の順): すべて、または ``kind`` の種類のもの。
 
-``kind`` は "graph"、"table"、"procedure"、"page"、"panel"。``closed=False`` なら、閉じた(``close_window`` を参照)ウィンドウを除きます。
+``kind`` は "graph"、"table"、"procedure"、"page"、"panel"、"note" のどれかです。``closed=False`` で、閉じた(``close_window`` を参照)ウィンドウを除きます。
 
 ## `rename_window`
 

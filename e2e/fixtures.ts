@@ -103,6 +103,7 @@ export class App {
           graphs: state.graphs,
           tables: state.tables,
           procedures: state.procedures,
+          notes: state.notes,
           pages: state.pages,
           results: state.results,
           templates: state.templates,
@@ -115,6 +116,7 @@ export class App {
         graphs: typeof state.graphs;
         tables: typeof state.tables;
         procedures: typeof state.procedures;
+        notes: typeof state.notes;
         pages: typeof state.pages;
         results: typeof state.results;
         templates: typeof state.templates;

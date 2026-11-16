@@ -37,4 +37,24 @@ op.kill_window("Table0")
 op.windows("graph", closed=False)  # the names of the open graphs
 ```
 
+## Write notes
+
+**Windows → New Note** makes a note: a window of text written in Markdown, as Igor's notebooks are. It is saved with the experiment, so what was done, under which conditions, and what the results mean stay with the data.
+
+- **Split** shows what you type on the left and the formatted text on the right as you type. **Edit** shows only the text, **View** only the formatted note. A note with something in it opens in View
+- Headings, emphasis, lists, quotes, code, tables and links work
+- Right-click for **Export as name.md**; **Windows → Import Markdown as Note…** takes in `.md` files
+
+So that a note in an experiment from someone else is safe to open, what it shows is limited:
+
+- HTML in the text (`<script>` and the like) is shown as text
+- Links go only to http, https and mailto addresses, and open in a new tab
+- A picture is shown only when its data is in the text (`data:image/png;base64,...`). One at an address is not loaded: it is shown as a link to it
+
+```python
+n = op.new_note("log", "# Run 12")
+n.append(f"Peak at {r.coef[1]:.3g} eV")  # adds a paragraph at the end
+print(n.text)
+```
+
 [Persistence implementation](../../architecture/#opfs-persistence)
