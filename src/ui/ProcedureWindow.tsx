@@ -26,6 +26,7 @@ import {
 import {
   closeLintPanel,
   diagnosticCount,
+  forceLinting,
   lintGutter,
   linter,
   lintKeymap,
@@ -81,7 +82,8 @@ import {
 } from "../editor/extensions";
 import { loadRuff } from "../editor/loadRuff";
 import { editingItems, keys, openEditorMenu, rightClickKeepsSelection } from "../editor/menu";
-import { Button, Checkbox } from "./controls";
+import { importAsName } from "../core/doc/commands";
+import { Button, Checkbox, TextInput } from "./controls";
 
 /** Marks changes that came from the document, so they are not sent back to it. */
 const fromDocument = Annotation.define<boolean>();
@@ -145,6 +147,8 @@ function ProcedureEditor({ name }: { name: string }) {
   const [status, setStatus] = useState<Status>({ line: 1, column: 1, problems: 0 });
   const [lint, setLint] = useState<LintStatus>({ kind: "loading" });
   const [message, setMessage] = useState<string | null>(null);
+  // The module name being typed, while it differs from the procedure's own.
+  const [alias, setAlias] = useState<string | null>(null);
 
   const run = () => {
     runProcedure(name);
@@ -159,6 +163,35 @@ function ProcedureEditor({ name }: { name: string }) {
     void formatDocument(view).then(setMessage);
     return true;
   };
+  /**
+   * Looks for mistakes without running the file: Ruff's problems, listed in
+   * the editor, and what Python can tell before it runs (a syntax error, a
+   * module that cannot be found), in the command window.
+   */
+  const check = (view: EditorView): boolean => {
+    forceLinting(view);
+    openLintPanel(view);
+    if (canRun) kernel.execute(`op.procedure(${JSON.stringify(name)}).check()`);
+    else setMessage("Python is not running: only Ruff has checked the file.");
+    return true;
+  };
+  const setImportAs = (value: string | null) => {
+    try {
+      doc.dispatch({ op: "setProcedure", name, importAs: importAsName(value) });
+      setAlias(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const aliasProblem = (() => {
+    if (alias === null) return null;
+    try {
+      importAsName(alias);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  })();
   const actions = useRef({ run, runSelection, format });
   actions.current = { run, runSelection, format };
 
@@ -330,6 +363,7 @@ function ProcedureEditor({ name }: { name: string }) {
         onSelect: () => openLintPanel(view),
       },
       { separator: true },
+      { label: "Check Procedure", onSelect: () => check(view) },
       { label: "Run Procedure", shortcut: RUN_KEYS, disabled: !canRun, onSelect: run },
       {
         label: "Run Selection",
@@ -361,7 +395,7 @@ function ProcedureEditor({ name }: { name: string }) {
   const problems = status.problems === 1 ? "1 problem" : `${status.problems} problems`;
   return (
     <div className="absolute inset-0 flex flex-col">
-      <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-chrome px-2 text-[11.5px]">
+      <div className="flex h-7 shrink-0 items-center gap-2 overflow-hidden border-b border-line bg-chrome px-2 text-[11.5px]">
         <Button
           className="!h-5 !px-2"
           disabled={!canRun}
@@ -369,6 +403,16 @@ function ProcedureEditor({ name }: { name: string }) {
           onClick={run}
         >
           Run
+        </Button>
+        <Button
+          className="!h-5 !px-2"
+          title="Look for mistakes without running the file: Ruff's problems, and in Python a syntax error or a module that cannot be found"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (viewRef.current) check(viewRef.current);
+          }}
+        >
+          Check
         </Button>
         <Button
           className="!h-5 !px-2"
@@ -381,14 +425,52 @@ function ProcedureEditor({ name }: { name: string }) {
         >
           Format
         </Button>
-        <Checkbox
-          label="Run when the experiment opens"
-          checked={procedure.autoRun}
+        <span
+          className="shrink-0"
+          title="Run the file when the experiment opens and whenever Python starts"
+        >
+          <Checkbox
+            label="Auto-run"
+            aria-label="Run when the experiment opens"
+            checked={procedure.autoRun}
+            onChange={(event) =>
+              doc.dispatch({ op: "setProcedure", name, autoRun: event.target.checked })
+            }
+          />
+        </span>
+        <span className="flex-1" />
+        {/* How Run runs the file, written as the Python it is like. */}
+        <select
+          aria-label="Run as"
+          title="Run brings the file's names into the command line, or makes it a module bound to a name"
+          className="h-5 min-w-0 shrink cursor-pointer rounded border border-transparent bg-transparent px-0.5 font-mono text-[11px] text-muted hover:border-line hover:text-ink focus:border-accent focus:outline-none"
+          value={procedure.importAs === null ? "names" : "module"}
           onChange={(event) =>
-            doc.dispatch({ op: "setProcedure", name, autoRun: event.target.checked })
+            setImportAs(event.target.value === "names" ? null : (procedure.importAs ?? name))
           }
-        />
-        <span className="min-w-0 flex-1 truncate text-right text-muted">import {name}</span>
+        >
+          <option value="names">from {name} import *</option>
+          <option value="module">import {name} as</option>
+        </select>
+        {procedure.importAs !== null ? (
+          <TextInput
+            aria-label="Module name"
+            aria-invalid={aliasProblem !== null}
+            title={aliasProblem ?? `Run makes ${name}.py the module ${alias ?? procedure.importAs}`}
+            className="!h-5 w-16 shrink-0 font-mono"
+            value={alias ?? procedure.importAs}
+            onChange={(event) => setAlias(event.target.value)}
+            onBlur={() => {
+              if (alias !== null && aliasProblem === null) setImportAs(alias);
+              else setAlias(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && aliasProblem === null && alias !== null)
+                setImportAs(alias);
+              if (event.key === "Escape") setAlias(null);
+            }}
+          />
+        ) : null}
       </div>
       <div
         ref={hostRef}

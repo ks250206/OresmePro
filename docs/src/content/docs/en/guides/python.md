@@ -18,6 +18,8 @@ Each procedure is a file `<name>.py`, and its name is its module name (so it tak
 
 - **Run** (`p.run()`) executes the file **in the command window's namespace**: what it defines can be used from the command line at once.
 - `import name` loads it as **a namespace of its own** (a module). Other procedures can use it too, with `import tools` or `from tools import scaled`. A procedure that changes is loaded again before the next input.
+- The menu at the right of the procedure window's toolbar chooses how Run runs it, written as the Python it is like: `from tools import *` runs it in the command window's namespace (the default); `import tools as` with a name in the field beside it (`tl`) runs it as a module of its own bound to that name, which leaves the command line's names alone. A module run this way has `np` and `op` as the command line does, and one that fails is not kept. From Python: `p.import_as = "tl"`, or `op.new_procedure("tools", code, import_as="tl")`. Running when the experiment opens follows it too.
+- **Check** looks for mistakes without running the file: it opens the list of Ruff's problems (undefined names, unused imports, ...) in the editor, and in Python reports a syntax error or a module that cannot be found (not installed, not in the Pyodide distribution, not another procedure) in the command window (`p.check()`). **Format** only tidies the code with Ruff.
 
 ```python
 # Procedure "tools"

@@ -470,6 +470,7 @@ describe("procedures", () => {
       name: "Procedure1",
       code: "x = 1\n",
       autoRun: true,
+      importAs: null,
     });
     // The name is a module name, and windows share one set of names.
     expect(() => doc.dispatch({ op: "newProcedure", name: "données" })).toThrow();

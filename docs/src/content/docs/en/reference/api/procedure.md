@@ -18,13 +18,18 @@ op.Procedure(name)
 A Python file kept in the experiment, shown in a procedure window.
 
 It is ``<name>.py`` in the working directory: ``run()`` executes it in
-the interactive namespace, and other code can ``import`` it.
+the interactive namespace (as ``from name import *`` would bring its
+names in), and other code can ``import`` it. With ``import_as`` set,
+``run()`` runs it as a module of its own and binds it to that name
+instead, as ``import name as tl`` would. ``check()`` looks for mistakes
+without running it.
 
 **Properties**
 
 - `name` (read-only)
 - `code` (read/write)
 - `auto_run` (read/write) · Whether the file runs when the experiment is opened.
+- `import_as` (read/write) · The name ``run()`` binds the file to as a module, or None to run it in the namespace.
 
 ### `Procedure.run`
 
@@ -32,10 +37,29 @@ the interactive namespace, and other code can ``import`` it.
 run()
 ```
 
-Run the file in the interactive namespace, as if it were typed there.
+Run the file: in the interactive namespace, or as a module (see ``import_as``).
 
-What it defines can then be used from the command line. An error
-stops it and is reported with the file's name and line.
+In the namespace, what it defines can be used from the command line
+by its own name. As a module, it starts with ``np`` and ``op`` as the
+command line does, goes in ``sys.modules`` (so ``import name`` gets
+it too) and is bound to the ``import_as`` name: ``tl.area(2)``. An
+error stops it and is reported with the file's name and line; a
+module that fails is not kept.
+
+### `Procedure.check`
+
+```python
+check()
+```
+
+Look for mistakes without running the file: what Python can tell before it runs.
+
+Reports a syntax error, and modules it imports that cannot be found
+(neither installed nor a package of the Pyodide distribution, nor
+another procedure). Returns the problems as a list of text, empty
+when there are none; shown, it says so in words. The procedure
+window's Check also shows Ruff's problems (undefined names and the
+like) in the editor.
 
 ### `Procedure.kill`
 
@@ -72,7 +96,7 @@ Give it and its window another name (see ``op.rename_window``). Returns self.
 ## `new_procedure`
 
 ```python
-op.new_procedure(name=None, code='', *, auto_run=True)
+op.new_procedure(name=None, code='', *, auto_run=True, import_as=None)
 ```
 
 Make a procedure window: a Python file that is saved with the experiment.
@@ -81,6 +105,8 @@ It is the module ``name`` (``import name`` from the command line or
 another procedure); ``Procedure.run()`` runs it in the interactive
 namespace instead. ``auto_run=False`` keeps it from running when the
 experiment opens, as a procedure imported from a file starts.
+``import_as="tl"`` makes ``run()`` run it as a module bound to ``tl``
+(see ``Procedure.import_as``).
 
 ## `procedure`
 

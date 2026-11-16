@@ -88,3 +88,39 @@ rc = [1, 2, 3]`);
     expect((await app.run("print(np.pi > 3, op.waves() == [])")).output).toBe("True True\n");
   });
 });
+
+test.describe("the procedure window's Run and Check", () => {
+  test("runs a procedure as a module bound to a name, and checks it without running it", async ({
+    app,
+  }) => {
+    await app.run(
+      'op.new_procedure("geo", "SIDES = 3\\ndef area(r):\\n    return np.pi * r * r\\n")',
+    );
+    const window = app.window("geo");
+    await expect(window.getByLabel("Run as")).toHaveValue("names");
+    await window.getByLabel("Run as").selectOption("module");
+    await window.getByLabel("Module name").fill("gm");
+    await window.getByLabel("Module name").press("Enter");
+    await expect(window.getByLabel("Run as")).toHaveValue("module");
+    expect((await app.doc()).procedures.geo!.importAs).toBe("gm");
+    await window.getByRole("button", { name: "Run", exact: true }).click();
+    await app.idle();
+    expect((await app.run("print(round(gm.area(1), 4), 'SIDES' in globals())")).output).toBe(
+      "3.1416 False\n",
+    );
+    // A name Python cannot bind to is refused where it is typed.
+    await window.getByLabel("Module name").fill("for");
+    await expect(window.getByLabel("Module name")).toHaveAttribute("aria-invalid", "true");
+    await window.getByLabel("Module name").press("Escape");
+
+    // Check: Ruff's problems in the editor, and Python's own in the command window.
+    await app.run('op.procedure("geo").code = "import nosuchmodule\\nprint(undefined_name)\\n"');
+    await window.getByRole("button", { name: "Check" }).click();
+    await app.idle();
+    expect((await app.lastEntry()).code).toBe('op.procedure("geo").check()');
+    expect((await app.lastEntry()).output).toContain(
+      "geo.py, line 1: no module named 'nosuchmodule'",
+    );
+    await expect(window.locator(".cm-panel-lint")).toContainText("undefined_name");
+  });
+});

@@ -29,6 +29,7 @@ import math
 import numbers
 import os
 import re
+import sys
 import warnings
 
 import numpy as np
@@ -1680,7 +1681,11 @@ class Procedure:
     """A Python file kept in the experiment, shown in a procedure window.
 
     It is ``<name>.py`` in the working directory: ``run()`` executes it in
-    the interactive namespace, and other code can ``import`` it.
+    the interactive namespace (as ``from name import *`` would bring its
+    names in), and other code can ``import`` it. With ``import_as`` set,
+    ``run()`` runs it as a module of its own and binds it to that name
+    instead, as ``import name as tl`` would. ``check()`` looks for mistakes
+    without running it.
     """
 
     def __init__(self, name):
@@ -1710,24 +1715,107 @@ class Procedure:
     def auto_run(self, value):
         _dispatch({"op": "setProcedure", "name": self._name, "autoRun": bool(value)})
 
-    def run(self):
-        """Run the file in the interactive namespace, as if it were typed there.
+    @property
+    def import_as(self):
+        """The name ``run()`` binds the file to as a module, or None to run it in the namespace."""
+        return self._info().get("importAs")
 
-        What it defines can then be used from the command line. An error
-        stops it and is reported with the file's name and line.
+    @import_as.setter
+    def import_as(self, value):
+        _dispatch(
+            {"op": "setProcedure", "name": self._name, "importAs": None if value is None else str(value)}
+        )
+
+    def run(self):
+        """Run the file: in the interactive namespace, or as a module (see ``import_as``).
+
+        In the namespace, what it defines can be used from the command line
+        by its own name. As a module, it starts with ``np`` and ``op`` as the
+        command line does, goes in ``sys.modules`` (so ``import name`` gets
+        it too) and is bound to the ``import_as`` name: ``tl.area(2)``. An
+        error stops it and is reported with the file's name and line; a
+        module that fails is not kept.
         """
         import linecache
 
         from IPython import get_ipython
 
         __tracebackhide__ = True
-        code = self.code
+        info = self._info()
+        code = info["code"]
+        alias = info.get("importAs")
         path = f"{self._name}.py"
         # Tracebacks quote the file, so it has to hold what is being run.
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(code)
         linecache.checkcache(path)
-        exec(compile(code, path, "exec"), get_ipython().user_ns)
+        compiled = compile(code, path, "exec")
+        namespace = get_ipython().user_ns
+        if not alias:
+            exec(compiled, namespace)
+            return
+        import types
+
+        module = types.ModuleType(self._name)
+        module.__file__ = os.path.abspath(path)
+        module.np = np
+        module.op = sys.modules[__name__]
+        previous = sys.modules.get(self._name)
+        sys.modules[self._name] = module
+        try:
+            exec(compiled, module.__dict__)
+        except BaseException:
+            if previous is None:
+                sys.modules.pop(self._name, None)
+            else:
+                sys.modules[self._name] = previous
+            raise
+        namespace[alias] = module
+
+    def check(self):
+        """Look for mistakes without running the file: what Python can tell before it runs.
+
+        Reports a syntax error, and modules it imports that cannot be found
+        (neither installed nor a package of the Pyodide distribution, nor
+        another procedure). Returns the problems as a list of text, empty
+        when there are none; shown, it says so in words. The procedure
+        window's Check also shows Ruff's problems (undefined names and the
+        like) in the editor.
+        """
+        import ast
+        import importlib.util
+
+        info = self._info()
+        file = f"{self._name}.py"
+        problems = _CheckReport(file)
+        try:
+            tree = ast.parse(info["code"], file)
+            compile(tree, file, "exec")
+        except SyntaxError as error:
+            problems.append(f"{file}, line {error.lineno}: SyntaxError: {error.msg}")
+            return problems
+        procedures = set(_call("listWindows", {"kind": "procedure"})[0])
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                if top in sys.modules or top in procedures:
+                    continue
+                try:
+                    found = importlib.util.find_spec(top) is not None
+                except (ImportError, ValueError):
+                    found = False
+                if not found:
+                    problems.append(
+                        f"{file}, line {node.lineno}: no module named {top!r}"
+                        " (install it with %pip install, or check the name)"
+                    )
+        return problems
 
     def kill(self):
         """Kill the window and what it shows (see ``op.kill_window``)."""
@@ -3068,19 +3156,36 @@ def table(name=None):
     return Table(name)
 
 
-def new_procedure(name=None, code="", *, auto_run=True):
+class _CheckReport(list):
+    """The problems Procedure.check found: a list of text, shown as a report."""
+
+    def __init__(self, file):
+        super().__init__()
+        self._file = file
+
+    def __repr__(self):
+        if not self:
+            return f"{self._file}: no problems found."
+        return "\n".join(self)
+
+
+def new_procedure(name=None, code="", *, auto_run=True, import_as=None):
     """Make a procedure window: a Python file that is saved with the experiment.
 
     It is the module ``name`` (``import name`` from the command line or
     another procedure); ``Procedure.run()`` runs it in the interactive
     namespace instead. ``auto_run=False`` keeps it from running when the
     experiment opens, as a procedure imported from a file starts.
+    ``import_as="tl"`` makes ``run()`` run it as a module bound to ``tl``
+    (see ``Procedure.import_as``).
     """
     command = {"op": "newProcedure", "code": str(code)}
     if name is not None:
         command["name"] = name
     if not auto_run:
         command["autoRun"] = False
+    if import_as is not None:
+        command["importAs"] = str(import_as)
     return Procedure(_dispatch(command))
 
 

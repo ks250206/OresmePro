@@ -17,13 +17,14 @@ op.Procedure(name)
 
 実験に保存され、Procedure ウィンドウに表示される Python ファイル。
 
-作業ディレクトリの ``<name>.py`` です。``run()`` はコマンド入力と同じ名前空間で実行し、ほかのコードからは ``import`` できます。
+作業ディレクトリの ``<name>.py`` です。``run()`` はコマンド入力と同じ名前空間で実行し(``from name import *`` で名前を取り込むのと同じ)、ほかのコードからは ``import`` できます。``import_as`` を設定すると、``run()`` は独自のモジュールとして実行し、その名前に結び付けます(``import name as tl`` と同じ)。``check()`` は実行せずに誤りを探します。
 
 **プロパティ**
 
 - `name` (read-only)
 - `code` (read/write)
 - `auto_run` (read/write) · 実験を開いたときにこのファイルを実行するかどうか。
+- `import_as` (read/write) · ``run()`` がファイルをモジュールとして結び付ける名前。None なら名前空間で実行します。
 
 ### `Procedure.run`
 
@@ -31,9 +32,19 @@ op.Procedure(name)
 run()
 ```
 
-ファイルをコマンド入力と同じ名前空間で、そこに入力したように実行します。
+ファイルを実行します: 名前空間で、またはモジュールとして(``import_as`` を参照)。
 
-定義したものはコマンド入力から使えます。エラーで止まり、ファイル名と行とともに報告します。
+名前空間で実行すると、定義したものはその名前のままコマンド入力から使えます。モジュールとして実行すると、コマンド入力と同じく ``np`` と ``op`` を持った状態で始まり、``sys.modules`` に入り(``import name`` でも同じものが得られます)、``import_as`` の名前に結び付けられます: ``tl.area(2)``。エラーで止まり、ファイル名と行とともに報告します。実行に失敗したモジュールは残しません。
+
+### `Procedure.check`
+
+```python
+check()
+```
+
+ファイルを実行せずに誤りを探します: Python が実行前に分かること。
+
+構文エラーと、import しているのに見つからないモジュール(インストールされておらず、Pyodide の配布物にも、ほかの Procedure にもないもの)を報告します。問題を文字列のリストで返し、なければ空です。表示すると、その旨を文章で示します。Procedure ウィンドウの Check は、Ruff の問題(未定義の名前など)もエディタに表示します。
 
 ### `Procedure.kill`
 
@@ -70,12 +81,12 @@ rename(new_name)
 ## `new_procedure`
 
 ```python
-op.new_procedure(name=None, code='', *, auto_run=True)
+op.new_procedure(name=None, code='', *, auto_run=True, import_as=None)
 ```
 
 Procedure ウィンドウ(実験と一緒に保存される Python ファイル)を作ります。
 
-モジュール ``name`` になり、コマンド入力やほかの Procedure から ``import name`` できます。``Procedure.run()`` ならコマンド入力と同じ名前空間で実行します。``auto_run=False`` で、実験を開いたときに実行しないようにします(ファイルから取り込んだ Procedure はこの状態で始まります)。
+モジュール ``name`` になり、コマンド入力やほかの Procedure から ``import name`` できます。``Procedure.run()`` ならコマンド入力と同じ名前空間で実行します。``auto_run=False`` で、実験を開いたときに実行しないようにします(ファイルから取り込んだ Procedure はこの状態で始まります)。``import_as="tl"`` で、``run()`` が ``tl`` に結び付けたモジュールとして実行するようにします(``Procedure.import_as`` を参照)。
 
 ## `procedure`
 

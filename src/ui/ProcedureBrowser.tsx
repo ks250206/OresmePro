@@ -154,6 +154,9 @@ export function ProcedureBrowser() {
                       {items.length > 0 ? (open ? "▾" : "▸") : ""}
                     </button>
                     <span className="truncate font-medium">{name}.py</span>
+                    {procedure.importAs ? (
+                      <span className="font-mono text-muted">as {procedure.importAs}</span>
+                    ) : null}
                     {closed(name) ? <span className="text-muted">(closed)</span> : null}
                     {procedure.autoRun ? null : (
                       <span className="text-muted" title="Does not run when the experiment opens">

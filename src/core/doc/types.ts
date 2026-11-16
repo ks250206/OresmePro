@@ -776,6 +776,12 @@ export interface ProcedureSpec {
   code: string;
   /** Runs the file when the experiment is opened and whenever Python starts. */
   autoRun: boolean;
+  /**
+   * How Run runs it: null runs it in the command line's namespace (as
+   * `from name import *` would bring its names in); a name runs it as a
+   * module of its own and binds it to that name (as `import name as tl`).
+   */
+  importAs: string | null;
 }
 
 /**

@@ -103,6 +103,7 @@ describe("renaming a window", () => {
       name: "fits",
       code: "x = 1\n",
       autoRun: true,
+      importAs: null,
     });
     doc.dispatch({ op: "closeWindow", name: "fits" });
     doc.dispatch({ op: "renameWindow", name: "fits", newName: "fits2" });

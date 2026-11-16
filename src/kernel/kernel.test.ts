@@ -800,6 +800,50 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("[]\n");
   });
 
+  it("runs a procedure as a module bound to a name, and checks one without running it", async () => {
+    expect(
+      await run(
+        [
+          'm = op.new_procedure("mtools", "SCALE = 3\\ndef area(r):\\n    return SCALE * np.pi * r * r\\n", import_as="mt")',
+          "m.run()",
+          "import mtools",
+          "print(m.import_as, round(mt.area(1), 3), mtools is mt, 'SCALE' in globals())",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("mt 9.425 True False\n");
+    expect(doc.getState().procedures.mtools!.importAs).toBe("mt");
+
+    // Back to the namespace: its names come in by themselves.
+    expect(await run("m.import_as = None\nm.run()\nprint(SCALE)")).toBe(true);
+    expect(stdout).toBe("3\n");
+    expect(await run('m.import_as = "class"')).toBe(false);
+    expect(errors[0]).toMatch(/must be a Python name/);
+
+    // A module that fails is not kept.
+    expect(
+      await run('m.import_as = "mt"\nm.code = "x = 1\\nraise ValueError(\'bad\')\\n"\nm.run()'),
+    ).toBe(false);
+    expect(errors[0]).toBe("ValueError: bad");
+    expect(await run("import sys\nprint('mtools' in sys.modules)")).toBe(true);
+    expect(stdout).toBe("False\n");
+
+    // check() reads it without running it.
+    expect(
+      await run('m.code = "import nosuchmodule\\nimport numpy\\nraise SystemExit"\nm.check()'),
+    ).toBe(true);
+    expect(displays.at(-1)?.["text/plain"]).toBe(
+      "mtools.py, line 1: no module named 'nosuchmodule' (install it with %pip install, or check the name)",
+    );
+    expect(await run('m.code = "def f(:\\n    pass\\n"\nprint(m.check())')).toBe(true);
+    expect(stdout).toMatch(/^mtools\.py, line 1: SyntaxError: /);
+    expect(
+      await run('m.code = "import mtools2\\ny = np.pi\\n"\nop.new_procedure("mtools2")\nm.check()'),
+    ).toBe(true);
+    expect(displays.at(-1)?.["text/plain"]).toBe("mtools.py: no problems found.");
+    expect(await run("m.kill(); op.procedure('mtools2').kill()")).toBe(true);
+  });
+
   it("imports one procedure from another, each its own module", async () => {
     // Procedures become files before each input, so each step is an input of its own.
     expect(
