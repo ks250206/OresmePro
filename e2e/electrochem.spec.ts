@@ -43,17 +43,22 @@ test.describe("the example plugin electrochem", () => {
     await expect(
       dialog.getByRole("option", { name: "Electrochemistry", exact: true }),
     ).toBeVisible();
-    await dialog.getByRole("combobox", { name: /^Action/ }).selectOption("eis_fit");
-    await dialog.getByRole("combobox", { name: /^Frequency/ }).selectOption("eis_f");
-    await dialog.getByRole("combobox", { name: /^Z′/ }).selectOption("eis_re");
-    await dialog.getByRole("combobox", { name: /^Z″/ }).selectOption("eis_im");
-    await dialog.getByRole("button", { name: "Run" }).click();
+    // Its action opens in a window of its own, not in the dialog.
+    await dialog.getByRole("button", { name: "Open EIS Fit" }).click();
+    await expect(dialog).toHaveCount(0);
+    const form = page.getByRole("dialog", { name: "EIS Fit" });
+    await form.getByRole("combobox", { name: /^Frequency/ }).selectOption("eis_f");
+    await form.getByRole("combobox", { name: /^Z′/ }).selectOption("eis_re");
+    await form.getByRole("combobox", { name: /^Z″/ }).selectOption("eis_im");
+    await form.getByRole("button", { name: "Run" }).click();
     await expect
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().results)), {
         timeout: 150_000,
       })
       .toEqual(["Plugin0"]);
-    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await expect(form.getByRole("alert")).toHaveCount(0);
+    await form.getByRole("button", { name: "Close EIS Fit" }).click();
+    await expect(form).toHaveCount(0);
 
     const outcome = await page.evaluate(() => {
       const state = globalThis.oresme.doc.getState();
@@ -102,6 +107,7 @@ test.describe("the example plugin electrochem", () => {
     );
 
     // Its Nyquist template comes into the experiment, and makes a graph of the data and the fit.
+    await app.menu("Python", "Plugins…");
     await dialog.getByRole("button", { name: "Add Graph Templates to Experiment" }).click();
     await expect
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().graphTemplates)))

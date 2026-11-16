@@ -15,6 +15,8 @@ sidebar:
 | Heading     | 見出し                                                        |
 | Text        | 説明文(複数行)                                                |
 | Wave Picker | Wave の選択。次元の数と名前(`*_I` のようなパターンも可)で絞る |
+| Wave List   | Wave の一覧。Wave Picker と同じように絞り、1 つか複数を選ぶ   |
+| Plot        | 小さなグラフ。アクティブなグラフの wave を取ってきて描く      |
 | Choice      | 選択肢のメニュー                                              |
 | Number      | 数値。最小・最大・刻みを指定できる                            |
 | Text Field  | 文字の入力欄                                                  |
@@ -22,6 +24,24 @@ sidebar:
 | Button      | 登録された Action を呼ぶボタン                                |
 
 部品は上から 1 行に 1 つ並びます。**On the line before** を付けると前の部品と同じ行に並びます。↑ ↓(**Alt+矢印キー**)で並べ替え、**Delete** で削除します。編集を終えるにはタイトルバーの **Done** を押します。タイトルバーの **Edit** か、右クリック → **Edit Panel** で再び編集モードになります。
+
+## 部品を自由に置く
+
+行に並べるだけでなく、Igor のパネルのように部品を好きな位置に置けます。
+
+- 編集モードで部品を**ドラッグ**すると、その位置に置かれます(パネルの左上からのピクセル数 x, y)。置いた部品は行から外れ、ほかの部品の上に重なります。行に並ぶ部品は、置いた部品がないものとして並びます
+- 選んだ部品の右下の**取っ手**をドラッグすると大きさ(w, h)が変わります
+- **矢印キー**で 1 ピクセル、**Shift+矢印キー**で 10 ピクセル動きます。行に並んでいる部品も、動かすとその位置に置かれます
+- 重なった部品は z の大きいものが前に描かれます。ツールバーの **Front** / **Back**、または右クリック → **Bring to Front** / **Send to Back** で前面・背面へ動かします
+- 右クリック → **Return to Line** で、置いた部品を行に戻します
+
+右のフォームの **Look and Place** では、文字の色(**Color**)と背景色(**Background**)、位置(**Placed by x and y** と **X**・**Y**)、大きさ(**Width**・**Height**。空なら中身の大きさ)、**Z** を数値で指定できます。**None** で色を外します。ドラッグ 1 回、色の選択 1 回、矢印キーで続けて動かした分がそれぞれ 1 回の Undo で、履歴には `op.panel("free").control("go").set(x=200, y=150)` のように残ります。
+
+## Wave List と Plot
+
+**Wave List** は、条件に合う Wave の一覧です。値は選んだ Wave の名前のリストで、ボタンでは複数の Wave をとる引数(`waves`)に渡せます。**Select several** を外すと 1 つだけ選べます。Wave の名前を変えると追従し、削除した Wave は **missing** と表示されます。
+
+**Plot** は、パネルの中の小さなグラフです。右上の **From Graph**(フォームでは **Take from Active Graph**)を押すと、いちばん前にあるグラフ(アクティブなグラフ)のトレースの wave を取ってきて描きます。新しく足した Plot は、アクティブなグラフの wave で始まります。フォームの **Waves** に 1 行に 1 つ、`y` か `y vs x` の形で書いても指定できます。**Live** を付けると、自分の wave ではなく、アクティブなグラフをそのまま描き続けます。大きさは **Width**・**Height** で決めます。
 
 ## ボタンに解析を割り当てる
 
@@ -40,7 +60,9 @@ sidebar:
 
 部品の値は Experiment に保存され、開き直すと戻ります。値の変更は Undo でき、履歴には `op.panel("quick_fit")["model"] = "lor"` のように残ります。数値や文字を打ち込んだときは、その欄の 1 回の編集が 1 回の Undo です。
 
-Wave Picker は Wave の名前を持ちます。Wave の名前を変えると追従し、Wave を削除すると名前が残って **missing** と表示されます。
+Wave Picker は Wave の名前を持ちます。Wave の名前を変えると追従し、Wave を削除すると名前が残って **missing** と表示されます。Wave List と Plot の wave も同じです。
+
+部品の位置・大きさ・色・z も Experiment に保存され、書き出した JSON にも入ります。使っていない(既定のままの)ものは書き出されないので、これらを使わないパネルは以前の版のアプリでも読めます。
 
 ## データのみとコードを含むパネル
 
@@ -74,5 +96,26 @@ r = p.press("run")
 ```
 
 部品を足すメソッドは、同じ名前・種類の部品がすでにあれば設定だけを変え、値は残します。パネルを組み立てる Procedure を何度実行しても、使っている人の値は消えません。
+
+部品を足すメソッドはどれも、見た目と位置をキーワードで受け取ります。`color`・`background`(`"#rrggbb"`、色の名前、`(r, g, b)`)、`x`・`y`(置く位置)、`w`・`h`(大きさ)、`z`(重なりの順)です。
+
+```python
+# 選んだ wave の平均を作る Action(Procedure で登録する)
+@op.action("lab.average", title="Average", params={"waves": {"type": "waves", "title": "Waves"}})
+def average(waves):
+    return op.make("average", np.mean([w.data for w in waves], axis=0))
+
+p = op.panel("free", title="Free")
+p.heading("top", "Spectra", x=10, y=8, color="#2a6fd6")
+p.list("waves", "Waves", dims=1, x=10, y=36, w=160, h=140)
+pv = p.plot("preview", x=190, y=36, w=280, h=160)
+pv.take_from_graph()                     # いちばん前のグラフの wave を描く
+p.button("run", "Average", action="lab.average", args={"waves": op.control("waves")},
+         x=10, y=190, w=160, background="orange")
+p.control("top").bring_to_front()        # send_to_back() で背面へ
+p.control("run").place(10, 200)          # unplace() で行に戻す
+```
+
+`p.data` と `op.set_panel(name, data)` でも、各部品の `x`・`y`・`w`・`h`・`color`・`background`・`z` をそのまま読み書きできます。
 
 [Panel API](../../reference/api/panel/) · [Actions API](../../reference/api/actions/) · [解析を名前で呼ぶ](../python/#解析を名前で呼ぶ)

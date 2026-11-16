@@ -2011,7 +2011,8 @@ function changed(wave: Wave, change: Partial<Wave>): Wave {
   return { ...wave, ...change, rev: nextRev() };
 }
 
-function emptyGraph(name: string): GraphSpec {
+/** A graph with nothing in it, as a new graph starts. */
+export function emptyGraph(name: string): GraphSpec {
   return {
     name,
     traces: [],

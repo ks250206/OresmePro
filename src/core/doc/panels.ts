@@ -6,9 +6,11 @@ import {
   type JsonValue,
   type ParamSpec,
 } from "../actions";
+import { normalizeColor } from "./colors";
 import {
   checkName,
   checkPath,
+  emptyGraph,
   oneOf,
   placeWindow,
   uniqueName,
@@ -18,15 +20,20 @@ import {
 } from "./commands";
 import { dict, withEntry, type Dict } from "./dict";
 import {
+  AUTO_SIZE,
   CONTROL_KINDS,
   DocError,
+  defaultTraceStyle,
   hasValue,
+  leafName,
   type ControlArg,
   type ControlKind,
   type ControlRef,
   type DocState,
+  type GraphSpec,
   type PanelControl,
   type PanelSpec,
+  type PlotTrace,
 } from "./types";
 
 /*
@@ -161,6 +168,71 @@ function args(value: unknown, what: string): Dict<ControlArg> {
   return result;
 }
 
+/** A place or size in pixels, from 0 (a place) or 1 (a size) to MAX_PIXELS, rounded to a whole pixel. */
+const pixels =
+  (least: number) =>
+  (value: unknown, what: string): number => {
+    const number = Math.round(finite(value, what));
+    if (number < least || number > MAX_PIXELS) {
+      throw new DocError(`${what} must be from ${least} to ${MAX_PIXELS} pixels.`);
+    }
+    return number;
+  };
+const MAX_PIXELS = 20_000;
+
+function color(value: unknown, what: string): string {
+  try {
+    return normalizeColor(value);
+  } catch (error) {
+    throw new DocError(`${what}: ${(error as Error).message}`);
+  }
+}
+
+function order(value: unknown, what: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) > 1_000_000) {
+    throw new DocError(`${what} must be a whole number.`);
+  }
+  return value;
+}
+
+/** The waves a list holds: names of waves, each once. */
+function waveNames(value: unknown, what: string): string[] {
+  if (!Array.isArray(value) || value.length > MAX_ITEMS) {
+    throw new DocError(`${what} must be a list of the names of waves.`);
+  }
+  const names = value.map((item: unknown, index) => checkPath(item, `${what}[${index}]`));
+  if (new Set(names).size !== names.length) throw new DocError(`${what} names a wave twice.`);
+  return names;
+}
+
+/**
+ * The waves a plot draws: each the name of a Y wave, a pair [y, x], or
+ * {"y": y, "x": x}, where x may be null for the Y wave's own X scaling.
+ */
+function plotTraces(value: unknown, what: string): PlotTrace[] {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new DocError(`${what} must be a list of at most 100 waves to plot.`);
+  }
+  return value.map((item: unknown, index): PlotTrace => {
+    const where = `${what}[${index}]`;
+    if (typeof item === "string") return { y: checkPath(item, where), x: null };
+    const pair = Array.isArray(item)
+      ? item.length === 2
+        ? { y: item[0] as unknown, x: item[1] as unknown }
+        : null
+      : typeof item === "object" && item !== null
+        ? (item as { y?: unknown; x?: unknown })
+        : null;
+    if (!pair || Object.keys(pair).some((key) => key !== "y" && key !== "x")) {
+      throw new DocError(`${where} must be a wave's name, [y, x] or {"y": y, "x": x}.`);
+    }
+    return {
+      y: checkPath(pair.y, `${where}: y`),
+      x: pair.x === null || pair.x === undefined ? null : checkPath(pair.x, `${where}: x`),
+    };
+  });
+}
+
 type Check = (value: unknown, what: string) => unknown;
 
 /** The properties each kind of control has besides name, kind, label and inline. */
@@ -185,21 +257,71 @@ const KIND_PROPS: Record<ControlKind, Record<string, Check>> = {
     dims: orNull(dims),
     filter: text,
   },
+  list: { value: waveNames, dims: orNull(dims), filter: text, multiple: bool },
+  plot: { traces: plotTraces, live: bool },
   button: { action: actionId, version: orNull(version), args },
 };
 
-const COMMON_PROPS: Record<string, Check> = { label: text, inline: bool };
+/**
+ * The look and place every control can be given (see PanelControl), with the
+ * value each has while it is left out: null takes a property back to it.
+ */
+const STYLE_PROPS: Record<string, { check: Check; usual: unknown }> = {
+  color: { check: color, usual: null },
+  background: { check: color, usual: null },
+  x: { check: pixels(0), usual: null },
+  y: { check: pixels(0), usual: null },
+  w: { check: pixels(1), usual: null },
+  h: { check: pixels(1), usual: null },
+  z: { check: order, usual: 0 },
+};
+
+/** The names of the look and place properties, in the order they are written. */
+export const STYLE_KEYS = Object.keys(STYLE_PROPS) as readonly (
+  | "color"
+  | "background"
+  | "x"
+  | "y"
+  | "w"
+  | "h"
+  | "z"
+)[];
+
+const COMMON_PROPS: Record<string, Check> = {
+  label: text,
+  inline: bool,
+  ...Object.fromEntries(
+    Object.entries(STYLE_PROPS).map(([key, { check, usual }]) => [
+      key,
+      (value: unknown, what: string) => (value === null ? usual : check(value, what)),
+    ]),
+  ),
+};
 
 /** The properties a control of a kind can be given. */
 export const controlProps = (kind: ControlKind): string[] => [
   "label",
   "inline",
+  ...STYLE_KEYS,
   ...Object.keys(KIND_PROPS[kind]),
 ];
 
+/** Whether a control has a place of its own (x and y) rather than flowing in its line. */
+export const isPlaced = (control: PanelControl): boolean => control.x !== undefined;
+
+/** A control without the look and place properties that have their usual values. */
+function withoutUsual(control: Record<string, unknown>): PanelControl {
+  const result = { ...control };
+  for (const [key, { usual }] of Object.entries(STYLE_PROPS)) {
+    if (result[key] === usual || result[key] === undefined) delete result[key];
+  }
+  return result as unknown as PanelControl;
+}
+
 /** A new control of a kind, with its properties as they start. */
 export function newControl(kind: ControlKind, name: string): PanelControl {
-  const base = { name, label: kind === "heading" || kind === "text" ? "" : name, inline: false };
+  const words = kind === "heading" || kind === "text" || kind === "plot";
+  const base = { name, label: words ? "" : name, inline: false };
   switch (kind) {
     case "heading":
     case "text":
@@ -214,6 +336,10 @@ export function newControl(kind: ControlKind, name: string): PanelControl {
       return { ...base, kind, value: null, options: [] };
     case "wave":
       return { ...base, kind, value: null, dims: null, filter: "" };
+    case "list":
+      return { ...base, kind, value: [], dims: null, filter: "", multiple: true };
+    case "plot":
+      return { ...base, kind, traces: [], live: false };
     case "button":
       return { ...base, kind, action: "", version: null, args: dict() };
   }
@@ -236,9 +362,18 @@ export function changeControl(control: PanelControl, props: Props): PanelControl
     }
     changed[key] = check(value, key);
   }
-  const next = { ...control, ...changed } as PanelControl;
+  const next = withoutUsual({ ...control, ...changed });
   const given = Object.hasOwn(changed, "value");
   const label = next.label || next.name;
+  if ((next.x === undefined) !== (next.y === undefined)) {
+    throw new DocError(
+      `${label}: x and y are given together, to place it; both null put it back in its line.`,
+    );
+  }
+  if (next.kind === "list" && !next.multiple && next.value.length > 1) {
+    if (given) throw new DocError(`${label} holds one wave: it is not set to select several.`);
+    return { ...next, value: next.value.slice(0, 1) };
+  }
   if (next.kind === "number") {
     if (next.min !== null && next.max !== null && next.min > next.max) {
       throw new DocError(`${label}: min is above max.`);
@@ -514,24 +649,101 @@ export function applyPanelCommand(state: DocState, command: PanelCommand): Comma
   }
 }
 
-/** The panels with the waves their pickers hold renamed. */
+/** A control with the waves it holds renamed; the same control when none of them is. */
+function renameWaves(control: PanelControl, rename: (name: string) => string): PanelControl {
+  const names = (list: readonly string[]) => list.map(rename);
+  const same = (a: readonly unknown[], b: readonly unknown[]) =>
+    a.every((item, index) => item === b[index]);
+  switch (control.kind) {
+    case "wave":
+      return control.value === null || rename(control.value) === control.value
+        ? control
+        : { ...control, value: rename(control.value) };
+    case "list": {
+      const value = names(control.value);
+      return same(value, control.value) ? control : { ...control, value };
+    }
+    case "plot": {
+      const traces = control.traces.map((trace) => ({
+        y: rename(trace.y),
+        x: trace.x === null ? null : rename(trace.x),
+      }));
+      const moved = traces.some(
+        (trace, index) =>
+          trace.y !== control.traces[index]!.y || trace.x !== control.traces[index]!.x,
+      );
+      return moved ? { ...control, traces } : control;
+    }
+    default:
+      return control;
+  }
+}
+
+/** The panels with the waves their pickers, lists and plots hold renamed. */
 export function renameInPanels(
   panels: Dict<PanelSpec>,
   rename: (name: string) => string,
 ): Dict<PanelSpec> {
   let result = panels;
   for (const panel of Object.values(panels)) {
-    const follows = (control: PanelControl) =>
-      control.kind === "wave" && control.value !== null && rename(control.value) !== control.value;
-    if (!panel.controls.some(follows)) continue;
-    const controls = panel.controls.map((control) =>
-      control.kind === "wave" && follows(control)
-        ? { ...control, value: rename(control.value!) }
-        : control,
-    );
+    const controls = panel.controls.map((control) => renameWaves(control, rename));
+    if (controls.every((control, index) => control === panel.controls[index])) continue;
     result = withEntry(result, panel.name, { ...panel, controls });
   }
   return result;
+}
+
+/**
+ * The z that brings a control in front of the others of its panel ("front")
+ * or behind them ("back"); its own z when it is there already.
+ */
+export function stackingZ(panel: PanelSpec, name: string, to: "front" | "back"): number {
+  const control = panel.controls.find((item) => item.name === name);
+  const own = control?.z ?? 0;
+  const others = panel.controls.filter((item) => item !== control).map((item) => item.z ?? 0);
+  if (others.length === 0) return own;
+  if (to === "front") {
+    const top = Math.max(...others);
+    return own > top ? own : top + 1;
+  }
+  const bottom = Math.min(...others);
+  return own < bottom ? own : bottom - 1;
+}
+
+/** The waves a graph draws, as a plot of a panel keeps them. */
+export const tracesOf = (graph: GraphSpec): PlotTrace[] =>
+  graph.traces.map((trace) => ({ y: trace.y, x: trace.x }));
+
+/** The graph whose window is frontmost, or null. */
+export function activeGraph(state: Pick<DocState, "windows" | "graphs">): GraphSpec | null {
+  const window = state.windows.findLast((item) => item.kind === "graph" && !item.hidden);
+  return window && Object.hasOwn(state.graphs, window.name) ? state.graphs[window.name]! : null;
+}
+
+/**
+ * What a panel's plot draws, as a graph that follows its box: the frontmost
+ * graph when it is live (null when there is none), or else its own traces
+ * in the usual colors.
+ */
+export function plotGraph(
+  control: Extract<PanelControl, { kind: "plot" }>,
+  state: Pick<DocState, "windows" | "graphs">,
+): GraphSpec | null {
+  if (control.live) {
+    const graph = activeGraph(state);
+    return graph && { ...graph, width: AUTO_SIZE, height: AUTO_SIZE, magnification: 1 };
+  }
+  const graph = emptyGraph(control.name);
+  const traces = control.traces.map((trace, index) => ({
+    ...defaultTraceStyle(index),
+    // Unique as a graph wants them: a wave plotted twice is named twice.
+    name: `${leafName(trace.y)}#${index}`,
+    y: trace.y,
+    x: trace.x,
+    vAxis: "left",
+    hAxis: "bottom",
+  }));
+  return { ...graph, fontSize: 10, traces };
 }
 
 /** Whether an action id belongs to the application (core) or to a plugin, which runs sandboxed. */
@@ -622,6 +834,18 @@ export function resolveButton(
       problems.push(`${name}: ${shown(source)} is a ${source.kind}, which has no value.`);
       return undefined;
     }
+    if (source.kind === "list") {
+      if (source.value.length === 0) {
+        problems.push(`Select a wave in ${shown(source)}.`);
+        return undefined;
+      }
+      const gone = source.value.filter((wave) => !options.waveExists(wave));
+      if (gone.length > 0) {
+        problems.push(`${shown(source)} is missing: there is no wave ${gone.join(", ")}.`);
+        return undefined;
+      }
+      return [...source.value];
+    }
     if (source.kind === "wave") {
       if (source.value === null) {
         problems.push(`Choose a wave for ${shown(source)}.`);
@@ -673,7 +897,7 @@ export function resolveButton(
         control.version !== null
           ? `There is no version ${control.version} of the action ${control.action}.`
           : plugin
-            ? `There is no action ${control.action}: install the plugin ${plugin}, or turn it on (Analysis › Plugins…).`
+            ? `There is no action ${control.action}: install the plugin ${plugin}, or turn it on (Python › Plugins…).`
             : `There is no action ${control.action}. If a procedure registers it, run the procedure.`,
       );
     } else {
@@ -715,7 +939,7 @@ export function matchesFilter(name: string, filter: string): boolean {
 /** The waves a wave picker offers: numeric ones of its dimensions that pass its filter. */
 export function pickerWaves(
   state: Pick<DocState, "waves" | "waveOrder">,
-  control: Extract<PanelControl, { kind: "wave" }>,
+  control: { readonly dims: number | null; readonly filter: string },
 ): string[] {
   return state.waveOrder.filter((name) => {
     const wave = state.waves[name];
@@ -769,6 +993,7 @@ export function controlForParam(
       return { kind: "choice", props };
     }
     case "waves":
+      return { kind: "list", props: { label } };
     case "numbers":
     // A template's samples: rows of waves, which no one control holds.
     case "samples":

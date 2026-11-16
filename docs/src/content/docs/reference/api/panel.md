@@ -28,6 +28,11 @@ op.Panel(name)
 
 部品を追加するメソッドは、パネル内で一意の部品の ``name`` を最初に受け取ります。同じ名前・同じ種類の部品がすでにあれば、値を保ったままそれを変えるので、パネルを作る Procedure をもう一度実行できます。``value`` は新しい部品の初期値です。``inline=True`` で前の部品と同じ行に置きます。``with p.row():`` の中で追加した部品も同じ行に並びます。
 
+どのメソッドも、部品の見た目と位置をキーワードで受け取ります: ``color``(文字の色)と ``background``(背景色)は ``"#rrggbb"``、色の名前、``(r, g, b)`` のどれか。``x`` と ``y`` はパネルの左上からのピクセル数で、部品を行から外してそこに置きます。``w`` と ``h`` はピクセルでの大きさ、``z`` は描く順(大きいほど前)です::
+
+    p.button("run", "Fit", action="core.fit", x=20, y=140, w=90,
+             color="white", background="#2a6fd6")
+
 ``p["name"]`` で部品の値を読み書きします。値は実験の一部で、一緒に保存され、ほかの変更と同じく Undo できます。ボタンは Action(``op.action`` を参照)を、普通の値と部品の値(``op.control``)で呼びます。自分の Python をボタンで動かすには、Procedure で関数を Action として登録し、その名前を指定します。
 
 **プロパティ**
@@ -68,7 +73,7 @@ __setitem__(name, value)
 ### `Panel.heading`
 
 ```python
-heading(name, label=None, *, inline=None)
+heading(name, label=None, *, inline=None, **style)
 ```
 
 見出し: 太字の ``label``。
@@ -76,7 +81,7 @@ heading(name, label=None, *, inline=None)
 ### `Panel.text`
 
 ```python
-text(name, label=None, *, inline=None)
+text(name, label=None, *, inline=None, **style)
 ```
 
 文章の段落: ``label``(複数行も可)。
@@ -84,7 +89,7 @@ text(name, label=None, *, inline=None)
 ### `Panel.number`
 
 ```python
-number(name, label=None, *, value=None, min=None, max=None, step=None, inline=None)
+number(name, label=None, *, value=None, min=None, max=None, step=None, inline=None, **style)
 ```
 
 数の入力欄。``min``〜``max``(両端を含む)を指定でき、``step`` は矢印で変わる量です。
@@ -92,7 +97,7 @@ number(name, label=None, *, value=None, min=None, max=None, step=None, inline=No
 ### `Panel.string`
 
 ```python
-string(name, label=None, *, value=None, inline=None)
+string(name, label=None, *, value=None, inline=None, **style)
 ```
 
 文字の入力欄。
@@ -100,7 +105,7 @@ string(name, label=None, *, value=None, inline=None)
 ### `Panel.checkbox`
 
 ```python
-checkbox(name, label=None, *, value=None, inline=None)
+checkbox(name, label=None, *, value=None, inline=None, **style)
 ```
 
 チェックボックス: 値は True か False。
@@ -108,7 +113,7 @@ checkbox(name, label=None, *, value=None, inline=None)
 ### `Panel.choice`
 
 ```python
-choice(name, options, *, value=None, label=None, inline=None)
+choice(name, options, *, value=None, label=None, inline=None, **style)
 ```
 
 ``options``(文字列か数)のメニュー。``value`` を指定しなければ最初の項目から始まります。
@@ -116,17 +121,37 @@ choice(name, options, *, value=None, label=None, inline=None)
 ### `Panel.wave`
 
 ```python
-wave(name, label=None, *, value=None, dims=None, filter=None, inline=None)
+wave(name, label=None, *, value=None, dims=None, filter=None, inline=None, **style)
 ```
 
 wave の選択欄: 値は選んだ wave の名前。
 
 ``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``"*_I"`` に合う)wave だけを並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。
 
+### `Panel.list`
+
+```python
+list(name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style)
+```
+
+選ぶための wave の一覧: 値は選んだ wave の名前のリストです。
+
+``dims`` と ``filter`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。
+
+### `Panel.plot`
+
+```python
+plot(name, label=None, *, traces=None, live=None, inline=None, **style)
+```
+
+パネルの中の小さなグラフ。
+
+``traces`` は描く wave で、それぞれ wave、その名前、または ``(y, x)`` の組です。``live=True`` にすると、代わりにいちばん前のグラフが描くものを、変わるたびに描きます。``Control.take_from_graph()``(とプロット自身のボタン)で、いちばん前のグラフの wave を取ってきます。``label`` は上に付く見出し、``w`` と ``h`` は大きさです。
+
 ### `Panel.button`
 
 ```python
-button(name, label=None, *, action, args=None, version=None, inline=None)
+button(name, label=None, *, action, args=None, version=None, inline=None, **style)
 ```
 
 押すと Action ``action`` を ``args`` で呼ぶボタン。
@@ -189,9 +214,9 @@ rename(new_name)
 op.Control(panel, name)
 ```
 
-パネルの部品: 見出し、文章、入力欄、選択欄、ボタン。
+パネルの部品: 見出し、文章、入力欄、選択欄、wave の一覧、プロット、ボタン。
 
-``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。
+``value`` は入力欄・選択欄の値(wave の選択欄なら wave の名前、wave の一覧なら選んだ wave の名前のリスト)、``data`` はパネルが持つその部品のすべてのプロパティです。``set(...)`` でプロパティを変えます: ``label``、``inline``(前の部品と同じ行に置く)、見た目と位置(``color``、``background``、``x``、``y``、``w``、``h``、``z``。``Panel`` を参照)、それに部品を追加するメソッドが受け取る、その種類のプロパティ。``name`` で名前を変えると、その値を渡すボタンも追随します。見た目と位置のプロパティは ``None`` で既定に戻ります。
 
 **プロパティ**
 
@@ -216,7 +241,49 @@ set(**props)
 move(index)
 ```
 
-部品をパネルの中の位置(上から 0 で数える)に移します。
+部品をパネルの中の順番の位置(上から 0 で数える)に移します。
+
+### `Control.place`
+
+```python
+place(x, y, w=None, h=None)
+```
+
+部品をパネルの左上から ``x``、``y`` ピクセルの位置に置きます。ほかの部品が並ぶ行からは外れます。``w`` と ``h`` で大きさを決めます。self を返します。
+
+### `Control.unplace`
+
+```python
+unplace()
+```
+
+部品を行に戻し、位置を持たない部品と同じように並べます。self を返します。
+
+### `Control.bring_to_front`
+
+```python
+bring_to_front()
+```
+
+部品をパネルのほかの部品より前に描きます(いちばん大きい ``z`` にします)。self を返します。
+
+### `Control.send_to_back`
+
+```python
+send_to_back()
+```
+
+部品をパネルのほかの部品より後ろに描きます(いちばん小さい ``z`` にします)。self を返します。
+
+### `Control.take_from_graph`
+
+```python
+take_from_graph(graph=None)
+```
+
+プロットに、グラフが描いている wave を渡します: いちばん前のグラフ、または ``graph``(Graph かその名前)。self を返します。
+
+**明示的な例外** · `OresmeError`
 
 ### `Control.press`
 

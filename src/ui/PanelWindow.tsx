@@ -1,4 +1,15 @@
-import { useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   buttonKey,
   exportPanel,
@@ -8,17 +19,23 @@ import {
   useCatalog,
   usePanelRuntime,
 } from "../app/panels";
+import { measureText } from "../app/measure";
 import { doc, runGui, runGuiCoalesced, showError, useDoc, type MenuItem } from "../app/session";
 import { findAction, type JsonValue, type ParamSpec } from "../core/actions";
 import { uniqueName, type Command } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoPython } from "../core/doc/echo";
 import {
+  activeGraph,
   codeActions,
   controlForParam,
   isControlRef,
+  isPlaced,
   panelTrust,
   pickerWaves,
+  plotGraph,
+  stackingZ,
+  tracesOf,
 } from "../core/doc/panels";
 import {
   hasValue,
@@ -27,7 +44,10 @@ import {
   type PanelControl,
   type PanelSpec,
 } from "../core/doc/types";
-import { Button, Checkbox, Select, TextInput } from "./controls";
+import { drawPrims } from "../core/plot/canvas";
+import { layoutGraph } from "../core/plot/layout";
+import { graphWaveKey } from "../core/plot/windowFit";
+import { Button, Checkbox, ListBox, Select, TextInput } from "./controls";
 import { keepFocus, openContextMenu } from "./Menu";
 
 type ControlOf<K extends ControlKind> = Extract<PanelControl, { kind: K }>;
@@ -37,6 +57,8 @@ const ADDABLE: readonly { kind: ControlKind; title: string; base: string; label:
   { kind: "heading", title: "Heading", base: "heading", label: "Heading" },
   { kind: "text", title: "Text", base: "text", label: "Text" },
   { kind: "wave", title: "Wave Picker", base: "wave", label: "Wave" },
+  { kind: "list", title: "Wave List", base: "list", label: "Waves" },
+  { kind: "plot", title: "Plot", base: "plot", label: "" },
   { kind: "choice", title: "Choice", base: "choice", label: "Choice" },
   { kind: "number", title: "Number", base: "number", label: "Number" },
   { kind: "string", title: "Text Field", base: "field", label: "Text" },
@@ -71,9 +93,26 @@ function numberProblem(control: ControlOf<"number">, text: string): string | nul
   return null;
 }
 
-function Labelled({ label, children }: { label: string; children: ReactNode }) {
+/** The size a plot and a wave list take when they are given none. */
+const PLOT_SIZE = { w: 300, h: 180 };
+const LIST_SIZE = { w: 180, h: 120 };
+/** The height of the caption above a plot or a list. */
+const CAPTION = 18;
+
+/** Whether a control has a width of its own, which its field then fills. */
+const fills = (control: PanelControl): boolean => control.w !== undefined;
+
+function Labelled({
+  label,
+  fill,
+  children,
+}: {
+  label: string;
+  fill?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <label className="flex items-center gap-1.5">
+    <label className={`flex items-center gap-1.5 ${fill ? "h-full w-full" : ""}`}>
       {label ? <span className="shrink-0">{label}</span> : null}
       {children}
     </label>
@@ -86,10 +125,10 @@ function NumberField({ panel, control }: { panel: string; control: ControlOf<"nu
   const text = draft ?? String(control.value);
   const problem = draft === null ? null : numberProblem(control, draft);
   return (
-    <Labelled label={control.label}>
+    <Labelled label={control.label} fill={fills(control)}>
       <TextInput
         type="number"
-        className={`w-24 ${problem ? "!border-danger" : ""}`}
+        className={`${fills(control) ? "min-w-0 flex-1" : "w-24"} ${problem ? "!border-danger" : ""}`}
         value={text}
         min={control.min ?? undefined}
         max={control.max ?? undefined}
@@ -116,9 +155,9 @@ function NumberField({ panel, control }: { panel: string; control: ControlOf<"nu
 function StringField({ panel, control }: { panel: string; control: ControlOf<"string"> }) {
   const session = useRef(0);
   return (
-    <Labelled label={control.label}>
+    <Labelled label={control.label} fill={fills(control)}>
       <TextInput
-        className="w-40"
+        className={fills(control) ? "min-w-0 flex-1" : "w-40"}
         value={control.value}
         onFocus={() => {
           typingSessions += 1;
@@ -136,8 +175,9 @@ const optionKey = (options: readonly (string | number)[], value: string | number
 
 function ChoiceField({ panel, control }: { panel: string; control: ControlOf<"choice"> }) {
   return (
-    <Labelled label={control.label}>
+    <Labelled label={control.label} fill={fills(control)}>
       <Select
+        className={fills(control) ? "min-w-0 flex-1" : ""}
         value={optionKey(control.options, control.value)}
         disabled={control.options.length === 0}
         onChange={(event) =>
@@ -162,9 +202,9 @@ function WaveField({ panel, control }: { panel: string; control: ControlOf<"wave
   const value = control.value;
   const missing = value !== null && !(value in waves);
   return (
-    <Labelled label={control.label}>
+    <Labelled label={control.label} fill={fills(control)}>
       <Select
-        className={`max-w-[14rem] ${missing ? "!border-danger" : ""}`}
+        className={`${fills(control) ? "min-w-0 flex-1" : "max-w-[14rem]"} ${missing ? "!border-danger" : ""}`}
         value={value ?? ""}
         aria-invalid={missing || undefined}
         title={missing ? `There is no wave ${value}.` : undefined}
@@ -185,6 +225,135 @@ function WaveField({ panel, control }: { panel: string; control: ControlOf<"wave
   );
 }
 
+/** A list of waves to select from: the waves its filter passes, and those selected that are missing. */
+function ListField({ panel, control }: { panel: string; control: ControlOf<"list"> }) {
+  const waves = useDoc((state) => state.waves);
+  const waveOrder = useDoc((state) => state.waveOrder);
+  const names = pickerWaves({ waves, waveOrder }, control);
+  const missing = control.value.filter((name) => !(name in waves));
+  const items = [
+    ...missing.map((name) => ({ key: name, text: name, label: `${name} (missing)`, muted: true })),
+    ...names.map((name) => ({ key: name, text: name })),
+  ];
+  const width = control.w ?? LIST_SIZE.w;
+  const height =
+    (control.h ?? LIST_SIZE.h + (control.label ? CAPTION : 0)) - (control.label ? CAPTION : 0);
+  return (
+    <div className="flex flex-col" style={{ width: control.w ? "100%" : width }}>
+      {control.label ? (
+        <span className="truncate" style={{ height: CAPTION }}>
+          {control.label}
+        </span>
+      ) : null}
+      <ListBox
+        label={control.label || control.name}
+        items={items}
+        selected={control.value}
+        multiple={control.multiple}
+        empty="No waves to list."
+        style={{ height: Math.max(24, height) }}
+        onChange={(chosen) =>
+          setValue(
+            panel,
+            control.name,
+            items.map((item) => item.key).filter((key) => chosen.includes(key)),
+          )
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * A plot in the panel: its own waves, or the frontmost graph when it is
+ * live. Its button gives it the waves of the frontmost graph.
+ */
+function PlotField({ panel, control }: { panel: string; control: ControlOf<"plot"> }) {
+  const active = useDoc((state) => activeGraph(state));
+  const waves = useDoc((state) => state.waves);
+  const zoneName = useDoc((state) => state.timeZone);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const width = control.w ?? PLOT_SIZE.w;
+  const height = Math.max(
+    40,
+    (control.h ?? PLOT_SIZE.h + (control.label ? CAPTION : 0)) - (control.label ? CAPTION : 0),
+  );
+  const live = control.live ? active : null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- live stands in for the graph followed
+  const graph = useMemo(() => plotGraph(control, doc.getState()), [control, live]);
+  const waveKey = graph ? graphWaveKey(graph, waves) : "";
+  const layout = useMemo(
+    () =>
+      graph
+        ? layoutGraph(graph, doc.getState().waves, width, height, measureText, {
+            timeZone: zoneName,
+          })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- waveKey stands in for the wave data
+    [graph, waveKey, width, height, zoneName],
+  );
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    if (layout) drawPrims(context, layout.prims, ratio);
+  }, [layout, width, height]);
+  const message = control.live
+    ? active
+      ? null
+      : "No graph is open."
+    : control.traces.length === 0
+      ? "No waves yet: take those of a graph."
+      : null;
+  const shown = control.label || control.name;
+  return (
+    <div className="flex flex-col" style={{ width: control.w ? "100%" : width }}>
+      {control.label ? (
+        <span className="truncate font-medium" style={{ height: CAPTION }}>
+          {control.label}
+        </span>
+      ) : null}
+      <div className="relative overflow-hidden border border-line bg-paper" style={{ height }}>
+        <canvas
+          ref={canvasRef}
+          role="img"
+          aria-label={`${shown} plot`}
+          className="block"
+          style={{ width, height }}
+        />
+        {message ? (
+          <div className="absolute inset-0 grid place-items-center p-2 text-center text-[11px] text-muted">
+            {message}
+          </div>
+        ) : null}
+        {control.live ? null : (
+          <button
+            type="button"
+            className="absolute right-1 top-1 rounded border border-line bg-chrome/90 px-1.5 text-[10.5px] text-muted hover:text-ink disabled:opacity-50"
+            title="Plot the waves of the frontmost graph"
+            disabled={!active}
+            onClick={() => takeFromGraph(panel, control.name)}
+          >
+            From Graph
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Gives a plot the waves of the frontmost graph. */
+function takeFromGraph(panel: string, control: string): void {
+  const graph = activeGraph(doc.getState());
+  if (graph) modifyControl(panel, control, { traces: tracesOf(graph) });
+}
+
 function ButtonField({ panel, control }: { panel: string; control: ControlOf<"button"> }) {
   const busy = usePanelRuntime((state) =>
     Object.hasOwn(state.busy, panel) ? state.busy[panel] : undefined,
@@ -195,10 +364,20 @@ function ButtonField({ panel, control }: { panel: string; control: ControlOf<"bu
   });
   const running = busy === control.name;
   return (
-    <span className="inline-flex flex-col items-start gap-1">
-      <span className="flex items-center gap-2">
+    <span
+      className={`inline-flex flex-col items-start gap-1 ${control.w === undefined ? "" : "w-full"} ${control.h === undefined ? "" : "h-full"}`}
+    >
+      <span
+        className={`flex items-center gap-2 ${control.w === undefined ? "" : "w-full"} ${control.h === undefined ? "" : "h-full"}`}
+      >
         <Button
-          primary
+          primary={control.background === undefined}
+          style={{
+            color: control.color,
+            background: control.background,
+            width: control.w === undefined ? undefined : "100%",
+            height: control.h === undefined ? undefined : "100%",
+          }}
           disabled={busy !== undefined}
           aria-busy={running || undefined}
           title={control.action ? `Calls ${control.action}` : "Calls no action yet"}
@@ -239,15 +418,195 @@ function ControlBody({ panel, control }: { panel: string; control: PanelControl 
       return <ChoiceField panel={panel} control={control} />;
     case "wave":
       return <WaveField panel={panel} control={control} />;
+    case "list":
+      return <ListField panel={panel} control={control} />;
+    case "plot":
+      return <PlotField panel={panel} control={control} />;
     case "button":
       return <ButtonField panel={panel} control={control} />;
   }
 }
 
-/** The controls in their lines: each on a line of its own unless it sits beside the one before. */
+/** Where a control sits in its panel's area, in pixels from its top left. */
+function offsetIn(element: HTMLElement, area: HTMLElement): { x: number; y: number } {
+  const box = element.getBoundingClientRect();
+  const origin = area.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.round(box.left - origin.left + area.scrollLeft)),
+    y: Math.max(0, Math.round(box.top - origin.top + area.scrollTop)),
+  };
+}
+
+/** The element of a control of a panel window, and the area it sits in. */
+function controlElement(
+  panel: string,
+  control: string,
+): { element: HTMLElement; area: HTMLElement } | null {
+  const window = document.querySelector(`[data-window="${CSS.escape(panel)}"]`);
+  const element = window?.querySelector<HTMLElement>(`[data-control="${CSS.escape(control)}"]`);
+  const area = element?.closest<HTMLElement>("[data-panel-area]");
+  return element && area ? { element, area } : null;
+}
+
+/** Where a control is now: its own place, or where its line has put it. */
+function placeOf(panel: string, control: PanelControl): { x: number; y: number } {
+  if (control.x !== undefined && control.y !== undefined) return { x: control.x, y: control.y };
+  const found = controlElement(panel, control.name);
+  return found ? offsetIn(found.element, found.area) : { x: 0, y: 0 };
+}
+
+interface Gesture {
+  kind: "move" | "size";
+  /** Where the pointer went down. */
+  x: number;
+  y: number;
+  /** Where the control was, and its size, when it did. */
+  from: { x: number; y: number; w: number; h: number };
+  moved: boolean;
+  /** What the gesture has come to: a shift, or a size. */
+  dx: number;
+  dy: number;
+}
+
+/** How far the pointer goes before a press becomes a drag. */
+const DRAG_START = 3;
+
+/**
+ * A control in its box, with its look and place: its colors, a place of
+ * its own or its line's, its size and its z. In edit mode the box is
+ * selected by a click, moved by a drag (which gives a control in a line a
+ * place of its own) and sized by the handle at its corner; each drag is
+ * one change, made when the pointer is let go.
+ */
+function ControlBox({
+  panel,
+  control,
+  editing,
+  selected,
+  area,
+}: {
+  panel: string;
+  control: PanelControl;
+  editing: boolean;
+  selected: boolean;
+  area: RefObject<HTMLDivElement | null>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const gesture = useRef<Gesture | null>(null);
+  const [preview, setPreview] = useState<Gesture | null>(null);
+  const placed = isPlaced(control);
+  const button = control.kind === "button";
+
+  const start = (event: ReactPointerEvent<HTMLElement>, kind: Gesture["kind"]) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    area.current?.focus();
+    selectControl(panel, control.name);
+    const element = ref.current;
+    if (!element || !area.current) return;
+    const box = element.getBoundingClientRect();
+    const at = placed ? { x: control.x!, y: control.y! } : offsetIn(element, area.current);
+    gesture.current = {
+      kind,
+      x: event.clientX,
+      y: event.clientY,
+      from: { ...at, w: Math.round(box.width), h: Math.round(box.height) },
+      moved: false,
+      dx: 0,
+      dy: 0,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const move = (event: ReactPointerEvent<HTMLElement>) => {
+    const now = gesture.current;
+    if (!now) return;
+    const dx = Math.round(event.clientX - now.x);
+    const dy = Math.round(event.clientY - now.y);
+    if (!now.moved && Math.hypot(dx, dy) < DRAG_START) return;
+    gesture.current = { ...now, moved: true, dx, dy };
+    setPreview(gesture.current);
+  };
+  const end = (commit: boolean) => {
+    const done = gesture.current;
+    gesture.current = null;
+    setPreview(null);
+    if (!commit || !done?.moved) return;
+    const { from, dx, dy } = done;
+    modifyControl(
+      panel,
+      control.name,
+      done.kind === "move"
+        ? { x: Math.max(0, from.x + dx), y: Math.max(0, from.y + dy) }
+        : { w: Math.max(8, from.w + dx), h: Math.max(8, from.h + dy) },
+    );
+  };
+
+  const style: CSSProperties = {
+    position: placed ? "absolute" : "relative",
+    left: control.x,
+    top: control.y,
+    width: control.w,
+    height: control.h,
+    zIndex: control.z,
+    // A button wears its colors itself.
+    color: button ? undefined : control.color,
+    background: button ? undefined : control.background,
+  };
+  if (preview?.kind === "move") style.transform = `translate(${preview.dx}px, ${preview.dy}px)`;
+  if (preview?.kind === "size") {
+    style.width = Math.max(8, preview.from.w + preview.dx);
+    style.height = Math.max(8, preview.from.h + preview.dy);
+  }
+  const padded = control.background !== undefined && !button ? "rounded px-1 py-0.5" : "";
+  const sized = control.w !== undefined || control.h !== undefined ? "overflow-hidden" : "";
+  if (!editing) {
+    return (
+      <div data-control={control.name} className={`${padded} ${sized}`} style={style}>
+        <ControlBody panel={panel} control={control} />
+      </div>
+    );
+  }
+  return (
+    <div
+      ref={ref}
+      data-control={control.name}
+      aria-label={`${KIND_TITLES[control.kind]} ${control.name}`}
+      aria-pressed={selected}
+      role="button"
+      className={`cursor-move rounded outline-1 ${padded} ${
+        selected
+          ? "bg-accent-soft outline outline-accent"
+          : "outline-dashed outline-line hover:bg-paper/60"
+      } ${preview ? "opacity-80" : ""}`}
+      style={{ ...style, zIndex: preview ? 100_000 : style.zIndex }}
+      onPointerDown={(event) => start(event, "move")}
+      onPointerMove={move}
+      onPointerUp={() => end(true)}
+      onPointerCancel={() => end(false)}
+    >
+      <div inert className={`${sized} h-full w-full`}>
+        <ControlBody panel={panel} control={control} />
+      </div>
+      {selected ? (
+        <span
+          aria-label={`Resize ${control.name}`}
+          title="Drag to resize"
+          className="absolute -bottom-1 -right-1 h-2.5 w-2.5 cursor-nwse-resize border border-accent bg-paper"
+          onPointerDown={(event) => start(event, "size")}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The controls in their lines: each on a line of its own unless it sits
+ * beside the one before. Those with a place of their own are not in a line.
+ */
 function rowsOf(controls: readonly PanelControl[]): PanelControl[][] {
   const rows: PanelControl[][] = [];
   for (const control of controls) {
+    if (isPlaced(control)) continue;
     const last = rows.at(-1);
     if (control.inline && last) last.push(control);
     else rows.push([control]);
@@ -265,6 +624,28 @@ function moveSelected(panel: PanelSpec, control: string, by: number): void {
   runGui({ op: "moveControl", panel: panel.name, control, to });
 }
 
+/** Brings a control in front of the others, or sends it behind them. */
+function stack(panel: PanelSpec, control: string, to: "front" | "back"): void {
+  const z = stackingZ(panel, control, to);
+  const now = panel.controls.find((item) => item.name === control)?.z ?? 0;
+  if (z !== now) modifyControl(panel.name, control, { z });
+}
+
+/** Moves a control by some pixels, giving it a place of its own if it had none; one undo step for a run of them. */
+function nudge(panel: string, control: PanelControl, dx: number, dy: number): void {
+  const at = placeOf(panel, control);
+  const command: Command = {
+    op: "modifyControl",
+    panel,
+    control: control.name,
+    props: { x: Math.max(0, at.x + dx), y: Math.max(0, at.y + dy) },
+  };
+  runGuiCoalesced(`panel-nudge:${panel}:${control.name}`, [command], () => {
+    const now = doc.getState().panels[panel]?.controls.find((item) => item.name === control.name);
+    return now ? (echoPython({ ...command, props: { x: now.x, y: now.y } }) ?? "") : "";
+  });
+}
+
 function removeSelected(panel: PanelSpec, control: string): void {
   if (runGui({ op: "removeControl", panel: panel.name, control }) !== undefined) {
     selectControl(panel.name, null);
@@ -275,9 +656,10 @@ function removeSelected(panel: PanelSpec, control: string): void {
 function addControl(panel: PanelSpec, kind: ControlKind, selected: string | null): void {
   const { base, label } = ADDABLE.find((item) => item.kind === kind)!;
   const name = uniqueName(base, (taken) => panel.controls.some((item) => item.name === taken));
-  const commands: Command[] = [
-    { op: "addControl", panel: panel.name, kind, name, props: { label } },
-  ];
+  // A new plot starts with the waves of the frontmost graph.
+  const graph = kind === "plot" ? activeGraph(doc.getState()) : null;
+  const props = graph ? { label, traces: tracesOf(graph) } : { label };
+  const commands: Command[] = [{ op: "addControl", panel: panel.name, kind, name, props }];
   const at = panel.controls.findIndex((item) => item.name === selected);
   if (at >= 0 && at < panel.controls.length - 1) {
     commands.push({ op: "moveControl", panel: panel.name, control: name, to: at + 1 });
@@ -287,7 +669,16 @@ function addControl(panel: PanelSpec, kind: ControlKind, selected: string | null
 
 function controlItems(panel: PanelSpec, control: string): MenuItem[] {
   const at = panel.controls.findIndex((item) => item.name === control);
+  const found = panel.controls[at];
   return [
+    { label: "Bring to Front", onSelect: () => stack(panel, control, "front") },
+    { label: "Send to Back", onSelect: () => stack(panel, control, "back") },
+    {
+      label: "Return to Line",
+      disabled: !found || !isPlaced(found),
+      onSelect: () => modifyControl(panel.name, control, { x: null, y: null }),
+    },
+    { separator: true },
     { label: "Move Up", disabled: at <= 0, onSelect: () => moveSelected(panel, control, -1) },
     {
       label: "Move Down",
@@ -356,6 +747,22 @@ function EditBar({ panel, selected }: { panel: PanelSpec; selected: string | nul
         onClick={() => moveSelected(panel, selected!, 1)}
       >
         ↓
+      </Button>
+      <Button
+        className={small}
+        title="Bring to Front"
+        disabled={at < 0}
+        onClick={() => stack(panel, selected!, "front")}
+      >
+        Front
+      </Button>
+      <Button
+        className={small}
+        title="Send to Back"
+        disabled={at < 0}
+        onClick={() => stack(panel, selected!, "back")}
+      >
+        Back
       </Button>
       <Button className={small} disabled={at < 0} onClick={() => removeSelected(panel, selected!)}>
         Delete
@@ -833,6 +1240,7 @@ function ControlForm({ panel, control }: { panel: PanelSpec; control: PanelContr
         <Checkbox
           label="On the line before"
           checked={control.inline}
+          disabled={isPlaced(control)}
           onChange={(event) => modify({ inline: event.target.checked })}
         />
       </Prop>
@@ -873,7 +1281,7 @@ function ControlForm({ panel, control }: { panel: PanelSpec; control: PanelContr
           }
         />
       ) : null}
-      {control.kind === "wave" ? (
+      {control.kind === "wave" || control.kind === "list" ? (
         <>
           <Prop label="Dimensions">
             <Select
@@ -899,8 +1307,176 @@ function ControlForm({ panel, control }: { panel: PanelSpec; control: PanelContr
           />
         </>
       ) : null}
+      {control.kind === "list" ? (
+        <Prop label="">
+          <Checkbox
+            label="Select several"
+            checked={control.multiple}
+            onChange={(event) => modify({ multiple: event.target.checked })}
+          />
+        </Prop>
+      ) : null}
+      {control.kind === "plot" ? <PlotForm panel={panel} control={control} /> : null}
       {control.kind === "button" ? <ButtonForm panel={panel} control={control} /> : null}
+      <LookForm panel={panel} control={control} />
     </div>
+  );
+}
+
+/** A plot's waves, one on each line as "y" or "y vs x", and where it takes them from. */
+function PlotForm({ panel, control }: { panel: PanelSpec; control: ControlOf<"plot"> }) {
+  const active = useDoc((state) => activeGraph(state));
+  const modify = (props: Record<string, unknown>) => modifyControl(panel.name, control.name, props);
+  return (
+    <>
+      <Prop label="">
+        <Checkbox
+          label="Live: draw the frontmost graph"
+          checked={control.live}
+          onChange={(event) => modify({ live: event.target.checked })}
+        />
+      </Prop>
+      <CommitText
+        label="Waves"
+        multiline
+        placeholder={"One on each line: y, or y vs x"}
+        value={control.traces
+          .map((trace) => (trace.x === null ? trace.y : `${trace.y} vs ${trace.x}`))
+          .join("\n")}
+        onCommit={(text) =>
+          modify({
+            traces: text
+              .split("\n")
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .map((line) => {
+                const [y, x] = line.split(/\s+vs\s+/);
+                return { y: y!.trim(), x: x?.trim() || null };
+              }),
+          })
+        }
+      />
+      <Prop label="">
+        <Button
+          className="!h-5 !px-2"
+          disabled={!active}
+          title={active ? `Plot the waves of ${active.name}` : "No graph is open"}
+          onClick={() => takeFromGraph(panel.name, control.name)}
+        >
+          Take from Active Graph
+        </Button>
+      </Prop>
+    </>
+  );
+}
+
+let colorSessions = 0;
+
+/** A color of a control: a swatch to pick it, and a button that takes it away. */
+function ColorProp({
+  panel,
+  control,
+  prop,
+  label,
+}: {
+  panel: string;
+  control: PanelControl;
+  prop: "color" | "background";
+  label: string;
+}) {
+  const session = useRef(0);
+  const value = control[prop];
+  return (
+    <Prop label={label}>
+      <input
+        type="color"
+        aria-label={label}
+        className="h-5 w-9 cursor-pointer rounded border border-line bg-paper p-0.5"
+        value={value ?? (prop === "color" ? "#000000" : "#ffffff")}
+        onFocus={() => {
+          colorSessions += 1;
+          session.current = colorSessions;
+        }}
+        onChange={(event) => {
+          // Picking is one undo step and one history line, however long the picker is dragged.
+          const command: Command = {
+            op: "modifyControl",
+            panel,
+            control: control.name,
+            props: { [prop]: event.target.value },
+          };
+          runGuiCoalesced(
+            `panel-color:${panel}:${control.name}:${prop}:${session.current}`,
+            [command],
+            () => echoPython(command) ?? "",
+          );
+        }}
+      />
+      {value === undefined ? (
+        <span className="text-muted">{prop === "color" ? "The panel's" : "None"}</span>
+      ) : (
+        <Button
+          className="!h-5 !px-2"
+          aria-label={`No ${label.toLowerCase()}`}
+          onClick={() => modifyControl(panel, control.name, { [prop]: null })}
+        >
+          None
+        </Button>
+      )}
+    </Prop>
+  );
+}
+
+/** The look and place of a control: its colors, its place, its size and its z. */
+function LookForm({ panel, control }: { panel: PanelSpec; control: PanelControl }) {
+  const modify = (props: Record<string, unknown>) => modifyControl(panel.name, control.name, props);
+  const pixels = (key: "x" | "y" | "w" | "h", label: string, placeholder?: string) => (
+    <CommitText
+      label={label}
+      value={numberText(control[key] ?? null)}
+      placeholder={placeholder}
+      onCommit={(text) => modify({ [key]: numberOrNull(text) })}
+    />
+  );
+  const placed = isPlaced(control);
+  return (
+    <>
+      <div className="mt-1 border-t border-line-soft pt-1.5 font-semibold">Look and Place</div>
+      <ColorProp panel={panel.name} control={control} prop="color" label="Color" />
+      <ColorProp panel={panel.name} control={control} prop="background" label="Background" />
+      <Prop label="">
+        <Checkbox
+          label="Placed by x and y"
+          checked={placed}
+          onChange={(event) =>
+            modify(event.target.checked ? placeOf(panel.name, control) : { x: null, y: null })
+          }
+        />
+      </Prop>
+      {placed ? (
+        <>
+          {pixels("x", "X")}
+          {pixels("y", "Y")}
+        </>
+      ) : null}
+      {pixels("w", "Width", "Its own")}
+      {pixels("h", "Height", "Its own")}
+      <CommitText
+        label="Z"
+        value={String(control.z ?? 0)}
+        onCommit={(text) => modify({ z: text.trim() === "" ? 0 : Number(text) })}
+      />
+      <Prop label="">
+        <span className="flex gap-1">
+          <Button className="!h-5 !px-2" onClick={() => stack(panel, control.name, "front")}>
+            Bring to Front
+          </Button>
+          <Button className="!h-5 !px-2" onClick={() => stack(panel, control.name, "back")}>
+            Send to Back
+          </Button>
+        </span>
+      </Prop>
+    </>
   );
 }
 
@@ -917,8 +1493,9 @@ function PanelForm({ panel }: { panel: PanelSpec }) {
         onCommit={(title) => runGui({ op: "modifyPanel", panel: panel.name, props: { title } })}
       />
       <p className="text-[11px] text-muted">
-        Add controls with <b>Add ▾</b> and click one to change it. A button calls an action with
-        fixed values and the values of controls.
+        Add controls with <b>Add ▾</b> and click one to change it. Drag a control to place it where
+        you want, and its corner to size it; the arrow keys move it a pixel (Shift: ten). A button
+        calls an action with fixed values and the values of controls.
       </p>
       <p className={`text-[11px] ${code.length > 0 ? "text-danger" : "text-muted"}`}>
         {code.length > 0
@@ -929,12 +1506,20 @@ function PanelForm({ panel }: { panel: PanelSpec }) {
   );
 }
 
+const ARROWS: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
 /**
  * A panel window: its controls, which hold values and run actions; in edit
- * mode, the same controls to select, move and delete, with the properties
- * of the one selected beside them.
+ * mode, the same controls to select, move, size and delete, with the
+ * properties of the one selected beside them.
  */
 export function PanelWindow({ name }: { name: string }) {
+  const area = useRef<HTMLDivElement>(null);
   const panel = useDoc((state) =>
     Object.hasOwn(state.panels, name) ? state.panels[name] : undefined,
   );
@@ -967,6 +1552,11 @@ export function PanelWindow({ name }: { name: string }) {
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
       moveSelected(panel, selectedName, event.key === "ArrowUp" ? -1 : 1);
+    } else if (event.key in ARROWS && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      const [dx, dy] = ARROWS[event.key]!;
+      const by = event.shiftKey ? 10 : 1;
+      nudge(name, selected!, dx * by, dy * by);
     } else if (event.key === "Escape") {
       selectControl(name, null);
     }
@@ -977,10 +1567,12 @@ export function PanelWindow({ name }: { name: string }) {
       {editing ? <EditBar panel={panel} selected={selectedName} /> : null}
       <div className="flex min-h-0 flex-1">
         <div
+          ref={area}
           role="group"
           aria-label={`${name} controls`}
+          data-panel-area
           tabIndex={editing ? 0 : undefined}
-          className="flex min-w-0 flex-1 flex-col gap-2 overflow-auto p-3 outline-none"
+          className="relative flex min-w-0 flex-1 flex-col gap-2 overflow-auto p-3 outline-none"
           onKeyDown={onKeyDown}
           onPointerDown={(event) => {
             if (editing && event.target === event.currentTarget) selectControl(name, null);
@@ -1000,35 +1592,27 @@ export function PanelWindow({ name }: { name: string }) {
           ) : null}
           {rowsOf(panel.controls).map((row) => (
             <div key={row[0]!.name} className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              {row.map((control) =>
-                editing ? (
-                  <div
-                    key={control.name}
-                    data-control={control.name}
-                    aria-label={`${KIND_TITLES[control.kind]} ${control.name}`}
-                    aria-pressed={control === selected}
-                    role="button"
-                    className={`cursor-default rounded px-1 py-0.5 outline-1 ${
-                      control === selected
-                        ? "bg-accent-soft outline outline-accent"
-                        : "outline-dashed outline-line hover:bg-paper/60"
-                    }`}
-                    onPointerDown={(event) => {
-                      event.currentTarget.parentElement?.parentElement?.focus();
-                      selectControl(name, control.name);
-                    }}
-                  >
-                    <div inert>
-                      <ControlBody panel={name} control={control} />
-                    </div>
-                  </div>
-                ) : (
-                  <div key={control.name} data-control={control.name}>
-                    <ControlBody panel={name} control={control} />
-                  </div>
-                ),
-              )}
+              {row.map((control) => (
+                <ControlBox
+                  key={control.name}
+                  panel={name}
+                  control={control}
+                  editing={editing}
+                  selected={control === selected}
+                  area={area}
+                />
+              ))}
             </div>
+          ))}
+          {panel.controls.filter(isPlaced).map((control) => (
+            <ControlBox
+              key={control.name}
+              panel={name}
+              control={control}
+              editing={editing}
+              selected={control === selected}
+              area={area}
+            />
           ))}
         </div>
         {editing ? (

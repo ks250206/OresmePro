@@ -4,6 +4,7 @@ import { buildState, describeExperiment } from "../io/experiment";
 import { Doc } from "./doc";
 import { echoPython } from "./echo";
 import {
+  activeGraph,
   checkPanel,
   codeActions,
   controlForParam,
@@ -11,8 +12,11 @@ import {
   panelFile,
   panelTrust,
   pickerWaves,
+  plotGraph,
   readPanelFile,
   resolveButton,
+  stackingZ,
+  tracesOf,
 } from "./panels";
 import type { PanelControl, PanelSpec } from "./types";
 
@@ -387,15 +391,7 @@ describe("wave pickers", () => {
     doc.dispatch({ op: "makeWave", name: "map", data: wave(1, 2, 3, 4), shape: [2, 2] });
     doc.dispatch({ op: "makeWave", name: "labels", text: ["a", "b"] });
     const picker = (dims: number | null, filter: string) =>
-      pickerWaves(doc.getState(), {
-        kind: "wave",
-        name: "w",
-        label: "",
-        inline: false,
-        value: null,
-        dims,
-        filter,
-      });
+      pickerWaves(doc.getState(), { dims, filter });
     expect(picker(null, "")).toEqual(["s1_I", "run1:s2_I", "s1_V", "map"]);
     expect(picker(1, "")).toEqual(["s1_I", "run1:s2_I", "s1_V"]);
     expect(picker(2, "")).toEqual(["map"]);
@@ -464,7 +460,190 @@ describe("buttons of a plugin's panel", () => {
     });
     expect(call).toBeNull();
     expect(problems).toEqual([
-      "There is no action plugin.electrochem.eis_fit: install the plugin electrochem, or turn it on (Analysis › Plugins…).",
+      "There is no action plugin.electrochem.eis_fit: install the plugin electrochem, or turn it on (Python › Plugins…).",
     ]);
+  });
+});
+
+describe("the look and place of controls", () => {
+  it("are given colors, a place, a size and a z, and taken back to the usual with null", () => {
+    const doc = quickFit();
+    const modify = (control: string, props: Record<string, unknown>) =>
+      doc.dispatch({ op: "modifyControl", panel: "quick_fit", control, props });
+    modify("run", { color: "white", background: [0, 128, 255], x: 12.4, y: 30, w: 80, z: 2 });
+    expect(controlOf(doc, "run")).toMatchObject({
+      color: "#ffffff",
+      background: "#0080ff",
+      x: 12,
+      y: 30,
+      w: 80,
+      z: 2,
+    });
+    expect(controlOf(doc, "run")).not.toHaveProperty("h");
+    expect(() => modify("run", { x: null })).toThrow(/x and y are given together/);
+    expect(() => modify("run", { w: 0 })).toThrow(/w must be from 1/);
+    expect(() => modify("run", { x: -1 })).toThrow(/x must be from 0/);
+    expect(() => modify("run", { color: "nope" })).toThrow(/color: Unknown color/);
+    expect(() => modify("run", { z: 1.5 })).toThrow(/z must be a whole number/);
+    // Back in its line, with the usual look: the properties are gone, as in a panel from before.
+    modify("run", { x: null, y: null, color: null, background: null, w: null, z: 0 });
+    expect(Object.keys(controlOf(doc, "run")).sort()).toEqual(
+      ["action", "args", "inline", "kind", "label", "name", "version"].sort(),
+    );
+    // One undo step takes back each change.
+    modify("width", { x: 5, y: 6 });
+    doc.undo();
+    expect(controlOf(doc, "width")).not.toHaveProperty("x");
+  });
+
+  it("are brought to the front or sent to the back by their z", () => {
+    const doc = quickFit();
+    const panel = () => panelOf(doc);
+    expect(stackingZ(panel(), "target", "front")).toBe(1);
+    expect(stackingZ(panel(), "target", "back")).toBe(-1);
+    doc.dispatch({
+      op: "modifyControl",
+      panel: "quick_fit",
+      control: "target",
+      props: { z: stackingZ(panel(), "target", "front") },
+    });
+    // Already in front, it stays where it is.
+    expect(stackingZ(panel(), "target", "front")).toBe(1);
+    expect(stackingZ(panel(), "run", "front")).toBe(2);
+    expect(stackingZ(panel(), "run", "back")).toBe(-1);
+  });
+
+  it("are kept in files and experiments, and echoed as Python", () => {
+    const doc = quickFit();
+    doc.dispatch({
+      op: "modifyControl",
+      panel: "quick_fit",
+      control: "run",
+      props: { x: 10, y: 20, w: 90, h: 30, color: "#123456", z: 3 },
+    });
+    expect(readPanelFile(JSON.stringify(panelFile(panelOf(doc))))).toEqual(panelOf(doc));
+    const saved = JSON.parse(JSON.stringify(describeExperiment(doc.getState(), () => "w.npy")));
+    saved.waves = [];
+    expect(buildState(saved, new Map()).panels.quick_fit).toEqual(panelOf(doc));
+    expect(
+      echoPython({
+        op: "modifyControl",
+        panel: "p",
+        control: "run",
+        props: { x: 10, y: 20, background: "#ff0000" },
+      }),
+    ).toBe('op.panel("p").control("run").set(x=10, y=20, background="#ff0000")');
+  });
+});
+
+describe("wave lists", () => {
+  function listPanel(): Doc {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "a", data: wave(1, 2) });
+    doc.dispatch({ op: "makeWave", name: "b", data: wave(3, 4) });
+    doc.dispatch({ op: "newPanel", name: "quick_fit" });
+    doc.dispatch({
+      op: "addControl",
+      panel: "quick_fit",
+      kind: "list",
+      name: "picked",
+      props: { label: "Waves", value: ["a", "b"] },
+    });
+    doc.dispatch({
+      op: "addControl",
+      panel: "quick_fit",
+      kind: "button",
+      name: "go",
+      props: { action: "core.stack", args: { waves: { $control: "picked" } } },
+    });
+    return doc;
+  }
+
+  it("hold the waves selected, one or several, and follow renames", () => {
+    const doc = listPanel();
+    expect(controlOf(doc, "picked")).toMatchObject({ value: ["a", "b"], multiple: true });
+    const set = (value: unknown) =>
+      doc.dispatch({ op: "setControlValue", panel: "quick_fit", control: "picked", value });
+    expect(() => set(["a", "a"])).toThrow(/names a wave twice/);
+    expect(() => set("a")).toThrow(/must be a list/);
+    doc.dispatch({
+      op: "modifyControl",
+      panel: "quick_fit",
+      control: "picked",
+      props: { multiple: false },
+    });
+    expect(controlOf(doc, "picked")).toMatchObject({ value: ["a"] });
+    expect(() => set(["a", "b"])).toThrow(/holds one wave/);
+    doc.dispatch({ op: "renameWave", name: "a", newName: "a2" });
+    expect(controlOf(doc, "picked")).toMatchObject({ value: ["a2"] });
+  });
+
+  it("pass their waves to a button, and say which are missing", () => {
+    const doc = listPanel();
+    const press = () => resolveButton(panelOf(doc), "go", { waveExists: (name) => name !== "b" });
+    expect(press().problems).toEqual(["Waves is missing: there is no wave b."]);
+    doc.dispatch({ op: "setControlValue", panel: "quick_fit", control: "picked", value: ["a"] });
+    expect(press().call).toEqual({ action: "core.stack", version: null, args: { waves: ["a"] } });
+    doc.dispatch({ op: "setControlValue", panel: "quick_fit", control: "picked", value: [] });
+    expect(press().problems).toEqual(["Select a wave in Waves."]);
+    expect(controlForParam("ys", { type: "waves", optional: false })).toEqual({
+      kind: "list",
+      props: { label: "ys" },
+    });
+  });
+});
+
+describe("plots of a panel", () => {
+  it("draw their own waves, or the frontmost graph's when live", () => {
+    const doc = new Doc();
+    doc.dispatch({ op: "makeWave", name: "y1", data: wave(1, 2, 3) });
+    doc.dispatch({ op: "makeWave", name: "x1", data: wave(0, 1, 4) });
+    doc.dispatch({ op: "newPanel", name: "p" });
+    doc.dispatch({
+      op: "addControl",
+      panel: "p",
+      kind: "plot",
+      name: "preview",
+      props: { traces: ["y1", ["y1", "x1"], { y: "y1", x: null }] },
+    });
+    const plot = () =>
+      doc.getState().panels.p!.controls[0] as Extract<PanelControl, { kind: "plot" }>;
+    expect(plot()).toMatchObject({
+      label: "",
+      live: false,
+      traces: [
+        { y: "y1", x: null },
+        { y: "y1", x: "x1" },
+        { y: "y1", x: null },
+      ],
+    });
+    const own = plotGraph(plot(), doc.getState())!;
+    expect(own.traces.map((trace) => [trace.name, trace.y, trace.x])).toEqual([
+      ["y1#0", "y1", null],
+      ["y1#1", "y1", "x1"],
+      ["y1#2", "y1", null],
+    ]);
+    expect(new Set(own.traces.map((trace) => trace.color)).size).toBe(3);
+    expect(() =>
+      doc.dispatch({
+        op: "modifyControl",
+        panel: "p",
+        control: "preview",
+        props: { traces: [{ y: "y1", z: "x1" }] },
+      }),
+    ).toThrow(/must be a wave's name/);
+
+    // Live, it follows the frontmost graph, at the size of its box.
+    doc.dispatch({ op: "modifyControl", panel: "p", control: "preview", props: { live: true } });
+    expect(plotGraph(plot(), doc.getState())).toBeNull();
+    doc.dispatch({ op: "display", y: ["x1"], name: "G" });
+    const live = plotGraph(plot(), doc.getState())!;
+    expect(live.traces.map((trace) => trace.y)).toEqual(["x1"]);
+    expect(live.width).toEqual({ mode: "auto" });
+    expect(activeGraph(doc.getState())?.name).toBe("G");
+    expect(tracesOf(doc.getState().graphs.G!)).toEqual([{ y: "x1", x: null }]);
+
+    doc.dispatch({ op: "renameWave", name: "x1", newName: "x2" });
+    expect(plot().traces[1]).toEqual({ y: "y1", x: "x2" });
   });
 });

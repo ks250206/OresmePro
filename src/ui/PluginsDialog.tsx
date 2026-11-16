@@ -1,20 +1,18 @@
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { closePluginWindows, openActionWindow } from "../app/actionWindows";
 import { contributionCommands } from "../app/plugins/contributions";
 import { fetchFromGitHub, readLocalPackage } from "../app/plugins/sources";
 import type { InstalledPlugin } from "../app/plugins/store";
-import { doc, invokeAction, pluginStore, runGui, showError, ui, useDoc } from "../app/session";
-import type { ActionArgs, JsonValue, ParamSpec } from "../core/actions";
+import { doc, pluginStore, runGui, showError, ui } from "../app/session";
 import {
   CONTRIBUTION_KINDS,
   describeSource,
   parseGitHubSource,
   pluginActionId,
   type ContributionKind,
-  type PluginAction,
-  type PluginManifest,
 } from "../core/plugins/manifest";
 import type { VerifiedPackage } from "../core/plugins/package";
-import { Button, Checkbox, Dialog, Field, ListBox, Select, TextInput } from "./controls";
+import { Button, Dialog, Field, ListBox, TextInput } from "./controls";
 
 const close = () => ui.set({ dialog: null });
 
@@ -111,170 +109,6 @@ function PackageSummary({ pkg, previous }: { pkg: VerifiedPackage; previous?: In
   );
 }
 
-/** A plain value as a form shows it. */
-const shown = (value: JsonValue | undefined): string =>
-  value === undefined || value === null
-    ? ""
-    : typeof value === "object"
-      ? JSON.stringify(value)
-      : String(value);
-
-/** The value a control of the action's form starts with. */
-function initialValue(spec: ParamSpec): JsonValue | undefined {
-  if (spec.default !== undefined) return spec.default;
-  if (spec.type === "choice") return spec.choices?.[0] ?? null;
-  if (spec.type === "boolean") return false;
-  return undefined;
-}
-
-/** A form for an action's arguments, made from their descriptions. */
-function ActionForm({ manifest, action }: { manifest: PluginManifest; action: PluginAction }) {
-  // The selector must return what the document holds, not a new list each time it is asked.
-  const state = useDoc((current) => current);
-  const waves = useMemo(
-    () => state.waveOrder.filter((name) => !state.waves[name]?.text),
-    [state.waveOrder, state.waves],
-  );
-  const [values, setValues] = useState<Record<string, JsonValue | undefined>>(() =>
-    Object.fromEntries(
-      Object.entries(action.params).map(([name, spec]) => [name, initialValue(spec)]),
-    ),
-  );
-  const [text, setText] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const set = (name: string, value: JsonValue | undefined) =>
-    setValues((current) => ({ ...current, [name]: value }));
-
-  const run = () => {
-    const args: ActionArgs = {};
-    for (const [name, spec] of Object.entries(action.params)) {
-      let value = values[name];
-      if (spec.type === "number" || spec.type === "integer") {
-        const typed = text[name];
-        if (typed !== undefined && typed.trim() !== "") value = Number(typed);
-        else if (typed !== undefined) value = undefined;
-      }
-      if (spec.type === "numbers" && text[name] !== undefined) {
-        value = text[name]!.split(/[\s,]+/)
-          .filter(Boolean)
-          .map(Number);
-      }
-      if (value !== undefined && value !== "") args[name] = value as JsonValue;
-    }
-    setBusy(true);
-    setProblem(null);
-    invokeAction(pluginActionId(manifest.name, action.name), args).then(
-      () => setBusy(false),
-      (error: unknown) => {
-        setBusy(false);
-        setProblem(error instanceof Error ? error.message : String(error));
-      },
-    );
-  };
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      {action.description ? <p className="m-0 text-muted">{action.description}</p> : null}
-      {Object.entries(action.params).map(([name, spec]) => {
-        const label = spec.title ?? name;
-        switch (spec.type) {
-          case "wave":
-            return (
-              <Field key={name} label={label}>
-                <Select
-                  value={typeof values[name] === "string" ? (values[name] as string) : ""}
-                  onChange={(event) => set(name, event.target.value || undefined)}
-                >
-                  <option value="">{spec.optional ? "(none)" : "Choose a wave"}</option>
-                  {waves.map((wave) => (
-                    <option key={wave} value={wave}>
-                      {wave}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            );
-          case "waves":
-            return (
-              <Field key={name} label={label} group>
-                <ListBox
-                  label={label}
-                  items={waves.map((wave) => ({ key: wave, text: wave }))}
-                  selected={Array.isArray(values[name]) ? (values[name] as string[]) : []}
-                  onChange={(selected) => set(name, selected)}
-                  style={{ height: 96 }}
-                />
-              </Field>
-            );
-          case "boolean":
-            return (
-              <Field key={name} label="" group>
-                <Checkbox
-                  label={label}
-                  checked={values[name] === true}
-                  onChange={(event) => set(name, event.target.checked)}
-                />
-              </Field>
-            );
-          case "choice":
-            return (
-              <Field key={name} label={label}>
-                <Select
-                  value={shown(values[name])}
-                  onChange={(event) => {
-                    const chosen = (spec.choices ?? []).find(
-                      (item) => String(item) === event.target.value,
-                    );
-                    set(name, chosen ?? null);
-                  }}
-                >
-                  {(spec.choices ?? []).map((choice) => (
-                    <option key={String(choice)} value={String(choice)}>
-                      {String(choice)}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            );
-          case "string":
-            return (
-              <Field key={name} label={label}>
-                <TextInput
-                  value={typeof values[name] === "string" ? (values[name] as string) : ""}
-                  onChange={(event) => set(name, event.target.value)}
-                />
-              </Field>
-            );
-          default:
-            return (
-              <Field key={name} label={label}>
-                <TextInput
-                  inputMode="decimal"
-                  placeholder={spec.optional ? "default" : ""}
-                  value={text[name] ?? shown(values[name])}
-                  onChange={(event) =>
-                    setText((current) => ({ ...current, [name]: event.target.value }))
-                  }
-                />
-              </Field>
-            );
-        }
-      })}
-      <div className="flex items-center gap-2">
-        <Button primary disabled={busy} onClick={run}>
-          {busy ? "Running…" : "Run"}
-        </Button>
-        {problem ? (
-          <span role="alert" className="text-red-700">
-            {problem}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 /** What a plugin brings as data, put into the experiment on request. */
 function Contributions({ plugin }: { plugin: InstalledPlugin }) {
   const { contributes } = plugin.manifest;
@@ -329,18 +163,9 @@ export function PluginsDialog() {
   const [ref, setRef] = useState("");
   const [folder, setFolder] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
-  const [actionName, setActionName] = useState<string>("");
   const folderInput = useRef<HTMLInputElement>(null);
   const zipInput = useRef<HTMLInputElement>(null);
   const plugin = installed.find((item) => item.manifest.name === selected) ?? null;
-  const action = useMemo(
-    () =>
-      plugin?.manifest.actions.find((item) => item.name === actionName) ??
-      plugin?.manifest.actions[0] ??
-      null,
-    [plugin, actionName],
-  );
-
   const fail = (error: unknown, back: Step) => {
     setProblem(error instanceof Error ? error.message : String(error));
     setStep(back);
@@ -416,6 +241,7 @@ export function PluginsDialog() {
     ) {
       return;
     }
+    closePluginWindows(current.manifest.name);
     pluginStore
       .remove(current.manifest.name)
       .catch((error: unknown) => fail(error, { kind: "list" }));
@@ -585,25 +411,34 @@ export function PluginsDialog() {
                 <Button onClick={() => remove(plugin)}>Remove…</Button>
               </div>
               <Contributions plugin={plugin} />
-              {plugin.enabled && plugin.manifest.actions.length > 0 && action ? (
-                <div className="flex flex-col gap-1.5 border-t border-line pt-2">
-                  <Field label="Action">
-                    <Select
-                      value={action.name}
-                      onChange={(event) => setActionName(event.target.value)}
-                    >
-                      {plugin.manifest.actions.map((item) => (
-                        <option key={item.name} value={item.name}>
-                          {item.title}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <ActionForm
-                    key={`${plugin.lock.digest}:${action.name}`}
-                    manifest={plugin.manifest}
-                    action={action}
-                  />
+              {plugin.enabled && plugin.manifest.actions.length > 0 ? (
+                <div className="flex flex-col gap-1 border-t border-line pt-2">
+                  <div className="font-medium">Actions</div>
+                  <p className="m-0 text-muted">
+                    Each opens in a window of its own, which stays open beside your graphs and
+                    tables while you work.
+                  </p>
+                  <ul aria-label="Actions" className="m-0 flex list-none flex-col gap-1 p-0">
+                    {plugin.manifest.actions.map((item) => (
+                      <li key={item.name} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate" title={item.description}>
+                          {item.title}{" "}
+                          <span className="text-muted">
+                            ({pluginActionId(plugin.manifest.name, item.name)})
+                          </span>
+                        </span>
+                        <Button
+                          aria-label={`Open ${item.title}`}
+                          onClick={() => {
+                            openActionWindow(plugin.manifest.name, item.name);
+                            close();
+                          }}
+                        >
+                          Open
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </>
