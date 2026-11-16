@@ -34,6 +34,32 @@ export function checkFilePath(path: unknown): string {
   return parts.join("/");
 }
 
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.byteLength === b.byteLength && a.every((byte, index) => byte === b[index]);
+
+/**
+ * Where a file of data that is loaded is kept among the experiment's files:
+ * under its own name, unless a different file of that name is kept already
+ * (two instruments' data.csv, say), when the start of its SHA-256 is put
+ * before the extension ("data-1a2b3c4d.csv"). The same file loaded again
+ * keeps its place, so the history's lines that load each one go on loading
+ * that one.
+ */
+export function sourcePath(
+  store: FileStore,
+  name: string,
+  bytes: Uint8Array,
+  digest: string,
+): string {
+  const path = checkFilePath(name);
+  const there = store.get(path);
+  if (!there || sameBytes(there.bytes, bytes)) return path;
+  const slash = path.lastIndexOf("/");
+  const dot = path.lastIndexOf(".");
+  const [stem, extension] = dot > slash + 1 ? [path.slice(0, dot), path.slice(dot)] : [path, ""];
+  return `${stem}-${digest.slice(0, 8)}${extension}`;
+}
+
 export class FileStore {
   private files: ReadonlyMap<string, StoredFile> = new Map();
   private nextVersion = 1;

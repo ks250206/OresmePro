@@ -21,6 +21,7 @@ import {
 } from "./formula";
 import {
   checkResult,
+  keptFolder,
   renameInResult,
   RESULT_BASE,
   RESULT_KINDS,
@@ -488,6 +489,53 @@ function withFolders(state: DocState, folder: string): DocState {
     if (!state.folders.includes(path)) added.push(path);
   }
   return { ...state, folders: [...state.folders, ...added] };
+}
+
+/**
+ * Copies the waves a result made into its own data folder (see keptFolder),
+ * so that what it made stays when the analysis is run again and makes the
+ * same names anew. Waves that are gone are left out.
+ */
+function keepOutputs(
+  state: DocState,
+  result: string,
+  outputs: Readonly<Record<string, string>>,
+): { state: DocState; kept: Record<string, string> } {
+  const kept: Record<string, string> = {};
+  const roles = Object.entries(outputs).filter(([, wave]) => wave in state.waves);
+  if (roles.length === 0) return { state, kept };
+  let next = withFolders(state, keptFolder(result));
+  for (const [role, wave] of roles) {
+    const source = next.waves[wave]!;
+    const name = `${keptFolder(result)}:${role}`;
+    next = putWave(
+      next,
+      withoutFormula(
+        changed(source, { name, data: source.data.slice(), imag: source.imag?.slice() ?? null }),
+      ),
+    );
+    kept[role] = name;
+  }
+  return { state: next, kept };
+}
+
+/**
+ * Removes a result's own copies, except those something still shows (a
+ * graph, a table), and its folder and the results folder if that empties
+ * them.
+ */
+function dropKept(state: DocState, result: AnalysisResult): DocState {
+  const unused = Object.values(result.kept).filter(
+    (name) => name in state.waves && waveUsers(state, name).length === 0,
+  );
+  let next = unused.length > 0 ? removeWaves(state, unused) : state;
+  for (const folder of [keptFolder(result.name), "results"]) {
+    const holds = (name: string) => name.startsWith(`${folder}:`);
+    if (next.folders.includes(folder) && !next.waveOrder.some(holds) && !next.folders.some(holds)) {
+      next = { ...next, folders: next.folders.filter((item) => item !== folder) };
+    }
+  }
+  return next;
 }
 
 function putWave(state: DocState, wave: Wave): DocState {
@@ -2713,15 +2761,27 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? uniqueName(RESULT_BASE[kind ?? "fit"], taken)
           : checkName(command.name, "result");
       const result = checkResult(command.result, name, state);
-      return { state: { ...state, results: withEntry(state.results, name, result) }, result: name };
+      // The result run again under its name keeps what it makes now, not what it made before.
+      const before = state.results[name];
+      const { state: next, kept } = keepOutputs(
+        before ? dropKept(state, before) : state,
+        name,
+        result.outputs,
+      );
+      return {
+        state: { ...next, results: withEntry(next.results, name, { ...result, kept }) },
+        result: name,
+      };
     }
     case "removeResults": {
+      let next = state;
       for (const name of command.names) {
-        if (!(name in state.results))
-          throw new DocError(`No result named ${JSON.stringify(name)}.`);
+        const result = state.results[name];
+        if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+        next = dropKept(next, result);
       }
       return {
-        state: { ...state, results: withoutEntries(state.results, command.names) },
+        state: { ...next, results: withoutEntries(next.results, command.names) },
         result: null,
       };
     }
@@ -2733,15 +2793,24 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (newName in state.results) {
         throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
       }
+      // Its copies move with it, and whatever names them follows (graphs, the result itself).
+      let moved = state;
+      if (state.folders.includes(keptFolder(command.name))) {
+        moved = applyCommand(state, {
+          op: "renameFolder",
+          path: keptFolder(command.name),
+          newPath: keptFolder(newName),
+        }).state;
+      }
       const runs = dict<TemplateRun>();
-      for (const run of Object.values(state.runs)) {
+      for (const run of Object.values(moved.runs)) {
         runs[run.name] = renameResultInRun(run, command.name, newName);
       }
       return {
         state: {
-          ...state,
-          results: withEntry(withoutEntries(state.results, [command.name]), newName, {
-            ...result,
+          ...moved,
+          results: withEntry(withoutEntries(moved.results, [command.name]), newName, {
+            ...moved.results[command.name]!,
             name: newName,
           }),
           runs,

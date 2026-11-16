@@ -59,11 +59,15 @@ export type DialogRequest =
   | { kind: "arrangeLayout"; layout: string; items: readonly string[] }
   | { kind: "importData"; file: PendingData; rest: readonly PendingData[] }
   | { kind: "results"; result?: string }
+  /** Makes a template (none given) or changes one, step by step. */
+  | { kind: "editTemplate"; template?: string }
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
   /** The attributes of samples, as a table: of `targets` (keys, see ../core/doc/attributes), or every data folder. */
   | { kind: "attributes"; targets?: string[] }
+  /** This experiment could not be saved before opening `target`: what to do. */
+  | { kind: "unsavedLeave"; target: string }
   /** Asks for the file name to save the experiment as. */
   | { kind: "saveExperiment" }
   /** Asks whether to close a window (keeping what it shows) or kill it. */

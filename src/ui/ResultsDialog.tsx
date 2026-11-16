@@ -62,6 +62,7 @@ function entangled(result: AnalysisResult): string[] {
 function Details({ result, changed }: { result: AnalysisResult; changed: string[] }) {
   const pairs = entangled(result);
   const outputs = Object.values(result.outputs);
+  const kept = Object.values(result.kept);
   return (
     <div
       className="selectable max-h-40 overflow-auto rounded border border-line bg-paper px-2 py-1.5 leading-relaxed"
@@ -90,7 +91,12 @@ function Details({ result, changed }: { result: AnalysisResult; changed: string[
           .map(([key, value]) => `${key}=${literal(value)}`)
           .join(", ")}
       </div>
-      {outputs.length > 0 ? <div className="text-muted">Made: {outputs.join(", ")}</div> : null}
+      {outputs.length > 0 ? (
+        <div className="text-muted">
+          Made: {outputs.join(", ")}
+          {kept.length > 0 ? ` (this result's own copies: ${kept.join(", ")})` : ""}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -165,7 +171,7 @@ export function ResultsDialog({ focus }: { focus?: string }) {
   });
   const cell = "border-b border-r border-line-soft px-1.5 py-0.5 whitespace-nowrap";
   return (
-    <Dialog title="Analysis Results" width={940} onClose={close}>
+    <Dialog title="Analysis Results" help="guides/curve-fitting/" width={940} onClose={close}>
       {list.length === 0 ? (
         <p className="m-0 text-muted">
           No results yet. Each fit (Analysis › Curve Fitting…, <code>op.fit</code>,{" "}
@@ -395,6 +401,15 @@ export function ResultsDialog({ focus }: { focus?: string }) {
           }
         >
           Fit Again
+        </Button>
+        <Button
+          disabled={chosen.length === 0}
+          title="Graph the data each result read with the curves it made, as it made them."
+          onClick={() =>
+            run(chosen.map((result) => `op.result(${pyName(result.name)}).show()`).join("\n"))
+          }
+        >
+          Show
         </Button>
         <Button
           disabled={chosen.length !== 1 || shown?.kind === "global"}

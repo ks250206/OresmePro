@@ -451,6 +451,7 @@ export function ImportDialog({ file, rest }: { file: PendingFile; rest: readonly
   return (
     <Dialog
       title={`Load Data: ${file.name}`}
+      help="guides/import-export/"
       width={920}
       onClose={close}
       onSubmit={() => void load()}
