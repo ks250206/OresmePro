@@ -355,6 +355,13 @@ export type Command =
   | { op: "removeRuns"; names: readonly string[] }
   | { op: "killWindow"; name: string }
   /**
+   * Links graphs (at least two) so that their axes zoom together, the
+   * bottom ("x") or the bottom and the left ("xy"), and, with `cursors`,
+   * their cursors follow each other by X. They leave any group they were in.
+   */
+  | { op: "linkGraphs"; graphs: readonly string[]; axes?: string; cursors?: boolean }
+  | { op: "unlinkGraphs"; graphs: readonly string[] }
+  /**
    * Sets attributes of a sample: of a data folder ("run1:", with a colon) or
    * of a wave. A value of null removes that attribute.
    */
@@ -489,6 +496,122 @@ function withFolders(state: DocState, folder: string): DocState {
     if (!state.folders.includes(path)) added.push(path);
   }
   return { ...state, folders: [...state.folders, ...added] };
+}
+
+/** The graphs linked to `graph`, but itself. */
+function linkedTo(state: DocState, graph: GraphSpec): GraphSpec[] {
+  const group = graph.link?.group;
+  if (group === undefined) return [];
+  return Object.values(state.graphs).filter(
+    (other) => other.name !== graph.name && other.link?.group === group,
+  );
+}
+
+/**
+ * The state with the range just given to an axis of `graph` given to the
+ * same axis of the graphs linked to it, where the link covers that axis.
+ */
+function followRange(state: DocState, graph: GraphSpec, axis: string, props: Props): DocState {
+  const link = graph.link;
+  if (!link || !("min" in props || "max" in props)) return state;
+  if (axis !== "bottom" && !(axis === "left" && link.axes === "xy")) return state;
+  const given = state.graphs[graph.name]!.axes[axis]!;
+  const range: Partial<AxisSpec> = {
+    ...("min" in props ? { min: given.min } : {}),
+    ...("max" in props ? { max: given.max } : {}),
+  };
+  let next = state;
+  for (const other of linkedTo(state, graph)) {
+    const current = other.axes[axis];
+    if (!current) continue;
+    const moved: AxisSpec = { ...current, ...range };
+    // A log axis cannot take a range through zero: it keeps its own.
+    if (moved.log && ((moved.min ?? 1) <= 0 || (moved.max ?? 1) <= 0)) continue;
+    next = putGraph(next, {
+      ...next.graphs[other.name]!,
+      axes: withEntry(other.axes, axis, moved),
+    });
+  }
+  return next;
+}
+
+/** The X of a point of a trace, as the graph plots it. */
+function cursorX(state: DocState, trace: TraceSpec, point: number): number | null {
+  const y = state.waves[trace.y];
+  if (!y) return null;
+  const x = trace.x === null ? undefined : state.waves[trace.x];
+  const value = x ? (x.text ? point : Number(x.data[point])) : y.x0 + point * y.dx;
+  return Number.isFinite(value) ? value + trace.xOffset : null;
+}
+
+/** The point of a trace nearest an X. */
+function nearestPointTo(state: DocState, trace: TraceSpec, target: number): number | null {
+  const y = state.waves[trace.y];
+  if (!y || y.data.length === 0) return null;
+  const x = trace.x === null ? undefined : state.waves[trace.x];
+  const want = target - trace.xOffset;
+  if (!x || x.text) {
+    const at = x ? want : (want - y.x0) / y.dx;
+    return Math.min(y.data.length - 1, Math.max(0, Math.round(at)));
+  }
+  let best: number | null = null;
+  let distance = Infinity;
+  const count = Math.min(x.data.length, y.data.length);
+  for (let index = 0; index < count; index += 1) {
+    const gap = Math.abs(Number(x.data[index]) - want);
+    if (gap < distance) {
+      distance = gap;
+      best = index;
+    }
+  }
+  return best;
+}
+
+/**
+ * The state with a cursor just set on `graph` (at X, or removed when null)
+ * set on the graphs linked to it whose link takes cursors along: on the
+ * trace the cursor is on there, or the first, at the point nearest X.
+ */
+function followCursor(
+  state: DocState,
+  graph: GraphSpec,
+  cursor: CursorName,
+  x: number | null,
+): DocState {
+  if (!graph.link?.cursors) return state;
+  let next = state;
+  for (const other of linkedTo(state, graph)) {
+    if (x === null) {
+      next = putGraph(next, { ...other, cursors: withoutEntries(other.cursors, [cursor]) });
+      continue;
+    }
+    const placed = other.cursors[cursor]?.trace;
+    const trace = other.traces.find((item) => item.name === placed) ?? other.traces[0];
+    const point = trace ? nearestPointTo(state, trace, x) : null;
+    if (!trace || point === null) continue;
+    next = putGraph(next, {
+      ...other,
+      cursors: withEntry(other.cursors, cursor, { trace: trace.name, point }),
+    });
+  }
+  return next;
+}
+
+/** The graphs taken out of their groups, and a group left with one graph undone. */
+function unlink(state: DocState, names: readonly string[]): DocState {
+  let next = state;
+  const groups = new Set<string>();
+  for (const name of names) {
+    const graph = next.graphs[name];
+    if (!graph?.link) continue;
+    groups.add(graph.link.group);
+    next = putGraph(next, { ...graph, link: null });
+  }
+  for (const group of groups) {
+    const left = Object.values(next.graphs).filter((graph) => graph.link?.group === group);
+    if (left.length === 1) next = putGraph(next, { ...left[0]!, link: null });
+  }
+  return next;
 }
 
 /**
@@ -1883,6 +2006,7 @@ function emptyGraph(name: string): GraphSpec {
     marginRight: null,
     marginTop: null,
     magnification: 1,
+    link: null,
     width: AUTO_SIZE,
     height: AUTO_SIZE,
     style: null,
@@ -2341,10 +2465,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (axis.log && ((axis.min ?? 1) <= 0 || (axis.max ?? 1) <= 0)) {
         throw new DocError("A log axis needs a range greater than 0.");
       }
-      return {
-        state: putGraph(state, { ...graph, axes: withEntry(graph.axes, command.axis, axis) }),
-        result: null,
-      };
+      const next = putGraph(state, { ...graph, axes: withEntry(graph.axes, command.axis, axis) });
+      return { state: followRange(next, graph, command.axis, command.props), result: null };
     }
     case "modifyGraph": {
       const graph = requireGraph(state, command.graph);
@@ -2459,11 +2581,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           `Point ${command.point} is out of range for ${trace.name} (${length} points).`,
         );
       }
+      const next = putGraph(state, {
+        ...graph,
+        cursors: withEntry(graph.cursors, cursor, { trace: trace.name, point: command.point }),
+      });
       return {
-        state: putGraph(state, {
-          ...graph,
-          cursors: withEntry(graph.cursors, cursor, { trace: trace.name, point: command.point }),
-        }),
+        state: followCursor(next, graph, cursor, cursorX(state, trace, command.point)),
         result: null,
       };
     }
@@ -2471,7 +2594,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const graph = requireGraph(state, command.graph);
       const cursor: CursorName = oneOf(command.cursor, CURSOR_NAMES, "cursor");
       const cursors = withoutEntries(graph.cursors, [cursor]);
-      return { state: putGraph(state, { ...graph, cursors }), result: null };
+      return {
+        state: followCursor(putGraph(state, { ...graph, cursors }), graph, cursor, null),
+        result: null,
+      };
     }
     case "addAnnotation": {
       const graph = requireGraph(state, command.graph);
@@ -2982,6 +3108,30 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         made = name;
       });
       return { state: next, result: made };
+    }
+    case "linkGraphs": {
+      const names = [...new Set(command.graphs)];
+      if (names.length < 2) throw new DocError("Link two graphs or more.");
+      const graphs = names.map((name) => requireGraph(state, name));
+      const axes = oneOf(command.axes ?? "x", ["x", "xy"] as const, "axes");
+      const cursors = command.cursors === undefined ? true : bool(command.cursors, "cursors");
+      const taken = new Set(Object.values(state.graphs).map((graph) => graph.link?.group));
+      const group = uniqueName("Link", (name) => taken.has(name));
+      let next = unlink(state, names);
+      for (const graph of graphs) {
+        next = putGraph(next, { ...next.graphs[graph.name]!, link: { group, axes, cursors } });
+      }
+      // They start where the first one is.
+      const first = next.graphs[names[0]!]!;
+      for (const axisName of axes === "xy" ? ["bottom", "left"] : ["bottom"]) {
+        const from = first.axes[axisName]!;
+        next = followRange(next, first, axisName, { min: from.min, max: from.max });
+      }
+      return { state: next, result: group };
+    }
+    case "unlinkGraphs": {
+      for (const name of command.graphs) requireGraph(state, name);
+      return { state: unlink(state, command.graphs), result: null };
     }
     case "setAttributes": {
       const target = command.target;

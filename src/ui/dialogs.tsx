@@ -87,6 +87,7 @@ import { ExperimentsDialog } from "./ExperimentsDialog";
 import { TemplateEditorDialog } from "./TemplateEditor";
 import {
   CloseWindowDialog,
+  LinkGraphsDialog,
   NewProcedureDialog,
   RenameWindowDialog,
   SaveExperimentDialog,
@@ -3283,6 +3284,8 @@ function renderDialog(dialog: DialogRequest) {
       );
     case "experiments":
       return <ExperimentsDialog />;
+    case "linkGraphs":
+      return <LinkGraphsDialog graph={dialog.graph} />;
     case "attributes":
       return <AttributesDialog targets={dialog.targets} />;
     case "editTemplate":

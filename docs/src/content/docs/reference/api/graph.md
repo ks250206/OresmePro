@@ -25,6 +25,7 @@ enclose, as Igor's ModifyGraph width and height (see ``Graph.set``).
 **プロパティ**
 
 - `name` (read-only)
+- `link` (read-only) · How this graph is linked to others (see ``op.link_graphs``), or None. A dict of ``graphs`` (all of the group, this one too), ``axes`` ("x" or "xy") and ``cursors``.
 - `traces` (read-only)
 - `axes` (read-only)
 - `images` (read-only)
@@ -81,6 +82,14 @@ window grows with it; the figure, and what is exported, keep their
 size.
 
 **明示的な例外** · `ValueError`
+
+### `Graph.unlink`
+
+```python
+unlink()
+```
+
+Take this graph out of the graphs it is linked to.
 
 ### `Graph.append`
 
@@ -643,3 +652,25 @@ Define a graph template from a dict (see ``GraphTemplate``) or copy another; ret
 A template of that name is replaced. What the dict leaves out is as in a
 new graph; unknown keys, bad values and references to slots or axes the
 template does not have are refused.
+
+## `link_graphs`
+
+```python
+op.link_graphs(*graphs, axes='x', cursors=True)
+```
+
+Link graphs so that zooming or panning one zooms the others alike.
+
+``axes="x"`` links the bottom axes, ``"xy"`` the left ones too. With
+``cursors``, a cursor set on one graph is set on the others at the point
+nearest the same X: the same moment of a charge curve, a current and a
+temperature shown apart. The graphs start at the first one's range and
+leave any graphs they were linked to before. Returns the group's name.
+
+## `unlink_graphs`
+
+```python
+op.unlink_graphs(*graphs)
+```
+
+Take graphs out of the graphs they are linked to (see ``link_graphs``).

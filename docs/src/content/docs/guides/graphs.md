@@ -63,6 +63,21 @@ g.magnification = 2     # 2 倍で表示
 g.set(magnification=1)  # 等倍に戻す
 ```
 
+## グラフを連動させる
+
+**Graph → Link Graphs…**(グラフの右クリックにもあります)で 2 つ以上のグラフを選んで **Link** を押すと、1 つを拡大・移動したときに他のグラフも同じ範囲になります。
+連動する軸は X(下の軸)だけか、X と Y(下と左)を選べます。最初は 1 つ目のグラフの範囲にそろいます。
+**Cursors follow each other by X** をオンにすると、1 つのグラフに置いたカーソルが、他のグラフでも同じ X に最も近い点に置かれます。
+点の数や間隔が違っても(充放電曲線・電流・温度を別々のグラフに出した場合など)、点番号ではなく X の値で対応します。
+連動中のグラフはタイトルに「linked」と出ます。**Unlink** で外します。
+
+```python
+op.link_graphs("XPS1", "XPS2", "XPS3", "XPS4")          # X を連動、カーソルも
+op.link_graphs(charge, current, temp, axes="xy", cursors=False)
+g.link        # {'graphs': [...], 'axes': 'x', 'cursors': True}
+g.unlink()
+```
+
 ## 再利用と書き出し
 
 保存したグラフスタイルは同じ Experiment の他のグラフにも適用できます。`g.script()` はグラフの作り方を Python コードで返します。元データが使える Experiment で実行してください。図として共有する場合は `g.save("response.svg")` や **File → Save Graph as PDF / SVG / PNG** を使います。

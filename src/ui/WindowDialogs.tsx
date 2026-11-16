@@ -9,7 +9,7 @@ import {
 import { doc, experiment, runGui, ui, useDoc } from "../app/session";
 import { procedureName, windowTaken, type Command } from "../core/doc/commands";
 import type { WindowState } from "../core/doc/types";
-import { Button, Dialog, Field, TextInput } from "./controls";
+import { Button, Checkbox, Dialog, Field, ListBox, Select, TextInput } from "./controls";
 
 const close = () => ui.set({ dialog: null });
 
@@ -182,6 +182,81 @@ export function SaveExperimentDialog() {
           ? `Saved as ${filename}, where the browser puts downloads (it may ask where).`
           : "Type a file name."}
       </div>
+    </Dialog>
+  );
+}
+
+/**
+ * Links graphs so that their axes zoom together and their cursors follow
+ * each other by X, or takes them out of their links.
+ */
+export function LinkGraphsDialog({ graph: initial }: { graph?: string }) {
+  const graphs = useDoc((state) => state.graphs);
+  const names = Object.keys(graphs).sort((a, b) => a.localeCompare(b));
+  const [chosen, setChosen] = useState<string[]>(() => {
+    const own = initial ? graphs[initial]?.link?.group : undefined;
+    return own
+      ? names.filter((name) => graphs[name]?.link?.group === own)
+      : initial
+        ? [initial]
+        : [];
+  });
+  const [axes, setAxes] = useState<"x" | "xy">(
+    () => (initial ? graphs[initial]?.link?.axes : undefined) ?? "x",
+  );
+  const [cursors, setCursors] = useState(
+    () => (initial ? graphs[initial]?.link?.cursors : undefined) ?? true,
+  );
+  const linked = chosen.filter((name) => graphs[name]?.link);
+  const describe = (name: string) => {
+    const link = graphs[name]?.link;
+    return link ? `${name} (${link.group})` : name;
+  };
+  return (
+    <Dialog
+      title="Link Graphs"
+      width={420}
+      onClose={close}
+      submitLabel="Link"
+      submitDisabled={chosen.length < 2}
+      onSubmit={() => submit({ op: "linkGraphs", graphs: chosen, axes, cursors })}
+      buttons={
+        <Button
+          disabled={linked.length === 0}
+          onClick={() => submit({ op: "unlinkGraphs", graphs: linked })}
+        >
+          Unlink
+        </Button>
+      }
+    >
+      <p className="m-0 text-muted">
+        Zooming or panning one of the graphs linked zooms the others alike; they start at the range
+        of the first.
+      </p>
+      <ListBox
+        label="Graphs to link"
+        items={names.map((name) => ({ key: name, text: describe(name) }))}
+        selected={chosen}
+        onChange={setChosen}
+        style={{ height: 140 }}
+      />
+      <Field label="Axes">
+        <Select
+          aria-label="Linked axes"
+          value={axes}
+          onChange={(event) => setAxes(event.target.value as "x" | "xy")}
+        >
+          <option value="x">X (bottom)</option>
+          <option value="xy">X and Y (bottom and left)</option>
+        </Select>
+      </Field>
+      <Field label="" group>
+        <Checkbox
+          label="Cursors follow each other by X"
+          checked={cursors}
+          onChange={(event) => setCursors(event.target.checked)}
+        />
+      </Field>
     </Dialog>
   );
 }

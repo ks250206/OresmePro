@@ -593,6 +593,25 @@ describe("oresme Python API", () => {
     expect(exported.at(-1)).toBe("Graph0:with.svg:cursors");
   });
 
+  it("links graphs so they zoom together and share cursors by X", async () => {
+    expect(
+      await run(
+        [
+          'la = op.display(op.make("link_a", np.arange(11.0)), name="LinkA")',
+          'lb = op.display(op.make("link_b", np.arange(21.0), dx=0.5), name="LinkB")',
+          "print(op.link_graphs(la, lb))",
+          "la.bottom.range = (2, 6)",
+          "print(lb.bottom.range, sorted(lb.link['graphs']), lb.link['axes'])",
+          'la.cursor("A", "link_a", 4)',
+          'print(lb.cursor("A").point)',
+          "lb.unlink()",
+          "print(la.link, lb.link)",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("Link0\n(2, 6) ['LinkA', 'LinkB'] x\n8\nNone None\n");
+  });
+
   it("keeps procedures as Python files that run and import", async () => {
     expect(
       await run(

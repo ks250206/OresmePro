@@ -145,6 +145,14 @@ export function describeExperiment(
   };
 }
 
+/** A graph's link as saved, or null where there is none or it cannot be read. */
+function savedLink(value: unknown): GraphSpec["link"] {
+  if (typeof value !== "object" || value === null) return null;
+  const { group, axes, cursors } = value as Record<string, unknown>;
+  if (typeof group !== "string" || !group) return null;
+  return { group, axes: axes === "xy" ? "xy" : "x", cursors: cursors !== false };
+}
+
 /** Fills in what graphs saved by earlier versions do not have. */
 function upgradeGraph(
   graphName: string,
@@ -196,6 +204,7 @@ function upgradeGraph(
     marginRight: saved.marginRight ?? null,
     marginTop: saved.marginTop ?? null,
     magnification: saved.magnification ?? 1,
+    link: savedLink(saved.link),
     ...savedPlotSize(saved.width, saved.height, axes),
     style: typeof saved.style === "string" && saved.style in styles ? saved.style : null,
     axes,

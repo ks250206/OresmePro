@@ -24,7 +24,7 @@ SECTIONS = {
         (
             "Graph Length pt cm inch Annotation Style display graph graphs style styles set_style "
             "apply_style set_default_style default_style "
-            "GraphTemplate graph_template graph_templates set_graph_template"
+            "GraphTemplate graph_template graph_templates set_graph_template link_graphs unlink_graphs"
         ),
     ),
     "trace": ("Trace API", "Trace"),

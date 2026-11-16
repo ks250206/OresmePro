@@ -64,6 +64,8 @@ export type DialogRequest =
   /** The analysis templates and their runs; `template` and `run` are the ones picked. */
   | { kind: "templates"; template?: string; run?: string }
   | { kind: "experiments" }
+  /** Links graphs (see GraphLink); `graph` is the one it was asked from. */
+  | { kind: "linkGraphs"; graph?: string }
   /** The attributes of samples, as a table: of `targets` (keys, see ../core/doc/attributes), or every data folder. */
   | { kind: "attributes"; targets?: string[] }
   /** This experiment could not be saved before opening `target`: what to do. */
