@@ -88,6 +88,7 @@ import {
   NewProcedureDialog,
   RenameWindowDialog,
   SaveExperimentDialog,
+  UnsavedLeaveDialog,
 } from "./WindowDialogs";
 import { GraphTemplatesDialog, SaveGraphTemplateDialog } from "./GraphTemplateDialogs";
 import { ImportDialog } from "./ImportDialog";
@@ -3274,6 +3275,8 @@ function renderDialog(dialog: DialogRequest) {
       return <ExperimentsDialog />;
     case "saveExperiment":
       return <SaveExperimentDialog />;
+    case "unsavedLeave":
+      return <UnsavedLeaveDialog target={dialog.target} />;
     case "closeWindow":
       return <CloseWindowDialog name={dialog.name} />;
     case "renameWindow":

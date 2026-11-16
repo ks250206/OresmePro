@@ -334,7 +334,7 @@ describe("autosave shared by several tabs", () => {
         states.push(state.kind === "failed" ? `failed: ${state.error}` : state.kind),
     });
     make(doc, "a", [1]);
-    await saver.saveNow();
+    expect(await saver.saveNow()).toBe(true);
     expect(states).toEqual(["saving", "saved"]);
     expect(values((await reload()).doc, "a")).toEqual([1]);
 
@@ -343,10 +343,11 @@ describe("autosave shared by several tabs", () => {
       if (op === "write" && name === "experiment.json") throw new Error("disk full");
     };
     make(doc, "b", [2]);
-    await saver.saveNow();
+    // Said, so that nothing goes on as if it were saved (opening another experiment).
+    expect(await saver.saveNow()).toBe(false);
     expect(states.slice(2)).toEqual(["saving", "failed: disk full"]);
     store.hook = () => {};
-    await saver.saveNow();
+    expect(await saver.saveNow()).toBe(true);
     expect(states.slice(4)).toEqual(["saving", "saved"]);
 
     // Told that everything is unsaved, it writes the indexes again though nothing changed.
@@ -355,6 +356,29 @@ describe("autosave shared by several tabs", () => {
     await settle();
     expect(store.files.has("history.json")).toBe(true);
     saver.stop();
+  });
+
+  it("restores every file it can read and says which it could not", async () => {
+    const doc = new Doc();
+    const files = new FileStore();
+    const saver = autosave(doc, new History(), files, options("A"));
+    files.put("a.csv", new TextEncoder().encode("1,2"));
+    files.put("b.csv", new TextEncoder().encode("3,4"));
+    files.put("c.csv", new TextEncoder().encode("5,6"));
+    make(doc, "a", [1]);
+    expect(await saver.saveNow()).toBe(true);
+    saver.stop();
+    // The data of the first file is gone: the others still come back.
+    const index = JSON.parse(new TextDecoder().decode(store.files.get("files.json")!)) as {
+      path: string;
+      file: string;
+    }[];
+    store.files.delete(index.find((item) => item.path === "a.csv")!.file);
+    const back = new FileStore();
+    const report = await restore(new Doc(), new History(), back, options("B"));
+    expect(back.list().map((file) => file.path)).toEqual(["b.csv", "c.csv"]);
+    expect(report.incomplete).toBe(true);
+    expect(report.errors).toEqual(["1 of the experiment's files could not be read: a.csv."]);
   });
 
   it("reads again when another tab replaces the experiment during a restore", async () => {
