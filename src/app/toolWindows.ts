@@ -17,7 +17,7 @@ export interface ToolWindowState {
 }
 
 const START: Record<Tool, Omit<ToolWindowState, "tool">> = {
-  procedureBrowser: { x: 80, y: 40, w: 320, h: 380 },
+  procedureBrowser: { x: 80, y: 40, w: 380, h: 420 },
   variables: { x: 140, y: 70, w: 420, h: 320 },
 };
 export const MIN_TOOL = { w: 220, h: 140 };

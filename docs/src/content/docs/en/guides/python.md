@@ -46,6 +46,9 @@ The command session starts with `np` and `op` preloaded. Include `import numpy a
 
 **Python → Procedure Browser** lists the experiment's procedures and the classes and functions defined in them, nested as written, as Igor's Procedure Browser does.
 
+- Icons tell the kinds apart: an orange **C** for a class, a purple **ƒ** for a function, a green **m** for a method of a class. The number at the right is the line it is defined on
+- Small labels beside a file say the module name it runs as (`as tl`), that its window is closed (`closed`), or that it does not run when the experiment opens (`no auto-run`)
+- Typing in the box at the top narrows the list to the functions and classes whose names have those letters
 - With **Signatures** on, it shows parameters (`(r, *, pi=3.14)`) and return annotations too
 - Clicking a function or class opens its procedure (reopening it if it is closed) with the cursor on the line where it is defined
 - Select a file to **Export** it (as `name.py`) or **Run** it; **New…** and **Import…** are there too, and right-click renames it
@@ -58,7 +61,8 @@ The command session starts with `np` and `op` preloaded. Include `import numpy a
 - Arrays show their shape and type (`2×3 float64`), lists and dicts their length and first items, functions their parameters
 - Double-click a variable (or right-click → **Show Value**) to show its value in the Command Window
 - Tick variables and **Drop** them to run `del a, b`; **Drop All…** asks, then drops every variable listed. Both are written in the history
-- What Python starts with (`np`, `op`, IPython's names), names starting with `_` and modules are never listed, so they cannot be dropped by mistake and leave Python unusable
+- What Python starts with (`np`, `op`, IPython's names) and names starting with `_` are never listed, so they cannot be dropped by mistake and leave Python unusable
+- Modules you imported (`import tools as tl`) are listed as "module" (`tools (procedure)` for a procedure). Dropping one only takes the name away: importing it again brings it back
 
 ## Add packages
 

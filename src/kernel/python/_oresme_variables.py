@@ -2,9 +2,11 @@
 
 After each input the kernel tells the application what the user's variables
 are now (when that has changed): their names, types and a short description
-of each. What Python starts with (``np``, ``op``, IPython's own names),
-names starting with ``_`` and modules are left out: they are not the user's
-work, and dropping them would leave Python unusable.
+of each. What Python starts with (``np``, ``op``, IPython's own names) and
+names starting with ``_`` are left out: they are not the user's work, and
+dropping them would leave Python unusable. Modules the user imported
+(``import tools as tl``) are listed: dropping one only takes the name away,
+and importing it again brings it back.
 
 Describing a value must never run much code or fail: arrays are described
 by their shape and type, collections by their length, and anything else by
@@ -12,6 +14,7 @@ a shortened ``repr`` that is given up on if it raises.
 """
 
 import inspect
+import os
 import reprlib
 import types
 
@@ -41,11 +44,7 @@ def start(namespace):
 
 def shown(name, value, namespace=None):
     """Whether a name of the namespace is listed: the user's own, not Python's or the app's."""
-    if name.startswith("_") or name in _baseline:
-        return False
-    if isinstance(value, types.ModuleType):
-        return False
-    return True
+    return not (name.startswith("_") or name in _baseline)
 
 
 def _clip(text):
@@ -57,6 +56,11 @@ def describe(value):
     """The type of a value and a short description of it, as (type, summary)."""
     kind = type(value).__name__
     try:
+        if isinstance(value, types.ModuleType):
+            file = getattr(value, "__file__", None) or ""
+            # A procedure is a file of the experiment, in Python's working directory.
+            mine = file and os.path.dirname(os.path.abspath(file)) == os.getcwd()
+            return "module", f"{value.__name__} (procedure)" if mine else value.__name__
         if isinstance(value, np.ndarray):
             shape = "×".join(str(size) for size in value.shape) or "scalar"
             return "ndarray", f"{shape} {value.dtype}"

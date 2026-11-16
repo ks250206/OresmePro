@@ -24,10 +24,18 @@ test.describe("the Procedure Browser", () => {
     await app.menu("Python", "Procedure Browser");
     const browser = page.getByRole("dialog", { name: "Procedure Browser" });
     const tree = browser.getByRole("tree", { name: "Procedures" });
-    await expect(tree.getByRole("treeitem", { name: "other.py" })).toContainText(
-      "not run at opening",
-    );
-    await expect(tree.getByRole("treeitem", { name: "tools.py" })).toContainText("(closed)");
+    await expect(tree.getByRole("treeitem", { name: "other.py" })).toContainText("no auto-run");
+    await expect(tree.getByRole("treeitem", { name: "tools.py" })).toContainText("closed");
+    // Classes, functions and methods, each with its icon.
+    await expect(
+      tree.getByRole("treeitem", { name: "Fit in tools" }).getByRole("img", { name: "class" }),
+    ).toBeVisible();
+    await expect(
+      tree.getByRole("treeitem", { name: "run in tools" }).getByRole("img", { name: "method" }),
+    ).toBeVisible();
+    await expect(
+      tree.getByRole("treeitem", { name: "area in tools" }).getByRole("img", { name: "function" }),
+    ).toBeVisible();
     await expect(tree.getByRole("treeitem", { name: "area in tools" })).toContainText(
       "area(r, *, pi=3.14)",
     );
@@ -36,7 +44,14 @@ test.describe("the Procedure Browser", () => {
     );
     // Without signatures, the names alone.
     await browser.getByLabel("Signatures").uncheck();
-    await expect(tree.getByRole("treeitem", { name: "area in tools" })).toHaveText("ƒarea");
+    await expect(tree.getByRole("treeitem", { name: "area in tools" })).toHaveText(/^ƒarea\d+$/);
+
+    // Finding narrows the list to what is called so, and what holds it.
+    await browser.getByLabel("Find definitions").fill("squ");
+    await expect(tree.getByRole("treeitem", { name: "square in tools" })).toBeVisible();
+    await expect(tree.getByRole("treeitem", { name: "Fit in tools" })).toHaveCount(0);
+    await expect(tree.getByRole("treeitem", { name: "other.py" })).toHaveCount(0);
+    await browser.getByLabel("Find definitions").fill("");
 
     // A definition opens its procedure, reopening it, with the cursor on its line.
     await tree.getByRole("treeitem", { name: "square in tools" }).click();
