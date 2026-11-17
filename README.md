@@ -5,61 +5,61 @@
 [![Downloads](https://img.shields.io/github/downloads/ks250206/OresmePro/total)](https://github.com/ks250206/OresmePro/releases)
 [![License](https://img.shields.io/github/license/ks250206/OresmePro)](LICENSE)
 
-日本語 | [English](README.en.md)
+[日本語](README.ja.md) | English
 
-OresmePro は、実験データの読み込み・表編集・グラフ作成・解析を 1 つのワークスペースで行う、ブラウザで動く科学データ解析環境です。
-WaveMetrics の Igor Pro の作業感(wave、グラフ、コマンドウィンドウ、GUI 操作がコマンドとして履歴に残ること)を手本に、スクリプト言語には Python を使います。
+OresmePro is a scientific data analysis environment that runs in the browser: load experimental data, edit tables, make graphs and analyze them in one workspace.
+It follows the feel of WaveMetrics' Igor Pro (waves, graphs, a command window, and every GUI action recorded as a command in the history), with Python as its scripting language.
 
-[![OresmePro のワークスペース。スペクトルに 3 本のピークをフィットしたグラフ、表、コマンドウィンドウの履歴](.github/readme/workspace.png)](https://ks250206.github.io/OresmePro/)
+[![The OresmePro workspace: a spectrum fitted with three peaks, a table, and the command window's history](.github/readme/workspace.png)](https://ks250206.github.io/OresmePro/)
 
-## 特徴
+## Features
 
-- **インストール不要**: ブラウザで開くだけで動きます。Python(Pyodide)もブラウザの中で動き、データはサーバーに送られません。
-- **wave 中心のデータモデル**: 名前・スケーリング・単位を持つ配列を、表とグラフが参照して追従します。
-- **Igor Pro 風のワークスペース**: グラフ、表、コマンドウィンドウ、プロシージャ、ページレイアウト、パネル。
-- **Python で操作**: GUI でできることは `op` API からも行え、操作はコマンドとして履歴に残ります。NumPy・SciPy・pandas・lmfit などを同梱しています。
-- **解析**: カーブフィット(ピーク・同時・一括)、FFT、平滑化、微積分、画像のフィルタなど。
-- **読み込み**: CSV / TSV、Excel、Parquet、HDF5、Igor のファイル(`.ibw` / `.pxp`)。
-- **プラグイン**: GitHub やフォルダから入れ、サンドボックスの中で動かします。
-- **PWA**: インストールしてオフラインでも使えます。実験はブラウザに自動保存され、`.oresme` ファイルで持ち運べます。
+- **Nothing to install**: open it in a browser. Python (Pyodide) runs in the browser too, and your data is never sent to a server.
+- **Waves at the center**: named arrays with scaling and units, which tables and graphs refer to and follow.
+- **An Igor Pro-style workspace**: graphs, tables, a command window, procedures, page layouts and panels.
+- **Driven from Python**: what the GUI does, the `op` API does too, and actions are kept as commands in the history. NumPy, SciPy, pandas, lmfit and more are bundled.
+- **Analysis**: curve fitting (peaks, global and batch), FFT, smoothing, differentiation and integration, image filters, and more.
+- **Loading**: CSV / TSV, Excel, Parquet, HDF5, and Igor files (`.ibw` / `.pxp`).
+- **Plugins**: install them from GitHub or a folder; they run in a sandbox.
+- **PWA**: install it and use it offline. Experiments are saved in the browser automatically and travel as `.oresme` files.
 
-## 使い始める
+## Getting started
 
-**[アプリを開く](https://ks250206.github.io/OresmePro/)** だけで使えます。
-最初の一歩は [最初の Wave とグラフ](https://ks250206.github.io/OresmePro/docs/getting-started/) を見てください。
+Just **[open the app](https://ks250206.github.io/OresmePro/)**.
+For a first step, see [Your first wave and graph](https://ks250206.github.io/OresmePro/docs/en/getting-started/).
 
-手元で動かすときは、Node.js と pnpm を用意して次を実行し、表示された URL を開きます。
+To run it locally, install Node.js and pnpm, run the following, and open the URL it prints.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-## ドキュメント
+## Documentation
 
-使い方・ガイド・Python API のリファレンスは **[公式ドキュメント](https://ks250206.github.io/OresmePro/docs/)**([English](https://ks250206.github.io/OresmePro/docs/en/))にあります。
+Usage, guides and the Python API reference are in the **[documentation](https://ks250206.github.io/OresmePro/docs/en/)**.
 
-- [はじめに](https://ks250206.github.io/OresmePro/docs/getting-started/)
-- [ガイド: グラフ](https://ks250206.github.io/OresmePro/docs/guides/graphs/)
-- [リファレンス](https://ks250206.github.io/OresmePro/docs/reference/)
-- [アーキテクチャ](https://ks250206.github.io/OresmePro/docs/architecture/)
+- [Getting started](https://ks250206.github.io/OresmePro/docs/en/getting-started/)
+- [Guide: graphs](https://ks250206.github.io/OresmePro/docs/en/guides/graphs/)
+- [Reference](https://ks250206.github.io/OresmePro/docs/en/reference/)
+- [Architecture](https://ks250206.github.io/OresmePro/docs/en/architecture/)
 
-## 開発
+## Development
 
 ```sh
-pnpm check      # フォーマット、lint、型チェック
-pnpm test       # 単体テスト
-pnpm build      # dist/ にビルド
-pnpm e2e        # E2E テスト(先に pnpm build が必要)
-pnpm docs:dev   # ドキュメント(docs/)の開発サーバー
+pnpm check      # format, lint and type checks
+pnpm test       # unit tests
+pnpm build      # build into dist/
+pnpm e2e        # end-to-end tests (run pnpm build first)
+pnpm docs:dev   # dev server for the documentation (docs/)
 ```
 
-CI は [`.github/workflows/ci.yml`](.github/workflows/ci.yml) です。`main` のビルドは GitHub Pages に公開されます。
+CI is [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Builds of `main` are published to GitHub Pages.
 
-## 名前の由来
+## The name
 
-名前は、変化する量を初めてグラフとして描いたとされる 14 世紀の学者 **ニコル・オレーム**(Nicole Oresme)にちなみます。
+It is named after **Nicole Oresme**, the 14th-century scholar credited with first drawing a changing quantity as a graph.
 
-## ライセンス
+## License
 
-[MIT License](LICENSE) です。同梱して配布する Pyodide、NumPy、SciPy などは、それぞれのライセンスに従います。
+[MIT License](LICENSE). Pyodide, NumPy, SciPy and the other packages bundled with the app are under their own licenses.
