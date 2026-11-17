@@ -72,6 +72,7 @@ Python のコードを含むプラグインは、アプリとは別のサンド�
 
 - `files` にはパッケージのファイルをすべて書きます。ここにないファイルは入りません
 - `actions` の引数の型は `op.action` と同じです(`wave`、`waves`、`number`、`integer`、`numbers`、`string`、`boolean`、`choice`)。Action はここで宣言するので、コードを動かす前に内容を表示して確かめられます
+- `wave` と `waves` の引数は数値の wave を取ります。`"text": true` を付けると、テキスト wave も取ります(試料名や結晶構造の名前など)。付けていない引数にテキスト wave を渡すと、実行する前に断ります
 - Python 側では、Action ごとに関数を登録します
 
 ```python
@@ -85,7 +86,7 @@ def scale(y, factor=2.0):
     }
 ```
 
-wave の引数は `Wave`(`.data` は読み取り専用の NumPy 配列。`.x`、`.dx`、`.unit` なども使えます)として渡されます。`values` の `result` に `names`、`coef`、`sigma` を入れると、解析結果として残ります。
+wave の引数は `Wave`(`.data` は読み取り専用の NumPy 配列。`.x`、`.dx`、`.unit` なども使えます)として渡されます。テキスト wave は、`.data` が文字列(`str`)の 1 次元配列で、`.is_text` が `True` です。`values` の `result` に `names`、`coef`、`sigma` を入れると、解析結果として残ります。
 
 文字列のリスト(または文字列の NumPy 配列)を `wave(...)` に渡すと、テキスト wave になります(文字マーカーのラベルなど)。
 

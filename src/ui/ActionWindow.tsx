@@ -47,10 +47,12 @@ export function ActionForm({
 }) {
   // The selector must return what the document holds, not a new list each time it is asked.
   const state = useDoc((current) => current);
-  const waves = useMemo(
+  const numeric = useMemo(
     () => state.waveOrder.filter((name) => !state.waves[name]?.text),
     [state.waveOrder, state.waves],
   );
+  // An argument that takes text waves lists them too.
+  const wavesFor = (spec: { text?: boolean }) => (spec.text ? state.waveOrder : numeric);
   const [values, setValues] = useState<Record<string, JsonValue | undefined>>(() =>
     Object.fromEntries(
       Object.entries(action.params).map(([name, spec]) => [name, initialValue(spec)]),
@@ -120,7 +122,7 @@ export function ActionForm({
                     onChange={(event) => set(name, event.target.value || undefined)}
                   >
                     <option value="">{spec.optional ? "(none)" : "Choose a wave"}</option>
-                    {waves.map((wave) => (
+                    {wavesFor(spec).map((wave) => (
                       <option key={wave} value={wave}>
                         {wave}
                       </option>
@@ -133,7 +135,7 @@ export function ActionForm({
                 <Field key={name} name={name} label={label} group>
                   <ListBox
                     label={label}
-                    items={waves.map((wave) => ({ key: wave, text: wave }))}
+                    items={wavesFor(spec).map((wave) => ({ key: wave, text: wave }))}
                     selected={Array.isArray(values[name]) ? (values[name] as string[]) : []}
                     onChange={(selected) => set(name, selected)}
                     style={{ height: 96 }}

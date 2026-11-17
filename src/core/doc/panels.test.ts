@@ -204,6 +204,12 @@ describe("panels", () => {
     expect(problems()).toEqual(["Spectrum is missing: there is no wave sig."]);
     doc.dispatch({ op: "setControlValue", panel: "quick_fit", control: "target", value: null });
     expect(problems()).toEqual(["Choose a wave for Spectrum."]);
+    // With no wave chosen, an argument the action can do without is left out.
+    const optional = { ...FIT, params: { ...FIT.params, y: { ...FIT.params.y!, optional: true } } };
+    expect(resolveButton(panelOf(doc), "run", { waveExists, catalog: [optional] })).toEqual({
+      call: { action: "core.fit", version: null, args: { function: "gauss" } },
+      problems: [],
+    });
     doc.dispatch({ op: "makeWave", name: "sig", data: wave(1, 2) });
     doc.dispatch({ op: "setControlValue", panel: "quick_fit", control: "target", value: "sig" });
     // The catalog's choices are narrower than the panel's options.
@@ -397,6 +403,13 @@ describe("wave pickers", () => {
     expect(picker(2, "")).toEqual(["map"]);
     expect(picker(null, "*_i")).toEqual(["s1_I", "run1:s2_I"]);
     expect(picker(null, "s1")).toEqual(["s1_I", "s1_V"]);
+    // One that lists text waves offers them as well.
+    expect(pickerWaves(doc.getState(), { dims: 1, filter: "", text: true })).toEqual([
+      "s1_I",
+      "run1:s2_I",
+      "s1_V",
+      "labels",
+    ]);
     expect(matchesFilter("a.b", "a.*")).toBe(true);
     expect(matchesFilter("axb", "a.b")).toBe(false);
   });
@@ -428,6 +441,15 @@ describe("controls made for an argument", () => {
       props: { label: "quiet", value: false },
     });
     expect(controlForParam("guess", { type: "numbers", optional: true })).toBeNull();
+    // An argument that takes text waves gets a picker that lists them.
+    expect(controlForParam("g", { type: "wave", optional: true, text: true })).toEqual({
+      kind: "wave",
+      props: { label: "g", text: true },
+    });
+    expect(controlForParam("gs", { type: "waves", optional: false, text: true })).toEqual({
+      kind: "list",
+      props: { label: "gs", text: true },
+    });
     // What it makes is a control the panel takes.
     const doc = new Doc();
     doc.dispatch({ op: "newPanel", name: "p" });

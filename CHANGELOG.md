@@ -44,6 +44,15 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - The example plugin ternary (0.2.0) draws its points with the marker shape, color, size and
   fill asked for (`marker`, `marker_color`, `marker_size`, `marker_fill`), in the action and
   in its panel.
+- A plugin's `wave` or `waves` argument with `"text": true` takes text waves too; its `Wave`
+  then holds an array of `str` (`.is_text`). Without it, a text wave is refused before the run,
+  naming the argument. Wave pickers and lists in panels list text waves with **Text waves too**
+  (`text=True` in Python), as the form of such an argument does.
+- A panel's button leaves out an argument the action can do without when its Wave Picker has no
+  wave chosen, instead of asking for one.
+- The example plugin ternary (0.3.0) draws groups apart: `group` names the group of each point
+  (a crystal structure, say) in a text or numeric wave, and each group gets a marker and a color
+  of its own (`group_markers`, `group_colors`, or else in turn) and a line in the legend.
 
 ### Changed
 

@@ -121,22 +121,22 @@ choice(name, options, *, value=None, label=None, inline=None, **style)
 ### `Panel.wave`
 
 ```python
-wave(name, label=None, *, value=None, dims=None, filter=None, inline=None, **style)
+wave(name, label=None, *, value=None, dims=None, filter=None, text=None, inline=None, **style)
 ```
 
 wave の選択欄: 値は選んだ wave の名前。
 
-``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``"*_I"`` に合う)wave だけを並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。
+``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``"*_I"`` に合う)wave だけを並べます。並べるのは数値の wave で、``text=True`` でテキスト wave も並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。
 
 ### `Panel.list`
 
 ```python
-list(name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style)
+list(name, label=None, *, value=None, dims=None, filter=None, text=None, multiple=None, inline=None, **style)
 ```
 
 選ぶための wave の一覧: 値は選んだ wave の名前のリストです。
 
-``dims`` と ``filter`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。
+``dims``、``filter``、``text`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。
 
 ### `Panel.plot`
 

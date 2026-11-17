@@ -452,8 +452,8 @@
     "ja": "ウィンドウとその中身を削除します(``op.kill_window`` を参照)。"
   },
   "Panel.list": {
-    "source": "735886d4a1ff",
-    "ja": "選ぶための wave の一覧: 値は選んだ wave の名前のリストです。\n\n``dims`` と ``filter`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。"
+    "source": "1fce2d668981",
+    "ja": "選ぶための wave の一覧: 値は選んだ wave の名前のリストです。\n\n``dims``、``filter``、``text`` は、wave の選択欄と同じように一覧に出す wave を絞ります。``multiple=False`` で 1 つだけ選べるようにします。ボタンは名前を、複数の wave をとる引数に渡します。wave の名前を変えると一覧も追随し、削除した wave は選ばれたまま missing と表示されます。"
   },
   "Panel.number": {
     "source": "3bda9b13f0bf",
@@ -492,8 +492,8 @@
     "ja": "文章の段落: ``label``(複数行も可)。"
   },
   "Panel.wave": {
-    "source": "77320bafa735",
-    "ja": "wave の選択欄: 値は選んだ wave の名前。\n\n``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``\"*_I\"`` に合う)wave だけを並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。"
+    "source": "f8b832dfb7a8",
+    "ja": "wave の選択欄: 値は選んだ wave の名前。\n\n``dims`` でその次元数の wave だけを、``filter`` で名前にそれを含む(または ``*`` を使ったパターン ``\"*_I\"`` に合う)wave だけを並べます。並べるのは数値の wave で、``text=True`` でテキスト wave も並べます。wave の名前が変わると選択も追随し、wave が削除されると名前は残って「見つからない」と表示されます。"
   },
   "PeakFitResult": {
     "source": "2dddee9d3705",

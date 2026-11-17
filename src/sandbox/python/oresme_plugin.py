@@ -93,6 +93,11 @@ class Wave:
         """The X value of each point along the first dimension."""
         return self.x0 + self.dx * np.arange(self.data.shape[0] if self.data.ndim else 0)
 
+    @property
+    def is_text(self):
+        """Whether it is a text wave: ``data`` is then a 1-D array of str."""
+        return self.data.dtype.kind in "USO"
+
     def __len__(self):
         return int(self.data.shape[0]) if self.data.ndim else 0
 
@@ -173,12 +178,16 @@ def _given(value):
 def _input(value):
     """A wave as the application sends it (a JS object) made a ``Wave``."""
     item = value.to_py(depth=1)
-    dtype = np.dtype(str(item["dtype"]))
-    shape = tuple(int(size) for size in item["shape"].to_py())
-    data = np.frombuffer(item["data"].to_bytes(), dtype=dtype).reshape(shape)
-    imag = item.get("imag")
-    if _given(imag):
-        data = data + 1j * np.frombuffer(imag.to_bytes(), dtype=dtype).reshape(shape)
+    if str(item["dtype"]) == "text":
+        # A text wave: its values as an array of str, one dimension.
+        data = np.array([str(text) for text in item["text"].to_py()], dtype=str)
+    else:
+        dtype = np.dtype(str(item["dtype"]))
+        shape = tuple(int(size) for size in item["shape"].to_py())
+        data = np.frombuffer(item["data"].to_bytes(), dtype=dtype).reshape(shape)
+        imag = item.get("imag")
+        if _given(imag):
+            data = data + 1j * np.frombuffer(imag.to_bytes(), dtype=dtype).reshape(shape)
     data.flags.writeable = False
     return Wave(
         str(item["name"]), data, float(item["x0"]), float(item["dx"]), str(item["xUnit"]),

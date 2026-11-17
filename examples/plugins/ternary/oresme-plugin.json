@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "name": "ternary",
   "title": "Ternary Diagram",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Plots compositions of three components as a ternary diagram: a triangle with a grid, tick labels and corner names, drawn with ordinary traces so that colors, lines, markers, text and the legend can be changed in Modify Trace and the rest of the app afterwards.",
   "license": "MIT",
   "python": {
@@ -86,6 +86,25 @@
           "title": "Filled markers",
           "default": true,
           "description": "Whether the markers are filled, or drawn as outlines."
+        },
+        "group": {
+          "type": "wave",
+          "title": "Group",
+          "optional": true,
+          "text": true,
+          "description": "A wave that names the group of each point, such as the crystal structure: text, or numbers. Each group is drawn with a marker and a color of its own and listed in the legend; marker and marker color are then not used. Points with an empty group are left out."
+        },
+        "group_markers": {
+          "type": "string",
+          "title": "Group markers",
+          "default": "",
+          "description": "The groups' markers, in the order the groups first appear, separated by commas (\"circle, square\"). Groups not given one take circle, square, triangle, diamond, cross and plus in turn."
+        },
+        "group_colors": {
+          "type": "string",
+          "title": "Group colors",
+          "default": "",
+          "description": "The groups' colors, in the same order, separated by commas (\"red, blue\" or \"#d62728, #1f77b4\"). Groups not given one take colors in turn."
         }
       }
     }

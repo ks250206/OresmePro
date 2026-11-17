@@ -63,6 +63,26 @@ describe("plugin manifests", () => {
     expect(manifest.contributes.panels).toEqual([]);
   });
 
+  it("say which wave arguments take text waves too", () => {
+    const manifest = parse({
+      actions: [
+        {
+          name: "a",
+          title: "A",
+          params: {
+            y: { type: "wave" },
+            group: { type: "wave", text: true, optional: true },
+            labels: { type: "waves", text: false },
+          },
+        },
+      ],
+    });
+    const params = manifest.actions[0]!.params;
+    expect(params.y!.text).toBeUndefined();
+    expect(params.group).toEqual({ type: "wave", text: true, optional: true });
+    expect(params.labels!.text).toBeUndefined();
+  });
+
   it.each([
     ["a name with capitals", { name: "Electro" }, /not a usable plugin name/],
     ["an unknown version", { manifestVersion: 2 }, /version/],
@@ -94,6 +114,16 @@ describe("plugin manifests", () => {
         ],
       },
       /same name/,
+    ],
+    [
+      "text waves for an argument that is not a wave",
+      { actions: [{ name: "a", title: "A", params: { n: { type: "number", text: true } } }] },
+      /not a wave/,
+    ],
+    [
+      "a text flag that is not true or false",
+      { actions: [{ name: "a", title: "A", params: { y: { type: "wave", text: "yes" } } }] },
+      /true or false/,
     ],
     ["a bad hash", { files: [{ path: "electrochem/__init__.py", sha256: "abc" }] }, /64 hex/],
     [

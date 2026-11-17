@@ -5530,29 +5530,30 @@ class Panel:
     #: The same as ``choice``.
     select = choice
 
-    def wave(self, name, label=None, *, value=None, dims=None, filter=None, inline=None, **style):
+    def wave(self, name, label=None, *, value=None, dims=None, filter=None, text=None, inline=None, **style):
         """A wave picker: its value is the name of the wave chosen.
 
         ``dims`` lists only waves of that many dimensions; ``filter`` only
         those whose names contain it, or match it as a pattern with ``*``
-        (``"*_I"``). The picker follows the wave when it is renamed; when
-        the wave is killed, the name stays and is shown as missing.
+        (``"*_I"``). It lists numeric waves; ``text=True`` lists text waves
+        too. The picker follows the wave when it is renamed; when the wave
+        is killed, the name stays and is shown as missing.
         """
-        props = {"label": label, "value": value, "dims": dims, "filter": filter, "inline": inline}
+        props = {"label": label, "value": value, "dims": dims, "filter": filter, "text": text, "inline": inline}
         return self._add("wave", name, props, style)
 
-    def list(self, name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style):
+    def list(self, name, label=None, *, value=None, dims=None, filter=None, text=None, multiple=None, inline=None, **style):
         """A list of waves to select from: its value is the list of the names selected.
 
-        ``dims`` and ``filter`` choose the waves listed, as a wave picker's
-        do; ``multiple=False`` lets only one be selected. A button passes
+        ``dims``, ``filter`` and ``text`` choose the waves listed, as a wave
+        picker's do; ``multiple=False`` lets only one be selected. A button passes
         the names to an argument that takes several waves. The list follows
         its waves when they are renamed; a killed wave stays selected and is
         shown as missing.
         """
         if isinstance(value, (Wave, str)):
             value = [value]
-        props = {"label": label, "value": value, "dims": dims, "filter": filter, "multiple": multiple, "inline": inline}
+        props = {"label": label, "value": value, "dims": dims, "filter": filter, "text": text, "multiple": multiple, "inline": inline}
         return self._add("list", name, props, style)
 
     def plot(self, name, label=None, *, traces=None, live=None, inline=None, **style):

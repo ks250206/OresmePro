@@ -10,18 +10,18 @@ A panel is a window of buttons and fields that runs analyses: the counterpart of
 
 **Windows → New Panel** opens an empty panel in edit mode. Add controls with **Add ▾**, and click a control to change it in the form on the right.
 
-| Control     | What it is                                                                  |
-| ----------- | --------------------------------------------------------------------------- |
-| Heading     | A heading                                                                   |
-| Text        | A paragraph (several lines)                                                 |
-| Wave Picker | A choice of wave, narrowed by dimensions and name (a pattern such as `*_I`) |
-| Wave List   | A list of waves, narrowed as a Wave Picker's, to select one or several from |
-| Plot        | A small graph, which takes its waves from the active graph                  |
-| Choice      | A menu of options                                                           |
-| Number      | A number, with a minimum, maximum and step if wanted                        |
-| Text Field  | A field for text                                                            |
-| Checkbox    | True or false                                                               |
-| Button      | Calls a registered action                                                   |
+| Control     | What it is                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Heading     | A heading                                                                                                                                        |
+| Text        | A paragraph (several lines)                                                                                                                      |
+| Wave Picker | A choice of wave, narrowed by dimensions and name (a pattern such as `*_I`). It lists numeric waves; **Text waves too** lists text waves as well |
+| Wave List   | A list of waves, narrowed as a Wave Picker's, to select one or several from                                                                      |
+| Plot        | A small graph, which takes its waves from the active graph                                                                                       |
+| Choice      | A menu of options                                                                                                                                |
+| Number      | A number, with a minimum, maximum and step if wanted                                                                                             |
+| Text Field  | A field for text                                                                                                                                 |
+| Checkbox    | True or false                                                                                                                                    |
+| Button      | Calls a registered action                                                                                                                        |
 
 Controls are laid out one to a line from the top; **On the line before** puts a control beside the one before it. Reorder them with ↑ ↓ (**Alt+arrow keys**) and remove them with **Delete**. Press **Done** in the title bar to stop editing; **Edit** in the title bar, or right-click → **Edit Panel**, edits it again.
 
@@ -52,7 +52,7 @@ Select a button and pick the analysis it calls under **Action** (`core.fit`, say
 - **Control**: the value a control of the panel has when the button is pressed
 - **New control**: a control made for the argument and bound to it: a Wave Picker for a wave, a menu of the choices for a choice, a Number with the argument's range for a number
 
-A button holds only the action's name and its arguments, never Python code. When it is pressed, the arguments are made from the controls' values and checked against the action's argument types before the call. What is missing ("Choose a wave for Spectrum.") or wrong is shown under the button, and nothing runs.
+A button holds only the action's name and its arguments, never Python code. When it is pressed, the arguments are made from the controls' values and checked against the action's argument types before the call. What is missing ("Choose a wave for Spectrum.") or wrong is shown under the button, and nothing runs. A Wave Picker with no wave chosen leaves its argument out, if the action can do without it.
 
 While a call runs, the panel's buttons cannot be pressed: pressing twice runs once. Values changed during the call do not change it. If it fails, the error is shown under the button and the values stay as they are. The call is recorded in the history as the Python that does the same (`op.fit("gauss", op.wave("sig"))`, say).
 
@@ -60,7 +60,7 @@ While a call runs, the panel's buttons cannot be pressed: pressing twice runs on
 
 The controls' values are saved with the experiment and come back when it is opened. Changing a value can be undone and is recorded as `op.panel("quick_fit")["model"] = "lor"`. Typing into a field is one undo step for the whole edit of the field.
 
-A Wave Picker holds a wave's name. It follows the wave when it is renamed; when the wave is killed, the name stays and is shown as **missing**. So do the waves of a Wave List and a Plot.
+A Wave Picker holds a wave's name. In Python, `text=True` lists text waves too (`p.wave("group", text=True)`). It follows the wave when it is renamed; when the wave is killed, the name stays and is shown as **missing**. So do the waves of a Wave List and a Plot.
 
 The place, size, colors and z of the controls are saved with the experiment and in exported JSON too. Those left as they usually are are not written, so a panel that uses none of them can still be read by earlier versions of the app.
 

@@ -1027,6 +1027,8 @@ export type PanelControl =
       readonly dims: number | null;
       /** Lists only waves whose names match: text they contain, or a pattern with "*". */
       readonly filter: string;
+      /** Lists text waves too, not only numeric ones. */
+      readonly text: boolean;
     })
   | (ControlBase & {
       readonly kind: "list";
@@ -1039,6 +1041,8 @@ export type PanelControl =
       readonly dims: number | null;
       /** Lists only waves whose names match, as a wave picker's filter. */
       readonly filter: string;
+      /** Lists text waves too, as a wave picker's text. */
+      readonly text: boolean;
       /** Whether more than one wave can be selected. */
       readonly multiple: boolean;
     })

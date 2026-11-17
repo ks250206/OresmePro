@@ -18,12 +18,18 @@ export const SANDBOX_DTYPES = [
 ] as const;
 export type SandboxDtype = (typeof SANDBOX_DTYPES)[number];
 
-/** A wave as it crosses into or out of the sandbox: one buffer per part, in C order. */
+/**
+ * A wave as it crosses into or out of the sandbox: one buffer per part, in C
+ * order. A text wave has the dtype "text", one dimension, an empty buffer and
+ * its values in `text`.
+ */
 export interface SandboxWave {
   name: string;
-  dtype: SandboxDtype;
+  dtype: SandboxDtype | "text";
   shape: number[];
   data: ArrayBuffer;
+  /** The values of a text wave; left out for a numeric one. */
+  text?: string[];
   /** The imaginary parts of a complex wave (dtype float64 or float32), or null. */
   imag: ArrayBuffer | null;
   x0: number;

@@ -1305,6 +1305,13 @@ function ControlForm({ panel, control }: { panel: PanelSpec; control: PanelContr
             value={control.filter}
             onCommit={(filter) => modify({ filter })}
           />
+          <Prop label="">
+            <Checkbox
+              label="Text waves too"
+              checked={control.text}
+              onChange={(event) => modify({ text: event.target.checked })}
+            />
+          </Prop>
         </>
       ) : null}
       {control.kind === "list" ? (
