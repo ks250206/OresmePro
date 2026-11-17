@@ -101,10 +101,10 @@ describe("loading Igor files", () => {
     const before = doc.getState();
     await loadFiles([igorFile("experiment-le.pxp", "exp.pxp")]);
     const state = doc.getState();
-    expect(state.waveOrder.length - before.waveOrder.length).toBe(21);
+    expect(state.waveOrder.length - before.waveOrder.length).toBe(22);
     expect(state.waves["raw_data:run_1:matrix"]).toMatchObject({ shape: [2, 3] });
     expect(state.folders).toContain("a_folder_whose_name_is_longer_than_31_bytes");
-    expect(history.getEntries().at(-1)!.code).toMatch(/^Loaded 21 waves from exp\.pxp: /);
+    expect(history.getEntries().at(-1)!.code).toMatch(/^Loaded 22 waves from exp\.pxp: /);
     doc.undo();
     expect(doc.getState().waveOrder).toEqual(before.waveOrder);
     expect(doc.getState().folders).toEqual(before.folders);

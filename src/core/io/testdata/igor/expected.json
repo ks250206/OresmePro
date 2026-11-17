@@ -1595,6 +1595,62 @@
   "imag": null,
   "text": null
  },
+ "v7-le-long-name.ibw": {
+  "name": "温度 300 K で測った抵抗 (run 12)",
+  "version": 7,
+  "littleEndian": true,
+  "igorType": "64-bit float",
+  "dims": [
+   {
+    "size": 3,
+    "start": 0.0,
+    "delta": 0.5,
+    "unit": "s"
+   }
+  ],
+  "unit": "Ω",
+  "note": "saved by Igor 8",
+  "formula": "",
+  "missingValues": false,
+  "type": "float64",
+  "shape": [
+   3
+  ],
+  "text": null,
+  "values": [
+   1.5,
+   -2.25,
+   10000000000.0
+  ],
+  "imag": null
+ },
+ "v7-be-text.ibw": {
+  "name": "names_of_the_samples_measured_on_the_second_day",
+  "version": 7,
+  "littleEndian": false,
+  "igorType": "text",
+  "dims": [
+   {
+    "size": 2,
+    "start": 0.0,
+    "delta": 1.0,
+    "unit": ""
+   }
+  ],
+  "unit": "sample identifiers",
+  "note": "two\nlines",
+  "formula": "",
+  "missingValues": false,
+  "type": "float64",
+  "shape": [
+   2
+  ],
+  "imag": null,
+  "text": [
+   "A-1",
+   "試料 2"
+  ]
+ },
  "experiment-le.pxp": {
   "littleEndian": true,
   "folders": [
@@ -1796,6 +1852,35 @@
     "text": null,
     "values": [
      4.0
+    ],
+    "imag": null
+   },
+   {
+    "folder": [],
+    "name": "a_wave_name_that_Igor_8_writes_as_version_7",
+    "version": 7,
+    "littleEndian": true,
+    "igorType": "64-bit float",
+    "dims": [
+     {
+      "size": 2,
+      "start": 0.0,
+      "delta": 1.0,
+      "unit": ""
+     }
+    ],
+    "unit": "",
+    "note": "",
+    "formula": "",
+    "missingValues": false,
+    "type": "float64",
+    "shape": [
+     2
+    ],
+    "text": null,
+    "values": [
+     7.0,
+     8.0
     ],
     "imag": null
    },
@@ -2530,6 +2615,35 @@
     "text": null,
     "values": [
      4.0
+    ],
+    "imag": null
+   },
+   {
+    "folder": [],
+    "name": "a_wave_name_that_Igor_8_writes_as_version_7",
+    "version": 7,
+    "littleEndian": false,
+    "igorType": "64-bit float",
+    "dims": [
+     {
+      "size": 2,
+      "start": 0.0,
+      "delta": 1.0,
+      "unit": ""
+     }
+    ],
+    "unit": "",
+    "note": "",
+    "formula": "",
+    "missingValues": false,
+    "type": "float64",
+    "shape": [
+     2
+    ],
+    "text": null,
+    "values": [
+     7.0,
+     8.0
     ],
     "imag": null
    },

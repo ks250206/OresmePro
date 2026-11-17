@@ -91,14 +91,41 @@ describe("reading Igor binary waves", () => {
     }
   });
 
-  it("covers versions 1, 2, 3 and 5 in both byte orders", () => {
+  it("covers versions 1, 2, 3, 5 and 7 in both byte orders", () => {
     const seen = new Set(
       files.map(([, item]) => {
         const wave = item as ExpectedWave;
         return `${wave.version}${wave.littleEndian ? "le" : "be"}`;
       }),
     );
-    expect([...seen].toSorted()).toEqual(["1be", "2be", "2le", "3be", "3le", "5be", "5le"]);
+    expect([...seen].toSorted()).toEqual([
+      "1be",
+      "2be",
+      "2le",
+      "3be",
+      "3le",
+      "5be",
+      "5le",
+      "7be",
+      "7le",
+    ]);
+  });
+
+  it("takes a version 7 wave's name from after its other sections, not from the header", () => {
+    const named = readBinaryWave(igorFixture("v7-le-long-name.ibw"));
+    expect(named.name).toBe("温度 300 K で測った抵抗 (run 12)");
+    expect(new TextEncoder().encode(named.name).length).toBeGreaterThan(31);
+    // Dimension labels are C strings one after another in version 7; they are noted, not loaded.
+    expect(named.remarks).toEqual(["Igor's dimension labels are not loaded."]);
+    const text = readBinaryWave(igorFixture("v7-be-text.ibw"));
+    expect(text.name).toBe("names_of_the_samples_measured_on_the_second_day");
+    expect(text.text).toEqual(["A-1", "試料 2"]);
+    expect(text.unit).toBe("sample identifiers");
+    // The name is the last section: a file that ends inside it is cut short.
+    const file = igorFixture("v7-be-text.ibw");
+    expect(() => readBinaryWave(file.subarray(0, file.length - 5))).toThrow(
+      /cut short: it ends inside the wave's name/,
+    );
   });
 
   it("puts Igor's columns-first values in this app's order", () => {
@@ -163,6 +190,10 @@ describe("reading Igor binary waves", () => {
     const refused = (bytes: Uint8Array, message: RegExp) => {
       expect(() => readBinaryWave(bytes)).toThrow(IgorError);
       expect(() => readBinaryWave(bytes)).toThrow(message);
+      // A file the app cannot handle, as every refusal of a file is.
+      expect(() => readBinaryWave(bytes)).toThrow(
+        expect.objectContaining({ code: "UNSUPPORTED", details: {} }),
+      );
     };
     refused(new TextEncoder().encode("x,y\n1,2\n"), /not an Igor binary wave/);
     refused(new Uint8Array(0), /not an Igor binary wave/);
@@ -189,6 +220,12 @@ describe("reading Igor binary waves", () => {
     const four = original.slice();
     four[0] = 4;
     refused(four, /version 4, which this reader does not know/);
+    // Igor's format for waves of 2 GB or more, which WaveMetrics does not describe.
+    for (const version of [6, 8]) {
+      const large = original.slice();
+      large[0] = version;
+      refused(large, new RegExp(`version ${version}, Igor's format for waves of 2 GB or more`));
+    }
   });
 });
 
@@ -235,6 +272,13 @@ describe("reading Igor packed experiments", () => {
         record(10, new Uint8Array(0)),
       ),
       /closes a data folder that was never opened/,
+    );
+  });
+
+  it("refuses a packed experiment as a file the app cannot handle", () => {
+    const file = igorFixture("experiment-be.pxp");
+    expect(() => readPackedExperiment(file.subarray(0, file.length - 3))).toThrow(
+      expect.objectContaining({ name: "IgorError", code: "UNSUPPORTED" }),
     );
   });
 
@@ -372,6 +416,7 @@ describe("loading Igor files into the experiment", () => {
       "a_b_1",
       "wave_2nd",
       "dup",
+      "a_wave_name_that_Igor_8_writes_as_version_7",
       "raw_data:sig_1",
       ...run,
       "raw_data:run_1:c64",
@@ -401,7 +446,7 @@ describe("loading Igor files into the experiment", () => {
       "Loaded from exp.pxp (SHA-256 ab12): Igor wave root:'raw data':sig, binary wave version 5, 32-bit float.\nIgor's note:\nraw\nsignal",
     );
     expect(plan.summary.split("\n")).toEqual([
-      "Loaded 21 waves from exp.pxp: 6 in root, 1 in raw_data, 12 in raw_data:run_1, 1 in a_folder_whose_name_is_longer_than_31_bytes, 1 in dup_1.",
+      "Loaded 22 waves from exp.pxp: 7 in root, 1 in raw_data, 12 in raw_data:run_1, 1 in a_folder_whose_name_is_longer_than_31_bytes, 1 in dup_1.",
       "Renamed to names allowed here, or taken already: root:'my wave' → my_wave, root:'a b' → a_b, root:a_b → a_b_1, root:'2nd' → wave_2nd, root:'raw data' → raw_data, root:'raw data':sig → raw_data:sig_1, root:'raw data':'run 1' → raw_data:run_1, root:'raw data':'run 1':'t0 int8' → raw_data:run_1:t0_int8, root:'raw data':'run 1':'t1 uint8' → raw_data:run_1:t1_uint8, root:'raw data':'run 1':'t2 int16' → raw_data:run_1:t2_int16, root:'raw data':'run 1':'t3 uint16' → raw_data:run_1:t3_uint16, root:'raw data':'run 1':'t4 int32' → raw_data:run_1:t4_int32 and 5 more.",
       "Not loaded: root:dep (Igor computes it from a formula and did not save its values).",
       "Data folders without waves are not made: root:'only variables'.",

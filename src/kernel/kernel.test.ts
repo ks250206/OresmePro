@@ -1743,7 +1743,7 @@ describe("oresme Python API", () => {
     // value at row 2, column 1, layer 0, chunk 1 is 2 + 3 + 12.
     expect(stdout.trim().split("\n")).toEqual([
       "['frames'] uint16 (3, 2, 2, 2) 17",
-      "21 raw_data:run_1:matrix [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]] 10.0 5.0 mm",
+      "22 raw_data:run_1:matrix [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]] 10.0 5.0 mm",
       "[0, 0, 65535] [(1+2j), (-0-3.5j)]",
       "frames_1 Loaded from copy.ibw (SHA-256",
     ]);
@@ -1753,8 +1753,14 @@ describe("oresme Python API", () => {
     expect(doc.getState().waveOrder).toEqual(order);
     for (const [code, error] of [
       ['op.load_igor("li_missing.ibw")', /Could not read li_missing\.ibw/],
-      ['op.load_igor(b"x,y\\n1,2\\n", name="table.ibw")', /not an Igor binary wave/],
-      ['op.load_igor(b"x,y\\n1,2\\n", name="table.pxp")', /not an Igor packed experiment/],
+      [
+        'op.load_igor(b"x,y\\n1,2\\n", name="table.ibw")',
+        /^UnsupportedError: This is not an Igor binary wave/,
+      ],
+      [
+        'op.load_igor(b"x,y\\n1,2\\n", name="table.pxp")',
+        /^UnsupportedError: This is not an Igor packed experiment/,
+      ],
       ['op.load_igor(b"1")', /Give name=/],
     ] as const) {
       expect(await run(code), code).toBe(false);

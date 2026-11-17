@@ -1,4 +1,4 @@
-import { newWaveData, type WaveData, type WaveType } from "../doc/types";
+import { DocError, newWaveData, type WaveData, type WaveType } from "../doc/types";
 
 /*
  * Reads the files of WaveMetrics Igor Pro: binary waves (.ibw), as described
@@ -7,9 +7,11 @@ import { newWaveData, type WaveData, type WaveType } from "../doc/types";
  *
  * A binary wave is a small header (BinHeader1, 2, 3 or 5, after the version
  * number it starts with), a wave header (WaveHeader2 for versions 1 to 3,
- * WaveHeader5 for version 5), the values, and then sections whose sizes the
- * first header gives: the note, the dependency formula, long units,
- * dimension labels and, for a text wave, where each string ends. The byte
+ * WaveHeader5 for versions 5 and 7), the values, and then sections whose
+ * sizes the first header gives: the note, the dependency formula, long units,
+ * dimension labels, for a text wave where each string ends and, in version
+ * 7, the wave's name. Igor 8 and later write version 7 in place of version 5
+ * for a wave whose name or a dimension label is longer than 31 bytes. The byte
  * order is that of the computer that wrote the file; the version number
  * shows it, since it is small enough to leave one of its two bytes zero.
  *
@@ -23,10 +25,14 @@ import { newWaveData, type WaveData, type WaveType } from "../doc/types";
  * without anyone knowing.
  */
 
-/** Why an Igor file could not be read, in words for the person who has the file. */
-export class IgorError extends Error {
+/**
+ * Why an Igor file could not be read, in words for the person who has the
+ * file. It is a file the app cannot handle (UNSUPPORTED), whether it is not
+ * from Igor, is damaged, or is of a version this reader does not know.
+ */
+export class IgorError extends DocError {
   constructor(message: string) {
-    super(message);
+    super(message, "UNSUPPORTED");
     this.name = "IgorError";
   }
 }
@@ -43,7 +49,7 @@ export interface IgorDimension {
 export interface IgorWave {
   /** The name in the file, as Igor wrote it (Igor allows spaces and punctuation). */
   name: string;
-  version: 1 | 2 | 3 | 5;
+  version: 1 | 2 | 3 | 5 | 7;
   littleEndian: boolean;
   /** How Igor held the values, in words: "32-bit float", "16-bit unsigned integer, complex", "text". */
   igorType: string;
@@ -379,7 +385,7 @@ function numericValues(
 
 /** What a binary wave's first header says, whatever its version. */
 interface BinHeader {
-  version: 1 | 2 | 3 | 5;
+  version: 1 | 2 | 3 | 5 | 7;
   /** Bytes of the first header, and of the wave header that the checksum covers too. */
   headerSize: number;
   checksumSize: number;
@@ -390,6 +396,8 @@ interface BinHeader {
   dimEUnitsSize: number[];
   dimLabelsSize: number[];
   sIndicesSize: number;
+  /** Version 7: the bytes of the wave's name, which is after all the other sections. */
+  longNameSize: number;
 }
 
 /** The byte order of a file that starts with an Igor version number, or null if it does not. */
@@ -403,7 +411,13 @@ function versionOrder(bytes: Uint8Array): { little: boolean; version: number } |
 }
 
 /** The size of the first header and the wave header together, by version: what the checksum covers. */
-const HEADERS_SIZE: Record<number, number> = { 1: 8 + 126, 2: 16 + 126, 3: 20 + 126, 5: 64 + 320 };
+const HEADERS_SIZE: Record<number, number> = {
+  1: 8 + 126,
+  2: 16 + 126,
+  3: 20 + 126,
+  5: 64 + 320,
+  7: 64 + 320,
+};
 
 function binHeader(read: Reader, version: number): BinHeader {
   const none = [0, 0, 0, 0];
@@ -420,6 +434,7 @@ function binHeader(read: Reader, version: number): BinHeader {
         dimEUnitsSize: none,
         dimLabelsSize: none,
         sIndicesSize: 0,
+        longNameSize: 0,
       };
     case 2:
       return {
@@ -433,6 +448,7 @@ function binHeader(read: Reader, version: number): BinHeader {
         dimEUnitsSize: none,
         dimLabelsSize: none,
         sIndicesSize: 0,
+        longNameSize: 0,
       };
     case 3:
       return {
@@ -446,12 +462,14 @@ function binHeader(read: Reader, version: number): BinHeader {
         dimEUnitsSize: none,
         dimLabelsSize: none,
         sIndicesSize: 0,
+        longNameSize: 0,
       };
     case 5:
+    case 7:
       return {
         version,
         headerSize: 64,
-        checksumSize: HEADERS_SIZE[5]!,
+        checksumSize: HEADERS_SIZE[version]!,
         wfmSize: read.int32(4),
         formulaSize: read.int32(8),
         noteSize: read.int32(12),
@@ -459,10 +477,17 @@ function binHeader(read: Reader, version: number): BinHeader {
         dimEUnitsSize: [0, 1, 2, 3].map((d) => read.int32(20 + 4 * d)),
         dimLabelsSize: [0, 1, 2, 3].map((d) => read.int32(36 + 4 * d)),
         sIndicesSize: read.int32(52),
+        // In version 5 these bytes are the first half of a reserved field, written as zero.
+        longNameSize: version === 7 ? read.uint16(56) : 0,
       };
+    case 6:
+    case 8:
+      throw new IgorError(
+        `This is a binary wave of version ${version}, Igor's format for waves of 2 GB or more, which WaveMetrics does not describe and this reader cannot read. Save the wave from Igor in parts smaller than 2 GB.`,
+      );
     default:
       throw new IgorError(
-        `This is a binary wave of version ${version}, which this reader does not know (it reads versions 1, 2, 3 and 5).`,
+        `This is a binary wave of version ${version}, which this reader does not know (it reads versions 1, 2, 3, 5 and 7).`,
       );
   }
 }
@@ -479,10 +504,10 @@ const WAVE2_SIZE = 126;
  */
 export function readBinaryWave(bytes: Uint8Array): IgorWave {
   const order = versionOrder(bytes);
-  // Versions after 5 would start the same way; anything else is not from Igor.
+  // Later versions would start the same way; anything else is not from Igor.
   if (!order || order.version > 15) {
     throw new IgorError(
-      "This is not an Igor binary wave: it does not start with a version number Igor writes (1, 2, 3 or 5).",
+      "This is not an Igor binary wave: it does not start with a version number Igor writes (1, 2, 3, 5 or 7).",
     );
   }
   const { little } = order;
@@ -512,11 +537,12 @@ export function readBinaryWave(bytes: Uint8Array): IgorWave {
     ...header.dimEUnitsSize,
     ...header.dimLabelsSize,
     header.sIndicesSize,
+    header.longNameSize,
   ];
   if (sizes.some((size) => size < 0)) {
     throw new IgorError("The file is damaged: its header gives a section a negative size.");
   }
-  return header.version === 5 ? readWave5(read, header) : readWave2(read, header);
+  return header.version >= 5 ? readWave5(read, header) : readWave2(read, header);
 }
 
 function cutShort(what: string): IgorError {
@@ -625,7 +651,6 @@ function readWave5(read: Reader, header: BinHeader): IgorWave {
   const remarks: string[] = [];
   const type = typeOf(read.int16(wave + 16));
   const npnts = read.int32(wave + 12);
-  const name = igorText(cString(bytes.subarray(wave + 28, wave + 60)), little, used);
   if (npnts < 0) throw new IgorError("The file is damaged: it gives the wave a negative length.");
   const sizes: number[] = [];
   for (let d = 0; d < 4; d += 1) {
@@ -653,6 +678,14 @@ function readWave5(read: Reader, header: BinHeader): IgorWave {
   const dimEUnits = header.dimEUnitsSize.map((size) => sections.take(size, "the dimension units"));
   const labels = header.dimLabelsSize.map((size) => sections.take(size, "the dimension labels"));
   const sIndices = sections.take(header.sIndicesSize, "the text wave's string index");
+  // Version 7 keeps the name after everything else, in UTF-8; the header's is not used.
+  // A version 7 wave written for a long dimension label alone still has one there.
+  const longName = sections.take(header.longNameSize, "the wave's name");
+  const name = igorText(
+    cString(longName.length > 0 ? longName : bytes.subarray(wave + 28, wave + 60)),
+    little,
+    used,
+  );
 
   const shortUnit = (at: number) => cString(bytes.subarray(at, at + 4));
   // A unit too long for its 4 bytes in the header is in the sections after the wave.
@@ -717,7 +750,7 @@ function readWave5(read: Reader, header: BinHeader): IgorWave {
   }
   return finish({
     name,
-    version: 5,
+    version: header.version as 5 | 7,
     littleEndian: little,
     igorType: type.words,
     dims,
@@ -733,7 +766,7 @@ function readWave5(read: Reader, header: BinHeader): IgorWave {
 }
 
 /**
- * The strings of a version 5 text wave: the values are the strings one after
+ * The strings of a text wave (version 5 or 7): the values are the strings one after
  * another, and the string index says where each ends.
  */
 function textValues(
