@@ -24,12 +24,15 @@ const GENERATED = [
 
 const require = createRequire(import.meta.url);
 const pyodideVersion = (require("pyodide/package.json") as { version: string }).version;
+/** The app's version, from package.json: semantic versioning (see CHANGELOG.md). */
+const appVersion = (require("./package.json") as { version: string }).version;
 
 export default defineConfig({
   define: {
     // Names the service worker's caches: a new build lets go of the old one's files.
     __BUILD_ID__: JSON.stringify(Date.now().toString(36)),
     __PYODIDE_VERSION__: JSON.stringify(pyodideVersion),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   staged: {
     "*": "vp check --fix",
