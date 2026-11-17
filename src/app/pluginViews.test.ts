@@ -4,6 +4,7 @@ import {
   clickPlot,
   dragHandle,
   endHandleDrag,
+  followWaves,
   forgetViews,
   openView,
   setValue,
@@ -28,9 +29,22 @@ interface Call {
 const calls: Call[] = [];
 const kept: Record<string, { plugin: string; editor: string; version: string; state: unknown }> =
   {};
+/** The experiment's waves, as far as views see them: their revisions. */
+const waves: Record<string, { rev: number }> = {};
+const listeners = new Set<() => void>();
+/** Changes a wave (or takes it away, with null) and tells whoever follows the experiment. */
+function changeWave(name: string, rev: number | null) {
+  if (rev === null) delete waves[name];
+  else waves[name] = { rev };
+  for (const listener of listeners) listener();
+}
 vi.mock("./session", () => ({
   doc: {
-    getState: () => ({ results: {}, editors: kept }),
+    getState: () => ({ results: {}, editors: kept, waves }),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     dispatch: (command: { plugin: string; editor: string; version: string; state: unknown }) => {
       kept[`${command.plugin}/${command.editor}`] = { ...command };
       return null;
@@ -85,6 +99,42 @@ describe("the window of a plugin's view", () => {
     expect(calls.at(-1)!.waves).toEqual({ y: "signal" });
     calls.at(-1)!.answer({});
     await settle();
+  });
+
+  it("tells the view when a wave it was given changes or goes, while its window is open", async () => {
+    changeWave("signal", 1);
+    openView("lab/follow");
+    await settle();
+    calls.at(-1)!.answer({ state: { y: "signal", x: 1 }, ui });
+    await settle();
+    calls.at(-1)!.answer({});
+    await settle();
+    const stop = followWaves("lab/follow");
+    const before = calls.length;
+
+    changeWave("other", 5);
+    await settle();
+    expect(calls.length).toBe(before);
+
+    changeWave("signal", 2);
+    await settle();
+    expect(calls.length).toBe(before + 1);
+    expect(calls.at(-1)!.event).toEqual({ type: "change", paths: ["y"] });
+    calls.at(-1)!.answer({});
+    await settle();
+
+    changeWave("signal", null);
+    await settle();
+    expect(calls.length).toBe(before + 2);
+    expect(calls.at(-1)!.event).toEqual({ type: "change", paths: ["y"] });
+    calls.at(-1)!.answer({});
+    await settle();
+
+    // Closed, it is told nothing more.
+    stop();
+    changeWave("signal", 3);
+    await settle();
+    expect(calls.length).toBe(before + 2);
   });
 
   it("keeps an undo made while an answer was on its way", async () => {

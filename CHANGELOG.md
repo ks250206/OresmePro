@@ -144,6 +144,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - On a Mac, Shift+Option+F formats a procedure, Option+G goes to a line, and Option+F takes
   the next word of the command line's suggestion. Option turns those keys into other
   characters (Ï, ©, ƒ), so they did nothing; they are now matched by the key's place.
+- A plugin's view follows its data: while its window is open, a wave it was given that changes
+  (from Python or a table, say) or is killed is told to it as a `change`, as if it had been
+  chosen again, rather than staying drawn as it was until the next edit in the window.
 - Load Data no longer stalls on a large file: telling its dialog from the one before it
   turned the file's bytes into text, some 12 characters a byte, again at every redraw.
 

@@ -62,6 +62,8 @@ interface Runner {
    * back (an undo or a redo).
    */
   edits: ({ path: string; value: unknown } | { whole: unknown })[];
+  /** The waves the view was last given, by the path that chose them, as they were then. */
+  given: Record<string, { name: string; rev: number | null }>;
 }
 
 const LIMIT = 100;
@@ -133,7 +135,7 @@ export function forgetViews(): void {
 function runnerOf(key: string): Runner {
   let runner = runners.get(key);
   if (!runner) {
-    runner = { queue: [], running: false, edits: [] };
+    runner = { queue: [], running: false, edits: [], given: {} };
     runners.set(key, runner);
   }
   return runner;
@@ -183,6 +185,34 @@ export function openView(key: string): void {
   void send(key, { type: "open", last: lastResult(split(key)[0]), saved: savedState(key) });
 }
 
+/**
+ * Keeps what a view draws in step with its data: when a wave it chose and
+ * was given changes (its values, scaling, units or note) or goes, the view
+ * is told so as if the wave had been chosen again. For as long as its window
+ * is open; returns what stops it.
+ */
+export function followWaves(key: string): () => void {
+  const check = () => {
+    const store = stores.get(key);
+    if (!store) return;
+    const { ui, state } = store.get();
+    const runner = runnerOf(key);
+    const waves = doc.getState().waves;
+    const changed = new Set<string>();
+    for (const [path, name] of Object.entries(chosenWaves(ui, state))) {
+      const given = runner.given[path];
+      // One chosen anew is told already, by the edit that chose it.
+      if (given?.name !== name) continue;
+      const rev = waves[name]?.rev ?? null;
+      if (rev === given.rev) continue;
+      changed.add(path);
+      runner.given[path] = { name, rev };
+    }
+    if (changed.size > 0) enqueue(key, { type: "change", paths: changed });
+  };
+  return doc.subscribe(check);
+}
+
 function enqueue(key: string, event: Pending, start = true): void {
   const runner = runnerOf(key);
   const last = runner.queue.at(-1);
@@ -216,6 +246,10 @@ async function send(key: string, event: unknown): Promise<void> {
   try {
     const { state, ui } = store.get();
     const sent = chosenWaves(ui, state);
+    const waves = doc.getState().waves;
+    runner.given = {};
+    for (const [path, name] of Object.entries(sent))
+      runner.given[path] = { name, rev: waves[name]?.rev ?? null };
     const outcome = await plugins.runView(plugin, view, { state, event, waves: sent });
     takeIn(store, runner, outcome);
     // What a command (a button, a click on a plot) or an action's values did to the state
