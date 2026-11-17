@@ -6,7 +6,7 @@ Run it from the repository root, with NumPy installed:
     python3 scripts/igor-fixtures.py
 
 The files are written here from the formats as WaveMetrics describes them:
-Technical Note TN003 for binary waves (.ibw, versions 1, 2, 3 and 5) and
+Technical Note TN003 for binary waves (.ibw, versions 1, 2, 3, 5 and 7) and
 PTN003 for packed experiments (.pxp). Beside them, expected.json says what
 each file holds, in the terms the reader (src/core/io/igor.ts) gives it:
 values in C order of Igor's dimensions (rows outermost), text in Igor's
@@ -150,8 +150,8 @@ class Wave:
         return result
 
     def write(self, version, order):
-        if version == 5:
-            return self.write5(order)
+        if version in (5, 7):
+            return self.write5(order, version)
         return self.write2(version, order)
 
     def write2(self, version, order):
@@ -185,14 +185,23 @@ class Wave:
         tail = b"" if version == 1 else self.note + (self.formula if version == 3 else b"")
         return bin_header + wfm + tail
 
-    def write5(self, order):
-        """Version 5: BinHeader5, WaveHeader5 (320 bytes), values, then the sections."""
+    def write5(self, order, version=5):
+        """Versions 5 and 7: BinHeader5, WaveHeader5 (320 bytes), values, then the sections.
+
+        Version 7 (Igor 8 and later, for a name or a dimension label longer than
+        31 bytes) is version 5 with the name's size in the first 16 bits of
+        what is reserved in version 5, and the name after all the other
+        sections; the header's 32 bytes for the name are not read. Its
+        dimension labels are C strings one after another (label_strings).
+        """
         values = self.value_bytes(order) if self.save_values else b""
         header = bytearray(320)
         struct.pack_into(order + "LLl", header, 4, 3_000_000_000, 3_000_000_001, self.npnts)
         struct.pack_into(order + "h", header, 16, self.code())
         struct.pack_into(order + "h", header, 26, 1)  # whVersion
-        header[28:28 + len(self.name)] = self.name
+        # A long name is cut to fit; a reader of version 7 must take it from the end.
+        short_name = self.name[:31]
+        header[28:28 + len(short_name)] = short_name
         shape = (self.shape + [0, 0, 0, 0])[:4] if self.npnts else [0, 0, 0, 0]
         struct.pack_into(order + "4l", header, 68, *shape)
         scaling = (self.scaling + [(0.0, 1.0)] * 4)[:4]
@@ -205,15 +214,17 @@ class Wave:
         if self.text is not None:
             ends = np.cumsum([len(item) for item in self.text]).astype(np.dtype("i4").newbyteorder(order))
             indices = ends.tobytes()
+        long_name = self.name if version == 7 else b""
         sizes = [320 + len(values), len(self.formula), len(self.note), len(self.long_unit),
                  *[len(unit) for unit in self.long_dim_units], *[len(label) for label in self.labels],
-                 len(indices), 0, 0]
-        bin_header = struct.pack(order + "hhl" + "l" * 14, 5, 0, *sizes)
+                 len(indices)]
+        # longWaveNameSize (16 bits; 0 in version 5), then the reserved fields.
+        bin_header = struct.pack(order + "hhl" + "l" * 12 + "hhl", version, 0, *sizes, len(long_name), 0, 0)
         words = np.frombuffer(bin_header + bytes(header), dtype=np.dtype("i2").newbyteorder(order))
         check = checksum(words.astype("<i2").tobytes())
         bin_header = bin_header[:2] + struct.pack(order + "h", check) + bin_header[4:]
         return (bin_header + bytes(header) + values + self.formula + self.note + self.long_unit
-                + b"".join(self.long_dim_units) + b"".join(self.labels) + indices)
+                + b"".join(self.long_dim_units) + b"".join(self.labels) + indices + long_name)
 
 
 def record(order, kind, data, superseded=False, version=0):
@@ -235,6 +246,11 @@ def variables(order, numbers, strings):
 def label_block(labels):
     """Dimension labels: 32 bytes each, the first for the dimension itself."""
     return b"".join(label.ljust(32, b"\0") for label in labels)
+
+
+def label_strings(labels):
+    """Dimension labels of a version 7 file: C strings one after another."""
+    return b"".join(label + b"\0" for label in labels)
 
 
 def single_waves():
@@ -282,6 +298,15 @@ def single_waves():
                                           kind="uint64")),
         ("v5-le-dependent.ibw", 5, "<", Wave("dependent5", np.zeros(4), kind="float64",
                                              formula=b"sin(x)\0", save_values=False)),
+        ("v7-le-long-name.ibw", 7, "<", Wave(
+            "温度 300 K で測った抵抗 (run 12)", np.array([1.5, -2.25, 1e10]), kind="float64",
+            scaling=[(0.0, 0.5)], dim_units=[b"s"], unit="Ω".encode(),
+            labels=[label_strings([b"", b"a row label that is longer than 31 bytes", b"", b"last"]),
+                    b"", b"", b""],
+            note=b"saved by Igor 8")),
+        ("v7-be-text.ibw", 7, ">", Wave(
+            "names_of_the_samples_measured_on_the_second_day", text=[b"A-1", "試料 2".encode()],
+            long_unit=b"sample identifiers", note=b"two\rlines")),
     ]
 
 
@@ -313,6 +338,8 @@ def experiment(order):
     wave([], Wave("a_b", np.array([2.0]), kind="float32"))
     wave([], Wave("2nd", np.array([3.0]), kind="float32"))
     wave([], Wave("dup", np.array([4.0]), kind="float32"))
+    wave([], Wave("a_wave_name_that_Igor_8_writes_as_version_7", np.array([7.0, 8.0]), kind="float64"),
+         version=7)
     wave([], Wave("dep", np.zeros(3), kind="float32", formula=b"wave0*2\0", save_values=False), version=3)
     start(["raw data"])
     records.append(variables(order, [(b"offset", -1.0)], []))

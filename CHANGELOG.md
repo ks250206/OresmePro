@@ -37,6 +37,10 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - A plugin's failure says where it failed (starting its sandbox, loading, running, the time
   limit, or what it returned), in the history and in the action's form.
 - The Python guide explains the codes, their details, stopped runs and plugin failures.
+- Igor binary waves of version 7 load, in `.ibw` files and in packed experiments. Igor 8
+  and later write them in place of version 5 for a wave whose name or a dimension label is
+  longer than 31 bytes; the long name is kept. Versions 6 and 8, Igor's undocumented format
+  for waves of 2 GB or more, are refused with a reason.
 
 ### Changed
 
@@ -46,6 +50,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - An action called from the app (`kernel.invoke`) that Python refuses is rejected with the
   message alone (no `OresmeError: ` before it), with its code and details; one that was
   interrupted is rejected as stopped.
+- An Igor file that cannot be read (not from Igor, damaged, or of a version this reader does
+  not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
+  for it, where it was `INTERNAL`.
 
 ## [0.3.0] - 2026-11-17
 

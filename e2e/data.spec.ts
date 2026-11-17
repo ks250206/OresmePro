@@ -492,7 +492,7 @@ test.describe("loading Igor files", () => {
     page,
   }) => {
     await app.drop([await igorFile("experiment-le.pxp", "run.pxp")]);
-    await expect.poll(async () => (await app.doc()).order.length).toBe(21);
+    await expect.poll(async () => (await app.doc()).order.length).toBe(22);
     const doc = await app.doc();
     expect(doc.folders).toEqual([
       "raw_data",
@@ -507,8 +507,8 @@ test.describe("loading Igor files", () => {
       "a_b_1",
       "wave_2nd",
       "dup",
+      "a_wave_name_that_Igor_8_writes_as_version_7",
       "raw_data:sig",
-      "raw_data:run_1:t0_int8",
     ]);
     expect((await app.wave("raw_data:run_1:t5_uint32"))!.data).toEqual([0, 0, 4294967295]);
     expect((await app.wave("a_folder_whose_name_is_longer_than_31_bytes:labels"))!.text).toEqual([
@@ -517,7 +517,7 @@ test.describe("loading Igor files", () => {
     ]);
     const summary = (await app.lastEntry()).code;
     expect(summary).toMatch(
-      /^Loaded 21 waves from run\.pxp: 6 in root, 1 in raw_data, 12 in raw_data:run_1/,
+      /^Loaded 22 waves from run\.pxp: 7 in root, 1 in raw_data, 12 in raw_data:run_1/,
     );
     expect(summary).toContain("Not loaded: root:dep (Igor computes it from a formula");
     expect(summary).toContain(
