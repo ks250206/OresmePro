@@ -42,6 +42,7 @@ import {
   drawingHandles,
   pixelToDrawing,
   tidyDrawingValue,
+  type DrawingGeometry,
 } from "../core/plot/drawings";
 import type { Rect } from "../core/plot/displayList";
 import {
@@ -318,7 +319,13 @@ type Gesture =
       from: { drawing: string; pixels: readonly number[] }[];
     }
   /** Dragging a handle of a drawing (see drawingHandles). */
-  | { kind: "handle"; name: string; handle: number };
+  | {
+      kind: "handle";
+      name: string;
+      handle: number;
+      /** The drawing when the drag began: the corner held is the one opposite the handle then. */
+      from: DrawingGeometry;
+    };
 
 /** A shape being drawn, in pixels; for a polygon, its corners so far and where the pointer is. */
 interface Draft {
@@ -595,7 +602,7 @@ export function GraphWindow({ name }: { name: string }) {
       );
       if (handle !== -1) {
         event.currentTarget.setPointerCapture(event.pointerId);
-        gesture.current = { kind: "handle", name: spec.name, handle };
+        gesture.current = { kind: "handle", name: spec.name, handle, from: geometry };
         return true;
       }
     }
@@ -678,10 +685,9 @@ export function GraphWindow({ name }: { name: string }) {
       );
     } else if (current?.kind === "handle") {
       const spec = graph.drawings.find((item) => item.name === current.name);
-      const geometry = layout.drawings.find((item) => item.name === current.name);
-      if (spec && geometry) {
+      if (spec) {
         placeDrawings([
-          { drawing: current.name, pixels: dragHandle(spec, geometry, current.handle, x, y) },
+          { drawing: current.name, pixels: dragHandle(spec, current.from, current.handle, x, y) },
         ]);
       }
     } else if (draft?.tool === "polygon") {

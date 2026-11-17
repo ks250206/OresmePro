@@ -4,7 +4,7 @@ import { echoPython } from "../doc/echo";
 import { graphScript } from "../doc/recreate";
 import { unzipExperiment, zipExperiment } from "../io/experiment";
 import type { MeasureText, Prim } from "./displayList";
-import { pixelToDrawing } from "./drawings";
+import { dragHandle, pixelToDrawing, tidyDrawingValue } from "./drawings";
 import { layoutGraph } from "./layout";
 
 const measure: MeasureText = (text, size) => text.length * size * 0.55;
@@ -227,5 +227,52 @@ describe("drawings on a graph", () => {
     expect(() => doc.dispatch({ op: "removeAxis", graph: "G", axis: "R2" })).toThrow(
       /in use by draw0/,
     );
+  });
+
+  it("keep the values of points on axes as they are, dates too", () => {
+    // 2026-11-17T12:30:00Z in seconds: six significant digits would move it by 1400 s.
+    const noon = Date.UTC(2026, 10, 17, 12, 30) / 1000;
+    expect(tidyDrawingValue(noon, "axes")).toBe(noon);
+    expect(tidyDrawingValue(noon + 0.25, "axes")).toBe(noon + 0.25);
+    expect(tidyDrawingValue(0.1 + 0.2, "axes")).toBe(0.3);
+    expect(tidyDrawingValue(0.123456, "plot")).toBe(0.1235);
+
+    // Pinned on a date axis, a drawing is where the pointer was, to the second.
+    const doc = new Doc();
+    const start = Date.UTC(2026, 10, 17) / 1000;
+    doc.dispatch({
+      op: "makeWave",
+      name: "t",
+      data: Float64Array.of(start, start + 86400),
+      unit: "dat",
+    });
+    doc.dispatch({ op: "makeWave", name: "v", data: Float64Array.of(0, 1) });
+    doc.dispatch({ op: "display", y: ["v"], x: "t", name: "D" });
+    const state = doc.getState();
+    const layout = layoutGraph(state.graphs.D!, state.waves, 400, 300, measure);
+    const bottom = layout.axes.bottom!.scale;
+    const [x] = pixelToDrawing(
+      { coords: "axes", hAxis: "bottom", vAxis: "left" },
+      bottom.toPixel(noon),
+      layout.plot.y,
+      layout.plot,
+      (axis) => layout.axes[axis]?.scale,
+    )!;
+    expect(Math.abs(tidyDrawingValue(x, "axes") - noon)).toBeLessThan(1);
+  });
+
+  it("hold the corner opposite the handle for the whole drag, past it too", () => {
+    const doc = graph();
+    doc.dispatch({ op: "addDrawing", graph: "G", kind: "rect", points: [0, 0, 1, 1] });
+    const spec = doc.getState().graphs.G!.drawings[0]!;
+    // The drawing as the drag began: a box from (0, 0) to (100, 100).
+    const start = {
+      name: spec.name,
+      points: [0, 0, 100, 100],
+      box: { x: 0, y: 0, w: 100, h: 100 },
+    };
+    expect(dragHandle(spec, start, 0, 110, 110)).toEqual([100, 100, 110, 110]);
+    expect(dragHandle(spec, start, 0, 120, 120)).toEqual([100, 100, 120, 120]);
+    expect(dragHandle(spec, start, 0, 50, 30)).toEqual([100, 100, 50, 30]);
   });
 });

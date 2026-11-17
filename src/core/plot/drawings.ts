@@ -318,7 +318,8 @@ export function drawingHandles(
 /**
  * The pixels of a drawing after a handle is dragged to (px, py). A corner
  * of a box moves with the opposite corner held; an end or a polygon corner
- * moves by itself.
+ * moves by itself. `geometry` is the drawing as it was when the drag began,
+ * so that the corner held stays the same one when the handle crosses it.
  */
 export function dragHandle(
   drawing: DrawingSpec,
@@ -338,8 +339,14 @@ export function dragHandle(
   return points;
 }
 
-/** A value to keep: fractions of the plot area to 1/10000, values on axes to 6 significant digits. */
+/**
+ * A value to keep. Fractions of the plot area go to 1/10000 (a hundredth of
+ * a pixel on a large graph). Values on axes are kept as they are: an axis can
+ * have a large offset and a narrow range (dates are seconds since 1970), so
+ * any fixed number of digits would move the drawing. Only the noise of binary
+ * arithmetic is taken away, at 15 significant digits.
+ */
 export function tidyDrawingValue(value: number, coords: DrawingSpec["coords"]): number {
   if (coords === "plot") return Math.round(value * 1e4) / 1e4;
-  return value === 0 ? 0 : Number(value.toPrecision(6));
+  return value === 0 ? 0 : Number(value.toPrecision(15));
 }
