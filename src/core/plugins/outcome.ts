@@ -52,8 +52,9 @@ const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON
  * The run whose waves a run of `source.action` on these inputs may replace:
  * the latest result the same action of the same plugin kept for the same
  * input waves; and, by role, those of its waves that are still what it
- * made (equal to the result's own copies), which may be made again under
- * their names. Null when there is no such run.
+ * made (equal to the result's own copies) and still under a name such a
+ * run makes (not renamed), which may be made again under their names. Null
+ * when there is no such run.
  */
 export function previousOutputs(
   state: DocState,
@@ -73,13 +74,24 @@ export function previousOutputs(
   }
   if (!latest) return null;
   const given = new Set(Object.values(inputs).flat());
+  // Only a wave still under a name a run of it makes ("<input>_<role>", or with _1, _2...):
+  // a renamed wave was set aside by the user, though the result follows it to its new name.
+  const first = Object.values(inputs).flat()[0];
+  const folder = first ? parentFolder(first) : "";
+  const stem = first ? leafName(first) : source.action.split(".").at(-1)!;
+  const ownName = (role: string, name: string) => {
+    const base = folder ? `${folder}:${stem}_${role}` : `${stem}_${role}`;
+    return (
+      name === base || (name.startsWith(`${base}_`) && /^\d+$/.test(name.slice(base.length + 1)))
+    );
+  };
   const unchanged: Record<string, string> = {};
   for (const [role, name] of Object.entries(latest.outputs)) {
     const wave = Object.hasOwn(state.waves, name) ? state.waves[name] : undefined;
     const keptName = latest.kept[role];
     const kept =
       keptName && Object.hasOwn(state.waves, keptName) ? state.waves[keptName] : undefined;
-    if (!wave || !kept || given.has(name)) continue;
+    if (!wave || !kept || given.has(name) || !ownName(role, name)) continue;
     if (waveFingerprint(wave) === waveFingerprint(kept) && wave.unit === kept.unit)
       unchanged[role] = name;
   }
