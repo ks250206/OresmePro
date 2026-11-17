@@ -182,6 +182,8 @@ export class ExperimentSession {
   private registeredAt = 0;
   /** True once this session has replaced what was saved: from then on the backup is the way back. */
   private replaced = false;
+  /** True once something was changed here that this tab does not save (see unsavedHere). */
+  private changedUnsaved = false;
   private readonly parts: { doc: Doc; history: History; files: FileStore };
   private readonly env: ExperimentEnvironment;
 
@@ -236,6 +238,7 @@ export class ExperimentSession {
     const known = (await readRegistry(this.root)).find((item) => item.id === this.id);
     if (known) this.info = known;
     const report = await restore(doc, history, files, this.options());
+    this.watchUnsaved();
     if (this.writer && !known) await this.register();
     if (report.incomplete) {
       this.set({
@@ -251,6 +254,46 @@ export class ExperimentSession {
 
   private options() {
     return { directory: () => Promise.resolve(this.dir) };
+  }
+
+  /**
+   * Notes the changes made while this tab does not save (another tab does,
+   * or what is saved could not be read): they are this tab's alone. Moving
+   * and sizing windows is not counted.
+   */
+  private watchUnsaved(): void {
+    const { doc, files } = this.parts;
+    let last = doc.getState();
+    const mark = () => {
+      if (!this.saver) this.changedUnsaved = true;
+    };
+    doc.subscribe(() => {
+      const now = doc.getState();
+      const before = last;
+      last = now;
+      if (this.saver || now === before) return;
+      for (const key of Object.keys(now) as (keyof typeof now)[]) {
+        if (key !== "windows" && now[key] !== before[key]) {
+          mark();
+          return;
+        }
+      }
+    });
+    files.subscribe(mark);
+  }
+
+  /**
+   * Whether this tab holds changes that are saved nowhere: made while
+   * another tab saved the experiment, or while what is saved could not be
+   * read. Leaving would lose them. Taking over saves them.
+   */
+  unsavedHere(): boolean {
+    return !this.saver && this.changedUnsaved;
+  }
+
+  /** The user chose to leave without the changes made here: they are not asked about again. */
+  discardHere(): void {
+    this.changedUnsaved = false;
   }
 
   /** Asks for the experiment's lock: if it is free, or (to take over) from whoever holds it. */
@@ -278,6 +321,8 @@ export class ExperimentSession {
 
   private begin(): void {
     const { doc, history, files } = this.parts;
+    // From here on this tab saves: what it had changed is saved with the rest.
+    this.changedUnsaved = false;
     this.saver = autosave(doc, history, files, {
       ...this.options(),
       // The session locks of the saver tell which data files are still some tab's.
@@ -327,12 +372,11 @@ export class ExperimentSession {
 
   /**
    * Saves what is unsaved, before the page goes on to something else.
-   * False when this tab saves the experiment and could not: what is
-   * unsaved would be lost by leaving. A tab that does not save it (another
-   * tab does, or it could not be read) has nothing of its own to lose.
+   * False when leaving would lose something: this tab saves the experiment
+   * and could not, or it does not save it and was changed (see unsavedHere).
    */
   async flush(): Promise<boolean> {
-    if (!this.saver) return true;
+    if (!this.saver) return !this.unsavedHere();
     return this.saver.saveNow();
   }
 

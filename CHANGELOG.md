@@ -144,6 +144,10 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - On a Mac, Shift+Option+F formats a procedure, Option+G goes to a line, and Option+F takes
   the next word of the command line's suggestion. Option turns those keys into other
   characters (Ï, ©, ƒ), so they did nothing; they are now matched by the key's place.
+- A tab that does not save its experiment (another tab does) no longer drops what was changed in
+  it without a word when another experiment is opened in it: it asks first, and offers to save
+  here, then open, to save a copy as a file, or to leave without the changes. Closing it with
+  such changes asks too. Moving and sizing windows does not count as a change.
 - A plugin's view follows its data: while its window is open, a wave it was given that changes
   (from Python or a table, say) or is killed is told to it as a `change`, as if it had been
   chosen again, rather than staying drawn as it was until the next edit in the window.

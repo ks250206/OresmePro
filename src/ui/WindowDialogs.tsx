@@ -265,10 +265,12 @@ export function LinkGraphsDialog({ graph: initial }: { graph?: string }) {
 /**
  * Asked when this experiment could not be saved before another one opens:
  * leaving now would lose what is unsaved. Try again, keep a copy as a file,
- * or leave anyway.
+ * or leave anyway. Where this tab does not save the experiment and was
+ * changed, the way to keep the changes is to save here instead.
  */
 export function UnsavedLeaveDialog({ target }: { target: string }) {
   const error = experiment.getState();
+  if (experiment.unsavedHere()) return <ChangedHereDialog target={target} />;
   return (
     <Dialog
       title="The Experiment Is Not Saved"
@@ -302,6 +304,53 @@ export function UnsavedLeaveDialog({ target }: { target: string }) {
       {error.kind === "failed" ? <p className="text-[11px] text-danger">{error.error}</p> : null}
       <p className="text-[11px] text-muted">
         Free up the browser&apos;s storage and try again, or keep a copy as a .oresme file first.
+      </p>
+    </Dialog>
+  );
+}
+
+/** The changes of a tab that does not save its experiment, about to be left. */
+function ChangedHereDialog({ target }: { target: string }) {
+  const elsewhere = experiment.getState().kind === "elsewhere";
+  return (
+    <Dialog
+      title="Changes Made in This Tab Are Not Saved"
+      width={460}
+      onClose={close}
+      submitLabel={elsewhere ? "Save Here, Then Open" : undefined}
+      onSubmit={
+        elsewhere
+          ? () => {
+              close();
+              void experiment.takeOver().then(() => switchExperiment(target));
+            }
+          : undefined
+      }
+      buttons={
+        <>
+          <Button onClick={() => saveExperimentAs(experimentFileName())}>Save as File…</Button>
+          <Button
+            onClick={() => {
+              if (window.confirm("Leave without the changes made in this tab? They are lost.")) {
+                close();
+                leaveFor(target);
+              }
+            }}
+          >
+            Leave Without Saving
+          </Button>
+        </>
+      }
+    >
+      <p className="leading-relaxed">
+        {elsewhere
+          ? "Another tab saves this experiment, so what was changed in this tab is kept nowhere: opening another experiment here would lose it."
+          : "What is saved of this experiment could not be read, so it is not saved over, and what was changed in this tab is kept nowhere: opening another experiment here would lose it."}
+      </p>
+      <p className="text-[11px] text-muted">
+        {elsewhere
+          ? "Save Here makes this tab the one that saves the experiment, as it is here: what the other tab saved is replaced. Or keep a copy as a .oresme file first."
+          : "Keep a copy as a .oresme file first, or leave without the changes."}
       </p>
     </Dialog>
   );

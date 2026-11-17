@@ -221,6 +221,10 @@ export async function startExperiment(): Promise<void> {
   }
   // Plugins belong to the browser, not the experiment; a failure to read them stops nothing.
   void pluginStore.load().catch(() => {});
+  // A tab that does not save its experiment asks before it closes with changes of its own.
+  window.addEventListener("beforeunload", (event) => {
+    if (experiment.unsavedHere()) event.preventDefault();
+  });
   await experiment.start();
 }
 

@@ -389,6 +389,8 @@ export async function switchExperiment(id: string): Promise<void> {
 
 /** Goes to another of the browser's experiments without saving this one again. */
 export function leaveFor(id: string): void {
+  // Leaving was decided: the page is not to ask again as it unloads.
+  experiment.discardHere();
   location.hash = `#e=${id}`;
   location.reload();
 }

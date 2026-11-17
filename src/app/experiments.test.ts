@@ -185,6 +185,43 @@ describe("experiments kept in the browser", () => {
     expect(waves((await open()).doc)).toEqual({ w: [1], a: [3] });
   });
 
+  it("knows when a tab that does not save holds changes of its own", async () => {
+    const a = await open();
+    make(a.doc, "w", [1]);
+    await settle();
+    expect(a.session.unsavedHere()).toBe(false);
+    const b = await open();
+    expect(b.session.unsavedHere()).toBe(false);
+    expect(await b.session.flush()).toBe(true);
+    b.doc.dispatch({ op: "display", y: ["w"], name: "G" });
+    expect(b.session.unsavedHere()).toBe(true);
+    expect(await b.session.flush()).toBe(false);
+    b.session.discardHere();
+    expect(await b.session.flush()).toBe(true);
+    b.files.put("notes.txt", new Uint8Array([1]));
+    expect(b.session.unsavedHere()).toBe(true);
+    // Taking over saves them: nothing of this tab's is left unsaved.
+    await b.session.takeOver();
+    await settle();
+    expect(b.session.unsavedHere()).toBe(false);
+    expect(await b.session.flush()).toBe(true);
+    // And the tab that was saving has nothing of its own until it is changed.
+    expect(a.session.unsavedHere()).toBe(false);
+    make(a.doc, "late", [2]);
+    expect(a.session.unsavedHere()).toBe(true);
+  });
+
+  it("does not count moving windows as a change of a tab that does not save", async () => {
+    const a = await open();
+    a.doc.dispatch({ op: "display", y: [], name: "G" });
+    await settle();
+    const b = await open();
+    const [window] = b.doc.getState().windows;
+    b.doc.dispatch({ op: "moveWindow", name: window!.name, x: 40, y: 50 });
+    expect(b.doc.getState().windows[0]).not.toBe(window);
+    expect(b.session.unsavedHere()).toBe(false);
+  });
+
   it("stops the tab that was saving when another takes over", async () => {
     const a = await open();
     make(a.doc, "w", [1]);

@@ -43,6 +43,34 @@ test.describe("experiments kept in the browser", () => {
     await second.page.close();
   });
 
+  test("a tab that does not save asks before it leaves with changes of its own", async ({
+    app,
+    page,
+  }) => {
+    await app.run('op.make("first", [1])');
+    await expect(saving(app)).toHaveText(/^Saved \d/);
+    const second = new App(await page.context().newPage());
+    await second.page.goto("/");
+    await expect(saving(second)).toContainText("Open in another tab: not saved here");
+    await expect(second.page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
+    await second.run('op.make("second", [2])');
+
+    await second.menu("File", "New Experiment");
+    const dialog = second.page.getByRole("dialog", {
+      name: "Changes Made in This Tab Are Not Saved",
+    });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Save Here, Then Open" }).click();
+    await expect(second.page).toHaveTitle("Untitled — OresmePro");
+    // It saved what it had before it left, and the first tab stopped saving.
+    await expect(saving(app)).toContainText("Open in another tab: not saved here");
+    const third = new App(await page.context().newPage());
+    await third.page.goto("/#e=default");
+    await expect.poll(async () => (await third.doc()).order).toEqual(["first", "second"]);
+    await third.page.close();
+    await second.page.close();
+  });
+
   test("a new experiment leaves the old one to be opened again, renamed or deleted", async ({
     app,
     page,
