@@ -201,16 +201,22 @@ describe("KernelClient actions", () => {
 
   it("stops the plugins' runs Python waits on when it is interrupted or restarted", () => {
     const signals: AbortSignal[] = [];
+    const invokePlugin: NonNullable<KernelOptions["invokePlugin"]> = (
+      _action,
+      _args,
+      _writer,
+      options,
+    ) => {
+      signals.push(options.signal!);
+      // The plugin is still at work.
+      return new Promise(() => {});
+    };
     const kernel = new KernelClient({
       doc: new Doc(),
       history: new History(),
       files: new FileStore(),
       indexURL: "/pyodide/",
-      invokePlugin: (_action, _args, _writer, options) => {
-        signals.push(options.signal!);
-        // The plugin is still at work.
-        return new Promise(() => {});
-      },
+      invokePlugin,
     } as unknown as KernelOptions);
     kernel.start();
     const worker = FakeWorker.last!;
