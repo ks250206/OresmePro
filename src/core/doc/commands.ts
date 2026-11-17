@@ -2204,6 +2204,34 @@ function moved(wave: Wave, name: string): Wave {
     : next;
 }
 
+/**
+ * After a change to `before` that no formula reads (its note, say), the
+ * formulas that were up to date with it, its own and those it is an input
+ * of, are kept up to date with `after` rather than computed again.
+ */
+function keepFormulasCurrent(state: DocState, before: Wave, after: Wave): DocState {
+  let waves = state.waves;
+  for (const wave of Object.values(waves)) {
+    const formula = wave.formula;
+    if (!formula) continue;
+    const own = wave.name === after.name && formula.rev === before.rev;
+    const input = formula.inputs[before.name] === before.rev;
+    if (!own && !input) continue;
+    const current = wave.name === after.name ? after : wave;
+    waves = withEntry(waves, wave.name, {
+      ...current,
+      formula: {
+        ...formula,
+        rev: own ? after.rev : formula.rev,
+        inputs: input
+          ? dict([...Object.entries(formula.inputs), [before.name, after.rev]])
+          : formula.inputs,
+      },
+    });
+  }
+  return waves === state.waves ? state : { ...state, waves };
+}
+
 /** A wave without its formula, keeping its values. */
 function withoutFormula(wave: Wave): Wave {
   const { formula: _formula, ...rest } = wave;
@@ -2573,13 +2601,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "setWaveMeta": {
       const wave = requireWave(state, command.name);
-      return {
-        state: putWave(
-          state,
-          changed(wave, { unit: command.unit ?? wave.unit, note: command.note ?? wave.note }),
-        ),
-        result: null,
-      };
+      const next = changed(wave, {
+        unit: command.unit ?? wave.unit,
+        note: command.note ?? wave.note,
+      });
+      // No formula reads a wave's unit or note: those up to date stay so, and are not computed again.
+      return { state: keepFormulasCurrent(putWave(state, next), wave, next), result: null };
     }
     case "renameWave": {
       const wave = requireWave(state, command.name);

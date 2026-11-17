@@ -135,6 +135,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - An Igor file that cannot be read (not from Igor, damaged, or of a version this reader does
   not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
   for it, where it was `INTERNAL`.
+- Editing a wave's note or unit, or its scaling or name, no longer writes its numbers to the
+  browser's storage again or sends them to Python again; editing its note or unit no longer
+  computes again the formulas made from it, or its own.
 
 ### Fixed
 

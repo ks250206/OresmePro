@@ -35,6 +35,8 @@ const exported: string[] = [];
 let beforeRpc: ((method: string) => void) | null = null;
 /** The catalogs of actions Python has sent, the latest last. */
 const catalogs: ActionSpec[][] = [];
+/** The requests answered with numbers, in order. */
+const sent: string[] = [];
 /** What Python last said the user's variables are. */
 let variables: VariablesStatus | null = null;
 
@@ -56,7 +58,7 @@ beforeAll(async () => {
   kernel = await bootPython(pyodide, {
     rpc: (method, paramsJson, data) => {
       beforeRpc?.(method);
-      return answerRpc(
+      const answer = answerRpc(
         {
           doc,
           files,
@@ -96,6 +98,8 @@ beforeAll(async () => {
         data ? data.slice() : null,
         `run${runCount}`,
       );
+      if (answer.data) sent.push(method);
+      return answer;
     },
     stream: (name, text) => {
       if (name === "stdout") stdout += text;
@@ -140,6 +144,20 @@ describe("oresme Python API", () => {
     expect([...doc.getState().waves.signal!.data]).toEqual([0, 11, 0, 6, 0]);
     expect(await run("w.data = w.data * 2; print(w.data[1])")).toBe(true);
     expect(stdout).toBe("22.0\n");
+  });
+
+  it("sends a wave's numbers again when they change, not when its note does", async () => {
+    doc.dispatch({ op: "makeWave", name: "cached", data: Float64Array.from([1, 2, 3]) });
+    const read = async () => {
+      sent.length = 0;
+      expect(await run("print(op.wave('cached').data.sum())")).toBe(true);
+      return [stdout, sent.filter((method) => method === "waveData").length];
+    };
+    expect(await read()).toEqual(["6.0\n", 1]);
+    doc.dispatch({ op: "setWaveMeta", name: "cached", note: "seen", unit: "V" });
+    expect(await read()).toEqual(["6.0\n", 0]);
+    doc.dispatch({ op: "setWaveData", name: "cached", data: Float64Array.from([4, 5, 6]) });
+    expect(await read()).toEqual(["15.0\n", 1]);
   });
 
   it("refuses silent no-op writes to the data copy", async () => {

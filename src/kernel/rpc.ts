@@ -9,6 +9,7 @@ import { changedInputs } from "../core/doc/results";
 import { changedSampleInputs } from "../core/doc/analysisTemplates";
 import { templateWarnings } from "../core/doc/graphTemplates";
 import { resolveButton } from "../core/doc/panels";
+import { valuesId } from "../core/doc/values";
 import {
   errorInfo,
   DocError,
@@ -281,10 +282,13 @@ export function handleRpc(
     case "waveData": {
       const wave = readWave(params.name);
       if (wave.text) return { result: { ...waveInfo(state, wave), text: wave.text } };
-      // The caller says which revision it has cached; skip the copy if current.
-      return params.rev === wave.rev
-        ? { result: waveInfo(state, wave) }
-        : { result: waveInfo(state, wave), data: transportData(wave) };
+      // The caller says which values it has a copy of (see valuesId); none are sent if they
+      // are these. Not by `rev`: a new note does not send the numbers again.
+      const values = valuesId(wave);
+      const info = { ...waveInfo(state, wave), values };
+      return params.values === values
+        ? { result: info }
+        : { result: info, data: transportData(wave) };
     }
     case "listWaves":
       return { result: state.waveOrder };
