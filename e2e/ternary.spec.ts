@@ -21,7 +21,7 @@ test.describe("the example plugin ternary", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(TERNARY);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("Ternary Diagram 0.1.0");
+    await expect(approval).toContainText("Ternary Diagram 0.2.0");
     await approval.getByRole("button", { name: "Install" }).click();
     const dialog = page.getByRole("dialog", { name: "Plugins" });
     await expect(

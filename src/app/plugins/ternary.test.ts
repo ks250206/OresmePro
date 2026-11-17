@@ -228,6 +228,42 @@ describe("the example plugin ternary", () => {
     expect(kept.annotations).toEqual([]);
   });
 
+  it("draws the points with the marker, color, size and fill asked for", () => {
+    const doc = compositions();
+    const made = make(doc);
+    const plain = doc.getState().graphs[made]!;
+    expect(plain.traces.find((trace) => trace.y === "a_y")).toMatchObject({
+      marker: "square",
+      markerSize: 4,
+      markerFill: true,
+      color: "#4a90d9",
+    });
+
+    const styled = compositions();
+    const name = make(styled, {
+      marker: "triangle",
+      marker_color: "red",
+      marker_size: 7,
+      marker_fill: false,
+    });
+    const points = styled.getState().graphs[name]!.traces.find((trace) => trace.y === "a_y")!;
+    expect(points).toMatchObject({
+      marker: "triangle",
+      markerSize: 7,
+      markerFill: false,
+      color: "#ff0000",
+    });
+    // Only the points change: the frame keeps its gray.
+    const frame = styled.getState().graphs[name]!.traces.find((trace) => trace.y === "a_frame_y")!;
+    expect(frame.color).toBe("#808080");
+  });
+
+  it("refuses a marker it does not know, and a color the app does not", () => {
+    expect(() => make(compositions(), { marker: "star" })).toThrow(/marker is one of/);
+    expect(() => make(compositions(), { marker_size: 0 })).toThrow(/more than 0/);
+    expect(() => make(compositions(), { marker_color: "not a color" })).toThrow(/color/i);
+  });
+
   it("refuses names that are not three", () => {
     expect(() => make(compositions(), { names: "A, B" })).toThrow(/three names/);
   });

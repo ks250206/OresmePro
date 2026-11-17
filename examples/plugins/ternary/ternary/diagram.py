@@ -31,6 +31,8 @@ FRAME = "#808080"
 GRID = "#c8c8c8"
 LABELS = "#606060"
 POINTS = "#4a90d9"
+#: The shapes a trace's markers take (MARKER_SHAPES in the app).
+MARKERS = ("circle", "square", "triangle", "diamond", "cross", "plus")
 
 
 def position(a, b, c):
@@ -106,11 +108,29 @@ def names_of(text):
 
 
 @action("ternary")
-def ternary(a, b, c, names="A, B, C", step=10.0, grid=True, ticks="clockwise", legend=""):
+def ternary(
+    a,
+    b,
+    c,
+    names="A, B, C",
+    step=10.0,
+    grid=True,
+    ticks="clockwise",
+    legend="",
+    marker="square",
+    marker_color=POINTS,
+    marker_size=4.0,
+    marker_fill=True,
+):
     if not (len(a) == len(b) == len(c)):
         raise PluginError(f"A, B and C have {len(a)}, {len(b)} and {len(c)} points; they need as many.")
     if not 1 <= step <= 50:
         raise PluginError("The grid step is between 1 and 50 %.")
+    if marker not in MARKERS:
+        raise PluginError(f"The marker is one of: {', '.join(MARKERS)}.")
+    if not marker_size > 0:
+        raise PluginError("The marker size is more than 0.")
+    color = str(marker_color).strip() or POINTS
     top, right, left = names_of(names)
     x, y = position(a.data, b.data, c.data)
 
@@ -169,9 +189,10 @@ def ternary(a, b, c, names="A, B, C", step=10.0, grid=True, ticks="clockwise", l
         "y": "y",
         "x": "x",
         "mode": "markers",
-        "marker": "square",
-        "marker_size": 4,
-        "color": POINTS,
+        "marker": marker,
+        "marker_size": float(marker_size),
+        "marker_fill": bool(marker_fill),
+        "color": color,
     }
     if legend:
         point_trace["legend"] = str(legend)

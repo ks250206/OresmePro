@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "name": "ternary",
   "title": "Ternary Diagram",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Plots compositions of three components as a ternary diagram: a triangle with a grid, tick labels and corner names, drawn with ordinary traces so that colors, lines, markers, text and the legend can be changed in Modify Trace and the rest of the app afterwards.",
   "license": "MIT",
   "python": {
@@ -59,6 +59,33 @@
           "title": "Legend",
           "default": "",
           "description": "The points' text in a legend at the top right; empty, no legend."
+        },
+        "marker": {
+          "type": "choice",
+          "title": "Marker",
+          "default": "square",
+          "choices": ["circle", "square", "triangle", "diamond", "cross", "plus"],
+          "description": "The shape of the points' markers."
+        },
+        "marker_color": {
+          "type": "string",
+          "title": "Marker color",
+          "default": "#4a90d9",
+          "description": "The color of the points: \"#rrggbb\", \"#rgb\" or a name such as red, blue or black."
+        },
+        "marker_size": {
+          "type": "number",
+          "title": "Marker size",
+          "default": 4,
+          "min": 0.5,
+          "max": 50,
+          "description": "How large the points' markers are."
+        },
+        "marker_fill": {
+          "type": "boolean",
+          "title": "Filled markers",
+          "default": true,
+          "description": "Whether the markers are filled, or drawn as outlines."
         }
       }
     }
