@@ -65,6 +65,12 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
   for it, where it was `INTERNAL`.
 
+### Fixed
+
+- On a Mac, Shift+Option+F formats a procedure, Option+G goes to a line, and Option+F takes
+  the next word of the command line's suggestion. Option turns those keys into other
+  characters (Ï, ©, ƒ), so they did nothing; they are now matched by the key's place.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
