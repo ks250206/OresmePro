@@ -17,7 +17,7 @@ import {
   waveArgs,
 } from "../../core/plugins/outcome";
 import type { SandboxDtype, SandboxWave } from "../../core/sandbox/protocol";
-import type { CheckedResult } from "../../core/sandbox/validate";
+import { SandboxError, type CheckedResult } from "../../core/sandbox/validate";
 import { Sandbox } from "../../sandbox/host";
 import type { InstalledPlugin, PluginStore } from "./store";
 
@@ -49,6 +49,11 @@ export interface RunOptions {
    * again, or op.invoke(..., replace=True).
    */
   replace?: boolean;
+  /**
+   * Stops the run: its sandbox is stopped, and what it computed, should it
+   * be done already, is not kept. The run then fails as stopped.
+   */
+  signal?: AbortSignal;
 }
 
 /** How long a preview may take before the plugin's sandbox is stopped. */
@@ -245,13 +250,19 @@ export class PluginHost {
     const read = (): DocState => (writer ? writer.getState() : this.options.doc.getState());
     const { plugin, action, inputs, params, revisions } = this.prepare(id, args, read(), writer);
 
+    const { signal } = options;
+    const stopped = () => new SandboxError("Stopped.", "stopped");
+    if (signal?.aborted) throw stopped();
     const sandbox = await this.sandbox(plugin);
     const outcome = await sandbox.run({
       action: action.name,
       inputs,
       params,
       timeoutMs: this.options.timeoutMs ?? 5 * 60_000,
+      signal,
     });
+    // Stopped as it ended (Python restarted, say): nothing of it is kept.
+    if (signal?.aborted) throw stopped();
 
     const source: ResultSource = {
       action: id,

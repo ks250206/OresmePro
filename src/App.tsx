@@ -45,6 +45,7 @@ import { importPanels, newPanel } from "./app/panels";
 import { docsUrl, GITHUB_URL, openLink } from "./app/links";
 import { importProcedures } from "./app/procedures";
 import { windowListItems } from "./app/windowMenu";
+import { useStore } from "./app/store";
 import { frontWindow, type WindowState } from "./core/doc/types";
 import { ruffFiles } from "./editor/loadRuff";
 import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
@@ -66,6 +67,8 @@ import {
   showError,
   startExperiment,
   ui,
+  interruptAll,
+  pluginRuns,
   useDoc,
   useDocWhere,
   useExperimentInfo,
@@ -153,6 +156,7 @@ function useMenus(): MenuDefinition[] {
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
   const kernelState = useKernelState();
+  const pluginsRunning = useStore(pluginRuns, (runs) => runs.running);
   const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
   // The actions of the plugins turned on, each opening its form in a window of its own.
   const pluginActions: MenuItem[] = installed
@@ -433,8 +437,8 @@ function useMenus(): MenuDefinition[] {
         {
           label: kernelState.interrupting ? "Interrupt Again (Restarts Python)" : "Interrupt",
           shortcut: "Ctrl+C",
-          disabled: kernelState.status !== "busy",
-          onSelect: () => kernel.interruptExecution(),
+          disabled: kernelState.status !== "busy" && pluginsRunning === 0,
+          onSelect: interruptAll,
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
         { separator: true },

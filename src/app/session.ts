@@ -433,6 +433,27 @@ export function subscribeCatalog(listener: () => void): () => void {
 }
 
 /**
+ * The plugins' runs started from the app's windows (panels, dialogs, a
+ * view's buttons), which Interrupt stops as it stops Python. Runs Python
+ * asked for are Python's (see KernelClient), stopped with it.
+ */
+export const pluginRuns = createStore<{ running: number }>({ running: 0 });
+const pluginControllers = new Set<AbortController>();
+
+/**
+ * Interrupt, as the menu, Ctrl+C and the status bar ask: stops the plugins'
+ * runs started from the windows, and interrupts Python if it is running.
+ */
+export function interruptAll(): void {
+  for (const controller of pluginControllers) controller.abort();
+  if (kernel.getState().status === "busy") kernel.interruptExecution();
+}
+
+/** Whether there is anything for Interrupt to stop. */
+export const somethingRunning = (): boolean =>
+  kernel.getState().status === "busy" || pluginRuns.get().running > 0;
+
+/**
  * Calls an action by id, as panels and the Plugins dialog do. The app's own
  * and the procedures' go to Python; a plugin's goes to its sandbox, with the
  * call recorded in the history as the Python that does the same.
@@ -447,8 +468,11 @@ export async function invokeAction(
   flushEchoes();
   const startedAt = Date.now();
   const entry = history.add("gui", invokeCode(id, args, undefined, options), "running", startedAt);
+  const controller = new AbortController();
+  pluginControllers.add(controller);
+  pluginRuns.set({ running: pluginControllers.size });
   try {
-    const outcome = await plugins.run(id, args, null, options);
+    const outcome = await plugins.run(id, args, null, { ...options, signal: controller.signal });
     if (outcome.log)
       history.appendOutput(entry, { kind: "stream", name: "stdout", text: outcome.log });
     const made = Object.values(outcome.waves);
@@ -467,6 +491,9 @@ export async function invokeAction(
       durationMs: Date.now() - startedAt,
     });
     throw failure.cancelled ? new CancelledError(failure.output.message) : error;
+  } finally {
+    pluginControllers.delete(controller);
+    pluginRuns.set({ running: pluginControllers.size });
   }
 }
 

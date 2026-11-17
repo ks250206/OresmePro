@@ -154,7 +154,7 @@ In the interface, the command window names the kind of error (`NotFoundError: No
 
 ### Stopped runs
 
-A run stopped with **Python → Interrupt**, or by restarting Python while it ran, is recorded as stopped, not failed: its mark is ■, not red. Inside Python it is still a `KeyboardInterrupt`. Stopping a template run leaves the samples it had not finished as `cancelled`. A plugin stopped while it runs (turned off, say) is stopped too.
+A run stopped with **Python → Interrupt**, or by restarting Python while it ran, is recorded as stopped, not failed: its mark is ■, not red. Inside Python it is still a `KeyboardInterrupt`. Stopping a template run leaves the samples it had not finished as `cancelled`. A plugin stopped while it runs (turned off, say) is stopped too. **Interrupt** also stops the plugins' runs started from windows (a panel or a dialog, say), which the status bar shows while they run. A plugin that Python called with `op.invoke` stops when Python is interrupted or restarted, and nothing it was making goes into the experiment.
 
 ### Plugin failures
 

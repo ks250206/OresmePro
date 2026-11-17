@@ -45,7 +45,7 @@ export interface KernelOptions {
     action: string,
     args: Record<string, unknown>,
     writer: DocWriter | null,
-    options: { replace?: boolean },
+    options: { replace?: boolean; signal?: AbortSignal },
   ) => Promise<unknown>;
   indexURL: string;
 }
@@ -110,6 +110,12 @@ export class KernelClient {
   private readonly running = new Map<number, Running>();
   private readonly completions = new Map<number, (items: CompletionItem[]) => void>();
   private pendingReply: { json: string; data: Float64Array | null } | null = null;
+  /**
+   * The plugins' runs Python asked for and waits on. Python cannot notice an
+   * interrupt while it waits, so an interrupt stops these; a restart does too,
+   * so that none puts its waves into the experiment after Python is gone.
+   */
+  private readonly pluginRuns = new Set<AbortController>();
   private nextId = 1;
   private ready = false;
   private interruptAcked = false;
@@ -279,6 +285,8 @@ export class KernelClient {
       this.restart("Python did not stop, so it was restarted.");
       return;
     }
+    // Python waiting on a plugin hears of the interrupt once the plugin answers, as stopped.
+    this.stopPluginRuns();
     this.interruptAcked = false;
     // Executions run in order, so the first one still pending is the one running.
     const [current] = this.running.keys();
@@ -341,6 +349,7 @@ export class KernelClient {
   dispose(): void {
     this.worker?.terminate();
     this.worker = null;
+    this.stopPluginRuns();
   }
 
   private send(message: ToWorker): void {
@@ -522,9 +531,20 @@ export class KernelClient {
       fail(new Error("Plugins cannot be run here."));
       return;
     }
+    const controller = new AbortController();
+    this.pluginRuns.add(controller);
     run(params.action, params.args as Record<string, unknown>, openStage(this.options.doc), {
       replace: params.replace === true,
-    }).then((result) => reply(JSON.stringify({ ok: true, result: result ?? null })), fail);
+      signal: controller.signal,
+    })
+      .then((result) => reply(JSON.stringify({ ok: true, result: result ?? null })), fail)
+      .finally(() => this.pluginRuns.delete(controller));
+  }
+
+  /** Stops the plugins' runs Python waits on: each answers Python as stopped. */
+  private stopPluginRuns(): void {
+    for (const controller of this.pluginRuns) controller.abort();
+    this.pluginRuns.clear();
   }
 
   /**
@@ -533,6 +553,7 @@ export class KernelClient {
    */
   private failAll(reason: string, cancelled = false): void {
     const { history } = this.options;
+    this.stopPluginRuns();
     // Python stopped: an atomic block it had open will never be finished.
     dropStage(this.options.doc);
     for (const run of this.running.values()) {

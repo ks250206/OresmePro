@@ -104,16 +104,16 @@ sidebar:
 
 ## Python
 
-| 項目                                   | すること                                                                       | Python / 備考       |
-| -------------------------------------- | ------------------------------------------------------------------------------ | ------------------- |
-| Interrupt                              | 実行中の Python を止める(**Ctrl+C**)。もう一度押すと再起動                     |                     |
-| Restart Python                         | Python を再起動する。wave・グラフ・テーブルは残る                              |                     |
-| Variables                              | Python の変数の一覧。選んで消せる(`del`)                                       |                     |
-| Procedure Browser                      | Procedure と、その中のクラス・関数の一覧。クリックで定義の行へ                 |                     |
-| Packages…                              | この実験のパッケージ、Python の中のパッケージ一覧、導入と削除                  | `%pip install name` |
-| Plugins…                               | プラグインの導入・管理・実行                                                   |                     |
-| Plugin Actions                         | 有効なプラグインの Action のフォームを、動かせるウィンドウで開く               |                     |
-| Keep Optional Packages for Offline Use | 同梱パッケージ(SciPy など)を先にブラウザへ保存し、オフラインで使えるようにする |                     |
+| 項目                                   | すること                                                                         | Python / 備考       |
+| -------------------------------------- | -------------------------------------------------------------------------------- | ------------------- |
+| Interrupt                              | 実行中の Python とプラグインを止める(**Ctrl+C**)。もう一度押すと Python を再起動 |                     |
+| Restart Python                         | Python を再起動する。wave・グラフ・テーブルは残る                                |                     |
+| Variables                              | Python の変数の一覧。選んで消せる(`del`)                                         |                     |
+| Procedure Browser                      | Procedure と、その中のクラス・関数の一覧。クリックで定義の行へ                   |                     |
+| Packages…                              | この実験のパッケージ、Python の中のパッケージ一覧、導入と削除                    | `%pip install name` |
+| Plugins…                               | プラグインの導入・管理・実行                                                     |                     |
+| Plugin Actions                         | 有効なプラグインの Action のフォームを、動かせるウィンドウで開く                 |                     |
+| Keep Optional Packages for Offline Use | 同梱パッケージ(SciPy など)を先にブラウザへ保存し、オフラインで使えるようにする   |                     |
 
 ## Help
 

@@ -327,9 +327,9 @@ export class Sandbox {
           reject(error);
         },
       };
-      const stop = (reason: string) => {
+      const stop = (reason: string, phase: "timeout" | "stopped" = "timeout") => {
         finish();
-        reject(new SandboxError(reason, "timeout"));
+        reject(new SandboxError(reason, phase));
         this.destroy();
       };
       const timer = setTimeout(
@@ -339,7 +339,8 @@ export class Sandbox {
           ),
         timeoutMs,
       );
-      const abort = () => stop("Cancelled.");
+      // Asked to stop: not a failure of the plugin.
+      const abort = () => stop("Stopped.", "stopped");
       signal?.addEventListener("abort", abort, { once: true });
       const finish = () => {
         clearTimeout(timer);
