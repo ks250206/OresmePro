@@ -35,6 +35,7 @@ import {
   wavePath,
 } from "../core/doc/makeWaves";
 import { graphScript } from "../core/doc/recreate";
+import { dialogKey } from "./dialogKey";
 import {
   ANCHORS,
   AXIS_LABEL_MODES,
@@ -3668,7 +3669,7 @@ export function DialogHost() {
   const dialog = useUi((state) => state.dialog);
   const alert = useUi((state) => state.alert);
   const invalidField = useUi((state) => state.invalidField);
-  const key = dialog ? JSON.stringify(dialog) : null;
+  const key = dialog ? dialogKey(dialog) : null;
   // The mark is for the dialog that is open: closing it, or opening another, takes it away.
   useEffect(
     () => () => {
