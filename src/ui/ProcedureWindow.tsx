@@ -67,6 +67,7 @@ import {
   useKernelState,
   type MenuItem,
 } from "../app/session";
+import { altKeys } from "../editor/altKeys";
 import { codeToRun, editMenuState } from "../editor/commands";
 import { diffText } from "../editor/diff";
 import {
@@ -253,6 +254,13 @@ function ProcedureEditor({ name }: { name: string }) {
               });
             }
           }),
+          // Shift+Alt+F formats and Alt+G goes to a line, on a Mac too (Option+F types "ƒ").
+          Prec.high(
+            altKeys([
+              { code: "KeyF", shift: true, run: (target) => actions.current.format(target) },
+              { code: "KeyG", run: gotoLine },
+            ]),
+          ),
           Prec.high(
             keymap.of([
               {
@@ -263,14 +271,8 @@ function ProcedureEditor({ name }: { name: string }) {
                 },
               },
               { key: "Shift-Enter", run: (target) => actions.current.runSelection(target) },
-              {
-                key: "Shift-Alt-f",
-                run: (target) => actions.current.format(target),
-                preventDefault: true,
-              },
               // Ctrl+G as in VS Code on Windows and Linux (on a Mac, ⌘G stays Find Next).
               { key: "Ctrl-g", run: gotoLine, preventDefault: true },
-              { key: "Alt-g", run: gotoLine, preventDefault: true },
               // Tab indents. Escape then Tab leaves the editor, as CodeMirror provides.
               { key: "Tab", run: indentWithTab, shift: indentLess },
             ]),

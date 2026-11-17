@@ -17,6 +17,7 @@ import {
   activeGraph,
   addFilesForPython,
   autoscaleGraph,
+  copyGraph,
   EXAMPLE,
   exportGraph,
   loadDelimitedText,
@@ -200,6 +201,8 @@ function useMenus(): MenuDefinition[] {
           disabled: !doc.canRedo && !focusedEditor(),
           onSelect: () => editorRedo() || doc.redo(),
         },
+        { separator: true },
+        graphItem("Copy Graph", copyGraph, `${MOD}C`),
       ],
     },
     {
@@ -273,6 +276,8 @@ function useMenus(): MenuDefinition[] {
     {
       title: "Graph",
       items: [
+        { label: "New Graph…", onSelect: open({ kind: "newGraph" }) },
+        { separator: true },
         graphDialog("Append Traces…", (name) => ({ kind: "appendTraces", graph: name })),
         graphDialog("Append Image…", (name) => ({
           kind: "matrixPlot",
@@ -489,6 +494,13 @@ function onGlobalKey(event: KeyboardEvent) {
   } else if (key === "y") {
     event.preventDefault();
     doc.redo();
+  } else if (key === "c" && !event.shiftKey && !event.altKey) {
+    // Copy the front graph as an image, unless text is selected: that copy is the browser's.
+    const graph = activeGraph();
+    if (graph && !window.getSelection()?.toString()) {
+      event.preventDefault();
+      copyGraph(graph);
+    }
   } else if (key === "a" && activeWindow(doc.getState())?.kind === "page") {
     // Select All on a page layout selects its items, not the text of the app.
     event.preventDefault();

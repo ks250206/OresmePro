@@ -19,7 +19,7 @@ test.describe("tables", () => {
     expect((await app.wave("noise"))!.data).toEqual([0.5, 1.5, 42.5, 7]);
 
     await cells.nth(1).dblclick();
-    await page.keyboard.press("Control+a");
+    await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("gamma");
     await page.keyboard.press("Enter");
     expect((await app.wave("labels"))!.text).toEqual(["gamma", "b"]);
@@ -144,7 +144,7 @@ test.describe("tables", () => {
     await page.getByRole("menuitem", { name: "Insert Point" }).click();
     expect((await app.wave("a"))!.data).toEqual([NaN, 1, 4, 5]);
 
-    await page.keyboard.press("Control+a");
+    await page.keyboard.press("ControlOrMeta+a");
     expect(await app.copy()).toBe("NaN\t10\n1\t\n4\t\n5\t");
   });
 
@@ -341,7 +341,7 @@ test.describe("loading delimited text", () => {
     const first = page.getByRole("grid", { name: "Table0" }).getByRole("gridcell").first();
     await expect(first).toHaveText("2026-11-11 09:00:00");
     await first.dblclick();
-    await page.keyboard.press("Control+a");
+    await page.keyboard.press("ControlOrMeta+a");
     await page.keyboard.type("2026-11-11 08:45");
     await page.keyboard.press("Enter");
     const edited = (await app.wave("when"))!;

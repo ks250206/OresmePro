@@ -17,7 +17,7 @@ test.describe("procedure windows", () => {
       "def area(r):\n    return 3 * r * r\nLOADED = 'yes'",
     );
 
-    await page.keyboard.press("Control+Enter");
+    await page.keyboard.press("ControlOrMeta+Enter");
     await app.idle();
     expect((await app.lastEntry()).code).toBe('op.procedure("Procedure").run()');
     expect((await app.run("print(area(2), LOADED)")).output).toBe("12 yes\n");
@@ -87,7 +87,7 @@ test.describe("procedure windows", () => {
       .getByRole("button", { name: "Kill" })
       .click();
     expect((await app.doc()).procedures).toEqual({});
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     expect((await app.doc()).procedures.Fits!.code).toContain("def bad()");
   });
 });
@@ -99,7 +99,7 @@ test.describe("the procedure editor", () => {
     await app.place("Edit", 20, 20, 600, 380);
     const editor = app.window("Edit").getByRole("textbox", { name: "Edit.py" });
     await editor.click();
-    await app.page.keyboard.press("Control+End");
+    await app.page.keyboard.press("ControlOrMeta+End");
     return editor;
   }
   const code = async (app: App) => (await app.doc()).procedures.Edit!.code;
@@ -139,7 +139,7 @@ test.describe("the procedure editor", () => {
     expect(await code(app)).toBe("# a = 1\n# b = 2\n");
 
     // Undo in the editor undoes the edit, not something in the document.
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     expect(await code(app)).toBe("a = 1\nb = 2\n");
     expect((await app.doc()).windows.map((window) => window.name)).toEqual(["Edit"]);
     await page.locator('[data-window="Edit"] .cm-line', { hasText: "a = 1" }).click({
@@ -176,7 +176,7 @@ test.describe("the procedure editor", () => {
 
     // A syntax error is an error.
     await app.window("Edit").getByRole("textbox", { name: "Edit.py" }).click();
-    await page.keyboard.press("Control+End");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.type("def broken(:");
     await expect(app.window("Edit").locator(".cm-lint-marker-error")).toHaveCount(1);
   });
@@ -191,9 +191,9 @@ test.describe("the procedure editor", () => {
     const formatted = "x = [1, 2, 3]\n\n\ndef area(r):\n    return 3 * r * r\n";
     await expect.poll(() => code(app), { timeout: 30_000 }).toBe(formatted);
     await expect(app.window("Edit").getByRole("textbox")).toContainText("def area(r):");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     expect(await code(app)).toBe(messy);
-    await page.keyboard.press("Control+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
     expect(await code(app)).toBe(formatted);
 
     // From the menu; a syntax error is reported and the text left alone.
@@ -247,14 +247,14 @@ test.describe("the procedure editor", () => {
 
   test("find and replace, and go to line", async ({ app, page }) => {
     await procedure(app, "old = 1\nprint(old)\nOLD_NAME = 2\n");
-    await page.keyboard.press("Control+f");
+    await page.keyboard.press("ControlOrMeta+f");
     const panel = app.window("Edit").locator(".cm-search");
     await panel.getByRole("textbox", { name: "Find" }).fill("old");
     await panel.getByRole("textbox", { name: "Replace" }).fill("new");
     await panel.getByRole("button", { name: "Replace All" }).click();
     // Matching case is off by default; with it on, OLD_NAME is not touched.
     expect(await code(app)).toBe("new = 1\nprint(new)\nnew_NAME = 2\n");
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     await panel.getByLabel("Match case").check();
     await panel.getByRole("button", { name: "Replace All" }).click();
     expect(await code(app)).toBe("new = 1\nprint(new)\nOLD_NAME = 2\n");
@@ -274,7 +274,7 @@ test.describe("the procedure editor", () => {
     await app.run('p = op.new_procedure("Edit", "second = 1\\n")');
     await expect(editor).toContainText("second = 1");
     await editor.click();
-    await page.keyboard.press("Control+z");
+    await page.keyboard.press("ControlOrMeta+z");
     // Nothing of the old editor's history: there is nothing to undo.
     expect(await code(app)).toBe("second = 1\n");
   });
