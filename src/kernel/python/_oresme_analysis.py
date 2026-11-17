@@ -1320,6 +1320,8 @@ class Result:
             settings["function"] = function
         elif info["kind"] == "peaks":
             call = fit_peaks
+        elif info["kind"] == "xps":
+            call = _op.xps_fit
         else:
             call = fit_global
             function = settings.pop("function")
@@ -1613,7 +1615,7 @@ def fit_batch(function, waves, *, table=True, quiet=True, **options):
 
 
 #: The action that does each kind of kept analysis again.
-_RESULT_ACTIONS = {"fit": "core.fit", "peaks": "core.fit_peaks"}
+_RESULT_ACTIONS = {"fit": "core.fit", "peaks": "core.fit_peaks", "xps": "core.xps_fit"}
 #: Settings that say what to call what is made, or how to keep it: a template chooses those anew.
 _NOT_TEMPLATED = ("name", "result", "record", "graph", "custom")
 

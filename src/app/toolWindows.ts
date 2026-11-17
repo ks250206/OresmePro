@@ -1,11 +1,11 @@
 import { createStore, useStore } from "./store";
 
 /**
- * Tool windows: the Procedure Browser and the Variables window. Like the
+ * Tool windows: the Procedure Browser, the Variables window and XPS Peak Fitting. Like the
  * forms of plugins' actions (see ./actionWindows), they float over the
  * experiment's windows and are not part of it: not saved, not undone.
  */
-export const TOOLS = ["procedureBrowser", "variables"] as const;
+export const TOOLS = ["procedureBrowser", "variables", "xps"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 export interface ToolWindowState {
@@ -19,6 +19,7 @@ export interface ToolWindowState {
 const START: Record<Tool, Omit<ToolWindowState, "tool">> = {
   procedureBrowser: { x: 80, y: 40, w: 380, h: 420 },
   variables: { x: 140, y: 70, w: 420, h: 320 },
+  xps: { x: 40, y: 12, w: 960, h: 700 },
 };
 export const MIN_TOOL = { w: 220, h: 140 };
 

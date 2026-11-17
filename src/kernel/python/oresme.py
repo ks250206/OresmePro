@@ -5684,6 +5684,11 @@ from _oresme_analysis import __all__ as _analysis_all  # noqa: E402
 
 __all__ += _analysis_all
 
+from _oresme_xps import *  # noqa: E402,F401,F403
+from _oresme_xps import __all__ as _xps_all  # noqa: E402
+
+__all__ += _xps_all
+
 from _oresme_packages import install, packages, uninstall  # noqa: E402,F401
 
 __all__ += ["install", "packages", "uninstall"]

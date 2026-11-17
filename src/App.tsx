@@ -13,6 +13,7 @@ import {
   useToolsShown,
 } from "./app/drawTools";
 import { openTool } from "./app/toolWindows";
+import { openXps } from "./app/xps";
 import {
   activeGraph,
   addFilesForPython,
@@ -260,6 +261,15 @@ function useMenus(): MenuDefinition[] {
         { label: "Results…", onSelect: open({ kind: "results" }) },
         { label: "Templates…", onSelect: open({ kind: "templates" }) },
         { label: "Background…", onSelect: open({ kind: "background" }) },
+        {
+          label: "XPS Peak Fitting…",
+          onSelect: () =>
+            openXps(
+              selected.length === 1 && doc.getState().waves[selected[0]!]
+                ? selected[0]!
+                : undefined,
+            ),
+        },
         { label: "Onset…", onSelect: open({ kind: "onset" }) },
         { separator: true },
         analysis("Wave Stats…", "stats"),

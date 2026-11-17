@@ -1,5 +1,7 @@
 # xps: CasaXPS のように使う XPS ピークフィットの見本プラグイン
 
+> **アプリ本体に XPS Peak Fitting ウィンドウができました。** スペクトルの上で成分をドラッグし、CasaXPS のような成分の表で制約を書いてフィットできます(**Analysis › XPS Peak Fitting…**、Python では `op.xps_fit`)。プラグインを入れる必要はありません。このプラグインは、プラグインの書き方の見本と、サーベイからの定量(`quantify`)のために残してあります。
+
 XPS スペクトルのピークモデルを、CasaXPS と同じ手順で作る OresmePro のプラグインです。領域(Region)を決め、その下に背景(Shirley・直線)を引き、CasaXPS の線形(GL、SGL、テール付き、LA)と成分の間の制約(`pos=A+1.5`、`area=A*0.5`、`fwhm=A`)を持つ合成成分を最小二乗でフィットします。領域の面積と感度係数(RSF)からの原子濃度も求めます。計算は合成スペクトルで検算してあります([検算](#検算))。
 
 - [入れ方](#入れ方)
@@ -161,6 +163,8 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/xps/tes
 アプリの単体テスト(`src/app/plugins/xps.test.ts`)は同じ検算をプラグインが動く Pyodide で実行し、`xps_fit` の結果を wave・解析結果・グラフとしてアプリに取り込めることも確かめます。
 
 ## English
+
+The app now has an **XPS Peak Fitting** window of its own (**Analysis › XPS Peak Fitting…**, `op.xps_fit` in Python), where components are dragged on the spectrum and constrained in a table as in CasaXPS, with no plugin to install. This plugin stays as an example of writing one, and for quantification from a survey (`quantify`).
 
 **xps** is an example OresmePro plugin that builds peak models of XPS spectra the way CasaXPS does, in the plugin sandbox (Python with NumPy and SciPy). Install it from **Python › Plugins…** with _Install from GitHub…_ (`https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps`) or _Install from Folder…_ (this folder).
 

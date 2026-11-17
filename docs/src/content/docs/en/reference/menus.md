@@ -47,16 +47,17 @@ The items of the menu bar, menu by menu. Most of what is done on screen is writt
 
 ## Analysis
 
-| Item                                                                                   | Does                                                                       | Python                                 |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------- |
-| Curve Fitting…                                                                         | Fits a function (hold, bounds, ranges, weights, residuals, band)           | `op.fit("gauss", y)`                   |
-| Multi-peak Fit…                                                                        | Fits several peaks at once                                                 | `op.fit_peaks(y)`                      |
-| Results…                                                                               | The fits kept: compare, fit again, make templates, plot                    | `op.results()`, `op.plot_results(...)` |
-| Templates…                                                                             | Makes and edits analysis templates and runs them on many samples           | `op.template("Peak").run([...])`       |
-| Background…                                                                            | Shirley, Tougaard or linear background                                     | `op.background(y, "shirley")`          |
-| Onset…                                                                                 | Where an edge starts (its tangent meets the baseline)                      | `op.onset(y, edge=(...))`              |
-| Wave Stats… / Differentiate… / Integrate… / Smooth… / FFT… / Histogram… / Interpolate… | Statistics, derivative, integral, smoothing, FFT, histogram, interpolation | `op.stats`, `op.differentiate`, ...    |
-| Filter Image…                                                                          | Filters a 2-D wave                                                         | `op.filter_image(img, ...)`            |
+| Item                                                                                   | Does                                                                                                                        | Python                                 |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Curve Fitting…                                                                         | Fits a function (hold, bounds, ranges, weights, residuals, band)                                                            | `op.fit("gauss", y)`                   |
+| Multi-peak Fit…                                                                        | Fits several peaks at once                                                                                                  | `op.fit_peaks(y)`                      |
+| Results…                                                                               | The fits kept: compare, fit again, make templates, plot                                                                     | `op.results()`, `op.plot_results(...)` |
+| Templates…                                                                             | Makes and edits analysis templates and runs them on many samples                                                            | `op.template("Peak").run([...])`       |
+| Background…                                                                            | Shirley, Tougaard or linear background                                                                                      | `op.background(y, "shirley")`          |
+| XPS Peak Fitting…                                                                      | Places components of an XPS spectrum by dragging and in a table, and fits them as CasaXPS does ([guide](../../guides/xps/)) | `op.xps_fit(y, [...])`                 |
+| Onset…                                                                                 | Where an edge starts (its tangent meets the baseline)                                                                       | `op.onset(y, edge=(...))`              |
+| Wave Stats… / Differentiate… / Integrate… / Smooth… / FFT… / Histogram… / Interpolate… | Statistics, derivative, integral, smoothing, FFT, histogram, interpolation                                                  | `op.stats`, `op.differentiate`, ...    |
+| Filter Image…                                                                          | Filters a 2-D wave                                                                                                          | `op.filter_image(img, ...)`            |
 
 ## Graph
 

@@ -2,6 +2,7 @@ import type { PyodideAPI } from "pyodide";
 import analysisSource from "./python/_oresme_analysis.py?raw";
 import packagesSource from "./python/_oresme_packages.py?raw";
 import variablesSource from "./python/_oresme_variables.py?raw";
+import xpsSource from "./python/_oresme_xps.py?raw";
 import kernelSource from "./python/oresme_kernel.py?raw";
 import oresmeSource from "./python/oresme.py?raw";
 
@@ -67,6 +68,7 @@ export async function bootPython(
   pyodide.FS.writeFile(`${SITE}/_oresme_analysis.py`, analysisSource);
   pyodide.FS.writeFile(`${SITE}/_oresme_packages.py`, packagesSource);
   pyodide.FS.writeFile(`${SITE}/_oresme_variables.py`, variablesSource);
+  pyodide.FS.writeFile(`${SITE}/_oresme_xps.py`, xpsSource);
   pyodide.FS.writeFile(`${SITE}/oresme_kernel.py`, kernelSource);
 
   pyodide.registerJsModule("_oresme_js", {

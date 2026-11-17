@@ -24,6 +24,26 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ### Added
 
+- **Analysis › XPS Peak Fitting…**, a window for fitting XPS spectra in the way of CasaXPS.
+  The spectrum is drawn on a reversed binding energy axis with its residual above; the ends of
+  the region are dragged on it, a component is added by double-clicking a peak, moved and made
+  taller by dragging its top, and widened by dragging its half-width handles, while the
+  background, components and envelope are redrawn as they change. The components are a table
+  with a column for each (name, line shape, position, FWHM, area, the constraint of each,
+  Gaussian broadening, RSF and % area/RSF): constraints are limits (`284.5, 285.5`), `fixed`,
+  or ties to another component (`A+1.5`, `A*0.5`, `A`), and **Doublet** adds a spin-orbit
+  partner tied to the selected component. The background is Shirley, linear, Tougaard or none;
+  energies may be kinetic, with a charge correction. Edits are undone in the window; **Fit
+  Components** puts the values found in the table and a report of them (with uncertainties and
+  the true FWHM) in its Report tab. A spectrum fitted before opens with its last fit.
+- `op.xps_fit` (and the action `core.xps_fit`), which the window calls: fits CasaXPS's line
+  shapes (GL, SGL, GL(m)T(k), SGL(m)T(k), LA(α,β), optionally convolved with a Gaussian) with
+  constraints between components over a background held fixed, makes `fit_<name>`,
+  `fit_<name>_bg`, `fit_<name>_A`, … and `fit_<name>_res` again at each fit, shows them in the
+  graph `XPS_<name>`, and keeps the fit among the results as `XPS0`, `XPS1`, … (a new kind of
+  result, `xps`, that `rerun` and `apply` do again). It needs only NumPy.
+- A guide to XPS peak fitting, and its API reference.
+
 - **Edit › Copy Graph** (⌘C / Ctrl+C with a graph in front, and **Copy** in a graph's menu)
   puts the graph on the clipboard as a PNG, as Save Graph as PNG draws it.
 - **Graph › New Graph…**, as in the Windows menu.
