@@ -1101,6 +1101,22 @@ export const frontWindow = (windows: readonly WindowState[]): WindowState | null
   windows.findLast((window) => !window.hidden) ?? null;
 
 /** Every record kept by name is a {@link Dict}, built with the functions of ./dict. */
+/**
+ * What a plugin's editor or view had in its window, kept with the experiment
+ * so that it opens again where it was left (docs/design/plugin-views.md §11).
+ * Plain JSON, apart from the plugin's code: the plugin reads it back itself.
+ */
+export interface EditorMemory {
+  plugin: string;
+  editor: string;
+  /** The version of the plugin that left it, for the plugin to tell an old state from a new one. */
+  version: string;
+  state: unknown;
+}
+
+/** The largest state an editor may keep, as JSON text. */
+export const MAX_EDITOR_MEMORY = 1024 * 1024;
+
 export interface DocState {
   readonly waves: Dict<Wave>;
   /** Creation order, for stable listing. */
@@ -1139,6 +1155,12 @@ export interface DocState {
   readonly attributes: Dict<Readonly<Record<string, number | string>>>;
   /** The Python packages the experiment uses beyond those Python starts with (see ./pythonEnv). */
   readonly python: PythonEnv;
+  /**
+   * The windows of plugins' editors and views as they were left, by
+   * "<plugin>/<editor>". Not undone with the rest: like a note's text, it
+   * belongs to its window.
+   */
+  readonly editors: Dict<EditorMemory>;
 }
 
 export const emptyDoc = (): DocState => ({
@@ -1161,6 +1183,7 @@ export const emptyDoc = (): DocState => ({
   windows: [],
   attributes: dict(),
   python: emptyPythonEnv(),
+  editors: dict(),
 });
 
 /** Height of a window's title bar; the content area is the window minus this. */

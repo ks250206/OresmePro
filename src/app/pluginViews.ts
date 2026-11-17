@@ -11,7 +11,7 @@ import {
 } from "../core/plugins/view";
 import type { CheckedResult } from "../core/sandbox/validate";
 import type { PluginRunOutcome } from "./plugins/host";
-import { doc, invokeAction, plugins } from "./session";
+import { doc, invokeAction, pluginStore, plugins } from "./session";
 import { createStore, type Store } from "./store";
 
 /**
@@ -36,7 +36,10 @@ export interface ViewWindowState {
   future: unknown[];
 }
 
-type Pending = { type: "change"; paths: Set<string> } | { type: "command"; id: string } | DoneEvent;
+type Pending =
+  | { type: "change"; paths: Set<string> }
+  | { type: "command"; id: string; x?: number; y?: number }
+  | DoneEvent;
 
 interface DoneEvent {
   type: "done";
@@ -63,11 +66,16 @@ interface Runner {
 const LIMIT = 100;
 const stores = new Map<string, Store<ViewWindowState>>();
 const runners = new Map<string, Runner>();
+/** The state as it was when a handle started to be dragged, by view. */
+const dragStarts = new Map<string, unknown>();
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** How long a view's state has to stay unchanged to be kept in the experiment. */
+const SAVE_DELAY = 400;
 
 export function viewStore(key: string): Store<ViewWindowState> {
   let store = stores.get(key);
   if (!store) {
-    store = createStore<ViewWindowState>({
+    const made = createStore<ViewWindowState>({
       state: null,
       ui: null,
       arrays: {},
@@ -77,9 +85,63 @@ export function viewStore(key: string): Store<ViewWindowState> {
       past: [],
       future: [],
     });
+    // Its state goes into the experiment, a moment after it last changed.
+    let last: unknown = null;
+    made.subscribe(() => {
+      const { state } = made.get();
+      if (state === last) return;
+      last = state;
+      if (state !== null && state !== undefined) remember(key);
+    });
+    store = made;
     stores.set(key, store);
   }
   return store;
+}
+
+function remember(key: string): void {
+  clearTimeout(saveTimers.get(key));
+  saveTimers.set(
+    key,
+    setTimeout(() => {
+      saveTimers.delete(key);
+      keepState(key);
+    }, SAVE_DELAY),
+  );
+}
+
+/** Puts a view's state into the experiment, with the version of the plugin that made it. */
+function keepState(key: string): void {
+  const [plugin, view] = split(key);
+  const { state } = viewStore(key).get();
+  const installed = pluginStore.list().find((item) => item.manifest.name === plugin);
+  if (!installed || state === null || state === undefined) return;
+  try {
+    doc.dispatch({
+      op: "keepEditorState",
+      plugin,
+      editor: view,
+      version: installed.manifest.version,
+      state,
+    });
+  } catch {
+    // Too large to keep: it stays in the window only.
+  }
+}
+
+/** What the experiment kept of a view, for its Python to start from. */
+function savedState(key: string): JsonValue {
+  const memory = doc.getState().editors[key];
+  return memory ? { state: memory.state as JsonValue, version: memory.version } : null;
+}
+
+/** Forgets every view's window: another experiment was opened. */
+export function forgetViews(): void {
+  for (const timer of saveTimers.values()) clearTimeout(timer);
+  saveTimers.clear();
+  stores.clear();
+  runners.clear();
+  dragStarts.clear();
 }
 
 function runnerOf(key: string): Runner {
@@ -125,11 +187,14 @@ function lastResult(plugin: string): JsonValue {
   };
 }
 
-/** Opens a view: asks its Python for its window the first time. */
+/**
+ * Opens a view: asks its Python for its window the first time, with what the
+ * experiment kept of it (`saved`) and the last result the plugin kept (`last`).
+ */
 export function openView(key: string): void {
   const store = viewStore(key);
   if (store.get().ui || runnerOf(key).running) return;
-  void send(key, { type: "open", last: lastResult(split(key)[0]) });
+  void send(key, { type: "open", last: lastResult(split(key)[0]), saved: savedState(key) });
 }
 
 function enqueue(key: string, event: Pending, start = true): void {
@@ -227,6 +292,40 @@ export function setValue(key: string, path: string, value: unknown): void {
 /** Changes the list at a path (a table's rows): undoable, and told to the view. */
 export function setList(key: string, path: string, rows: unknown[]): void {
   setValue(key, path, rows);
+}
+
+/** A handle of a plot picked up: what it changes until it is let go is one edit, undone at once. */
+export function beginHandleDrag(key: string): void {
+  dragStarts.set(key, viewStore(key).get().state);
+}
+
+/** A handle dragged: the values it is bound to set, and told to the view as it goes. */
+export function dragHandle(key: string, values: Record<string, number>): void {
+  const store = viewStore(key);
+  let { state } = store.get();
+  const runner = runnerOf(key);
+  for (const [path, value] of Object.entries(values)) {
+    state = setPath(state, path, value);
+    if (runner.running) runner.edits.push({ path, value });
+  }
+  store.set({ state });
+  enqueue(key, { type: "change", paths: new Set(Object.keys(values)) });
+}
+
+/** A handle let go: the drag goes into the window's undo as one edit. */
+export function endHandleDrag(key: string): void {
+  if (!dragStarts.has(key)) return;
+  const start = dragStarts.get(key);
+  dragStarts.delete(key);
+  const store = viewStore(key);
+  const { state, past } = store.get();
+  if (state === start) return;
+  store.set({ past: [...past, start].slice(-LIMIT), future: [] });
+}
+
+/** A plot clicked away from its handles: the view's handler is told where, in the plot's units. */
+export function clickPlot(key: string, id: string, x: number, y: number): void {
+  enqueue(key, { type: "command", id, x, y });
 }
 
 export function undoView(key: string): void {

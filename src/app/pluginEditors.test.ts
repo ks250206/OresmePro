@@ -8,6 +8,7 @@ import {
   editorStore,
   removeItem,
   runFit,
+  savedEditor,
   type EditorContext,
 } from "./pluginEditors";
 
@@ -159,5 +160,47 @@ describe("fitting from a model editor", () => {
     const state = editorStore(context.key).get();
     expect(state.setup!.items.map((each) => each.values.x)).toEqual([2]);
     expect(state.error).toMatch(/changed while they were fitted/);
+  });
+});
+
+describe("a model editor kept in the experiment", () => {
+  const context = {
+    key: "lab/peaks",
+    plugin: { manifest: { name: "lab" } },
+    spec: spec({ x: "x" }),
+    fit: actions[1],
+  } as unknown as EditorContext;
+
+  it("is read back against the editor's fields, leaving out what does not fit them", () => {
+    const setup = {
+      data: "y",
+      x: null,
+      range: [1, 5],
+      settings: {},
+      items: [
+        { values: { x: 2, height: 1, area: 3, sigma: 0.5, other: 3 }, constraints: {} },
+        "not an item",
+        { values: { x: "two", height: 1, script: "x" }, constraints: {} },
+      ],
+    };
+    const report = { result: "Plugin0", columns: ["A"], rows: [["1"]], lines: [], warnings: [] };
+    const kept = savedEditor(context, {
+      current: "y",
+      setups: { y: { setup, report }, z: { setup: { data: 3 } }, w: "x" },
+    });
+    expect(kept.current).toBe("y");
+    expect(Object.keys(kept.kept)).toEqual(["y"]);
+    expect(kept.kept.y!.report).toEqual(report);
+    const items = kept.kept.y!.setup.items;
+    expect(items).toHaveLength(2);
+    expect(items[0]!.values).toEqual({ x: 2, height: 1, area: 3, sigma: 0.5, other: 3 });
+    // A value of the wrong kind is the field's default; an unknown field is dropped.
+    expect(items[1]!.values).toEqual({ x: 0, height: 1, area: 0, sigma: 0, other: 3 });
+    // This editor has no range to keep.
+    expect(kept.kept.y!.setup.range).toBeNull();
+    expect(savedEditor(context, { current: "gone", setups: {} })).toEqual({
+      current: null,
+      kept: {},
+    });
   });
 });

@@ -155,7 +155,8 @@ def view(name):
     ``message`` of None takes it away); ``waves`` are those of this answer only. ``waves`` given to it are copies of
     those chosen in the window's ``ui.wave`` parts, by the path they are bound
     to. ``event`` is ``{"type": "open", "last": ...}``, ``{"type": "change",
-    "paths": [...]}``, ``{"type": "command", "id": ...}`` or ``{"type":
+    "paths": [...]}``, ``{"type": "command", "id": ...}`` (with ``"x"`` and
+    ``"y"`` for a plot's ``on_click``) or ``{"type":
     "done", "id": ..., "args": ..., "ok": ..., "values": ..., "result": ...,
     "error": ...}`` (``args``: what the action ran with, to check that a result is
     for what the view shows now).
@@ -282,9 +283,23 @@ class ui:
 
     @staticmethod
     def plot(series, x_label=None, y_label=None, x_log=None, y_log=None, equal=None,
-             x_reverse=None, height=None):
+             x_reverse=None, height=None, handles=None, on_click=None):
+        """Series made by ``ui.series``; ``handles`` made by ``ui.handle``; ``on_click``: a
+        command sent with the place clicked (``event["x"]``, ``event["y"]``)."""
         return _part("plot", series=list(series), x_label=x_label, y_label=y_label, x_log=x_log,
-                     y_log=y_log, equal=equal, x_reverse=x_reverse, height=height)
+                     y_log=y_log, equal=equal, x_reverse=x_reverse, height=height,
+                     handles=None if handles is None else list(handles), on_click=on_click)
+
+    @staticmethod
+    def handle(x=None, y=None, bind_x=None, bind_y=None, label=None, color=None):
+        """A handle on a plot, at ``x``, ``y`` in its units: a point, or a line across it
+        when one of them is None. Dragged, it moves the values at ``bind_x`` and ``bind_y``
+        by as much as it moves (by the same ratio on a log axis); each step is a change of
+        those paths. Without a bind it only marks a place."""
+        return {key: value for key, value in {
+            "x": None if x is None else float(x), "y": None if y is None else float(y),
+            "bind_x": bind_x, "bind_y": bind_y, "label": label, "color": color,
+        }.items() if value is not None}
 
     @staticmethod
     def series(y, x=None, mode=None, color=None, label=None):

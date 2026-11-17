@@ -49,6 +49,9 @@ export type ViewNode =
       equal: boolean;
       xReverse: boolean;
       height: number;
+      handles: ViewHandle[];
+      /** The handler told where the plot was clicked, away from its handles. */
+      onClick: string | null;
     }
   | {
       type: "button";
@@ -81,6 +84,21 @@ export interface ViewSeries {
   label: string;
 }
 
+/**
+ * A point, or a line across the plot, that can be dragged: at x, y in the
+ * plot's units (a vertical line without y, a horizontal one without x). The
+ * values at bindX and bindY move as it does: by as much as it moves on a
+ * linear axis, by the same ratio on a log one.
+ */
+export interface ViewHandle {
+  x: number | null;
+  y: number | null;
+  bindX: string | null;
+  bindY: string | null;
+  label: string;
+  color: string | null;
+}
+
 /** An argument of a button's action: a plain value, or the value at a path of the state. */
 export type ViewValue = JsonValue | { $bind: string };
 
@@ -105,6 +123,7 @@ export const VIEW_LIMITS = {
   columns: 40,
   rows: 2000,
   series: 32,
+  handles: 200,
   /** The state and the definition, as JSON text. */
   bytes: 1024 * 1024,
 } as const;
@@ -130,7 +149,18 @@ const KEYS: Record<string, readonly string[]> = {
   checkbox: ["label", "bind"],
   wave: ["label", "bind", "optional"],
   table: ["bind", "columns", "add", "remove"],
-  plot: ["series", "x_label", "y_label", "x_log", "y_log", "equal", "x_reverse", "height"],
+  plot: [
+    "series",
+    "x_label",
+    "y_label",
+    "x_log",
+    "y_log",
+    "equal",
+    "x_reverse",
+    "height",
+    "handles",
+    "on_click",
+  ],
   button: ["label", "on", "action", "args", "replace", "primary", "disabled"],
 };
 
@@ -359,6 +389,49 @@ export function checkView(raw: unknown): ViewDefinition {
             label: text(item.label, "A series' label", VIEW_LIMITS.label, ""),
           };
         });
+        const rawHandles = value.handles ?? [];
+        if (!Array.isArray(rawHandles) || rawHandles.length > VIEW_LIMITS.handles)
+          throw new PluginError(`A plot has at most ${VIEW_LIMITS.handles} handles.`);
+        const handles = rawHandles.map((item): ViewHandle => {
+          if (!isRecord(item))
+            throw new PluginError("A handle is {x, y, bind_x, bind_y, label, color}.");
+          for (const key of Object.keys(item))
+            if (!["x", "y", "bind_x", "bind_y", "label", "color"].includes(key))
+              throw new PluginError(`A handle has no ${JSON.stringify(key)}.`);
+          const x = number(item.x, "A handle's x");
+          const y = number(item.y, "A handle's y");
+          if (x === null && y === null) throw new PluginError("A handle has an x, a y or both.");
+          const bindX =
+            item.bind_x === undefined || item.bind_x === null
+              ? null
+              : path(item.bind_x, "A handle's bind_x");
+          const bindY =
+            item.bind_y === undefined || item.bind_y === null
+              ? null
+              : path(item.bind_y, "A handle's bind_y");
+          if ((bindX !== null && x === null) || (bindY !== null && y === null))
+            throw new PluginError("A handle moves only along the axes it has a place on.");
+          const color =
+            item.color === undefined || item.color === null
+              ? null
+              : text(item.color, "A handle's color", 20);
+          if (color !== null && !COLOR.test(color))
+            throw new PluginError(`${JSON.stringify(color)} is not a color (#rrggbb).`);
+          return {
+            x,
+            y,
+            bindX,
+            bindY,
+            label: text(item.label, "A handle's label", VIEW_LIMITS.label, ""),
+            color,
+          };
+        });
+        const onClick =
+          value.on_click === undefined || value.on_click === null
+            ? null
+            : text(value.on_click, "A plot's on_click", 64);
+        if (onClick !== null && !HANDLER.test(onClick))
+          throw new PluginError(`${JSON.stringify(onClick)} is not a handler's name.`);
         const height = number(value.height, "A plot's height") ?? 240;
         if (!(height >= 80 && height <= 1200))
           throw new PluginError("A plot's height is from 80 to 1200.");
@@ -372,6 +445,8 @@ export function checkView(raw: unknown): ViewDefinition {
           equal: flag(value.equal, "A plot's equal", false),
           xReverse: flag(value.x_reverse, "A plot's x_reverse", false),
           height,
+          handles,
+          onClick,
         };
       }
       default: {

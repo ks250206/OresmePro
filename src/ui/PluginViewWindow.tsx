@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  beginHandleDrag,
+  clickPlot,
+  dragHandle,
+  endHandleDrag,
   openView,
   press,
   redoView,
@@ -541,11 +545,111 @@ function extent(values: ArrayLike<number>[], log: boolean): [number, number] | n
   return [lo - pad, hi + pad];
 }
 
-function Plot({ viewKey, node }: { viewKey: string; node: Extract<ViewNode, { type: "plot" }> }) {
+type PlotNode = Extract<ViewNode, { type: "plot" }>;
+
+interface PlotLayout {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  /** The scales, or null when there is nothing to draw. */
+  xs: Scale | null;
+  ys: Scale | null;
+}
+
+interface DrawnSeries {
+  xs: Float64Array;
+  ys: Float64Array;
+  mode: string;
+  color: string | null;
+  label: string;
+}
+
+/** Where a plot's frame is, and its scales, from what it draws. */
+function plotLayout(
+  node: PlotNode,
+  series: DrawnSeries[],
+  width: number,
+  height: number,
+): PlotLayout {
+  const left = MARGIN.left;
+  const right = width - MARGIN.right;
+  const top = MARGIN.top;
+  const bottom = height - MARGIN.bottom;
+  // The handles count too: a range marker beyond the data is still in view.
+  const hx = node.handles.flatMap((handle) => (handle.x === null ? [] : [handle.x]));
+  const hy = node.handles.flatMap((handle) => (handle.y === null ? [] : [handle.y]));
+  let xr = extent([...series.map((item) => item.xs), hx], node.xLog);
+  let yr = extent([...series.map((item) => item.ys), hy], node.yLog);
+  if (!xr || !yr) return { left, right, top, bottom, xs: null, ys: null };
+  if (node.equal && !node.xLog && !node.yLog) {
+    // One unit as long across as up: the range of the shorter side grows.
+    const perX = (xr[1] - xr[0]) / (right - left);
+    const perY = (yr[1] - yr[0]) / (bottom - top);
+    if (perX > perY) {
+      const grow = (perX * (bottom - top) - (yr[1] - yr[0])) / 2;
+      yr = [yr[0] - grow, yr[1] + grow];
+    } else {
+      const grow = (perY * (right - left) - (xr[1] - xr[0])) / 2;
+      xr = [xr[0] - grow, xr[1] + grow];
+    }
+  }
+  const xs = node.xReverse
+    ? makeScale(xr[1], xr[0], node.xLog, left, right)
+    : makeScale(xr[0], xr[1], node.xLog, left, right);
+  const ys = makeScale(yr[0], yr[1], node.yLog, bottom, top);
+  return { left, right, top, bottom, xs, ys };
+}
+
+/** How near, in pixels, the pointer has to be to pick up a handle. */
+const REACH = 7;
+
+/** The handle under a point of the plot, the nearest; only those that can be dragged. */
+function handleAt(node: PlotNode, layout: PlotLayout, px: number, py: number): number | null {
+  const { xs, ys } = layout;
+  if (!xs || !ys) return null;
+  let best: number | null = null;
+  let nearest = REACH;
+  node.handles.forEach((handle, index) => {
+    if (handle.bindX === null && handle.bindY === null) return;
+    const dx = handle.x === null ? 0 : Math.abs(xs.toPixel(handle.x) - px);
+    const dy = handle.y === null ? 0 : Math.abs(ys.toPixel(handle.y) - py);
+    const distance = Math.hypot(dx, dy);
+    if (distance <= nearest) {
+      nearest = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+/** A position moved from `from` to `to` on an axis, applied to `value`: by the difference, or the ratio on a log axis. */
+const moved = (value: number, from: number, to: number, log: boolean): number =>
+  log ? value * (to / from) : value + (to - from);
+
+interface Drag {
+  index: number;
+  /** Where the pointer went down, in the plot's units. */
+  startX: number;
+  startY: number;
+  /** The bound values when it was picked up. */
+  valueX: number | null;
+  valueY: number | null;
+  /** Where the handle is drawn while it is dragged. */
+  x: number | null;
+  y: number | null;
+}
+
+function Plot({ viewKey, node }: { viewKey: string; node: PlotNode }) {
   const arrays = useView(viewKey, (state) => state.arrays);
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(400);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const [cursor, setCursor] = useState("default");
+  /** The layout kept while a handle is dragged, so the plot does not rescale under the pointer. */
+  const frozen = useRef<PlotLayout | null>(null);
+  const press = useRef<{ x: number; y: number } | null>(null);
   const height = node.height;
   useEffect(() => {
     const element = box.current;
@@ -559,6 +663,7 @@ function Plot({ viewKey, node }: { viewKey: string; node: Extract<ViewNode, { ty
     const x = item.x ? (arrays[item.x] ?? new Float64Array(0)) : Float64Array.from(y, (_, i) => i);
     return { ...item, xs: x, ys: y };
   });
+  const layout = frozen.current ?? plotLayout(node, series, width, height);
   useEffect(() => {
     const element = canvas.current;
     if (!element) return;
@@ -569,16 +674,129 @@ function Plot({ viewKey, node }: { viewKey: string; node: Extract<ViewNode, { ty
     if (!ctx) return;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    drawPlot(ctx, node, series, width, height);
+    drawPlot(ctx, node, series, layout);
+    drawHandles(ctx, node, layout, drag);
   });
+  const local = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return { px: event.clientX - rect.left, py: event.clientY - rect.top };
+  };
+  const draggable = node.handles.some((handle) => handle.bindX !== null || handle.bindY !== null);
+  const label = `Plot of ${node.series.map((item) => item.label || item.y).join(", ")}`;
   return (
     <div ref={box} className="min-w-0">
       <canvas
         ref={canvas}
         role="img"
-        aria-label={`Plot of ${node.series.map((item) => item.label || item.y).join(", ")}`}
-        className="block rounded border border-line-soft bg-paper"
-        style={{ width, height }}
+        aria-label={label}
+        aria-description={
+          draggable || node.onClick
+            ? [
+                draggable ? "Its handles can be dragged." : "",
+                node.onClick ? "Click it to add at that place." : "",
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : undefined
+        }
+        className="block touch-none rounded border border-line-soft bg-paper"
+        style={{ width, height, cursor }}
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !layout.xs || !layout.ys) return;
+          const { px, py } = local(event);
+          const index = handleAt(node, layout, px, py);
+          if (index === null) {
+            press.current = { x: px, y: py };
+            return;
+          }
+          const handle = node.handles[index]!;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const state = viewStore(viewKey).get().state;
+          const value = (path: string | null) => {
+            const given = path === null ? undefined : getPath(state, path);
+            return typeof given === "number" && Number.isFinite(given) ? given : null;
+          };
+          frozen.current = layout;
+          beginHandleDrag(viewKey);
+          setDrag({
+            index,
+            startX: layout.xs.toValue(px),
+            startY: layout.ys.toValue(py),
+            valueX: value(handle.bindX),
+            valueY: value(handle.bindY),
+            x: handle.x,
+            y: handle.y,
+          });
+        }}
+        onPointerMove={(event) => {
+          const { px, py } = local(event);
+          if (!drag) {
+            const index = layout.xs ? handleAt(node, layout, px, py) : null;
+            const handle = index === null ? null : node.handles[index]!;
+            setCursor(
+              !handle
+                ? node.onClick
+                  ? "crosshair"
+                  : "default"
+                : handle.bindX !== null && handle.bindY !== null
+                  ? "move"
+                  : handle.bindX !== null
+                    ? "ew-resize"
+                    : "ns-resize",
+            );
+            return;
+          }
+          const { xs, ys } = frozen.current!;
+          const handle = node.handles[drag.index]!;
+          const toX = xs!.toValue(px);
+          const toY = ys!.toValue(py);
+          const values: Record<string, number> = {};
+          let { x, y } = drag;
+          if (handle.bindX !== null && handle.x !== null && Number.isFinite(toX)) {
+            x = moved(handle.x, drag.startX, toX, node.xLog);
+            if (drag.valueX !== null)
+              values[handle.bindX] = moved(drag.valueX, drag.startX, toX, node.xLog);
+          }
+          if (handle.bindY !== null && handle.y !== null && Number.isFinite(toY)) {
+            y = moved(handle.y, drag.startY, toY, node.yLog);
+            if (drag.valueY !== null)
+              values[handle.bindY] = moved(drag.valueY, drag.startY, toY, node.yLog);
+          }
+          setDrag({ ...drag, x, y });
+          if (Object.keys(values).length > 0) dragHandle(viewKey, values);
+        }}
+        onPointerUp={(event) => {
+          if (drag) {
+            frozen.current = null;
+            setDrag(null);
+            endHandleDrag(viewKey);
+            return;
+          }
+          const start = press.current;
+          press.current = null;
+          const { px, py } = local(event);
+          const { xs, ys, left, right, top, bottom } = layout;
+          if (
+            !node.onClick ||
+            !start ||
+            !xs ||
+            !ys ||
+            Math.hypot(px - start.x, py - start.y) > 3 ||
+            px < left ||
+            px > right ||
+            py < top ||
+            py > bottom
+          )
+            return;
+          clickPlot(viewKey, node.onClick, xs.toValue(px), ys.toValue(py));
+        }}
+        onPointerCancel={() => {
+          press.current = null;
+          if (!drag) return;
+          frozen.current = null;
+          setDrag(null);
+          endHandleDrag(viewKey);
+        }}
       />
     </div>
   );
@@ -586,55 +804,23 @@ function Plot({ viewKey, node }: { viewKey: string; node: Extract<ViewNode, { ty
 
 function drawPlot(
   ctx: CanvasRenderingContext2D,
-  node: Extract<ViewNode, { type: "plot" }>,
-  series: {
-    xs: Float64Array;
-    ys: Float64Array;
-    mode: string;
-    color: string | null;
-    label: string;
-  }[],
-  width: number,
-  height: number,
+  node: PlotNode,
+  series: DrawnSeries[],
+  layout: PlotLayout,
 ): void {
-  const left = MARGIN.left;
-  const right = width - MARGIN.right;
-  const top = MARGIN.top;
-  const bottom = height - MARGIN.bottom;
-  let xr = extent(
-    series.map((item) => item.xs),
-    node.xLog,
-  );
-  let yr = extent(
-    series.map((item) => item.ys),
-    node.yLog,
-  );
+  const { left, right, top, bottom, xs, ys } = layout;
   ctx.font = `11px ${FONT}`;
   ctx.strokeStyle = "#69717d";
   ctx.lineWidth = 1;
   ctx.strokeRect(left + 0.5, top + 0.5, right - left, bottom - top);
-  if (!xr || !yr) {
+  if (!xs || !ys) {
     ctx.fillStyle = "#69717d";
     ctx.textAlign = "center";
     ctx.fillText("Nothing to draw yet", (left + right) / 2, (top + bottom) / 2);
     return;
   }
-  if (node.equal && !node.xLog && !node.yLog) {
-    // One unit as long across as up: the range of the shorter side grows.
-    const perX = (xr[1] - xr[0]) / (right - left);
-    const perY = (yr[1] - yr[0]) / (bottom - top);
-    if (perX > perY) {
-      const grow = (perX * (bottom - top) - (yr[1] - yr[0])) / 2;
-      yr = [yr[0] - grow, yr[1] + grow];
-    } else {
-      const grow = (perY * (right - left) - (xr[1] - xr[0])) / 2;
-      xr = [xr[0] - grow, xr[1] + grow];
-    }
-  }
-  const xs: Scale = node.xReverse
-    ? makeScale(xr[1], xr[0], node.xLog, left, right)
-    : makeScale(xr[0], xr[1], node.xLog, left, right);
-  const ys: Scale = makeScale(yr[0], yr[1], node.yLog, bottom, top);
+  const xr = [Math.min(xs.min, xs.max), Math.max(xs.min, xs.max)] as const;
+  const yr = [ys.min, ys.max] as const;
   const ticks = (lo: number, hi: number, log: boolean, count: number) =>
     log ? logTicks(lo, hi, count) : linearTicks(lo, hi, count, false);
   ctx.fillStyle = "#1c2026";
@@ -723,4 +909,71 @@ function drawPlot(
     ctx.fillStyle = "#1c2026";
     ctx.fillText(item.label, x + 18, y);
   });
+}
+
+/** The handles over the plot: a ring at a point, a dashed line across it with a grip. */
+function drawHandles(
+  ctx: CanvasRenderingContext2D,
+  node: PlotNode,
+  layout: PlotLayout,
+  drag: Drag | null,
+): void {
+  const { left, right, top, bottom, xs, ys } = layout;
+  if (!xs || !ys) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, right - left, bottom - top);
+  ctx.clip();
+  ctx.font = `11px ${FONT}`;
+  node.handles.forEach((handle, index) => {
+    const x = drag?.index === index ? drag.x : handle.x;
+    const y = drag?.index === index ? drag.y : handle.y;
+    const color = handle.color ?? "#1f6fd1";
+    const fixed = handle.bindX === null && handle.bindY === null;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = drag?.index === index ? 2 : 1.25;
+    if (x !== null && y !== null) {
+      const px = xs.toPixel(x);
+      const py = ys.toPixel(y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4.5, 0, 2 * Math.PI);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.stroke();
+      if (handle.label) {
+        ctx.fillStyle = color;
+        ctx.textAlign = "center";
+        ctx.fillText(handle.label, px, py - 8);
+      }
+      return;
+    }
+    ctx.setLineDash(fixed ? [2, 3] : [5, 3]);
+    ctx.beginPath();
+    if (x !== null) {
+      const px = Math.round(xs.toPixel(x)) + 0.5;
+      ctx.moveTo(px, top);
+      ctx.lineTo(px, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (!fixed) ctx.fillRect(px - 3, top, 6, 9);
+      if (handle.label) {
+        ctx.textAlign = "left";
+        ctx.fillText(handle.label, px + 5, top + 20);
+      }
+    } else if (y !== null) {
+      const py = Math.round(ys.toPixel(y)) + 0.5;
+      ctx.moveTo(left, py);
+      ctx.lineTo(right, py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (!fixed) ctx.fillRect(right - 9, py - 3, 9, 6);
+      if (handle.label) {
+        ctx.textAlign = "right";
+        ctx.fillText(handle.label, right - 12, py - 4);
+      }
+    }
+    ctx.setLineDash([]);
+  });
+  ctx.restore();
 }

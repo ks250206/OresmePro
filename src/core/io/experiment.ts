@@ -2,8 +2,10 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import {
   applyCommand,
   checkGraphTemplate,
+  checkEditorMemory,
   checkName,
   checkStyle,
+  editorMemoryKey,
   savedPlotSize,
 } from "../doc/commands";
 import { checkAttributeName, checkAttributeValue, isFolderKey } from "../doc/attributes";
@@ -28,6 +30,7 @@ import {
   type AxisSide,
   type AxisSpec,
   type DocState,
+  type EditorMemory,
   type GraphSpec,
   type PageSpec,
   type PanelSpec,
@@ -104,6 +107,8 @@ export interface SavedExperiment {
   attributes?: Record<string, Record<string, number | string>>;
   /** The Python packages it uses; left out by files from before. */
   python?: PythonEnv;
+  /** What plugins' editors and views held, by "<plugin>/<editor>"; left out by files from before. */
+  editors?: Record<string, EditorMemory>;
 }
 
 /** Where the experiment's files (see FileStore) sit in an .oresme archive. */
@@ -151,6 +156,7 @@ export function describeExperiment(
     windows: [...state.windows],
     attributes: dictFrom(state.attributes),
     python: state.python,
+    editors: dictFrom(state.editors),
   };
 }
 
@@ -417,6 +423,16 @@ export function buildState(
     }
     if (Object.keys(kept).length > 0) attributes[key] = kept;
   }
+  // As with results: one that cannot be read is left behind, the plugin starts afresh.
+  const editors = dict<EditorMemory>();
+  for (const value of Object.values(saved.editors ?? {})) {
+    try {
+      const memory = checkEditorMemory(value);
+      editors[editorMemoryKey(memory.plugin, memory.editor)] = memory;
+    } catch {
+      continue;
+    }
+  }
   return {
     ...state,
     graphs,
@@ -435,6 +451,7 @@ export function buildState(
     windows,
     attributes,
     python: savedPythonEnv(saved.python),
+    editors,
   };
 }
 

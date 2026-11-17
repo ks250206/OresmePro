@@ -6,6 +6,9 @@ import {
   type DistributeDirection,
   type MatchDimension,
 } from "../core/doc/arrange";
+import { forgetEditors } from "./pluginEditors";
+import { forgetViews } from "./pluginViews";
+import { closeAllEditorWindows } from "./toolWindows";
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoArrangement } from "../core/doc/echo";
@@ -510,6 +513,10 @@ async function openExperimentFile(file: File): Promise<void> {
           ]),
         );
     doc.load({ ...opened.state, procedures });
+    // Plugins' editors start again from what this experiment kept of them.
+    closeAllEditorWindows();
+    forgetEditors();
+    forgetViews();
     history.load(opened.history);
     files.load(opened.files);
     // Python's variables belong to the experiment that was open before.

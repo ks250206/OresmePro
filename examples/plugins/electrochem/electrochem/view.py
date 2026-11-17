@@ -6,7 +6,9 @@ the data and of the circuit with the parameters as they stand; the
 parameters as a table, to edit; Guess, which starts them from the spectrum,
 and Fit, which runs the action eis_circuit (recorded in the history, kept
 among the results, and made again in place each time) and puts what it
-found back into the table. Every edit draws the circuit again.
+found back into the table. Every edit draws the circuit again. The window
+opens again where it was left: the application keeps its state in the
+experiment and hands it back on ``open`` as ``saved``.
 """
 
 import numpy as np
@@ -67,11 +69,23 @@ def _rows(model, rows):
     return out
 
 
+def _opened(event):
+    """Where the window was left (kept in the experiment), else the last fit, else afresh."""
+    saved = event.get("saved")
+    if isinstance(saved, dict) and isinstance(saved.get("state"), dict):
+        state = _fresh()
+        state.update({key: value for key, value in saved["state"].items() if key in state})
+        if not isinstance(state["params"], list):
+            state["params"] = []
+        return state
+    return _restored(event.get("last"))
+
+
 @view("eis")
 def eis_view(state, event, waves):
     kind = event.get("type")
     if kind == "open" or not isinstance(state, dict):
-        state = _restored(event.get("last"))
+        state = _opened(event)
     message = None
 
     try:

@@ -17,10 +17,10 @@ import { openTool, type EditorTool } from "./toolWindows";
  * The state of the model editors that plugins describe (see
  * src/core/plugins/editor.ts): for each, the data being modelled, the items
  * of the model with their constraints, the settings, what the plugin's
- * preview last drew, and what its last fit said. Like the other tool windows
- * an editor is not part of the experiment; each fit is, as a run of the
- * plugin's action in the history and among the results, which the editor
- * reads back when it opens on the same data again.
+ * preview last drew, and what its last fit said. What it holds is kept in the
+ * experiment (DocState.editors), to open again where it was left; each fit is
+ * also a run of the plugin's action, in the history and among the results,
+ * which the editor reads back when it opens on data it holds nothing for.
  */
 
 export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -95,6 +95,9 @@ export const editorTool = (plugin: string, editor: string): EditorTool =>
   `editor:${editorKey(plugin, editor)}`;
 
 const stores = new Map<string, Store<EditorState>>();
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** How long an editor has to stay unchanged for what it holds to be kept in the experiment. */
+const SAVE_DELAY = 400;
 
 /** The state of one editor, made when first asked for. */
 export function editorStore(key: string): Store<EditorState> {
@@ -113,9 +116,61 @@ export function editorStore(key: string): Store<EditorState> {
       previewError: null,
       sizing: null,
     });
+    // What it holds goes into the experiment, a moment after it last changed.
+    const made = store;
+    let last: [EditorSetup | null, EditorState["kept"], EditorReport | null] = [null, {}, null];
+    made.subscribe(() => {
+      const { setup, kept, report } = made.get();
+      if (setup === last[0] && kept === last[1] && report === last[2]) return;
+      last = [setup, kept, report];
+      if (!setup) return;
+      clearTimeout(saveTimers.get(key));
+      saveTimers.set(
+        key,
+        setTimeout(() => {
+          saveTimers.delete(key);
+          keepEditor(key);
+        }, SAVE_DELAY),
+      );
+    });
     stores.set(key, store);
   }
   return store;
+}
+
+/** What the experiment keeps of a spectrum-fit editor: the setups of the data it was used on. */
+interface EditorMemoryState {
+  current: string | null;
+  setups: Record<string, { setup: EditorSetup; report: EditorReport | null }>;
+}
+
+function keepEditor(key: string): void {
+  const [plugin, editor] = key.split("/") as [string, string];
+  const installed = pluginStore.list().find((item) => item.manifest.name === plugin);
+  const { setup, report, kept } = editorStore(key).get();
+  if (!installed || !setup) return;
+  const state: EditorMemoryState = {
+    current: setup.data,
+    setups: { ...kept, [setup.data]: { setup, report } },
+  };
+  try {
+    doc.dispatch({
+      op: "keepEditorState",
+      plugin,
+      editor,
+      version: installed.manifest.version,
+      state,
+    });
+  } catch {
+    // Too large to keep: it stays in the window only.
+  }
+}
+
+/** Forgets every editor's window: another experiment was opened. */
+export function forgetEditors(): void {
+  for (const timer of saveTimers.values()) clearTimeout(timer);
+  saveTimers.clear();
+  stores.clear();
 }
 
 export interface EditorContext {
@@ -244,6 +299,80 @@ export function fromResult(
   return { setup, report: null };
 }
 
+const strings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/** A setup as the experiment kept it, read against the editor's fields; null if it is not one. */
+export function savedSetup(context: EditorContext, raw: unknown): EditorSetup | null {
+  if (!isObject(raw) || typeof raw.data !== "string") return null;
+  const { spec } = context;
+  const setup = plainSetup(context, raw.data);
+  if (spec.x && typeof raw.x === "string") setup.x = raw.x;
+  const range = raw.range;
+  if (
+    spec.range &&
+    Array.isArray(range) &&
+    range.length === 2 &&
+    range.every((item) => typeof item === "number" && Number.isFinite(item))
+  )
+    setup.range = [range[0] as number, range[1] as number];
+  const settings = isObject(raw.settings) ? raw.settings : {};
+  for (const name of spec.settings)
+    if (settings[name] !== undefined) setup.settings[name] = settings[name] as JsonValue;
+  const items = Array.isArray(raw.items) ? raw.items.slice(0, LETTERS.length) : [];
+  setup.items = items.flatMap((entry: unknown) => {
+    if (!isObject(entry)) return [];
+    const item = blankItem(spec);
+    const values = isObject(entry.values) ? entry.values : {};
+    const constraints = isObject(entry.constraints) ? entry.constraints : {};
+    for (const field of spec.items.fields) {
+      const value = values[field.key];
+      if (
+        field.kind === "number"
+          ? typeof value === "number" && Number.isFinite(value)
+          : typeof value === "string"
+      )
+        item.values[field.key] = value as string | number;
+      if (field.constraint && typeof constraints[field.key] === "string")
+        item.constraints[field.key] = constraints[field.key] as string;
+    }
+    return [item];
+  });
+  return setup;
+}
+
+function savedReport(raw: unknown): EditorReport | null {
+  if (!isObject(raw)) return null;
+  const { result, columns, rows, lines, warnings } = raw;
+  if (
+    (result !== null && typeof result !== "string") ||
+    !strings(columns) ||
+    !Array.isArray(rows) ||
+    !rows.every(strings) ||
+    !strings(lines) ||
+    !strings(warnings)
+  )
+    return null;
+  return { result, columns, rows: rows as string[][], lines, warnings };
+}
+
+/** What the experiment kept of an editor: its setups by data, and the data it was on. */
+export function savedEditor(
+  context: EditorContext,
+  raw: unknown,
+): { current: string | null; kept: EditorState["kept"] } {
+  const kept: EditorState["kept"] = {};
+  if (!isObject(raw)) return { current: null, kept };
+  const setups = isObject(raw.setups) ? raw.setups : {};
+  for (const entry of Object.values(setups)) {
+    if (!isObject(entry)) continue;
+    const setup = savedSetup(context, entry.setup);
+    if (setup) kept[setup.data] = { setup, report: savedReport(entry.report) };
+  }
+  const current = typeof raw.current === "string" && raw.current in kept ? raw.current : null;
+  return { current, kept };
+}
+
 /** Starts work on data: where it was left this session, else its last fit, else afresh. */
 export function chooseData(context: EditorContext, data: string): void {
   const store = editorStore(context.key);
@@ -276,9 +405,19 @@ export function openEditor(plugin: string, editor: string, data?: string): void 
   const context = findEditor(editorKey(plugin, editor));
   if (typeof context === "string") return;
   const state = doc.getState();
+  const store = editorStore(context.key);
+  let left: string | null = null;
+  const memory = state.editors[context.key];
+  if (!store.get().setup && Object.keys(store.get().kept).length === 0 && memory) {
+    // Opened for the first time since the experiment was: where it was left when saved.
+    const saved = savedEditor(context, memory.state);
+    store.set({ kept: saved.kept });
+    left = saved.current;
+  }
   const name =
     data ??
-    editorStore(context.key).get().setup?.data ??
+    store.get().setup?.data ??
+    left ??
     state.waveOrder.find((item) => {
       const wave = state.waves[item]!;
       return !wave.text && wave.shape.length === 1;

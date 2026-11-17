@@ -512,6 +512,12 @@ def test_eis_view_draws_guesses_and_takes_a_fit_back():
             "coef": truth.tolist(), "sigma": [0.0] * 4}
     _, state, _ = call(None, {"type": "open", "last": last}, with_waves=False)
     assert state["frequency"] == "f" and state["params"][1]["value"] == 100.0
+    # Where it was left, when the experiment kept that, comes before the last fit.
+    left = dict(state, circuit="R0-p(R1,C1)", params=[{"name": "R0", "value": 7.0}], extra=1)
+    saved = {"state": left, "version": "0.2.0"}
+    _, state, _ = call(None, {"type": "open", "last": last, "saved": saved}, with_waves=False)
+    assert state["circuit"] == "R0-p(R1,C1)" and state["params"][0]["value"] == 7.0
+    assert "extra" not in state
 
 
 def run_all():
