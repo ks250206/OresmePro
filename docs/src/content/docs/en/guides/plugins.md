@@ -118,3 +118,4 @@ Two example plugins:
 
 - Electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
 - Ternary diagrams: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary). The frame, grid, tick labels and corner names are ordinary traces and text markers, returned as a graph
+- XPS peak fitting in the way of CasaXPS (a region, a Shirley background, GL/SGL/LA line shapes, constraints between components, quantification with RSFs): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps). It returns a graph with a reversed binding energy axis and the residual above

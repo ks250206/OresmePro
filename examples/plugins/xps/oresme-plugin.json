@@ -1,0 +1,150 @@
+{
+  "manifestVersion": 1,
+  "name": "xps",
+  "title": "XPS Peak Fitting",
+  "version": "0.1.0",
+  "description": "Peak models of XPS spectra in the way CasaXPS builds them: a region, a Shirley or linear background, and synthetic components with CasaXPS's line shapes (GL, SGL, GL(m)T(k), LA(α,β)) and constraints between components (pos=A+1.5, area=A*0.5, fwhm=A), fitted by least squares with uncertainties; and atomic concentrations from region areas and sensitivity factors. Binding energies in eV.",
+  "license": "MIT",
+  "python": {
+    "entry": "xps",
+    "packages": ["numpy", "scipy"]
+  },
+  "files": [
+    "xps/__init__.py",
+    "xps/common.py",
+    "xps/shapes.py",
+    "xps/components.py",
+    "xps/fit.py",
+    "xps/quantify.py"
+  ],
+  "actions": [
+    {
+      "name": "xps_fit",
+      "title": "XPS Peak Fit",
+      "description": "Fits synthetic components over a background in one region of a spectrum, as CasaXPS's Components page does. Components are written one per line or per ';', lettered A, B, C...: 'name: shape pos=... fwhm=... area=... rsf=...', e.g. 'C-C: GL(30) pos=284.8; C-O: GL(30) pos=A+1.5 fwhm=A'. A value is a start (284.8), limits (284.8[284,286]), fixed (284.8!) or tied to another component (A+1.5, A*0.5, A). Makes the region's data, background, each component on the background, the envelope and the residual, and a graph of them on a reversed binding energy axis; reports positions, FWHMs, areas with uncertainties, and each component's share of area/RSF.",
+      "params": {
+        "spectrum": {
+          "type": "wave",
+          "title": "Spectrum",
+          "description": "Intensities (counts, or counts per second)."
+        },
+        "components": {
+          "type": "string",
+          "title": "Components",
+          "description": "One per line or per ';': 'name: shape pos=... fwhm=... area=... rsf=... gauss=...'. Shapes: GL(m), SGL(m), GL(m)T(k), SGL(m)T(k), LA(α,β); GL(30) if none. Values: 284.8 (start), 284.8[284,286] (limits), 284.8! (fixed), A+1.5, A-1.5, A*0.5, A/2, A (tied to component A). Example: 'C-C: GL(30) pos=284.8; C-O: GL(30) pos=A+1.5 fwhm=A; O-C=O: GL(30) pos=A+4 fwhm=A'."
+        },
+        "energy": {
+          "type": "wave",
+          "title": "Energy",
+          "optional": true,
+          "description": "The energy of each point; without it, the spectrum's X scaling."
+        },
+        "region": {
+          "type": "numbers",
+          "title": "Region (eV)",
+          "optional": true,
+          "length": 2,
+          "description": "Binding energies from and to (after the shift); the whole spectrum when left out."
+        },
+        "background": {
+          "type": "choice",
+          "title": "Background",
+          "choices": ["Shirley", "Linear", "None"],
+          "default": "Shirley"
+        },
+        "average": {
+          "type": "integer",
+          "title": "Average width",
+          "default": 5,
+          "min": 1,
+          "description": "How many points at each end of the region are averaged for the background's end levels."
+        },
+        "energy_axis": {
+          "type": "choice",
+          "title": "Energies are",
+          "choices": ["binding", "kinetic"],
+          "default": "binding",
+          "description": "kinetic: binding energy = photon energy − kinetic energy."
+        },
+        "photon_energy": {
+          "type": "number",
+          "title": "Photon energy (eV)",
+          "default": 1486.6,
+          "min": 0,
+          "description": "Al Kα 1486.6, Mg Kα 1253.6."
+        },
+        "shift": {
+          "type": "number",
+          "title": "Charge correction (eV)",
+          "default": 0,
+          "description": "Added to every binding energy: −0.8 when C 1s is at 285.6 eV and should be at 284.8 eV."
+        },
+        "weighting": {
+          "type": "choice",
+          "title": "Weighting",
+          "choices": ["poisson", "unit"],
+          "default": "poisson",
+          "description": "poisson weights each point by 1/√counts."
+        }
+      }
+    },
+    {
+      "name": "quantify",
+      "title": "XPS Quantification",
+      "description": "Atomic concentrations from the areas of regions over a background, divided by their relative sensitivity factors. Regions are written one per line or per ';': 'name: from to rsf=...', e.g. 'C 1s: 280 292 rsf=1; O 1s: 526 538 rsf=2.93'. Each is taken from the first spectrum that covers it, so a survey or narrow scans both work. Makes the backgrounds, with the spectra's own scaling.",
+      "params": {
+        "spectra": {
+          "type": "waves",
+          "title": "Spectra",
+          "description": "A survey, or narrow scans of the regions."
+        },
+        "regions": {
+          "type": "string",
+          "title": "Regions",
+          "description": "One per line or per ';': 'name: from to rsf=...' in binding energy (eV), e.g. 'C 1s: 280 292 rsf=1; O 1s: 526 538 rsf=2.93'."
+        },
+        "energies": {
+          "type": "waves",
+          "title": "Energies",
+          "optional": true,
+          "description": "The energies of each spectrum, in the same order; without them, the spectra's X scaling."
+        },
+        "background": {
+          "type": "choice",
+          "title": "Background",
+          "choices": ["Shirley", "Linear", "None"],
+          "default": "Shirley"
+        },
+        "average": {
+          "type": "integer",
+          "title": "Average width",
+          "default": 5,
+          "min": 1
+        },
+        "energy_axis": {
+          "type": "choice",
+          "title": "Energies are",
+          "choices": ["binding", "kinetic"],
+          "default": "binding"
+        },
+        "photon_energy": {
+          "type": "number",
+          "title": "Photon energy (eV)",
+          "default": 1486.6,
+          "min": 0
+        },
+        "shift": {
+          "type": "number",
+          "title": "Charge correction (eV)",
+          "default": 0
+        },
+        "ke_exponent": {
+          "type": "number",
+          "title": "Kinetic energy exponent",
+          "default": 0,
+          "description": "Areas are also divided by KE^x (transmission and escape depth); 0 when the RSFs already include them."
+        }
+      }
+    }
+  ]
+}
