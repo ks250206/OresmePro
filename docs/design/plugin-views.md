@@ -189,7 +189,7 @@ EIS の view は、回路の文字列と図を両方向に結ぶ。文字列が�
 
 - action の結果は新しい名前の wave になり、既存の wave を置き換えない
 - `replace=True` なら、同じプラグインの同じ action が同じ入力 wave で前回作った wave のうち、その後変わっていないものだけを同じ名前で作り直し、そのグラフも更新する。決めるのは本体と使う人で、プラグインではない
-- Experiment の undo は action の実行単位。画面の中の編集の undo は、本体が状態の履歴として持つ(`spectrum-fit` と同じ Ctrl+Z)
+- Experiment の undo は action の実行単位。画面の中の編集の undo は、本体が状態の履歴として持つ(`spectrum-fit` と同じ Ctrl+Z)。部品での編集のほか、`command`(ボタン、プロットのクリック)や `done` への返事が状態を変えたときも、1 回の undo になる
 - プラグインを外しても、作った wave・グラフ・結果は本体の形式のまま残る
 
 ## 11. 保存

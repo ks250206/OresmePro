@@ -3,7 +3,8 @@
  * (DocState.editors), a moment after it last changed: a drag changes it at
  * every step, and the experiment need not take each one. What is waiting is
  * put in at once when the page is hidden or left, before the experiment is
- * saved (src/app/persist.ts saves it then too), so a reload loses nothing.
+ * saved (src/app/persist.ts saves then what it has not yet), so that it goes
+ * with the rest of what is unsaved.
  */
 
 /** How long a window's state has to stay unchanged to be kept. */

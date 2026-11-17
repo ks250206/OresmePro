@@ -142,8 +142,19 @@ describe("the window of a plugin's view", () => {
     await settle();
     clickPlot(key, "add", 2.5, 10);
     expect(calls.at(-1)!.event).toEqual({ type: "command", id: "add", x: 2.5, y: 10 });
+    calls.at(-1)!.answer({ state: { added: [2.5] } });
+    await settle();
+    // What the click added is undone in the window, as an edit is.
+    expect(viewStore(key).get().past).toEqual([{}]);
+    undoView(key);
+    expect(viewStore(key).get().state).toEqual({});
     calls.at(-1)!.answer({});
     await settle();
+    // A command that changes nothing leaves nothing to undo.
+    clickPlot(key, "add", 1, 1);
+    calls.at(-1)!.answer({ state: {} });
+    await settle();
+    expect(viewStore(key).get().past).toEqual([]);
   });
 
   it("keeps its state in the experiment, and starts from it when opened again", async () => {

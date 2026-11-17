@@ -1,8 +1,34 @@
 import { fileURLToPath } from "node:url";
+import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 /** The example plugin electrochem, whose view eis builds its window of the app's parts. */
 const ELECTROCHEM = fileURLToPath(new URL("../examples/plugins/electrochem", import.meta.url));
+
+/** The state of the view eis kept in the experiment. */
+interface Kept {
+  report?: string;
+  circuit?: string;
+  diagram?: { edges: { from: string[]; to: string[] }[] };
+}
+
+/** Waits until the view's state kept in the experiment passes a check, then saves the experiment. */
+async function keptAndSaved(
+  page: Page,
+  check: (state: Kept | undefined) => boolean,
+): Promise<void> {
+  await expect
+    .poll(async () =>
+      check(
+        await page.evaluate(
+          () => globalThis.oresme.doc.getState().editors["electrochem/eis"]?.state as Kept,
+        ),
+      ),
+    )
+    .toBe(true);
+  // Saved now, as before the page goes on to something else.
+  expect(await page.evaluate(() => globalThis.oresme.experiment.flush())).toBe(true);
+}
 
 test.describe("a plugin's view", () => {
   test.describe.configure({ timeout: 240_000 });
@@ -88,8 +114,8 @@ test.describe("a plugin's view", () => {
     const order = (await app.doc()).order;
     expect(order.filter((name) => name.startsWith("freq_zre_fit"))).toEqual(["freq_zre_fit"]);
 
-    // Opened after a reload, it starts from the last fit kept.
-    await expect(page.getByText(/^Saved/)).toBeVisible({ timeout: 20_000 });
+    // Opened after a reload, it starts where it was left: the last fit.
+    await keptAndSaved(page, (state) => /Plugin1/.test(state?.report ?? ""));
     await page.reload();
     await expect
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme?.doc.getState().results ?? {})))
@@ -136,19 +162,14 @@ test.describe("a plugin's view", () => {
     ).toHaveCount(1);
 
     // Kept in the experiment: opened after a reload, the window is as it was left.
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            (
-              globalThis.oresme.doc.getState().editors["electrochem/eis"]?.state as {
-                circuit?: string;
-              }
-            )?.circuit,
+    await keptAndSaved(
+      page,
+      (state) =>
+        state?.circuit === "p(R0,R2)-p(R1,CPE1)" &&
+        (state.diagram?.edges ?? []).some(
+          (edge) => edge.from.join(".") === "R2.b" && edge.to.join(".") === "R0.b",
         ),
-      )
-      .toBe("p(R0,R2)-p(R1,CPE1)");
-    await expect(page.getByText(/^Saved/)).toBeVisible({ timeout: 20_000 });
+    );
     await page.reload();
     await app.menu("Analysis", "EIS Circuit Fitting…");
     await expect(win.getByLabel("Circuit", { exact: true })).toHaveValue("p(R0,R2)-p(R1,CPE1)", {

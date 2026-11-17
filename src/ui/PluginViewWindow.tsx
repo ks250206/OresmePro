@@ -647,6 +647,9 @@ interface Drag {
   /** The bound values when it was picked up. */
   valueX: number | null;
   valueY: number | null;
+  /** Where the handle was when it was picked up: the view may move it before it is let go. */
+  fromX: number | null;
+  fromY: number | null;
   /** Where the handle is drawn while it is dragged. */
   x: number | null;
   y: number | null;
@@ -736,6 +739,8 @@ function Plot({ viewKey, node }: { viewKey: string; node: PlotNode }) {
             startY: layout.ys.toValue(py),
             valueX: value(handle.bindX),
             valueY: value(handle.bindY),
+            fromX: handle.x,
+            fromY: handle.y,
             x: handle.x,
             y: handle.y,
           });
@@ -764,13 +769,13 @@ function Plot({ viewKey, node }: { viewKey: string; node: PlotNode }) {
           const toY = ys!.toValue(py);
           const values: Record<string, number> = {};
           let { x, y } = drag;
-          if (handle.bindX !== null && handle.x !== null && Number.isFinite(toX)) {
-            x = moved(handle.x, drag.startX, toX, node.xLog);
+          if (handle.bindX !== null && drag.fromX !== null && Number.isFinite(toX)) {
+            x = moved(drag.fromX, drag.startX, toX, node.xLog);
             if (drag.valueX !== null)
               values[handle.bindX] = moved(drag.valueX, drag.startX, toX, node.xLog);
           }
-          if (handle.bindY !== null && handle.y !== null && Number.isFinite(toY)) {
-            y = moved(handle.y, drag.startY, toY, node.yLog);
+          if (handle.bindY !== null && drag.fromY !== null && Number.isFinite(toY)) {
+            y = moved(drag.fromY, drag.startY, toY, node.yLog);
             if (drag.valueY !== null)
               values[handle.bindY] = moved(drag.valueY, drag.startY, toY, node.yLog);
           }

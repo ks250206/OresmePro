@@ -218,6 +218,16 @@ async function send(key: string, event: unknown): Promise<void> {
     const sent = chosenWaves(ui, state);
     const outcome = await plugins.runView(plugin, view, { state, event, waves: sent });
     takeIn(store, runner, outcome);
+    // What a command (a button, a click on a plot) or an action's values did to the state
+    // is a step of the window's undo, as an edit is. With edits made meanwhile, those are.
+    const type = (event as { type?: string }).type;
+    const after = store.get();
+    if (
+      (type === "command" || type === "done") &&
+      runner.edits.length === 0 &&
+      JSON.stringify(after.state) !== JSON.stringify(state)
+    )
+      store.set({ past: [...after.past, state].slice(-LIMIT), future: [] });
     // Waves the view chose itself (a view opened again, restoring its choices) were not sent
     // with this event: it is told of them, and given them, with the next.
     const now = store.get();
