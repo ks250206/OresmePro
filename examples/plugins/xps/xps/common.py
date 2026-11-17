@@ -7,7 +7,9 @@ from oresme_plugin import PluginError
 #: Photon energies of the usual laboratory sources (eV).
 AL_KA = 1486.6
 
-BACKGROUNDS = ("Shirley", "Linear", "None")
+BACKGROUNDS = ("Shirley", "Linear", "Tougaard", "None")
+#: C of Tougaard's universal cross-section (eV²); B is scaled to the data.
+TOUGAARD_C = 1643.0
 
 
 def numbers(w, what):
@@ -80,13 +82,17 @@ def region_slice(be, y, bounds, what="The region"):
 
 
 def background(be, y, method, average):
-    """The background under the points (be, y) of a region: Shirley, linear or none.
+    """The background under the points (be, y) of a region: Shirley, linear, Tougaard or none.
 
     The levels at the two ends are the means of ``average`` points there. The
     Shirley background rises from the level at the low binding energy end to
     the level at the high end in proportion to the peak area (data above the
     background) at lower binding energy, found by iterating until it settles.
-    Points that are not finite stay NaN.
+    The Tougaard background adds to the level at the low binding energy end
+    the electrons the peaks lose on the way to higher binding energy, by
+    Tougaard's universal cross-section B T / (C + T²)² (C = 1643 eV²), with B
+    scaled so that it meets the level at the high end. Points that are not
+    finite stay NaN.
     """
     if method not in BACKGROUNDS:
         raise PluginError(f"The background is one of {', '.join(BACKGROUNDS)}.")
@@ -108,6 +114,16 @@ def background(be, y, method, average):
     if method == "Linear":
         out[order] = low + (high - low) * (x - x[0]) / (x[-1] - x[0])
         return out
+    if method == "Tougaard":
+        loss = _tougaard(x, data - low)
+        tail = float(loss[-count:].mean())
+        if not tail > 0:
+            raise PluginError(
+                "There is no peak above the background to scale a Tougaard background to; "
+                "choose a wider region, or a Linear background."
+            )
+        out[order] = low + (high - low) / tail * loss
+        return out
     level = np.full(len(x), low)
     tolerance = 1e-7 * max(abs(high - low), abs(high), abs(low), 1e-300)
     for _ in range(200):
@@ -128,3 +144,13 @@ def background(be, y, method, average):
             out[order] = level
             return out
     raise PluginError("The Shirley background did not settle in 200 iterations.")
+
+
+def _tougaard(x, net):
+    """At each point, ∫ T / (C + T²)² · net over the points of lower binding energy (T = the loss)."""
+    out = np.zeros(len(x))
+    for index in range(1, len(x)):
+        lost = x[index] - x[: index + 1]
+        integrand = lost / (TOUGAARD_C + lost**2) ** 2 * net[: index + 1]
+        out[index] = np.sum(0.5 * (integrand[1:] + integrand[:-1]) * np.diff(x[: index + 1]))
+    return out

@@ -7,18 +7,28 @@ import {
   type Tool,
   type ToolWindowState,
 } from "../app/toolWindows";
+import { useSyncExternalStore } from "react";
+import { pluginStore } from "../app/session";
+import { PluginEditorWindow } from "./PluginEditorWindow";
 import { ProcedureBrowser } from "./ProcedureBrowser";
 import { VariablesView } from "./VariablesView";
-import { XpsWindow } from "./XpsWindow";
 
-const TITLES: Record<Tool, string> = {
+const TITLES: Record<string, string> = {
   procedureBrowser: "Procedure Browser",
   variables: "Variables",
-  xps: "XPS Peak Fitting",
 };
 
+/** A tool window's title: a plugin's editor is named by its plugin. */
+function useTitle(tool: Tool): string {
+  const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
+  if (!tool.startsWith("editor:")) return TITLES[tool]!;
+  const [plugin, editor] = tool.slice("editor:".length).split("/");
+  const found = installed.find((item) => item.manifest.name === plugin);
+  return found?.manifest.editors.find((item) => item.name === editor)?.title ?? editor ?? tool;
+}
+
 function content(tool: Tool): ReactNode {
-  if (tool === "xps") return <XpsWindow />;
+  if (tool.startsWith("editor:")) return <PluginEditorWindow tool={tool} />;
   return tool === "procedureBrowser" ? <ProcedureBrowser /> : <VariablesView />;
 }
 
@@ -30,7 +40,7 @@ function ToolWindow({ window, front, z }: { window: ToolWindowState; front: bool
     from: ToolWindowState;
     resize: boolean;
   } | null>(null);
-  const title = TITLES[window.tool];
+  const title = useTitle(window.tool);
   const start = (event: React.PointerEvent, resize: boolean) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     event.currentTarget.setPointerCapture(event.pointerId);

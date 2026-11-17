@@ -767,10 +767,6 @@
     "source": "6026dc98a7ef",
     "ja": "2 次元 wave の第 2 次元の各点の Y の値。"
   },
-  "XPSFitResult": {
-    "source": "0b2c3ea27951",
-    "ja": "``op.xps_fit`` が返すもの: フィットした成分と、フィットの良さ。\n\n``components`` は dict のリスト(letter、name、shape、position、fwhm、area とそれぞれの ``_sigma``、``width``(真の半値全幅)、rsf、gauss、``percent``(面積/RSF の割合)、``constraints``)です。``chisq``、``chisq_reduced``、``points``、``converged``、``reason``、``warnings`` がフィットの様子を、``waves`` が役割ごとの作った wave を、``graph`` がグラフを、``name`` が残した結果の名前を表します。"
-  },
   "action": {
     "source": "8a61dc3626e4",
     "ja": "関数を Action として登録します: 名前と、型の決まった引数で呼ぶもの。\n\n::\n\n    @op.action(\"lab.normalize\", title=\"Normalize\", params={\n        \"wave\": {\"type\": \"wave\", \"title\": \"Wave\"},\n        \"to\": {\"type\": \"number\", \"default\": 1.0, \"min\": 0},\n    })\n    def normalize(wave, to=1.0):\n        return op.make(f\"{wave.name}_norm\", wave.data / np.nanmax(wave.data) * to)\n\nパネル・テンプレート・プラグインは、Python のコードではなく普通の値(JSON)で Action を呼びます。Python からは ``op.invoke(\"lab.normalize\", {\"wave\": \"signal\"})`` で同じことができます。引数は関数を呼ぶ前に ``params`` と照らし合わせて検査し、呼び出しは ``op.atomic()`` ブロックの中で動くので、失敗した呼び出しは何も変えません。\n\n``id`` は ``\"lab.normalize\"`` のような小文字の点区切りの名前です。``core.`` で始まる id はアプリ自身の解析、``plugin.`` はプラグイン用なので、Procedure からは登録できません。同じ id と版をもう一度登録すると置き換わります(Procedure をもう一度実行したときなど)。新しい ``version`` は古い版と並べて登録でき、版を指定した呼び出しはその版、それ以外は最新版を使います。\n\n``params`` は各引数の名前から、その説明の dict への対応です: ``type`` と、必要なら ``title``、``description``、``optional=True``、``default``(付けると省略可能になり、関数自身の既定値と同じである必要があります)。型は次のとおりです:\n\n- ``\"wave\"``: 既存の wave の名前。``op.Wave`` として渡す。\n- ``\"waves\"``: wave の名前のリスト。``op.Wave`` のリストとして渡す。\n- ``\"number\"``、``\"integer\"``: 必要なら ``min`` と ``max``(両端を含む)。\n- ``\"numbers\"``: 数のリスト。必要なら ``min``、``max``、``length``。\n- ``\"string\"``、``\"boolean\"``。\n- ``\"choice\"``: ``choices``(文字列か数のリスト)のどれか。\n- ``\"samples\"``: dict のリストで、各 dict はテンプレートの入力ごとに wave の名前を与える(``Template.run`` を参照)。\n- ``\"json\"``: 独自の構造を持つ値(dict、リスト、文字列、数、True/False と、その中の None)。中身は関数自身が検査する。フィットの ``hold``、``bounds``、``exclude`` など。\n\n省いた引数は渡さないので、関数の既定値が使われます。None(null)は値として使えません。代わりに引数を省いてください。``arg`` は引数をその名前のパラメータとして渡します。2 つの省略可能な引数を同じパラメータとして渡すこともでき(ピークの数か位置か、など)、そのときはどちらか一方しか指定できません。\n\n関数をそのまま返します。"
@@ -912,8 +908,8 @@
     "ja": "wave の点の間の値を、新しい wave ``<name>_interp`` として返します。\n\n``n`` を渡すと、同じ X 範囲に等間隔の n 点の結果になります(XY データを X スケーリング付きの wave にするのにも使えます)。``at``(X の値の wave か配列)を渡すと、その各点の値になります。``kind`` は ``\"linear\"`` か ``\"cubic\"``(自然スプライン)。データの外は NaN です。"
   },
   "invoke": {
-    "source": "936da2003c3f",
-    "ja": "id と普通の値の dict で Action を呼びます(アプリと同じ呼び方)。\n\n::\n\n    r = op.invoke(\"core.fit\", {\"function\": \"gauss\", \"y\": \"signal\"})\n\n引数はまず Action のパラメータと照らし合わせます(``op.action`` を参照)。拒否された呼び出しは ``OresmeError`` になり、何もしません。wave は名前でも ``op.Wave`` でも渡せます。``version`` で Action の版を選びます(既定は最新)。呼び出しは ``op.atomic()`` ブロックの中で動き、関数の戻り値を返します。"
+    "source": "339df72300fd",
+    "ja": "id と普通の値の dict で Action を呼びます(アプリと同じ呼び方)。\n\n::\n\n    r = op.invoke(\"core.fit\", {\"function\": \"gauss\", \"y\": \"signal\"})\n\n引数はまず Action のパラメータと照らし合わせます(``op.action`` を参照)。拒否された呼び出しは ``OresmeError`` になり、何もしません。wave は名前でも ``op.Wave`` でも渡せます。``version`` で Action の版を選びます(既定は最新)。呼び出しは ``op.atomic()`` ブロックの中で動き、関数の戻り値を返します。\n\nプラグインの Action は新しい名前の wave を作り、既存の wave を置き換えません。``replace=True`` なら、同じ Action が同じ入力 wave で最後に作った wave(その結果に残っているもの)を、その実行のあとから変わっていない限り同じ名前で作り直し、作ったグラフも更新します。プラグインのモデル編集ウィンドウはこの方法でフィットします。"
   },
   "kill": {
     "source": "3fe56bb33e45",
@@ -1138,9 +1134,5 @@
   "windows": {
     "source": "613459e4af7a",
     "ja": "ウィンドウの名前(後ろから前の順): すべて、または ``kind`` の種類のもの。\n\n``kind`` は \"graph\"、\"table\"、\"procedure\"、\"page\"、\"panel\"、\"note\" のどれかです。``closed=False`` で、閉じた(``close_window`` を参照)ウィンドウを除きます。"
-  },
-  "xps_fit": {
-    "source": "653f93e4c93e",
-    "ja": "XPS スペクトルの領域(Region)で、背景の上に合成成分をフィットします。CasaXPS と同じやり方です。\n\n::\n\n    op.xps_fit(\"C1s\", [\n        {\"name\": \"C-C\", \"shape\": \"GL(30)\", \"position\": 284.8, \"fwhm\": 1.2},\n        {\"name\": \"C-O\", \"position\": 286.3, \"constraints\": {\"position\": \"A+1.5\", \"fwhm\": \"A\"}},\n    ], region=[281, 292])\n\n``components`` は dict のリストで、順に A, B, C ... と文字が付きます。\n\n- ``name``、``shape``: ``\"GL(30)\"``(既定)、``\"SGL(m)\"``、``\"GL(m)T(k)\"``、``\"SGL(m)T(k)\"``、``\"LA(α,β)\"``\n- ``position``(結合エネルギー、eV)、``fwhm``(幅のパラメータ F、eV。省くと 1.5)、``area``: フィットを始める値。``area`` を省くとデータの高さから見積もります\n- ``constraints``: ``position``・``fwhm``・``area`` それぞれに、``\"\"``(自由。領域の中、0.05〜20 eV、0 以上)、制限 ``\"284, 286\"``、``\"fixed\"``(固定)、ほかの成分に結ぶ ``\"A\"``、``\"A+1.5\"``、``\"A-1.5\"``、``\"A*0.5\"``、``\"A/2\"``\n- ``rsf``(相対感度係数、既定 1)と ``gauss``(線形に畳み込むガウス関数の FWHM、eV、既定 0)\n\n``x`` はエネルギーの X wave で、省くとスペクトルの X スケーリングです。``energy=\"kinetic\"`` なら hν − KE で結合エネルギーにし、``shift``(帯電補正)をすべての結合エネルギーに足します。``region=[from, to]`` は(``shift`` を足したあとの)結合エネルギーで、省くとスペクトル全体です。\n\n``background`` は ``\"shirley\"``、``\"linear\"``、``\"tougaard\"``、``\"none\"`` で、両端を ``average`` 点で平均してデータから求め、フィットの間は固定します。``weighting`` は ``\"poisson\"``(各点を 1/√counts で重み付け)か ``\"unit\"`` です。``fit=False`` なら与えた成分を描くだけです。\n\n領域の上に(外は NaN、スペクトルと同じ長さとスケーリングで)``fit_<name>``(背景 + 全成分)、``fit_<name>_bg``、``fit_<name>_A``、``_B``、...(背景に載せた各成分)、``fit_<name>_res``(データ − フィット)を作り、結合エネルギーがスペクトルの X と違うときは ``fit_<name>_BE`` も作ります。同じスペクトルを次にフィットすると作り直されます。``graph`` なら、エネルギー軸を反転させ残差を上に置いたグラフ ``XPS_<name>`` に表示します。\n\n``XPSFitResult`` を返します。``record=False`` でなければ、フィットは解析結果に ``XPS0``、``XPS1``、... として残ります。"
   }
 }

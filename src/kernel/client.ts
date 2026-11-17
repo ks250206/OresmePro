@@ -45,6 +45,7 @@ export interface KernelOptions {
     action: string,
     args: Record<string, unknown>,
     writer: DocWriter | null,
+    options: { replace?: boolean },
   ) => Promise<unknown>;
   indexURL: string;
 }
@@ -504,7 +505,7 @@ export class KernelClient {
       this.pendingReply = writeSyncReply(buffer, json, null) ? null : answer;
     };
     const fail = (error: unknown) => reply(failureJson(error));
-    let params: { action?: unknown; args?: unknown };
+    let params: { action?: unknown; args?: unknown; replace?: unknown };
     try {
       params = JSON.parse(paramsJson) as typeof params;
     } catch (error) {
@@ -521,10 +522,9 @@ export class KernelClient {
       fail(new Error("Plugins cannot be run here."));
       return;
     }
-    run(params.action, params.args as Record<string, unknown>, openStage(this.options.doc)).then(
-      (result) => reply(JSON.stringify({ ok: true, result: result ?? null })),
-      fail,
-    );
+    run(params.action, params.args as Record<string, unknown>, openStage(this.options.doc), {
+      replace: params.replace === true,
+    }).then((result) => reply(JSON.stringify({ ok: true, result: result ?? null })), fail);
   }
 
   /**

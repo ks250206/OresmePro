@@ -47,17 +47,17 @@ sidebar:
 
 ## Analysis
 
-| 項目                                                                                   | すること                                                                                            | Python                                 |
-| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Curve Fitting…                                                                         | 関数をフィットする(hold・bounds・範囲・重み・残差・信頼帯)                                          | `op.fit("gauss", y)`                   |
-| Multi-peak Fit…                                                                        | 複数ピークを一度にフィットする                                                                      | `op.fit_peaks(y)`                      |
-| Results…                                                                               | 実験に残ったフィット結果の比較・再実行・テンプレート化・プロット                                    | `op.results()`、`op.plot_results(...)` |
-| Templates…                                                                             | 解析テンプレートの作成・編集と、多数の試料への実行                                                  | `op.template("Peak").run([...])`       |
-| Background…                                                                            | Shirley・Tougaard・直線の背景                                                                       | `op.background(y, "shirley")`          |
-| XPS Peak Fitting…                                                                      | XPS スペクトルの成分をドラッグと表で置き、CasaXPS のようにフィットする([ガイド](../../guides/xps/)) | `op.xps_fit(y, [...])`                 |
-| Onset…                                                                                 | 立ち上がりの開始点(接線とベースラインの交点)                                                        | `op.onset(y, edge=(...))`              |
-| Wave Stats… / Differentiate… / Integrate… / Smooth… / FFT… / Histogram… / Interpolate… | 統計量と、微分・積分・平滑化・FFT・ヒストグラム・補間                                               | `op.stats`、`op.differentiate` など    |
-| Filter Image…                                                                          | 2 次元 wave にフィルタをかける                                                                      | `op.filter_image(img, ...)`            |
+| 項目                                                                                   | すること                                                                                                                     | Python                                       |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Curve Fitting…                                                                         | 関数をフィットする(hold・bounds・範囲・重み・残差・信頼帯)                                                                   | `op.fit("gauss", y)`                         |
+| Multi-peak Fit…                                                                        | 複数ピークを一度にフィットする                                                                                               | `op.fit_peaks(y)`                            |
+| Results…                                                                               | 実験に残ったフィット結果の比較・再実行・テンプレート化・プロット                                                             | `op.results()`、`op.plot_results(...)`       |
+| Templates…                                                                             | 解析テンプレートの作成・編集と、多数の試料への実行                                                                           | `op.template("Peak").run([...])`             |
+| Background…                                                                            | Shirley・Tougaard・直線の背景                                                                                                | `op.background(y, "shirley")`                |
+| (プラグインのモデル編集ウィンドウ)                                                     | 入れたプラグインの編集ウィンドウ(xps プラグインの XPS Peak Fitting… など)。メニューの最後に並ぶ([ガイド](../../guides/xps/)) | `op.invoke("plugin.…", {...}, replace=True)` |
+| Onset…                                                                                 | 立ち上がりの開始点(接線とベースラインの交点)                                                                                 | `op.onset(y, edge=(...))`                    |
+| Wave Stats… / Differentiate… / Integrate… / Smooth… / FFT… / Histogram… / Interpolate… | 統計量と、微分・積分・平滑化・FFT・ヒストグラム・補間                                                                        | `op.stats`、`op.differentiate` など          |
+| Filter Image…                                                                          | 2 次元 wave にフィルタをかける                                                                                               | `op.filter_image(img, ...)`                  |
 
 ## Graph
 

@@ -1,6 +1,6 @@
 import type { ActionArgs, JsonValue } from "../actions";
-import { checkName, uniqueName, windowTaken, type Command } from "../doc/commands";
-import type { ResultSource } from "../doc/results";
+import { checkName, uniqueName, waveUsers, windowTaken, type Command } from "../doc/commands";
+import { waveFingerprint, type AnalysisResult, type ResultSource } from "../doc/results";
 import { DocError, leafName, parentFolder, type DocState } from "../doc/types";
 import { WAVE_PROPS, type CheckedResult, type PluginGraph } from "../sandbox/validate";
 import type { PluginAction } from "./manifest";
@@ -11,6 +11,15 @@ import type { PluginAction } from "./manifest";
  * values hold a "result", an analysis result kept with the others. The waves
  * get names of their own and never replace a wave that is there: the plugin
  * does not get to choose what in the experiment it overwrites.
+ *
+ * The one exception is the app's to make, never the plugin's: asked to
+ * `replace` (a model editor fitting again, or `op.invoke(..., replace=True)`),
+ * a run may make again the waves that the same action of the same plugin made
+ * from the same input waves the last time it kept a result, under the same
+ * names, but only those still as that result left them (their values and
+ * scaling equal to the result's own copies). Anything changed or renamed
+ * since, and anything else in the experiment, is left alone and the run's
+ * waves get new names. See {@link previousOutputs}.
  */
 
 export interface OutcomePlan {
@@ -23,6 +32,58 @@ export interface OutcomePlan {
   keepsResult: boolean;
   /** The graph the action asked for, to make once the waves are there (see makePluginGraph). */
   graph: PluginGraph | null;
+  /** When it replaces what a run made before (see previousOutputs): that run, and what to do with it. */
+  replaced: Replaced | null;
+}
+
+/** What a run that replaces an earlier one's waves does to them. */
+export interface Replaced {
+  /** The result of the run before. */
+  result: string;
+  /** The waves of the run before still as it left them, by role. */
+  unchanged: Record<string, string>;
+  /** Waves of the run before that are still as it left them but that this run did not make again. */
+  stale: string[];
+}
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * The run whose waves a run of `source.action` on these inputs may replace:
+ * the latest result the same action of the same plugin kept for the same
+ * input waves; and, by role, those of its waves that are still what it
+ * made (equal to the result's own copies), which may be made again under
+ * their names. Null when there is no such run.
+ */
+export function previousOutputs(
+  state: DocState,
+  source: Pick<ResultSource, "action" | "plugin">,
+  inputs: Readonly<Record<string, string | string[]>>,
+): { result: AnalysisResult; unchanged: Record<string, string> } | null {
+  let latest: AnalysisResult | null = null;
+  for (const result of Object.values(state.results)) {
+    if (
+      result.kind !== "plugin" ||
+      result.source?.action !== source.action ||
+      result.source.plugin !== source.plugin ||
+      !sameJson((result.settings as { inputs?: unknown }).inputs, inputs)
+    )
+      continue;
+    if (!latest || result.created >= latest.created) latest = result;
+  }
+  if (!latest) return null;
+  const given = new Set(Object.values(inputs).flat());
+  const unchanged: Record<string, string> = {};
+  for (const [role, name] of Object.entries(latest.outputs)) {
+    const wave = Object.hasOwn(state.waves, name) ? state.waves[name] : undefined;
+    const keptName = latest.kept[role];
+    const kept =
+      keptName && Object.hasOwn(state.waves, keptName) ? state.waves[keptName] : undefined;
+    if (!wave || !kept || given.has(name)) continue;
+    if (waveFingerprint(wave) === waveFingerprint(kept) && wave.unit === kept.unit)
+      unchanged[role] = name;
+  }
+  return { result: latest, unchanged };
 }
 
 const isObject = (value: unknown): value is Record<string, JsonValue> =>
@@ -66,8 +127,11 @@ export function planOutcome(
   outcome: CheckedResult,
   source: ResultSource,
   now: number,
+  replace = false,
 ): OutcomePlan {
   const inputs = waveArgs(action, args);
+  const previous = replace ? previousOutputs(state, source, inputs) : null;
+  const reuse = previous?.unchanged ?? {};
   const first = Object.values(inputs).flat()[0];
   // Next to the first wave it was given, named after it: "spectrum_fit".
   const folder = first ? parentFolder(first) : "";
@@ -77,7 +141,8 @@ export function planOutcome(
   const waves: Record<string, string> = {};
   for (const [role, wave] of outcome.waves) {
     const base = folder ? `${folder}:${stem}_${role}` : `${stem}_${role}`;
-    const name = freeName(base, taken);
+    const again = Object.hasOwn(reuse, role) ? reuse[role]! : null;
+    const name = again ?? freeName(base, taken);
     taken.add(name);
     waves[role] = name;
     const made = `Made by ${source.action} (${source.origin}${source.commit ? ` @ ${source.commit.slice(0, 12)}` : ""}).`;
@@ -96,7 +161,7 @@ export function planOutcome(
       yUnit: wave.yUnit,
       unit: wave.unit,
       note: wave.note ? `${wave.note}\n${made}` : made,
-      overwrite: false,
+      overwrite: again !== null,
     });
   }
 
@@ -139,7 +204,16 @@ export function planOutcome(
     });
     keepsResult = true;
   }
-  return { commands, waves, values: outcome.values, keepsResult, graph: outcome.graph };
+  const replaced: Replaced | null = previous
+    ? {
+        result: previous.result.name,
+        unchanged: { ...previous.unchanged },
+        stale: Object.entries(previous.unchanged)
+          .filter(([role]) => !Object.hasOwn(waves, role))
+          .map(([, name]) => name),
+      }
+    : null;
+  return { commands, waves, values: outcome.values, keepsResult, graph: outcome.graph, replaced };
 }
 
 /** What makePluginGraph works on: the document as the run's commands leave it. */
@@ -217,4 +291,109 @@ export function makePluginGraph(
     }
   }
   return name;
+}
+
+/**
+ * Brings the graphs that showed only the waves a run replaced (see
+ * planOutcome's `replace`) up to date with the graph the run asked for: the
+ * traces of waves it no longer makes come out, those of waves it makes now
+ * that a graph does not show go in as asked, and a legend that lists traces
+ * (not one written by hand) lists them again. Their look, axes and size stay
+ * as they are. A graph that shows anything else (a wave changed since, say)
+ * is left alone. Returns the first graph updated, or null when there was
+ * none and a graph is to be made instead.
+ */
+export function updatePluginGraphs(
+  target: GraphTarget,
+  graph: PluginGraph,
+  waves: Readonly<Record<string, string>>,
+  replaced: Replaced,
+  plugin: string,
+): string | null {
+  const unchanged = new Set(Object.values(replaced.unchanged));
+  const wave = (role: string): string => {
+    const name = waves[role];
+    if (name === undefined) {
+      throw new DocError(`The graph uses ${role}, which is not a wave the action returned.`);
+    }
+    return name;
+  };
+  const run = (command: Command): unknown => {
+    try {
+      return target.dispatch(command);
+    } catch (error) {
+      if (error instanceof DocError) {
+        throw new DocError(`The graph ${plugin} asked for cannot be updated: ${error.message}`);
+      }
+      throw error;
+    }
+  };
+  const made = new Set(Object.values(waves));
+  const shows = Object.values(target.getState().graphs)
+    .filter(
+      (item) =>
+        item.traces.length > 0 &&
+        item.traces.every(
+          (trace) => unchanged.has(trace.y) && (trace.x === null || unchanged.has(trace.x)),
+        ),
+    )
+    .map((item) => item.name);
+  for (const name of shows) {
+    const before = target.getState().graphs[name]!;
+    const gone = before.traces.filter((trace) => !made.has(trace.y)).map((trace) => trace.name);
+    if (gone.length > 0) run({ op: "removeTraces", graph: name, traces: gone });
+    const legend: string[] = [];
+    for (const trace of graph.traces) {
+      const y = wave(trace.y);
+      const x = trace.x === null ? null : wave(trace.x);
+      const now = target.getState().graphs[name]!;
+      let shown = now.traces.find((item) => item.y === y && item.x === x)?.name;
+      if (!shown) {
+        shown = run({
+          op: "appendTraces",
+          graph: name,
+          y: [y],
+          x,
+          vAxis: trace.vAxis,
+          hAxis: trace.hAxis,
+        }) as string;
+        const props: Record<string, JsonValue> = { ...trace.props };
+        for (const key of WAVE_PROPS) {
+          if (typeof props[key] === "string") props[key] = wave(props[key] as string);
+        }
+        if (Object.keys(props).length > 0)
+          run({ op: "modifyTrace", graph: name, trace: shown, props });
+      }
+      if (trace.legend !== null) legend.push(`\\s(${shown}) ${trace.legend}`);
+    }
+    const listsTraces = graph.annotations.some(
+      (item) => item.kind === "legend" && item.text === null,
+    );
+    const listing = target
+      .getState()
+      .graphs[name]!.annotations.find(
+        (item) =>
+          item.kind === "legend" &&
+          item.text !== "" &&
+          item.text.split("\n").every((line) => line.startsWith("\\s(")),
+      );
+    if (listsTraces && listing && legend.length > 0) {
+      run({
+        op: "modifyAnnotation",
+        graph: name,
+        annotation: listing.name,
+        props: { text: legend.join("\n") },
+      });
+    }
+  }
+  return shows[0] ?? null;
+}
+
+/** Kills the waves a replaced run made that this run did not make again, unless something shows them. */
+export function dropStale(target: GraphTarget, replaced: Replaced): void {
+  for (const name of replaced.stale) {
+    const state = target.getState();
+    if (Object.hasOwn(state.waves, name) && waveUsers(state, name).length === 0)
+      target.dispatch({ op: "killWaves", names: [name] });
+  }
 }

@@ -69,7 +69,7 @@ export interface ResultSource {
   digest: string;
 }
 
-export const RESULT_KINDS = ["fit", "peaks", "global", "plugin", "xps"] as const;
+export const RESULT_KINDS = ["fit", "peaks", "global", "plugin"] as const;
 export type ResultKind = (typeof RESULT_KINDS)[number];
 
 /** The first part of the name a result gets when none is given: Fit0, Peaks0, Global0. */
@@ -78,7 +78,6 @@ export const RESULT_BASE: Record<ResultKind, string> = {
   peaks: "Peaks",
   global: "Global",
   plugin: "Plugin",
-  xps: "XPS",
 };
 
 export interface ResultInput {

@@ -296,6 +296,87 @@ def test_fit_kinetic_energy_xy_and_shift():
     close(out["values"]["region"][0], 281.0, abs_=0.06, what="region start")
 
 
+#: C1S_TABLE as the XPS Peak Fitting window gives it: a list of dicts with CasaXPS's constraints.
+C1S_LIST = [
+    {"name": "C-C", "shape": "GL(30)", "position": 284.6, "fwhm": 1.4, "area": 25000.0},
+    {"name": "C-O", "shape": "GL(30)", "position": 286.1, "fwhm": 1.4, "area": 8000.0,
+     "constraints": {"position": "A+1.5", "fwhm": "A"}},
+    {"name": "O-C=O", "shape": "GL(30)", "position": 288.6, "fwhm": 1.2, "area": 3000.0,
+     "constraints": {"position": "288, 290"}},
+]
+
+
+def test_fit_from_the_windows_list():
+    """The window's list of dicts fits as the text table does, and says what it found for the window."""
+    be, y = c1s_spectrum()
+    spectrum = make("c1s", y, x0=be[0], dx=be[1] - be[0])
+    out = run("xps_fit", spectrum=spectrum, components=C1S_LIST, average=1)
+    v = out["values"]
+    for item, truth in zip(v["items"], C1S.values()):
+        close(item["position"], truth["pos"], rel=1e-6, what="position")
+        close(item["area"], truth["area"], rel=1e-6, what="area")
+    assert v["components"][1]["constraints"]["pos"] == "A+1.5"
+    report = v["report"]
+    assert len(report["rows"]) == 3 and len(report["rows"][0]) == len(report["columns"])
+    assert report["rows"][0][3].startswith("284.8"), report["rows"][0]
+    # A start outside its limits begins at the nearest limit; "fixed" holds the value given.
+    held = [dict(C1S_LIST[0], constraints={"fwhm": "fixed"}, fwhm=1.1),
+            dict(C1S_LIST[2], position=295.0)]
+    out = run("xps_fit", spectrum=spectrum, components=held, average=1, region=[282, 292])
+    assert out["values"]["items"][0]["fwhm"] == 1.1
+    assert out["values"]["components"][0]["fwhm_sigma"] == 0
+
+
+def test_preview_draws_without_fitting():
+    """xps_preview gives the window what to draw: the region, background, each component, envelope."""
+    be, y = c1s_spectrum()
+    spectrum = make("c1s", y, x0=be[0], dx=be[1] - be[0])
+    out = run("xps_preview", spectrum=spectrum, components=C1S_LIST, region=[281, 293])
+    waves, v = out["waves"], out["values"]
+    assert "result" not in v and "graph" not in out
+    count = len(waves["x"].data)
+    assert 230 < count < 250 and len(waves["all_x"].data) == 281
+    assert {"data", "background", "fit", "residual", "item0", "item1", "item2"} <= set(waves)
+    assert v["errors"] == [] and v["problem"] is None
+    first, second = v["items"][0], v["items"][1]
+    close(second["values"]["position"], first["values"]["position"] + 1.5, abs_=1e-12, what="tie")
+    assert second["tied"] == ["position", "fwhm"] and first["tied"] == []
+    position, top, base = first["peak"]
+    assert position == 284.6 and top > base
+    total = waves["background"].data + sum(waves[f"item{k}"].data for k in range(3))
+    assert np.allclose(waves["fit"].data, total)
+    # A constraint that is wrong is said about its component and field, and the data still drawn.
+    broken = [C1S_LIST[0], dict(C1S_LIST[1], constraints={"position": "D+1"})]
+    out = run("xps_preview", spectrum=spectrum, components=broken)
+    assert out["values"]["errors"][0]["item"] == 1
+    assert out["values"]["errors"][0]["field"] == "position"
+    assert "no component D" in out["values"]["errors"][0]["message"]
+    assert "data" in out["waves"] and "fit" not in out["waves"]
+    # No components yet: only the data and its background.
+    out = run("xps_preview", spectrum=spectrum, components=[])
+    assert out["values"]["items"] == [] and "fit" not in out["waves"]
+
+
+def test_tougaard_background():
+    """A Tougaard background is found again from data made of a peak and its own losses."""
+    from xps.common import _tougaard
+
+    be = np.linspace(280.0, 310.0, 601)
+    net = parse_shape("GL(30)").curve(be, 285.0, 1.2, 5000.0)
+    # The data: the peak, and the electrons lost from all that is above the low end, B·∫T/(C+T²)²·(y−100).
+    B = 900.0
+    y = 100.0 + net
+    for _ in range(200):
+        y = 100.0 + net + B * _tougaard(be, y - 100.0)
+    truth = 100.0 + B * _tougaard(be, y - 100.0)
+    made = background(be, y, "Tougaard", 1)
+    worst = float(np.max(np.abs(made - truth)))
+    assert worst < 1e-6 * (truth[-1] - truth[0]), worst
+    # By the same arithmetic, in reverse order of energies.
+    close(background(be[::-1], y[::-1], "Tougaard", 1)[0], truth[-1], rel=1e-9, what="reversed")
+    REPORT["tougaard"] = f"max error {worst:.1e} on a rise of {truth[-1] - truth[0]:.0f}"
+
+
 def test_fit_refuses_what_it_cannot_do():
     be, y = c1s_spectrum()
     spectrum = make("c1s", y, x0=be[0], dx=be[1] - be[0])

@@ -4077,18 +4077,22 @@ def _plugin_arg(value):
     return _plain(value)
 
 
-def _invoke_plugin(id, args):
+def _invoke_plugin(id, args, replace=False):
     """Runs a plugin's action: in the application, which hands it to the plugin's sandbox.
 
     The waves it makes go where this code's other changes go: into the open
     ``op.atomic()`` block, if there is one. Returns what the application
     reports: the names of the waves made, the values and the result kept.
+    ``replace`` is ``op.invoke``'s.
     """
     if args is None:
         args = {}
     if not isinstance(args, dict):
         raise OresmeError(f"The arguments of {id} are a dict of name: value, not {args!r}.")
-    outcome = _call("invokePlugin", {"action": id, "args": {str(key): _plugin_arg(value) for key, value in args.items()}})[0]
+    request = {"action": id, "args": {str(key): _plugin_arg(value) for key, value in args.items()}}
+    if replace:
+        request["replace"] = True
+    outcome = _call("invokePlugin", request)[0]
     if outcome.get("log"):
         print(outcome["log"], end="" if outcome["log"].endswith("\n") else "\n")
     return {key: outcome[key] for key in ("waves", "values", "result")}
@@ -4196,7 +4200,7 @@ def _with_field(error, field, message=None):
     )
 
 
-def invoke(id, args=None, *, version=None):
+def invoke(id, args=None, *, version=None, replace=False):
     """Call an action by its id with a dict of plain values, as the application does.
 
     ::
@@ -4208,9 +4212,17 @@ def invoke(id, args=None, *, version=None):
     nothing. Waves may be given by name or as ``op.Wave``. ``version`` picks
     a version of the action, the highest by default. The call runs in an
     ``op.atomic()`` block and returns what the function returns.
+
+    A plugin's action makes waves of new names and never replaces a wave.
+    With ``replace=True`` it makes again, under their names, the waves the
+    last run of the same action on the same input waves made (as kept with
+    its result), as long as they are still as that run left them, and
+    updates the graph it made; a plugin's model editor fits this way.
     """
     if isinstance(id, str) and id.startswith("plugin.") and id not in _actions:
-        return _invoke_plugin(id, args)
+        return _invoke_plugin(id, args, replace)
+    if replace:
+        raise InvalidArgumentError("replace is for the actions of plugins.", details={"field": "replace"})
     found, _, passed = _prepare_action(id, args, version)
     with atomic() if found.atomic else contextlib.nullcontext():
         return found.function(**passed)
@@ -5683,11 +5695,6 @@ from _oresme_analysis import *  # noqa: E402,F401,F403
 from _oresme_analysis import __all__ as _analysis_all  # noqa: E402
 
 __all__ += _analysis_all
-
-from _oresme_xps import *  # noqa: E402,F401,F403
-from _oresme_xps import __all__ as _xps_all  # noqa: E402
-
-__all__ += _xps_all
 
 from _oresme_packages import install, packages, uninstall  # noqa: E402,F401
 

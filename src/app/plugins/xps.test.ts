@@ -55,7 +55,11 @@ function runFit(doc: Doc, params: Record<string, unknown>): Record<string, unkno
     "import sys\nfor name in [m for m in sys.modules if m == 'xps' or m.startswith('xps.')]:\n    del sys.modules[name]",
   );
   const runtime = pyodide.pyimport("oresme_plugin");
-  runtime._load("/repo/examples/plugins/xps", "xps", JSON.stringify(["quantify", "xps_fit"]));
+  runtime._load(
+    "/repo/examples/plugins/xps",
+    "xps",
+    JSON.stringify(["quantify", "xps_fit", "xps_preview"]),
+  );
   const inputs = { spectrum: sandboxWave(doc.getState().waves.c1s!) };
   const outcome = runtime._run("xps_fit", inputs, JSON.stringify(params));
   const result = outcome.toJs({ dict_converter: Object.fromEntries }) as {
@@ -100,7 +104,13 @@ describe("the example plugin xps", () => {
     expect(picked.map((file) => file.path)).toContain("xps/README.md");
     const pkg = await readLocalPackage(picked);
     expect(pkg.manifest.name).toBe("xps");
-    expect(pkg.manifest.actions.map((action) => action.name)).toEqual(["xps_fit", "quantify"]);
+    expect(pkg.manifest.actions.map((action) => action.name)).toEqual([
+      "xps_fit",
+      "xps_preview",
+      "quantify",
+    ]);
+    // Its model editor is checked against those actions when it is installed.
+    expect(pkg.manifest.editors.map((editor) => editor.title)).toEqual(["XPS Peak Fitting"]);
     expect(pkg.manifest.python).toEqual({ entry: "xps", packages: ["numpy", "scipy"] });
     expect([...pkg.files.keys()].sort()).toEqual(pkg.manifest.files.map((f) => f.path).sort());
     expect(pkg.files.has("README.md")).toBe(false);

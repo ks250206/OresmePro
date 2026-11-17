@@ -35,6 +35,8 @@ Python のコードを含むプラグインは、アプリとは別のサンド�
 - このウィンドウはモーダルではありません。開いたままグラフやテーブル、コマンドを使え、タイトルバーをドラッグして好きな位置に動かせます。何度でも Run でき、閉じるまで入力した値が残ります。Experiment には保存されません
 - Python からは `op.invoke("plugin.<プラグイン名>.<Action 名>", {...})` で呼びます。`op.atomic()` の中でも使えます
 - 結果の wave は、最初の入力 wave の隣に `<入力名>_<役割>` という名前で作られます。同じ名前の wave があるときは上書きせず、`_1` などを付けます
+- 例外は `op.invoke(..., replace=True)` と、モデル編集ウィンドウのフィットだけです。同じプラグインの同じ Action が同じ入力 wave で最後に結果を残したときに作った wave のうち、その結果に残ったコピーと値・スケーリングが同じもの(つまり、その後に変えていないもの)だけを、同じ名前で作り直します。そのとき作ったグラフも、トレースの見た目や軸はそのままで、足りないトレースを足し、もう作らない wave のトレースを外して更新します(もう作らない wave は、どこにも表示されていなければ消します)。変えた・名前を変えた wave と、それ以外のものには触れず、新しい名前で作ります。上書きするかどうかはアプリと使う人が決め、プラグインが選ぶことはありません
+- プラグインが **モデル編集ウィンドウ**(下の `editors`)を持つときは、**Analysis** メニューの最後と **Python → Plugins…** の **Open** から開きます。データの上で項目をドラッグし、表で値と制約を書いて、**Fit** でフィットします。ウィンドウの中の編集は Ctrl+Z で戻せます
 - プラグインが結果を返すと、フィットと同じく **Analysis → Results…** に残ります。結果には、作ったプラグイン・版・導入元・コミットが記録されます
 - グラフテンプレートとスタイルは **Add … to Experiment** で Experiment に入れます
 
@@ -71,7 +73,7 @@ Python のコードを含むプラグインは、アプリとは別のサンド�
 ```
 
 - `files` にはパッケージのファイルをすべて書きます。ここにないファイルは入りません
-- `actions` の引数の型は `op.action` と同じです(`wave`、`waves`、`number`、`integer`、`numbers`、`string`、`boolean`、`choice`)。Action はここで宣言するので、コードを動かす前に内容を表示して確かめられます
+- `actions` の引数の型は `op.action` と同じです(`wave`、`waves`、`number`、`integer`、`numbers`、`string`、`boolean`、`choice`、`json`)。`json` は構造を持つ値(リストや dict)で、中身はプラグインが確かめます。Action はここで宣言するので、コードを動かす前に内容を表示して確かめられます
 - `wave` と `waves` の引数は数値の wave を取ります。`"text": true` を付けると、テキスト wave も取ります(試料名や結晶構造の名前など)。付けていない引数にテキスト wave を渡すと、実行する前に断ります
 - Python 側では、Action ごとに関数を登録します
 
@@ -114,8 +116,48 @@ return {
 - `axes` と `graph` は、軸とグラフのプロパティです。名前は Python と同じ snake_case で書けます
 - アプリは、Python から頼まれたときと同じように、すべてを確かめてから作ります。不正なプロパティがあれば、その実行は何も残しません
 
+### モデル編集ウィンドウ(editors)
+
+ピークや成分を組み合わせたモデルを、スペクトルの上でドラッグし、表で値と制約を書いて作り、フィットするウィンドウを、プラグインは `editors` で宣言できます(CasaXPS の Components ページのような画面です)。ウィンドウはアプリが描き、プラグインのコードはサンドボックスの Python で計算だけをします。プラグインの JavaScript は動きません。宣言は `actions` と同じく、入れる前に表示して確かめられ、項目ごとに検査されます。
+
+```json
+"editors": [{
+  "name": "xps",
+  "title": "XPS Peak Fitting",
+  "preview": "xps_preview",
+  "fit": "xps_fit",
+  "data": "spectrum",
+  "x": "energy",
+  "range": "region",
+  "items": {
+    "param": "components",
+    "title": "Component",
+    "fields": [
+      {"key": "name", "title": "Name", "type": "text"},
+      {"key": "shape", "title": "Line shape", "type": "text", "default": "GL(30)", "choices": ["GL(30)", "LA(1.53,243)"]},
+      {"key": "position", "title": "Position (eV)", "constraint": true},
+      {"key": "fwhm", "title": "FWHM (eV)", "default": 1.2, "constraint": true, "min": 0.05},
+      {"key": "area", "title": "Area", "constraint": true, "min": 0}
+    ],
+    "position": "position", "width": "fwhm", "amount": "area",
+    "coef": "{letter}_{key}"
+  },
+  "partner": {"title": "Doublet", "offset": "Δ (eV)", "ratios": [["p (1:2)", 0.5]],
+              "ties": {"position": "{ref}+{offset}", "fwhm": "{ref}", "area": "{ref}*{ratio}"}},
+  "settings": ["background", "shift"],
+  "axis": {"label": "Binding Energy (eV)", "reverse": true}
+}]
+```
+
+- `preview` と `fit` は、そのプラグインの Action の名前です。どちらも同じ引数を取ります: `data`(データの `wave`)、`x`(X の `wave`、省略可)、`range`(長さ 2 の `numbers`。プロット上の破線をドラッグして動かします)、`items.param`(`json`。項目のリスト)、`settings`(Settings タブに並ぶ、普通の値の引数)
+- 項目(items)は A, B, C … と文字が付き、表では項目ごとに列が並びます。`fields` の `type` は `"number"`(既定)か `"text"`、`"constraint": true` の欄にはその下に制約の行が付きます。`position`・`width`・`amount` は、プロット上で動かす欄です(頂上の四角で位置と高さ、◇ で幅。高さは `amount` に比例するとして変えます)
+- 項目は `{"<key>": 値, …, "constraints": {"<key>": "制約の文字列"}}` として渡ります。既定値のままの欄(`position`・`width`・`amount` 以外)は省くので、プラグインは欄がないときにその既定値を使います。制約の文字列の意味はプラグインが決めます。ただし、文字列の中で単独の大文字は項目を指すとみなし、項目を消したときにアプリが付け替えます
+- `preview` は編集のたびに呼ばれ、履歴に残らず、Experiment も変えません。返すのは wave `x`(範囲の中の X)、`data`、`background`、`fit`、`residual`、`item0`, `item1`, …(各項目だけ。背景は含めない)、`all_x`・`all_y`(データ全体、灰色の点に)、そして `values` に `items`(項目ごとに `values`: 制約を当てはめた数値、`tied`: 他の項目に結ばれた欄、`peak`: `[x, 頂上の y, その下の背景]`)、`errors`(`{"item", "field", "message"}` のリスト)、`problem`(文字列か null)です
+- `fit` は普通の Action の実行として履歴と解析結果に残ります。`values` の `items`(項目ごとの求まった数値)を表に戻し、`report`(`columns`、`rows`、`lines`、`warnings`)を Report タブに出します。`coef` を書くと、再び開いたときに、残った結果の係数(`A_position` など)から値を読み戻します
+- ウィンドウのフィットは `replace=True` で実行します(下)
+
 見本として、次のプラグインを置いています。
 
 - 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
 - 3元相図: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary)。枠、グリッド、目盛りの数値、頂点の名前を、普通のトレースと文字マーカーで描き、グラフとして返します
-- XPS のピークフィット(CasaXPS のような領域・Shirley 背景・GL/SGL/LA の線形・成分間の制約、RSF による定量): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps)。結合エネルギーの軸を反転し、残差を上に並べたグラフを返します。アプリ本体にも、プラグインなしで使える [XPS Peak Fitting ウィンドウ](../xps/)があります
+- XPS のピークフィット(CasaXPS のような領域・Shirley/Tougaard 背景・GL/SGL/LA の線形・成分間の制約、RSF による定量): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps)。モデル編集ウィンドウ **XPS Peak Fitting** を持ちます([使い方](../xps/))。結合エネルギーの軸を反転し、残差を上に並べたグラフを返します

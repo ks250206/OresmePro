@@ -27,7 +27,7 @@ test.describe("the example plugin xps", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(XPS);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("XPS Peak Fitting 0.1.0");
+    await expect(approval).toContainText("XPS Peak Fitting 0.2.0");
     await expect(approval).toContainText("plugin.xps.xps_fit");
     await expect(approval).toContainText("plugin.xps.quantify");
     await expect(approval).toContainText("Python packages: numpy, scipy");
@@ -35,7 +35,7 @@ test.describe("the example plugin xps", () => {
     await approval.getByRole("button", { name: "Install" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });
-    await dialog.getByRole("button", { name: "Open XPS Peak Fit" }).click();
+    await dialog.getByRole("button", { name: "Open XPS Peak Fit", exact: true }).click();
     const form = page.getByRole("dialog", { name: "XPS Peak Fit" });
     await form.getByRole("combobox", { name: /^Spectrum/ }).selectOption("c1s");
     await form

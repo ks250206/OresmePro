@@ -58,7 +58,7 @@ op.actions()
 ## `invoke`
 
 ```python
-op.invoke(id, args=None, *, version=None)
+op.invoke(id, args=None, *, version=None, replace=False)
 ```
 
 id と普通の値の dict で Action を呼びます(アプリと同じ呼び方)。
@@ -68,3 +68,7 @@ id と普通の値の dict で Action を呼びます(アプリと同じ呼び�
     r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})
 
 引数はまず Action のパラメータと照らし合わせます(``op.action`` を参照)。拒否された呼び出しは ``OresmeError`` になり、何もしません。wave は名前でも ``op.Wave`` でも渡せます。``version`` で Action の版を選びます(既定は最新)。呼び出しは ``op.atomic()`` ブロックの中で動き、関数の戻り値を返します。
+
+プラグインの Action は新しい名前の wave を作り、既存の wave を置き換えません。``replace=True`` なら、同じ Action が同じ入力 wave で最後に作った wave(その結果に残っているもの)を、その実行のあとから変わっていない限り同じ名前で作り直し、作ったグラフも更新します。プラグインのモデル編集ウィンドウはこの方法でフィットします。
+
+**明示的な例外** · `InvalidArgumentError`

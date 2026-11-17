@@ -1,12 +1,14 @@
 import type { ParamSpec, ParamType } from "../actions";
 import { DocError, type ErrorCode } from "../doc/types";
+import { EDITOR_LIMITS, parseEditor, type EditorSpec } from "./editor";
 
 /**
  * A plugin's description of itself: oresme-plugin.json at the root of its
  * package. It lists every file of the package, the actions the plugin's
  * Python provides (with their arguments, so they can be shown and checked
- * before any of its code runs) and what it contributes as data: panels,
- * templates, graph templates and styles.
+ * before any of its code runs), the model editors the app draws for them
+ * (see ./editor), and what it contributes as data: panels, templates,
+ * graph templates and styles.
  *
  * Everything here is read from a file the app does not trust, so it is
  * checked field by field and refused whole when anything is off.
@@ -67,6 +69,8 @@ export interface PluginManifest {
   python: { entry: string; packages: string[] } | null;
   files: PluginFileEntry[];
   actions: PluginAction[];
+  /** Windows the app draws for building a model and fitting it with the plugin's actions. */
+  editors: EditorSpec[];
   contributes: Record<ContributionKind, string[]>;
 }
 
@@ -84,6 +88,7 @@ const PARAM_TYPES: readonly ParamType[] = [
   "boolean",
   "choice",
   "numbers",
+  "json",
 ];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -277,6 +282,16 @@ export function parseManifest(bytes: Uint8Array): PluginManifest {
     throw new PluginError("A plugin with actions must name its Python entry module.");
   }
 
+  const editorsRaw = raw.editors ?? [];
+  if (!Array.isArray(editorsRaw)) throw new PluginError("editors must be a list.");
+  if (editorsRaw.length > EDITOR_LIMITS.editors) {
+    throw new PluginError(`A plugin may have at most ${EDITOR_LIMITS.editors} editors.`);
+  }
+  const editors = editorsRaw.map((item, index) => parseEditor(item, index, actions));
+  if (new Set(editors.map((item) => item.name)).size !== editors.length) {
+    throw new PluginError("Two editors have the same name.");
+  }
+
   const contributes = Object.fromEntries(
     CONTRIBUTION_KINDS.map((kind) => [kind, [] as string[]]),
   ) as Record<ContributionKind, string[]>;
@@ -305,6 +320,7 @@ export function parseManifest(bytes: Uint8Array): PluginManifest {
     python,
     files,
     actions,
+    editors,
     contributes,
   };
 }

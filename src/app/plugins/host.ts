@@ -9,8 +9,15 @@ import {
   splitPluginActionId,
   type PluginAction,
 } from "../../core/plugins/manifest";
-import { makePluginGraph, planOutcome, waveArgs } from "../../core/plugins/outcome";
+import {
+  dropStale,
+  makePluginGraph,
+  planOutcome,
+  updatePluginGraphs,
+  waveArgs,
+} from "../../core/plugins/outcome";
 import type { SandboxDtype, SandboxWave } from "../../core/sandbox/protocol";
+import type { CheckedResult } from "../../core/sandbox/validate";
 import { Sandbox } from "../../sandbox/host";
 import type { InstalledPlugin, PluginStore } from "./store";
 
@@ -33,6 +40,19 @@ export interface PluginRunOutcome {
   /** What the plugin printed. */
   log: string;
 }
+
+export interface RunOptions {
+  /**
+   * Make again, under their names, the waves the last run of this action on
+   * the same inputs made, where they are still as it left them, and update
+   * its graph (see planOutcome). The app's choice: a model editor fitting
+   * again, or op.invoke(..., replace=True).
+   */
+  replace?: boolean;
+}
+
+/** How long a preview may take before the plugin's sandbox is stopped. */
+const PREVIEW_TIMEOUT_MS = 30_000;
 
 export interface PluginHostOptions {
   store: PluginStore;
@@ -138,16 +158,8 @@ export class PluginHost {
     return plugin && action ? { plugin, action } : null;
   }
 
-  /**
-   * Runs an action. `writer` is where its waves and result go: the open
-   * `op.atomic()` block of Python that asked for it, or (by default) the
-   * document, as one change. The inputs are read from the same place.
-   */
-  async run(
-    id: string,
-    args: ActionArgs,
-    writer: DocWriter | null = null,
-  ): Promise<PluginRunOutcome> {
+  /** Checks a call and reads the copies of the waves it is given; nothing runs yet. */
+  private prepare(id: string, args: ActionArgs, before: DocState, writer: DocWriter | null) {
     const found = this.resolve(id);
     if (!found) {
       throw new PluginError(`No installed plugin has the action ${id}.`, "NOT_FOUND", {
@@ -159,8 +171,6 @@ export class PluginHost {
     if (!plugin.enabled)
       throw new PluginError(`The plugin ${plugin.manifest.title} is turned off.`);
     const spec = this.catalog().find((item) => item.id === id)!;
-    const read = (): DocState => (writer ? writer.getState() : this.options.doc.getState());
-    const before = read();
     const problems = argProblems(spec, args, {
       waveExists: (name) => Object.hasOwn(before.waves, name),
     });
@@ -196,6 +206,44 @@ export class PluginHost {
     }
     const params: Record<string, JsonValue> = {};
     for (const [key, value] of Object.entries(args)) if (!(key in named)) params[key] = value;
+    return { plugin, action, inputs, params, revisions };
+  }
+
+  /**
+   * Runs an action to see what it returns, as a model editor does while its
+   * model is edited: the plugin is given copies of the waves as for a run,
+   * and what it returns is checked as for a run, but nothing of it goes into
+   * the experiment and nothing is recorded.
+   */
+  async preview(id: string, args: ActionArgs): Promise<CheckedResult> {
+    const { plugin, action, inputs, params } = this.prepare(
+      id,
+      args,
+      this.options.doc.getState(),
+      null,
+    );
+    const sandbox = await this.sandbox(plugin);
+    return sandbox.run({
+      action: action.name,
+      inputs,
+      params,
+      timeoutMs: Math.min(this.options.timeoutMs ?? PREVIEW_TIMEOUT_MS, PREVIEW_TIMEOUT_MS),
+    });
+  }
+
+  /**
+   * Runs an action. `writer` is where its waves and result go: the open
+   * `op.atomic()` block of Python that asked for it, or (by default) the
+   * document, as one change. The inputs are read from the same place.
+   */
+  async run(
+    id: string,
+    args: ActionArgs,
+    writer: DocWriter | null = null,
+    options: RunOptions = {},
+  ): Promise<PluginRunOutcome> {
+    const read = (): DocState => (writer ? writer.getState() : this.options.doc.getState());
+    const { plugin, action, inputs, params, revisions } = this.prepare(id, args, read(), writer);
 
     const sandbox = await this.sandbox(plugin);
     const outcome = await sandbox.run({
@@ -225,15 +273,28 @@ export class PluginHost {
           );
         }
       }
-      const plan = planOutcome(state, action, args, outcome, source, Date.now());
+      const plan = planOutcome(
+        state,
+        action,
+        args,
+        outcome,
+        source,
+        Date.now(),
+        options.replace === true,
+      );
       let result: string | null = null;
       for (const command of plan.commands) {
         const made = target.dispatch(command);
         if (command.op === "addResult") result = made;
       }
-      const graph = plan.graph
-        ? makePluginGraph(target, plan.graph, plan.waves, plugin.manifest.name)
-        : null;
+      let graph: string | null = null;
+      if (plan.graph) {
+        graph = plan.replaced
+          ? updatePluginGraphs(target, plan.graph, plan.waves, plan.replaced, plugin.manifest.name)
+          : null;
+        graph ??= makePluginGraph(target, plan.graph, plan.waves, plugin.manifest.name);
+      }
+      if (plan.replaced) dropStale(target, plan.replaced);
       return { waves: plan.waves, values: plan.values, result, graph, log: outcome.log };
     };
     return writer ? apply(writer) : this.options.doc.transact(apply);

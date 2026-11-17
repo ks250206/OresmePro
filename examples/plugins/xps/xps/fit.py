@@ -20,7 +20,7 @@ from oresme_plugin import PluginError, action, wave
 
 from .common import AL_KA, binding_energies, interval, numbers, region_slice
 from .common import background as make_background
-from .components import PARAMS, parse_components
+from .components import FIELDS, PARAMS, ComponentError, parse_components
 
 #: Colors of the components in the graph, in turn.
 COLORS = ("#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf", "#e377c2", "#8c564b", "#bcbd22")
@@ -74,35 +74,34 @@ def _value_of(rule, u):
     return const if j is None else coef * u[j] + const
 
 
-@action("xps_fit")
-def xps_fit(spectrum, components, energy=None, region=None, background="Shirley",
-            average=5, energy_axis="binding", photon_energy=AL_KA, shift=0.0,
-            weighting="poisson"):
-    if weighting not in ("poisson", "unit"):
-        raise PluginError('weighting is "poisson" (1/√counts) or "unit".')
-    y_all = numbers(spectrum, "The spectrum")
-    be_all, scaled = binding_energies(spectrum, energy, energy_axis, photon_energy, shift)
-    bounds = interval(region, "The region")
-    start, stop = region_slice(be_all, y_all, bounds)
-    be, y = be_all[start:stop], y_all[start:stop]
-    bg = make_background(be, y, background, average)
-    good = np.isfinite(be) & np.isfinite(y) & np.isfinite(bg)
-    lo, hi = float(np.nanmin(be[good])), float(np.nanmax(be[good]))
-    comps = parse_components(components, (lo, hi))
+class _Setup:
+    """What a fit and a preview share: the region, its background, and where the fit starts."""
 
-    net = y - bg
+
+def _setup(spectrum, energy, region, background, average, energy_axis, photon_energy, shift):
+    """The region and its background, before the components are read."""
+    out = _Setup()
+    out.y_all = numbers(spectrum, "The spectrum")
+    out.be_all, out.scaled = binding_energies(spectrum, energy, energy_axis, photon_energy, shift)
+    bounds = interval(region, "The region")
+    out.start, out.stop = region_slice(out.be_all, out.y_all, bounds)
+    out.be = out.be_all[out.start : out.stop]
+    out.y = out.y_all[out.start : out.stop]
+    out.bg = make_background(out.be, out.y, background, average)
+    out.good = np.isfinite(out.be) & np.isfinite(out.y) & np.isfinite(out.bg)
+    out.lo, out.hi = float(np.nanmin(out.be[out.good])), float(np.nanmax(out.be[out.good]))
+    return out
+
+
+def _start(setup, comps):
+    """Where the fit starts: the values given, and areas left out from the data's height."""
+    be, good = setup.be, setup.good
+    net = setup.y - setup.bg
     peak = float(np.nanmax(np.abs(net[good])))
     if not peak > 0:
         raise PluginError("The region has nothing above its background to fit.")
     area_scale = peak  # a peak of this height and 1 eV wide, near enough
     maps, free = _affine(comps, area_scale)
-    count = int(good.sum())
-    if count <= len(free):
-        raise PluginError(
-            f"{len(free)} parameters are free but the region has only {count} points."
-        )
-
-    # Where the fit starts: the values given, and areas from the data's height at the position.
     u0 = np.zeros(len(free))
     lower = np.zeros(len(free))
     upper = np.zeros(len(free))
@@ -122,41 +121,123 @@ def xps_fit(spectrum, components, energy=None, region=None, background="Shirley"
             lower[j], upper[j] = 0.0, np.inf
     span = np.where(np.isfinite(upper - lower), upper - lower, np.abs(u0) + 1.0)
     u0 = np.clip(u0, lower + 1e-9 * span, np.where(np.isfinite(upper), upper - 1e-9 * span, np.inf))
+    return maps, free, u0, lower, upper
+
+
+def _curves(comps, maps, u, energies):
+    return [
+        c.shape.curve(energies, _value_of(maps[c.index]["pos"], u),
+                      _value_of(maps[c.index]["fwhm"], u),
+                      _value_of(maps[c.index]["area"], u), c.gauss)
+        for c in comps
+    ]
+
+
+@action("xps_preview")
+def xps_preview(spectrum, components, energy=None, region=None, background="Shirley",
+                average=5, energy_axis="binding", photon_energy=AL_KA, shift=0.0,
+                weighting="poisson"):
+    """What the XPS Peak Fitting window draws while the components are edited (not a fit).
+
+    Returns the region's binding energies (x), data, background, each component
+    alone (item0, item1, ...), the envelope (fit) and the residual, the whole
+    spectrum (all_x, all_y), and for each component the values its
+    constraints give it, which of them are tied, and where its top is.
+    """
+    setup = _setup(spectrum, energy, region, background, average, energy_axis, photon_energy, shift)
+    be, good = setup.be, setup.good
+    waves = {
+        "x": wave(be, unit="eV"),
+        "data": wave(np.where(good, setup.y, np.nan)),
+        "background": wave(np.where(good, setup.bg, np.nan)),
+        "all_x": wave(setup.be_all, unit="eV"),
+        "all_y": wave(setup.y_all),
+    }
+    values = {"items": [], "errors": [], "problem": None}
+    if isinstance(components, (list, tuple)) and len(components) == 0:
+        return {"waves": waves, "values": values}
+    try:
+        comps = parse_components(components, (setup.lo, setup.hi))
+        maps, free, u0, lower, upper = _start(setup, comps)
+    except ComponentError as error:
+        values["errors"].append({"item": error.item, "field": error.field, "message": str(error)})
+        return {"waves": waves, "values": values}
+    except PluginError as error:
+        values["problem"] = str(error)
+        return {"waves": waves, "values": values}
+    parts = _curves(comps, maps, u0, be)
+    envelope = setup.bg + np.sum(parts, axis=0)
+    waves["fit"] = wave(np.where(good, envelope, np.nan))
+    waves["residual"] = wave(np.where(good, setup.y - envelope, np.nan))
+    order = np.argsort(be)
+    for c, part in zip(comps, parts):
+        waves[f"item{c.index}"] = wave(part)
+        position = _value_of(maps[c.index]["pos"], u0)
+        top = float(np.interp(position, be[order], part[order]))
+        base = float(np.interp(position, be[order], setup.bg[order]))
+        values["items"].append({
+            "values": {field: _value_of(maps[c.index][param], u0) for field, param in FIELDS.items()},
+            "tied": [field for field, param in FIELDS.items()
+                     if c.values[param] is not None and c.values[param].kind == "tied"],
+            "peak": [position, base + top, base],
+        })
+    return {"waves": waves, "values": values}
+
+
+@action("xps_fit")
+def xps_fit(spectrum, components, energy=None, region=None, background="Shirley",
+            average=5, energy_axis="binding", photon_energy=AL_KA, shift=0.0,
+            weighting="poisson"):
+    if weighting not in ("poisson", "unit"):
+        raise PluginError('weighting is "poisson" (1/√counts) or "unit".')
+    setup = _setup(spectrum, energy, region, background, average, energy_axis, photon_energy, shift)
+    be, y, bg, good, scaled = setup.be, setup.y, setup.bg, setup.good, setup.scaled
+    lo, hi = setup.lo, setup.hi
+    comps = parse_components(components, (lo, hi))
+    maps, free, u0, lower, upper = _start(setup, comps)
+    count = int(good.sum())
+    if count <= len(free):
+        raise PluginError(
+            f"{len(free)} parameters are free but the region has only {count} points."
+        )
 
     x, data = be[good], y[good]
     floor = max(1e-3 * float(np.max(np.abs(data))), 1e-300)
     sigma = np.sqrt(np.clip(data, floor, None)) if weighting == "poisson" else np.ones(count)
 
     def curves(u, energies):
-        return [
-            c.shape.curve(energies, _value_of(maps[c.index]["pos"], u),
-                          _value_of(maps[c.index]["fwhm"], u),
-                          _value_of(maps[c.index]["area"], u), c.gauss)
-            for c in comps
-        ]
+        return _curves(comps, maps, u, energies)
 
     base = bg[good]
 
     def residuals(u):
         return (base + np.sum(curves(u, x), axis=0) - data) / sigma
 
-    try:
-        fit = least_squares(residuals, u0, bounds=(lower, upper), method="trf", x_scale="jac",
-                            ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=200 * (len(free) + 1))
-    except ValueError as error:
-        raise PluginError(f"The fit could not start: {error}") from None
-    u = fit.x
-    chisq = 2 * float(fit.cost)
-    freedom = count - len(free)
-    cov = np.linalg.pinv(fit.jac.T @ fit.jac) * (chisq / freedom)
-    sigma_u = np.sqrt(np.clip(np.diag(cov), 0, None))
+    if free:
+        try:
+            fit = least_squares(residuals, u0, bounds=(lower, upper), method="trf", x_scale="jac",
+                                ftol=1e-12, xtol=1e-12, gtol=1e-12, max_nfev=200 * (len(free) + 1))
+        except ValueError as error:
+            raise PluginError(f"The fit could not start: {error}") from None
+        u = fit.x
+        chisq = 2 * float(fit.cost)
+        freedom = count - len(free)
+        cov = np.linalg.pinv(fit.jac.T @ fit.jac) * (chisq / freedom)
+        sigma_u = np.sqrt(np.clip(np.diag(cov), 0, None))
+        success, message, active = bool(fit.success), str(fit.message), fit.active_mask
+    else:
+        u = u0
+        chisq = float(np.sum(residuals(u) ** 2))
+        freedom = count
+        sigma_u = np.zeros(0)
+        success, message, active = True, "nothing is free", []
 
     warnings = []
-    for (i, param), active in zip(free, fit.active_mask):
-        if active != 0:
+    for (i, param), at_limit in zip(free, active):
+        if at_limit != 0:
             warnings.append(f"{comps[i].letter}'s {param} is at a limit.")
-    if not fit.success:
-        warnings.append(f"The fit did not converge: {fit.message}")
+    if not success:
+        warnings.append(f"The fit did not converge: {message}")
 
     def estimate(i, param):
         j, coef, const = maps[i][param]
@@ -253,6 +334,10 @@ def xps_fit(spectrum, components, energy=None, region=None, background="Shirley"
             "residual_std": float(np.sqrt(chisq / freedom)),
             "points": count,
             "warnings": warnings,
+            # For the XPS Peak Fitting window: the values found, and its Report.
+            "items": [{"position": row["position"], "fwhm": row["fwhm"], "area": row["area"]}
+                      for row in rows],
+            "report": _report(rows, chisq, freedom, count, warnings, success, message),
             "result": {
                 "names": names,
                 "coef": coef,
@@ -260,9 +345,43 @@ def xps_fit(spectrum, components, energy=None, region=None, background="Shirley"
                 "chisq": chisq,
                 "points": count,
                 "freedom": freedom,
-                "converged": bool(fit.success),
-                "reason": " ".join(warnings) or str(fit.message),
+                "converged": success,
+                "reason": " ".join(warnings) or message,
             },
         },
         "graph": graph,
+    }
+
+
+def _with_error(value, error):
+    """A value to the digits its uncertainty leaves meaningful: 284.7792 ± 0.0038."""
+    if value is None or not np.isfinite(value):
+        return ""
+    if not (error and error > 0 and np.isfinite(error)):
+        return f"{value:.6g}"
+    decimals = max(0, 1 - int(np.floor(np.log10(error))))
+    return f"{value:.{decimals}f} ± {error:.{decimals}f}"
+
+
+def _report(rows, chisq, freedom, count, warnings, success, message):
+    """The fit as the window's Report shows it: a table and lines of text."""
+    return {
+        "columns": ["", "Name", "Shape", "Position (eV)", "FWHM (eV)", "Width (eV)", "Area", "RSF",
+                    "% Area/RSF"],
+        "rows": [
+            [row["letter"], row["name"], row["shape"],
+             _with_error(row["position"], row["position_sigma"]),
+             _with_error(row["fwhm"], row["fwhm_sigma"]),
+             "" if row["width"] is None else f"{row['width']:.4g}",
+             _with_error(row["area"], row["area_sigma"]), f"{row['rsf']:g}",
+             "" if row["percent"] is None else f"{row['percent']:.2f}"]
+            for row in rows
+        ],
+        "lines": [
+            f"χ² {chisq:.6g} · reduced χ² {chisq / freedom:.4g} · {count} points · "
+            + ("converged" if success else f"did not converge: {message}"),
+            "Width is the true full width at half maximum. The uncertainties leave out the "
+            "background's.",
+        ],
+        "warnings": warnings,
     }

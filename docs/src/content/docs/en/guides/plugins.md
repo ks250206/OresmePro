@@ -35,6 +35,8 @@ Procedures and the command line are different: they run in the app's Python, whi
 - The window is not modal: graphs, tables and the command window go on working while it is open, and it moves wherever you drag its title bar. It runs as often as you like and keeps what you entered until it is closed. It is not saved with the experiment
 - From Python, call `op.invoke("plugin.<plugin>.<action>", {...})`. It also works inside `op.atomic()`
 - Returned waves are made next to the first input wave and named `<input>_<role>`. An existing wave is never overwritten; `_1` and so on is added instead
+- The only exception is `op.invoke(..., replace=True)`, which a model editor's fit uses. Of the waves the same action of the same plugin made from the same input waves the last time it kept a result, those still equal in values and scaling to the copies that result kept (that is, not changed since) are made again under their names. The graph it made is updated too: its look and axes stay, missing traces are added and those of waves it no longer makes are taken out (and those waves killed, if nothing else shows them). Waves changed or renamed since, and everything else, are left alone and the run's waves get new names. Whether to replace is the app's and the user's choice, never the plugin's
+- A plugin with a **model editor** (`editors`, below) has it at the end of the **Analysis** menu and under **Open** in **Python → Plugins…**. Drag its items on the data, write their values and constraints in the table, and **Fit**. Ctrl+Z undoes edits in the window
 - A result the plugin returns is kept in **Analysis → Results…** like a fit, with the plugin, version, source, and commit that made it
 - Add graph templates and styles to the experiment with **Add … to Experiment**
 
@@ -71,7 +73,7 @@ Put an `oresme-plugin.json` in a folder.
 ```
 
 - List every file of the package in `files`; files not listed are not part of it
-- Argument types are those of `op.action` (`wave`, `waves`, `number`, `integer`, `numbers`, `string`, `boolean`, `choice`). Actions are declared here so they can be shown and checked before any code runs
+- Argument types are those of `op.action` (`wave`, `waves`, `number`, `integer`, `numbers`, `string`, `boolean`, `choice`, `json`). A `json` argument holds structure (lists and dicts), which the plugin checks itself. Actions are declared here so they can be shown and checked before any code runs
 - A `wave` or `waves` argument takes numeric waves. With `"text": true` it takes text waves too (sample names or crystal structures, say). A text wave given to an argument without it is refused before anything runs
 - In Python, register a function for each action
 
@@ -114,8 +116,48 @@ return {
 - `axes` and `graph` take the properties of axes and of the graph, in snake_case as in Python
 - The app checks all of it as it checks what Python asks for. A bad property leaves nothing of the run behind
 
-Two example plugins:
+### Model editors
+
+A plugin can declare, under `editors`, a window for building a model of peaks or components by dragging them on the data and writing their values and constraints in a table, and fitting it, like CasaXPS's Components page. The app draws the window; the plugin's code only computes, in Python in its sandbox. None of the plugin's JavaScript runs. Like `actions`, the declaration is shown before installing and checked field by field.
+
+```json
+"editors": [{
+  "name": "xps",
+  "title": "XPS Peak Fitting",
+  "preview": "xps_preview",
+  "fit": "xps_fit",
+  "data": "spectrum",
+  "x": "energy",
+  "range": "region",
+  "items": {
+    "param": "components",
+    "title": "Component",
+    "fields": [
+      {"key": "name", "title": "Name", "type": "text"},
+      {"key": "shape", "title": "Line shape", "type": "text", "default": "GL(30)", "choices": ["GL(30)", "LA(1.53,243)"]},
+      {"key": "position", "title": "Position (eV)", "constraint": true},
+      {"key": "fwhm", "title": "FWHM (eV)", "default": 1.2, "constraint": true, "min": 0.05},
+      {"key": "area", "title": "Area", "constraint": true, "min": 0}
+    ],
+    "position": "position", "width": "fwhm", "amount": "area",
+    "coef": "{letter}_{key}"
+  },
+  "partner": {"title": "Doublet", "offset": "Δ (eV)", "ratios": [["p (1:2)", 0.5]],
+              "ties": {"position": "{ref}+{offset}", "fwhm": "{ref}", "area": "{ref}*{ratio}"}},
+  "settings": ["background", "shift"],
+  "axis": {"label": "Binding Energy (eV)", "reverse": true}
+}]
+```
+
+- `preview` and `fit` name two of the plugin's actions, which take the same arguments: `data` (the data, a `wave`), `x` (X values, a `wave`, optional), `range` (`numbers` of length 2, dragged on the plot as dashed lines), `items.param` (`json`, the list of items) and `settings` (plain arguments, set in the Settings tab)
+- Items are lettered A, B, C …, a column each in the table. A field's `type` is `"number"` (the default) or `"text"`; `"constraint": true` gives it a row for its constraint. `position`, `width` and `amount` are the fields dragged on the plot (the square at the top moves and heightens an item, the ◇ widen it; the height is taken to grow with `amount`)
+- Each item is passed as `{"<key>": value, …, "constraints": {"<key>": "text"}}`. A field at its default (other than `position`, `width` and `amount`) is left out, so a plugin takes a missing field as its default. What a constraint means is the plugin's, except that a capital letter standing alone names an item, which the app renames when an item is taken out
+- `preview` is called after each edit, recorded nowhere and changing nothing in the experiment. It returns the waves `x` (X across the range), `data`, `background`, `fit`, `residual`, `item0`, `item1`, … (each item alone, without the background) and `all_x`, `all_y` (all of the data, drawn grey), and in its `values`: `items` (for each, `values`: its numbers as the constraints leave them, `tied`: the fields tied to another item, `peak`: `[x, the top, the background under it]`), `errors` (a list of `{"item", "field", "message"}`) and `problem` (text or null)
+- `fit` is an ordinary run of an action, kept in the history and among the results. The `items` of its `values` (each item's numbers found) go back into the table, and its `report` (`columns`, `rows`, `lines`, `warnings`) into the Report tab. With `coef`, an editor opened again reads the values back from the coefficients of the result kept (`A_position`, say)
+- The window fits with `replace=True` (below)
+
+Example plugins:
 
 - Electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
 - Ternary diagrams: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary). The frame, grid, tick labels and corner names are ordinary traces and text markers, returned as a graph
-- XPS peak fitting in the way of CasaXPS (a region, a Shirley background, GL/SGL/LA line shapes, constraints between components, quantification with RSFs): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps). It returns a graph with a reversed binding energy axis and the residual above. The app has [an XPS Peak Fitting window](../xps/) of its own, which needs no plugin
+- XPS peak fitting in the way of CasaXPS (a region, a Shirley or Tougaard background, GL/SGL/LA line shapes, constraints between components, quantification with RSFs): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps). It has the model editor **XPS Peak Fitting** ([how to use it](../xps/)) and returns a graph with a reversed binding energy axis and the residual above

@@ -24,26 +24,32 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ### Added
 
-- **Analysis › XPS Peak Fitting…**, a window for fitting XPS spectra in the way of CasaXPS.
-  The spectrum is drawn on a reversed binding energy axis with its residual above; the ends of
-  the region are dragged on it, a component is added by double-clicking a peak, moved and made
-  taller by dragging its top, and widened by dragging its half-width handles, while the
-  background, components and envelope are redrawn as they change. The components are a table
-  with a column for each (name, line shape, position, FWHM, area, the constraint of each,
-  Gaussian broadening, RSF and % area/RSF): constraints are limits (`284.5, 285.5`), `fixed`,
-  or ties to another component (`A+1.5`, `A*0.5`, `A`), and **Doublet** adds a spin-orbit
-  partner tied to the selected component. The background is Shirley, linear, Tougaard or none;
-  energies may be kinetic, with a charge correction. Edits are undone in the window; **Fit
-  Components** puts the values found in the table and a report of them (with uncertainties and
-  the true FWHM) in its Report tab. A spectrum fitted before opens with its last fit.
-- `op.xps_fit` (and the action `core.xps_fit`), which the window calls: fits CasaXPS's line
-  shapes (GL, SGL, GL(m)T(k), SGL(m)T(k), LA(α,β), optionally convolved with a Gaussian) with
-  constraints between components over a background held fixed, makes `fit_<name>`,
-  `fit_<name>_bg`, `fit_<name>_A`, … and `fit_<name>_res` again at each fit, shows them in the
-  graph `XPS_<name>`, and keeps the fit among the results as `XPS0`, `XPS1`, … (a new kind of
-  result, `xps`, that `rerun` and `apply` do again). It needs only NumPy.
-- A guide to XPS peak fitting, and its API reference.
-
+- Plugins can declare **model editors** (`editors` in `oresme-plugin.json`): windows the app
+  draws, in the way of CasaXPS, for building a model of a spectrum out of items (peaks,
+  components) and fitting it with two of the plugin's actions. The data are drawn with the range
+  fitted, its background, each item, the sum and the residual; the range's ends are dragged on
+  the plot, an item is added by double-clicking, moved and made taller by dragging its top and
+  widened by its half-width handles; the items are a table with a column for each (their fields
+  and the constraint of each, a tied value following the item it is tied to), with Create, Copy,
+  a tied partner (a doublet, say) and Delete. While the model is edited the plugin's preview
+  action computes what is drawn, in its sandbox, recorded nowhere and changing nothing; Fit runs
+  its fit action, kept in the history and among the results, and takes what it found back into
+  the table and a Report tab. Edits and fits are undone in the window, and data fitted before
+  open with their last fit. No code of the plugin runs in the app: the description is data,
+  checked field by field when the plugin is installed. Editors are listed in the Analysis menu
+  and in Python › Plugins….
+- The arguments of plugins' actions can be of type `json` (lists and dicts), as the app's own.
+- `op.invoke(..., replace=True)` makes again, under their names, the waves the last run of the
+  same action of the same plugin on the same input waves made (as its result kept them), where
+  they are still as that run left them, and updates the graph it made: traces are added and taken
+  out, the look and axes stay, and waves no longer made are killed if nothing shows them. Waves
+  changed or renamed since, and everything else, are left alone, and new names are used. A model
+  editor fits this way. A plugin itself still never chooses what it overwrites.
+- The example plugin xps (0.2.0) has the model editor **XPS Peak Fitting**, for fitting
+  synthetic components with CasaXPS's line shapes and constraints over a Shirley, linear or
+  Tougaard background on the spectrum and in a table; `xps_fit` also takes the components as a
+  list of dicts with constraints written as in CasaXPS (`"284, 286"`, `"fixed"`, `"A+1.5"`),
+  and backgrounds may be Tougaard. A guide to it is in the documentation.
 - **Edit › Copy Graph** (⌘C / Ctrl+C with a graph in front, and **Copy** in a graph's menu)
   puts the graph on the clipboard as a PNG, as Save Graph as PNG draws it.
 - **Graph › New Graph…**, as in the Windows menu.

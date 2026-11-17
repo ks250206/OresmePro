@@ -1,12 +1,14 @@
 import { createStore, useStore } from "./store";
 
 /**
- * Tool windows: the Procedure Browser, the Variables window and XPS Peak Fitting. Like the
+ * Tool windows: the Procedure Browser, the Variables window and the plugins' model editors. Like the
  * forms of plugins' actions (see ./actionWindows), they float over the
  * experiment's windows and are not part of it: not saved, not undone.
  */
-export const TOOLS = ["procedureBrowser", "variables", "xps"] as const;
-export type Tool = (typeof TOOLS)[number];
+export const TOOLS = ["procedureBrowser", "variables"] as const;
+/** A plugin's model editor (src/app/pluginEditors.ts): editor:<plugin>/<editor>. */
+export type EditorTool = `editor:${string}`;
+export type Tool = (typeof TOOLS)[number] | EditorTool;
 
 export interface ToolWindowState {
   tool: Tool;
@@ -16,11 +18,14 @@ export interface ToolWindowState {
   h: number;
 }
 
-const START: Record<Tool, Omit<ToolWindowState, "tool">> = {
+const START: Record<(typeof TOOLS)[number] | "editor", Omit<ToolWindowState, "tool">> = {
   procedureBrowser: { x: 80, y: 40, w: 380, h: 420 },
   variables: { x: 140, y: 70, w: 420, h: 320 },
-  xps: { x: 40, y: 12, w: 960, h: 700 },
+  editor: { x: 40, y: 12, w: 960, h: 700 },
 };
+
+const startOf = (tool: Tool) =>
+  START[tool.startsWith("editor:") ? "editor" : (tool as (typeof TOOLS)[number])];
 export const MIN_TOOL = { w: 220, h: 140 };
 
 /** The tool windows open, back to front. */
@@ -34,7 +39,7 @@ export function openTool(tool: Tool): void {
   toolWindows.set(({ windows }) => {
     const open = windows.find((window) => window.tool === tool);
     if (open) return { windows: [...windows.filter((window) => window !== open), open] };
-    return { windows: [...windows, { tool, ...START[tool] }] };
+    return { windows: [...windows, { tool, ...startOf(tool) }] };
   });
 }
 
@@ -62,4 +67,11 @@ export function placeTool(tool: Tool, place: Partial<Omit<ToolWindowState, "tool
 export function raiseTool(tool: Tool): void {
   const { windows } = toolWindows.get();
   if (windows.at(-1)?.tool !== tool) openTool(tool);
+}
+
+/** Closes the editor windows of a plugin (when it is removed). */
+export function closeEditorWindows(plugin: string): void {
+  toolWindows.set(({ windows }) => ({
+    windows: windows.filter((window) => !window.tool.startsWith(`editor:${plugin}/`)),
+  }));
 }

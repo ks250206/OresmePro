@@ -77,7 +77,6 @@ SECTIONS = {
         "ConflictError UnsupportedError PluginFailedError InternalError",
     ),
     "global": ("General", "全般", "atomic time_zone set_time_zone"),
-    "xps": ("XPS Peak Fitting", "XPS ピークフィット", "xps_fit XPSFitResult XPS_SHAPES"),
 }
 
 # Python protocols intentionally exposed to users.
@@ -266,7 +265,7 @@ def render_symbol(name, node, inherited_set, notes, japanese, translate=None):
 
 
 def generate():
-    files = ("oresme.py", "_oresme_analysis.py", "_oresme_packages.py", "_oresme_xps.py")
+    files = ("oresme.py", "_oresme_analysis.py", "_oresme_packages.py")
     modules = [ast.parse((SOURCE / file).read_text(encoding="utf-8")) for file in files]
     symbols = {}
     for file, module in zip(files, modules, strict=True):

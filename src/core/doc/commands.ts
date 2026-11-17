@@ -2243,7 +2243,7 @@ export function settleFormulas(state: DocState): DocState {
   return next;
 }
 
-function waveUsers(state: DocState, name: string): string[] {
+export function waveUsers(state: DocState, name: string): string[] {
   const users: string[] = [];
   for (const graph of Object.values(state.graphs)) {
     const used =

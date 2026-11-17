@@ -147,6 +147,103 @@ describe("plugin manifests", () => {
   });
 });
 
+describe("model editors in a manifest", () => {
+  const params = {
+    spectrum: { type: "wave" },
+    energy: { type: "wave", optional: true },
+    region: { type: "numbers", length: 2, optional: true },
+    components: { type: "json" },
+    shift: { type: "number", default: 0 },
+  };
+  const actions = [
+    { name: "xps_preview", title: "Preview", params },
+    { name: "xps_fit", title: "Fit", params },
+  ];
+  const editor = (change: Record<string, unknown> = {}) => ({
+    name: "xps",
+    title: "XPS Peak Fitting",
+    preview: "xps_preview",
+    fit: "xps_fit",
+    data: "spectrum",
+    x: "energy",
+    range: "region",
+    items: {
+      param: "components",
+      title: "Component",
+      fields: [
+        { key: "name", type: "text" },
+        { key: "position", constraint: true },
+        { key: "fwhm", default: 1.2, constraint: true, min: 0.05 },
+        { key: "area", constraint: true },
+      ],
+      position: "position",
+      width: "fwhm",
+      amount: "area",
+      coef: "{letter}_{key}",
+    },
+    partner: {
+      title: "Doublet",
+      ratios: [["p (1:2)", 0.5]],
+      ties: { position: "{ref}+{offset}", area: "{ref}*{ratio}" },
+    },
+    settings: ["shift"],
+    axis: { label: "Binding Energy (eV)", reverse: true },
+    ...change,
+  });
+  const read = (change: Record<string, unknown> = {}) =>
+    parse({ actions, editors: [editor(change)] });
+
+  it("are read against the plugin's actions", () => {
+    const [spec] = read().editors;
+    expect(spec).toMatchObject({
+      name: "xps",
+      preview: "xps_preview",
+      fit: "xps_fit",
+      data: "spectrum",
+      x: "energy",
+      range: "region",
+      settings: ["shift"],
+      axis: { label: "Binding Energy (eV)", reverse: true },
+    });
+    expect(spec!.items.fields[2]).toEqual({
+      key: "fwhm",
+      title: "fwhm",
+      kind: "number",
+      default: 1.2,
+      choices: [],
+      constraint: true,
+      hint: "",
+      min: 0.05,
+    });
+    expect(spec!.partner!.offset).toBe("Offset");
+    // A plugin without editors has none; json arguments are taken.
+    expect(parse().editors).toEqual([]);
+    expect(read().actions[1]!.params.components!.type).toBe("json");
+  });
+
+  it("are refused whole when anything does not fit", () => {
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ fit: "nothing" }, /does not have/],
+      [{ data: "components" }, /no wave argument components/],
+      [{ range: "shift" }, /no numbers argument shift/],
+      [{ items: { ...editor().items, param: "spectrum" } }, /no json argument spectrum/],
+      [{ items: { ...editor().items, position: "name" } }, /not one of its number fields/],
+      [
+        { items: { ...editor().items, fields: [{ key: "a" }, { key: "a" }], position: "a" } },
+        /same key/,
+      ],
+      [
+        { partner: { title: "Pair", ratios: [["1", 1]], ties: { name: "{ref}" } } },
+        /not a field with a constraint/,
+      ],
+      [{ settings: ["components"] }, /twice/],
+      [{ colour: "red" }, /unknown key "colour"/],
+    ];
+    for (const [change, message] of cases) expect(() => read(change)).toThrow(message);
+    expect(() => parse({ actions, editors: [editor(), editor()] })).toThrow(/same name/);
+  });
+});
+
 describe("plugin sources", () => {
   it("read GitHub addresses, with a branch and folder in them or apart", () => {
     expect(parseGitHubSource("https://github.com/lab/ec-tools")).toEqual({
