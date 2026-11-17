@@ -31,6 +31,12 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 - Show Tools is ⌥T / Alt+T: browsers keep ⌘T / Ctrl+T for a new tab and never pass it on.
 
+### Fixed
+
+- A drawing pinned to the axes keeps its points as they are: rounding them to six significant
+  digits moved it, by over 20 minutes on a date axis.
+- Dragging a corner of a rectangle or oval past the opposite corner no longer moves that corner.
+
 ## [0.2.0] - 2026-11-17
 
 The first version numbered: OresmePro as it was built up to here.

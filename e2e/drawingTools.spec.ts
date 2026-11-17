@@ -108,4 +108,48 @@ g = op.display(y)`);
     await expect(palette).toBeHidden();
     expect(await drawings()).toHaveLength(3);
   });
+
+  test("a corner dragged past the opposite one leaves that one where it was", async ({
+    app,
+    page,
+  }) => {
+    await app.run(`g = op.display(op.make("y", [0.0, 1, 0]))`);
+    await app.place("Graph0", 20, 16, 560, 400);
+    await page.getByRole("menuitem", { name: "Graph", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^Show Tools/ }).click();
+    const window = app.window("Graph0");
+    const box = (await window.getByLabel("Graph0 drawing area").boundingBox())!;
+    const points = async () =>
+      page.evaluate(() => globalThis.oresme.doc.getState().graphs.Graph0!.drawings[0]!.points);
+
+    // A rectangle from (150, 100) to (250, 180); then it is selected, with a handle at each corner.
+    await window
+      .getByRole("toolbar", { name: "Drawing tools" })
+      .getByRole("button", { name: "Draw rect" })
+      .click();
+    await page.mouse.move(box.x + 150, box.y + 100);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 250, box.y + 180, { steps: 4 });
+    await page.mouse.up();
+    const [, , right, bottom] = await points();
+
+    // The top left handle, dragged past the bottom right corner and on, a step at a time.
+    await page.mouse.move(box.x + 150, box.y + 100);
+    await page.mouse.down();
+    for (const [x, y] of [
+      [200, 140],
+      [260, 190],
+      [280, 210],
+      [300, 230],
+    ]) {
+      await page.mouse.move(box.x + x!, box.y + y!, { steps: 2 });
+    }
+    await page.mouse.up();
+    const after = await points();
+    // The corner held is still the old bottom right one; the other is where the pointer stopped.
+    expect(after[0]).toBeCloseTo(right!, 3);
+    expect(after[1]).toBeCloseTo(bottom!, 3);
+    expect(after[2]).toBeGreaterThan(right!);
+    expect(after[3]).toBeGreaterThan(bottom!);
+  });
 });
