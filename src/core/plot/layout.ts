@@ -30,6 +30,7 @@ import {
   type Extent,
 } from "./decimate";
 import { DASHES, type FontStyle, type MeasureText, type Prim, type Rect } from "./displayList";
+import { drawingPixels, emitDrawing, type DrawingGeometry } from "./drawings";
 import { emitText, layoutText, CAP_HEIGHT, type TextBlock } from "./richText";
 import { makeScale, shiftScale, type Scale } from "./scale";
 import {
@@ -119,6 +120,8 @@ export interface GraphLayout {
   axes: Record<string, AxisGeometry>;
   traces: TraceGeometry[];
   cursors: CursorGeometry[];
+  /** The drawings, front last, in pixels (for picking and editing them). */
+  drawings: DrawingGeometry[];
   /** Waves referenced by the graph that are missing or of the wrong kind. */
   missing: string[];
 }
@@ -1358,6 +1361,7 @@ export function layoutGraph(
       axes: {},
       traces: [],
       cursors: [],
+      drawings: [],
       missing: [...missing],
     };
   }
@@ -1394,6 +1398,19 @@ export function layoutGraph(
       GRID_MAJOR,
     );
   }
+
+  // Drawings, behind the traces or in front of everything else, each in the order they were made.
+  const drawingGeometry = new Map<string, DrawingGeometry>();
+  const drawLayer = (layer: "back" | "front") => {
+    for (const drawing of graph.drawings) {
+      if (drawing.layer !== layer) continue;
+      const pixels = drawingPixels(drawing, plot, (axis) => info.get(axis)?.scale);
+      if (!pixels) continue;
+      const box = emitDrawing(prims, drawing, pixels, size, family, measure);
+      drawingGeometry.set(drawing.name, { name: drawing.name, points: pixels, box });
+    }
+  };
+  drawLayer("back");
 
   // Everything drawn in data coordinates is clipped to its own pair of axes.
   const clipFor = (item: { vAxis: string; hAxis: string }): Rect => {
@@ -1946,6 +1963,8 @@ export function layoutGraph(
     });
   }
 
+  drawLayer("front");
+
   const cursors: CursorGeometry[] = [];
   if (options.cursors !== false) {
     for (const [name, cursor] of Object.entries(graph.cursors) as [
@@ -2019,6 +2038,7 @@ export function layoutGraph(
     axes,
     traces: geometry,
     cursors,
+    drawings: graph.drawings.flatMap((drawing) => drawingGeometry.get(drawing.name) ?? []),
     missing: [...missing],
   };
 }

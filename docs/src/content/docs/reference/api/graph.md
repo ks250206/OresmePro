@@ -232,6 +232,40 @@ tag(trace, point, text='', *, frame=True, x=None, y=None)
 annotation(name)
 ```
 
+### `Graph.draw`
+
+```python
+draw(kind, points, **props)
+```
+
+グラフに図形や文字を描き(Igor の描画ツールと同じ)、それを返します。
+
+``kind`` は "line"、"arrow"、"rect"、"roundrect"、"oval"、"polygon"、"text" のどれかです。``points`` は x, y の組を平らに並べたリストです: 線や矢印なら両端、四角や楕円なら向かい合う 2 つの角、多角形なら各頂点、文字なら左上の角。
+
+既定では、点はプロット領域の左上からの割合(横・下へ 0〜1)で、グラフを拡大・縮小しても同じ場所にとどまります。``coords="axes"`` にすると、点は軸 ``h_axis`` と ``v_axis``(既定は bottom と left)の値になり、データと一緒に動きます::
+
+    g.draw("arrow", [2.0, 0.8, 2.6, 0.3], coords="axes", color="red", line_size=2)
+    g.draw("rect", [0.1, 0.1, 0.4, 0.3], fill="#ffee88", fill_opacity=0.5)
+    g.draw("text", [0.7, 0.05], text="Peak A", text_size=14)
+
+ほかのプロパティは ``Drawing`` を参照してください。
+
+**明示的な例外** · `AttributeError`
+
+### `Graph.drawings`
+
+```python
+drawings()
+```
+
+グラフに描いた図形と文字(奥から手前の順)。
+
+### `Graph.drawing`
+
+```python
+drawing(name)
+```
+
 ### `Graph.save_style`
 
 ```python
@@ -351,6 +385,55 @@ remove()
 ```
 
 ### `Annotation.set`
+
+```python
+set(**props)
+```
+
+複数のプロパティをまとめて変えます。self を返します。
+
+**明示的な例外** · `AttributeError`
+
+## `Drawing`
+
+```python
+op.Drawing(graph, name)
+```
+
+グラフに描いた図形や文字(``Graph.draw`` を参照)。
+
+``points`` は x, y の組で、プロット領域の左上からの割合(``coords="plot"``)か、軸 ``h_axis`` と ``v_axis`` の値(``coords="axes"``)です。``color``、``line_size``(0 で輪郭なし)、``line_style``("solid"、"dash"、"dot"、"dashdot")が輪郭を、``fill``(色、または None)と ``fill_opacity`` が閉じた図形の塗りを決めます。``arrow`` は線の矢じりです: "none"、"end"、"start"、"both"。``closed=False`` の多角形は、頂点を結ぶ折れ線になります。``text`` と ``text_size`` は文字の内容と大きさです。``layer`` は "front"(トレースと軸の前)か "back"(トレースの後ろ)です。
+
+**プロパティ**
+
+- `name` (read-only)
+- `kind` (read-only)
+
+**設定可能なプロパティ** · `points`, `coords`, `h_axis`, `v_axis`, `color`, `line_size`, `line_style`, `fill`, `fill_opacity`, `arrow`, `closed`, `text`, `text_size`, `layer`
+
+### `Drawing.remove`
+
+```python
+remove()
+```
+
+### `Drawing.to_front`
+
+```python
+to_front()
+```
+
+同じ層のほかの図形より手前に描きます。self を返します。
+
+### `Drawing.to_back`
+
+```python
+to_back()
+```
+
+同じ層のほかの図形より奥に描きます。self を返します。
+
+### `Drawing.set`
 
 ```python
 set(**props)

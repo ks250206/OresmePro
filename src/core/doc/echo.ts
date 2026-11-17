@@ -418,6 +418,20 @@ export function echoPython(
       return `op.graph(${pyLiteral(command.graph)}).annotation(${pyLiteral(command.annotation)}).set(${keywords(command.props)})`;
     case "removeAnnotation":
       return `op.graph(${pyLiteral(command.graph)}).annotation(${pyLiteral(command.annotation)}).remove()`;
+    case "addDrawing":
+      return `op.graph(${pyLiteral(command.graph)}).draw(${joinArgs(
+        pyLiteral(command.kind),
+        pyLiteral(command.points),
+        keywords(command.props ?? {}),
+      )})`;
+    case "modifyDrawing":
+      return `op.graph(${pyLiteral(command.graph)}).drawing(${pyLiteral(command.drawing)}).set(${keywords(command.props)})`;
+    case "removeDrawing":
+      return `op.graph(${pyLiteral(command.graph)}).drawing(${pyLiteral(command.drawing)}).remove()`;
+    case "orderDrawing":
+      return `op.graph(${pyLiteral(command.graph)}).drawing(${pyLiteral(command.drawing)}).${
+        command.place === "back" ? "to_back" : "to_front"
+      }()`;
     case "edit":
       return `op.edit(${joinArgs(names(command.waves), keywords({ name: command.name }))})`;
     case "appendToTable":

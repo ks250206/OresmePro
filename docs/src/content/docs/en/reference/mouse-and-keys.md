@@ -43,6 +43,7 @@ On macOS read **Ctrl** as **⌘** and **Alt** as **Option**.
 | Drag a cursor (A round, B square) | Moves it to another point                                                |
 | **←** / **→**                     | Moves the cursor a point (**Shift**: ten)                                |
 | Right-click                       | Cursors, the Modify dialogs, styles, templates, Link Graphs, ...         |
+| **Ctrl+T** (Show Tools)           | Shows the drawing tools; see the guide on drawing shapes                 |
 
 In linked graphs (Link Graphs), zooming, panning and cursors go to the other graphs too.
 

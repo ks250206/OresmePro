@@ -31,6 +31,8 @@ import {
   type GraphSpec,
   type PageSpec,
   type PanelSpec,
+  defaultDrawing,
+  DRAWING_KINDS,
   type NoteSpec,
   type ProcedureSpec,
   type GraphTemplate,
@@ -199,6 +201,12 @@ function upgradeGraph(
       trace: annotation.trace ?? null,
       point: annotation.point ?? 0,
     })),
+    // Older experiments have none; one that cannot be read does not keep the graph from opening.
+    drawings: (saved.drawings ?? []).flatMap((drawing) =>
+      drawing && (DRAWING_KINDS as readonly string[]).includes(drawing.kind)
+        ? [{ ...defaultDrawing(drawing.kind), ...drawing }]
+        : [],
+    ),
     cursors: dict(
       CURSOR_NAMES.filter((cursor) => Object.hasOwn(cursors, cursor)).map((cursor) => [
         cursor,

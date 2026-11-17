@@ -28,7 +28,15 @@ import {
   type GraphSpec,
   type Wave,
 } from "../core/doc/types";
+import { setTools, toggleTools, useDrawTools, type DrawTool } from "../app/drawTools";
 import { drawPrims } from "../core/plot/canvas";
+import {
+  dragHandle,
+  drawingAt,
+  drawingHandles,
+  pixelToDrawing,
+  tidyDrawingValue,
+} from "../core/plot/drawings";
 import type { Rect } from "../core/plot/displayList";
 import {
   distanceToTrace,
@@ -41,6 +49,7 @@ import {
 import { formatDate, formatNumber, timeZone, type TimeZone } from "../core/plot/ticks";
 import { graphWaveKey } from "../core/plot/windowFit";
 import { marqueeZoom, panBy, tidy, zoomAbout } from "../core/plot/zoom";
+import { DrawPalette } from "./DrawPalette";
 import { openContextMenu } from "./Menu";
 
 const inside = (rect: Rect, x: number, y: number): boolean =>
@@ -292,7 +301,20 @@ type Gesture =
       box: Rect;
       /** The annotation's offset when the drag began. */
       from: { x: number; y: number };
-    };
+    }
+  /** Drawing a new shape from where the drag began. */
+  | { kind: "create"; tool: DrawTool }
+  /** Moving a drawing: its pixels when the drag began. */
+  | { kind: "moveDrawing"; name: string; x: number; y: number; from: number[] }
+  /** Dragging a handle of a drawing (see drawingHandles). */
+  | { kind: "handle"; name: string; handle: number };
+
+/** A shape being drawn, in pixels; for a polygon, its corners so far and where the pointer is. */
+interface Draft {
+  tool: DrawTool;
+  points: number[];
+  hover?: [number, number];
+}
 
 export function GraphWindow({ name }: { name: string }) {
   const graph = useDoc((state) => state.graphs[name]);
@@ -309,6 +331,8 @@ export function GraphWindow({ name }: { name: string }) {
   /** The cursor the arrow keys move. */
   const activeCursor = useRef<CursorName>("A");
   const dpr = useDevicePixelRatio();
+  const tools = useDrawTools(name);
+  const [draft, setDraft] = useState<Draft | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -424,10 +448,146 @@ export function GraphWindow({ name }: { name: string }) {
     });
   };
 
+  const scaleOf = (axis: string) => layout?.axes[axis]?.scale;
+  /** The axes new drawings pinned to the axes go on: bottom and left, or the first there are. */
+  const drawingAxes = (): { hAxis: string; vAxis: string } | null => {
+    if (!layout) return null;
+    const names = Object.keys(layout.axes);
+    const across = names.includes("bottom")
+      ? "bottom"
+      : names.find((axis) => !isVerticalSide(graph.axes[axis]!.side));
+    const up = names.includes("left")
+      ? "left"
+      : names.find((axis) => isVerticalSide(graph.axes[axis]!.side));
+    return across && up ? { hAxis: across, vAxis: up } : null;
+  };
+  /** Pixels in a drawing's own terms (see DrawingSpec.points), tidied; null if its axes are not drawn. */
+  const toDrawing = (
+    pixels: readonly number[],
+    place: { coords: "plot" | "axes"; hAxis: string; vAxis: string },
+  ): number[] | null => {
+    if (!layout) return null;
+    const out: number[] = [];
+    for (let index = 0; index < pixels.length; index += 2) {
+      const point = pixelToDrawing(place, pixels[index]!, pixels[index + 1]!, layout.plot, scaleOf);
+      if (!point || !point.every(Number.isFinite)) return null;
+      out.push(tidyDrawingValue(point[0], place.coords), tidyDrawingValue(point[1], place.coords));
+    }
+    return out;
+  };
+  /** Where a new drawing goes: on the axes if the tools say so and there are axes, else the plot area. */
+  const newPlace = () => {
+    const axes = tools?.onAxes ? drawingAxes() : null;
+    return axes
+      ? { coords: "axes" as const, ...axes }
+      : { coords: "plot" as const, hAxis: "bottom", vAxis: "left" };
+  };
+  /** Makes a drawing from pixels and selects it, going back to the select tool. */
+  const addDrawing = (tool: DrawTool, pixels: readonly number[]) => {
+    if (tool === "select") return;
+    const place = newPlace();
+    const points = toDrawing(pixels, place);
+    if (!points) return;
+    const made = runGui({
+      op: "addDrawing",
+      graph: name,
+      kind: tool,
+      points,
+      ...(place.coords === "axes"
+        ? {
+            props: {
+              coords: "axes",
+              ...(place.hAxis !== "bottom" ? { hAxis: place.hAxis } : {}),
+              ...(place.vAxis !== "left" ? { vAxis: place.vAxis } : {}),
+            },
+          }
+        : {}),
+    });
+    if (typeof made === "string") setTools(name, { tool: "select", selected: made });
+  };
+  /** Moves a drawing to new pixels, as one step however long the drag. */
+  const placeDrawing = (drawing: string, pixels: readonly number[]) => {
+    const spec = graph.drawings.find((item) => item.name === drawing);
+    const points = spec && toDrawing(pixels, spec);
+    if (!points) return;
+    const command: Command = { op: "modifyDrawing", graph: name, drawing, props: { points } };
+    runGuiCoalesced(`drawing:${name}:${drawing}`, [command], () => {
+      const now = doc.getState().graphs[name]?.drawings.find((item) => item.name === drawing);
+      return now ? (echoPython({ ...command, props: { points: now.points } }) ?? "") : "";
+    });
+  };
+  const selected =
+    tools?.selected && graph.drawings.some((item) => item.name === tools.selected)
+      ? tools.selected
+      : null;
+
+  /** Starts what a press does with the drawing tools out; false leaves it to the graph. */
+  const drawingPointerDown = (event: ReactPointerEvent<HTMLDivElement>, x: number, y: number) => {
+    if (!tools || !layout) return false;
+    const { tool } = tools;
+    if (tool === "polygon") {
+      setDraft((current) =>
+        current?.tool === "polygon"
+          ? { ...current, points: [...current.points, x, y] }
+          : { tool, points: [x, y], hover: [x, y] },
+      );
+      return true;
+    }
+    if (tool === "text") {
+      const place = newPlace();
+      const point = toDrawing([x, y], place);
+      // As after drawing a shape, the next click selects.
+      setTools(name, { tool: "select" });
+      if (point) {
+        ui.set({
+          dialog: {
+            kind: "drawText",
+            graph: name,
+            point: [point[0]!, point[1]!],
+            coords: place.coords,
+            hAxis: place.hAxis,
+            vAxis: place.vAxis,
+          },
+        });
+      }
+      return true;
+    }
+    if (tool !== "select") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      gesture.current = { kind: "create", tool };
+      setDraft({ tool, points: [x, y, x, y] });
+      return true;
+    }
+    // The select tool: a handle of the drawing selected, then any drawing under the pointer.
+    const spec = selected ? graph.drawings.find((item) => item.name === selected) : undefined;
+    const geometry = selected ? layout.drawings.find((item) => item.name === selected) : undefined;
+    if (spec && geometry) {
+      const handle = drawingHandles(spec, geometry).findIndex(
+        ([hx, hy]) => Math.hypot(hx - x, hy - y) <= 6,
+      );
+      if (handle !== -1) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        gesture.current = { kind: "handle", name: spec.name, handle };
+        return true;
+      }
+    }
+    const hit = drawingAt(graph.drawings, layout.drawings, x, y);
+    const hitGeometry = hit ? layout.drawings.find((item) => item.name === hit) : undefined;
+    if (hit && hitGeometry) {
+      setTools(name, { selected: hit });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      gesture.current = { kind: "moveDrawing", name: hit, x, y, from: hitGeometry.points };
+      return true;
+    }
+    if (selected) setTools(name, { selected: null });
+    return false;
+  };
+
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!layout || event.button !== 0) return;
     hostRef.current?.focus({ preventScroll: true });
     const { x, y } = position(event);
+    if (drawingPointerDown(event, x, y)) return;
     const grabbed = layout.cursors.find((cursor) => Math.hypot(cursor.x - x, cursor.y - y) <= 9);
     if (grabbed) {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -459,6 +619,23 @@ export function GraphWindow({ name }: { name: string }) {
     if (!layout) return;
     const { x, y } = position(event);
     const current = gesture.current;
+    if (current?.kind === "create") {
+      setDraft((now) => (now ? { ...now, points: [now.points[0]!, now.points[1]!, x, y] } : now));
+    } else if (current?.kind === "moveDrawing") {
+      const dx = x - current.x;
+      const dy = y - current.y;
+      placeDrawing(
+        current.name,
+        current.from.map((value, index) => value + (index % 2 === 0 ? dx : dy)),
+      );
+    } else if (current?.kind === "handle") {
+      const spec = graph.drawings.find((item) => item.name === current.name);
+      const geometry = layout.drawings.find((item) => item.name === current.name);
+      if (spec && geometry)
+        placeDrawing(current.name, dragHandle(spec, geometry, current.handle, x, y));
+    } else if (draft?.tool === "polygon") {
+      setDraft({ ...draft, hover: [x, y] });
+    }
     if (current?.kind === "marquee") {
       const cx = Math.min(layout.plot.x + layout.plot.w, Math.max(layout.plot.x, x));
       const cy = Math.min(layout.plot.y + layout.plot.h, Math.max(layout.plot.y, y));
@@ -511,6 +688,18 @@ export function GraphWindow({ name }: { name: string }) {
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = gesture.current;
     gesture.current = null;
+    if (current?.kind === "create") {
+      const points = draft?.points ?? [];
+      setDraft(null);
+      // A click without a drag draws nothing.
+      if (
+        points.length === 4 &&
+        Math.hypot(points[2]! - points[0]!, points[3]! - points[1]!) >= 3
+      ) {
+        addDrawing(current.tool, points);
+      }
+      return;
+    }
     if (!layout || current?.kind !== "marquee" || !marquee) return;
     if (marquee.w < 4 || marquee.h < 4) {
       setMarquee(null);
@@ -539,7 +728,37 @@ export function GraphWindow({ name }: { name: string }) {
     applyView(zoomAbout(name, layout.axes, x, y, factor, axis));
   };
 
+  /** Finishes a polygon: the corners clicked, each once. */
+  const finishPolygon = () => {
+    if (draft?.tool !== "polygon") return;
+    const corners: number[] = [];
+    for (let index = 0; index < draft.points.length; index += 2) {
+      const [x, y] = [draft.points[index]!, draft.points[index + 1]!];
+      const last = corners.length;
+      if (last >= 2 && Math.hypot(corners[last - 2]! - x, corners[last - 1]! - y) < 3) continue;
+      corners.push(x, y);
+    }
+    setDraft(null);
+    if (corners.length >= 4) addDrawing("polygon", corners);
+  };
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (tools && (event.key === "Delete" || event.key === "Backspace") && selected) {
+      event.preventDefault();
+      runGui({ op: "removeDrawing", graph: name, drawing: selected });
+      setTools(name, { selected: null });
+      return;
+    }
+    if (tools && event.key === "Escape") {
+      if (draft) setDraft(null);
+      else if (selected) setTools(name, { selected: null });
+      else setTools(name, { tool: "select" });
+      return;
+    }
+    if (tools && event.key === "Enter" && draft?.tool === "polygon") {
+      finishPolygon();
+      return;
+    }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     const which = graph.cursors[activeCursor.current]
       ? activeCursor.current
@@ -558,6 +777,15 @@ export function GraphWindow({ name }: { name: string }) {
     if (!layout) return;
     const { x, y } = position(event);
     setMarquee(null);
+    if (tools && draft?.tool === "polygon") {
+      finishPolygon();
+      return;
+    }
+    const drawing = tools ? drawingAt(graph.drawings, layout.drawings, x, y) : null;
+    if (drawing) {
+      ui.set({ dialog: { kind: "modifyDrawing", graph: name, drawing } });
+      return;
+    }
     const held = annotationAt(layout, x, y);
     if (held) {
       ui.set({ dialog: { kind: "editAnnotation", graph: name, annotation: held.name } });
@@ -608,6 +836,73 @@ export function GraphWindow({ name }: { name: string }) {
     const { x, y } = position(event);
     const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
       ui.set({ dialog });
+    const drawing = tools ? drawingAt(graph.drawings, layout.drawings, x, y) : null;
+    const drawingSpec = drawing ? graph.drawings.find((item) => item.name === drawing) : undefined;
+    const drawingGeometry = drawing
+      ? layout.drawings.find((item) => item.name === drawing)
+      : undefined;
+    if (drawing && drawingSpec && drawingGeometry) {
+      setTools(name, { selected: drawing });
+      const axes = drawingAxes();
+      /** Pins the drawing to the axes or the plot area, where it is now. */
+      const pin = (coords: "plot" | "axes") => () => {
+        const place =
+          coords === "axes" && axes
+            ? { coords, ...axes }
+            : { coords: "plot" as const, hAxis: drawingSpec.hAxis, vAxis: drawingSpec.vAxis };
+        const points = toDrawing(drawingGeometry.points, place);
+        if (points) {
+          runGui({ op: "modifyDrawing", graph: name, drawing, props: { ...place, points } });
+        }
+      };
+      const behind = drawingSpec.layer === "back";
+      openContextMenu(event, [
+        {
+          label: `Modify ${drawing}…`,
+          onSelect: open({ kind: "modifyDrawing", graph: name, drawing }),
+        },
+        { separator: true },
+        {
+          label: "Bring to Front",
+          onSelect: () => runGui({ op: "orderDrawing", graph: name, drawing, place: "front" }),
+        },
+        {
+          label: "Send to Back",
+          onSelect: () => runGui({ op: "orderDrawing", graph: name, drawing, place: "back" }),
+        },
+        {
+          label: behind ? "Move in Front of Traces" : "Move Behind Traces",
+          onSelect: () =>
+            runGui({
+              op: "modifyDrawing",
+              graph: name,
+              drawing,
+              props: { layer: behind ? "front" : "back" },
+            }),
+        },
+        { separator: true },
+        {
+          label: "Pin to the Axes (Moves with the Data)",
+          checked: drawingSpec.coords === "axes",
+          disabled: !axes,
+          onSelect: pin("axes"),
+        },
+        {
+          label: "Pin to the Plot Area",
+          checked: drawingSpec.coords === "plot",
+          onSelect: pin("plot"),
+        },
+        { separator: true },
+        {
+          label: `Remove ${drawing}`,
+          onSelect: () => {
+            runGui({ op: "removeDrawing", graph: name, drawing });
+            setTools(name, { selected: null });
+          },
+        },
+      ]);
+      return;
+    }
     const held = annotationAt(layout, x, y);
     if (held) {
       openContextMenu(event, [
@@ -627,6 +922,12 @@ export function GraphWindow({ name }: { name: string }) {
     const point = trace ? pointAt(trace, x) : null;
     const items: MenuItem[] = [
       { label: "Autoscale Axes", shortcut: "Ctrl+A", onSelect: () => autoscaleGraph(name) },
+      {
+        label: "Show Tools",
+        shortcut: "Ctrl+T",
+        checked: tools !== null,
+        onSelect: () => toggleTools(name),
+      },
       { separator: true },
     ];
     if (trace && point !== null) {
@@ -737,58 +1038,149 @@ export function GraphWindow({ name }: { name: string }) {
     openContextMenu(event, items);
   };
 
-  return (
-    <div className="absolute inset-0 flex flex-col bg-white">
-      <div
-        ref={hostRef}
-        tabIndex={0}
-        className="relative min-h-0 flex-1 cursor-crosshair outline-none"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          gesture.current = null;
-          setMarquee(null);
-        }}
-        onPointerLeave={() => ui.set({ readout: "" })}
-        onWheel={onWheel}
-        onKeyDown={onKeyDown}
-        onDoubleClick={onDoubleClick}
-        onContextMenu={onContextMenu}
+  // What the drawing tools show over the graph: the shape being drawn, and the handles of the one selected.
+  const selectedSpec = selected ? graph.drawings.find((item) => item.name === selected) : undefined;
+  const selectedGeometry = selected
+    ? layout?.drawings.find((item) => item.name === selected)
+    : undefined;
+  const draftPoints =
+    draft?.tool === "polygon" && draft.hover ? [...draft.points, ...draft.hover] : draft?.points;
+  const overlay =
+    tools && layout ? (
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute left-0 top-0"
+        width={layout.width * magnification}
+        height={layout.height * magnification}
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
       >
-        <canvas
-          ref={canvasRef}
-          role="img"
-          aria-label={`${name}: ${
-            [...graph.traces, ...graph.images, ...graph.contours]
-              .map((item) => item.name)
-              .join(", ") || "empty graph"
+        {draft && draftPoints ? (
+          draft.tool === "rect" || draft.tool === "roundrect" || draft.tool === "oval" ? (
+            (() => {
+              const [x0, y0, x1, y1] = draftPoints as [number, number, number, number];
+              const box = {
+                x: Math.min(x0, x1),
+                y: Math.min(y0, y1),
+                width: Math.abs(x1 - x0),
+                height: Math.abs(y1 - y0),
+              };
+              return draft.tool === "oval" ? (
+                <ellipse
+                  cx={box.x + box.width / 2}
+                  cy={box.y + box.height / 2}
+                  rx={box.width / 2}
+                  ry={box.height / 2}
+                  fill="none"
+                  stroke="#2760c4"
+                  strokeDasharray="4 3"
+                />
+              ) : (
+                <rect
+                  {...box}
+                  rx={draft.tool === "roundrect" ? Math.min(10, box.width / 2, box.height / 2) : 0}
+                  fill="none"
+                  stroke="#2760c4"
+                  strokeDasharray="4 3"
+                />
+              );
+            })()
+          ) : (
+            <polyline
+              points={draftPoints.join(" ")}
+              fill="none"
+              stroke="#2760c4"
+              strokeDasharray="4 3"
+            />
+          )
+        ) : null}
+        {selectedSpec && selectedGeometry ? (
+          <>
+            <rect
+              x={selectedGeometry.box.x - 3}
+              y={selectedGeometry.box.y - 3}
+              width={selectedGeometry.box.w + 6}
+              height={selectedGeometry.box.h + 6}
+              fill="none"
+              stroke="#2760c4"
+              strokeWidth={1}
+              strokeDasharray="3 2"
+            />
+            {drawingHandles(selectedSpec, selectedGeometry).map(([hx, hy], index) => (
+              <rect
+                key={index}
+                x={hx - 3.5}
+                y={hy - 3.5}
+                width={7}
+                height={7}
+                fill="#ffffff"
+                stroke="#2760c4"
+                strokeWidth={1.2}
+              />
+            ))}
+          </>
+        ) : null}
+      </svg>
+    ) : null;
+
+  return (
+    <div className="absolute inset-0 flex bg-white">
+      {tools ? <DrawPalette graph={name} tools={tools} /> : null}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div
+          ref={hostRef}
+          tabIndex={0}
+          aria-label={tools ? `${name} drawing area` : undefined}
+          className={`relative min-h-0 flex-1 outline-none ${
+            tools && tools.tool !== "select" ? "cursor-cell" : "cursor-crosshair"
           }`}
-          // A fixed plot area draws the figure at its own size, whatever the window's.
-          style={{
-            width: layout ? layout.width * magnification : size.w,
-            height: layout ? layout.height * magnification : size.h,
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={() => {
+            gesture.current = null;
+            setMarquee(null);
           }}
-          className="block"
-        />
-        {marquee ? (
-          <div
-            className="pointer-events-none absolute border border-dashed border-black/70 bg-black/[0.04]"
+          onPointerLeave={() => ui.set({ readout: "" })}
+          onWheel={onWheel}
+          onKeyDown={onKeyDown}
+          onDoubleClick={onDoubleClick}
+          onContextMenu={onContextMenu}
+        >
+          <canvas
+            ref={canvasRef}
+            role="img"
+            aria-label={`${name}: ${
+              [...graph.traces, ...graph.images, ...graph.contours]
+                .map((item) => item.name)
+                .join(", ") || "empty graph"
+            }`}
+            // A fixed plot area draws the figure at its own size, whatever the window's.
             style={{
-              left: marquee.x * magnification,
-              top: marquee.y * magnification,
-              width: marquee.w * magnification,
-              height: marquee.h * magnification,
+              width: layout ? layout.width * magnification : size.w,
+              height: layout ? layout.height * magnification : size.h,
             }}
+            className="block"
           />
-        ) : null}
-        {layout && layout.missing.length > 0 ? (
-          <div className="pointer-events-none absolute left-2 top-2 rounded bg-danger/10 px-2 py-0.5 text-danger">
-            Cannot plot: {layout.missing.join(", ")}
-          </div>
-        ) : null}
+          {marquee ? (
+            <div
+              className="pointer-events-none absolute border border-dashed border-black/70 bg-black/[0.04]"
+              style={{
+                left: marquee.x * magnification,
+                top: marquee.y * magnification,
+                width: marquee.w * magnification,
+                height: marquee.h * magnification,
+              }}
+            />
+          ) : null}
+          {layout && layout.missing.length > 0 ? (
+            <div className="pointer-events-none absolute left-2 top-2 rounded bg-danger/10 px-2 py-0.5 text-danger">
+              Cannot plot: {layout.missing.join(", ")}
+            </div>
+          ) : null}
+          {overlay}
+        </div>
+        {graph.showInfo ? <CursorInfo graph={graph} /> : null}
       </div>
-      {graph.showInfo ? <CursorInfo graph={graph} /> : null}
     </div>
   );
 }

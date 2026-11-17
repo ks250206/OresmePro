@@ -230,6 +230,15 @@ export function captureTemplate(
         },
       ];
     }),
+    ...(graph.drawings.length > 0
+      ? {
+          drawings: graph.drawings.map((drawing) => {
+            const { name, ...rest } = drawing;
+            void name;
+            return rest;
+          }),
+        }
+      : {}),
   };
 }
 
@@ -470,6 +479,9 @@ export function makeFromTemplate(
     } else {
       run({ op: "addAnnotation", graph: name, kind, text: fill(text), anchor, frame, x, y });
     }
+  }
+  for (const { kind, points, ...props } of template.drawings ?? []) {
+    run({ op: "addDrawing", graph: name, kind, points, props });
   }
   const graph = next.graphs[name]!;
   // The template's look is not a style of the experiment, so the graph

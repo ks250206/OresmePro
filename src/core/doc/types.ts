@@ -439,6 +439,81 @@ export interface AnnotationSpec {
   point: number;
 }
 
+export const DRAWING_KINDS = [
+  "line",
+  "arrow",
+  "rect",
+  "roundrect",
+  "oval",
+  "polygon",
+  "text",
+] as const;
+export type DrawingKind = (typeof DRAWING_KINDS)[number];
+/** How a drawing's points are given: as fractions of the plot area, or as values on its axes. */
+export const DRAWING_COORDS = ["plot", "axes"] as const;
+export type DrawingCoords = (typeof DRAWING_COORDS)[number];
+/** Behind the traces (over the grid), or in front of everything but the legends and text boxes. */
+export const DRAWING_LAYERS = ["back", "front"] as const;
+export type DrawingLayer = (typeof DRAWING_LAYERS)[number];
+export const ARROW_ENDS = ["none", "end", "start", "both"] as const;
+export type ArrowEnds = (typeof ARROW_ENDS)[number];
+
+/**
+ * A shape or text drawn on a graph, as Igor's drawing tools draw them
+ * (DrawLine, DrawRect, DrawOval, DrawPoly, DrawText).
+ */
+export interface DrawingSpec {
+  /** Unique in its graph: "draw0", "draw1", ... */
+  name: string;
+  kind: DrawingKind;
+  /**
+   * x0, y0, x1, y1, ...: the two ends of a line or arrow, two opposite
+   * corners of a rectangle or oval, the corners of a polygon, the top left
+   * corner of text. With `coords` "plot", fractions of the plot area from its
+   * top left corner (0 to 1 across and down, beyond for outside it); with
+   * "axes", values on `hAxis` and `vAxis`, so that the drawing moves with the data.
+   */
+  points: readonly number[];
+  coords: DrawingCoords;
+  hAxis: string;
+  vAxis: string;
+  /** Always normalized to `#rrggbb`. */
+  color: string;
+  /** In pixels; 0 draws no outline. */
+  lineSize: number;
+  lineStyle: LineStyle;
+  /** The fill of a closed shape, or null for none. */
+  fill: string | null;
+  fillOpacity: number;
+  /** Which ends of a line have arrowheads. */
+  arrow: ArrowEnds;
+  /** A polygon closes back to its first corner; open, it is a line through its corners. */
+  closed: boolean;
+  text: string;
+  /** The size of text; null is the graph's font size. */
+  textSize: number | null;
+  layer: DrawingLayer;
+}
+
+/** A new drawing of a kind, before what it is given. */
+export const defaultDrawing = (
+  kind: DrawingKind,
+): Omit<DrawingSpec, "name" | "kind" | "points"> => ({
+  coords: "plot",
+  hAxis: "bottom",
+  vAxis: "left",
+  color: "#000000",
+  lineSize: 1,
+  lineStyle: "solid",
+  fill: null,
+  fillOpacity: 1,
+  arrow: kind === "arrow" ? "end" : "none",
+  closed: true,
+  text: "",
+  textSize: null,
+  layer: "front",
+});
+
 /** Where a new tag's box sits relative to its point, in plot fractions. */
 export const TAG_OFFSET = { x: 0.08, y: -0.14 } as const;
 
@@ -563,6 +638,8 @@ export interface GraphSpec extends GraphStyle {
   /** Keyed by axis name. "left", "bottom", "right" and "top" always exist. */
   axes: Dict<AxisSpec>;
   annotations: readonly AnnotationSpec[];
+  /** Shapes and text drawn on the graph with its drawing tools, back to front. */
+  drawings: readonly DrawingSpec[];
   cursors: Readonly<Partial<Record<CursorName, CursorSpec>>>;
 }
 
@@ -750,6 +827,8 @@ export interface GraphTemplate {
   /** Every axis, the four sides first. A range left as null is worked out from the data. */
   axes: readonly TemplateAxis[];
   annotations: readonly TemplateAnnotation[];
+  /** Shapes and text drawn on the graph (their axes are the template's); left out, none. */
+  drawings?: readonly Omit<DrawingSpec, "name">[];
   /** How the plot area is sized, every mode (its axes are the template's); left out, auto. */
   plot?: { width: PlotDimension; height: PlotDimension };
 }

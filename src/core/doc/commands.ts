@@ -45,6 +45,12 @@ import { axisLook, captureStyle, styledGraph, styledWindows, traceLook } from ".
 import {
   ANCHORS,
   ANNOTATION_KINDS,
+  ARROW_ENDS,
+  defaultDrawing,
+  DRAWING_COORDS,
+  DRAWING_KINDS,
+  DRAWING_LAYERS,
+  type DrawingSpec,
   AXIS_DATA,
   AXIS_LOOK,
   AXIS_ROLES,
@@ -270,6 +276,12 @@ export type Command =
     }
   | { op: "modifyAnnotation"; graph: string; annotation: string; props: Props }
   | { op: "removeAnnotation"; graph: string; annotation: string }
+  /** Draws a shape or text on a graph (see DrawingSpec); returns its name. */
+  | { op: "addDrawing"; graph: string; kind: string; points: readonly number[]; props?: Props }
+  | { op: "modifyDrawing"; graph: string; drawing: string; props: Props }
+  | { op: "removeDrawing"; graph: string; drawing: string }
+  /** Puts a drawing in front of the others of its layer, or behind them. */
+  | { op: "orderDrawing"; graph: string; drawing: string; place: string }
   | { op: "edit"; waves: readonly string[]; name?: string }
   | { op: "appendToTable"; table: string; waves: readonly string[] }
   | { op: "removeFromTable"; table: string; waves: readonly string[] }
@@ -1516,6 +1528,7 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
       images: anything,
       contours: anything,
       axes: anything,
+      drawings: anything,
       annotations: anything,
       plot: anything,
     },
@@ -1754,6 +1767,17 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
     if (width.mode !== "auto" || height.mode !== "auto") plot = { width, height };
   }
 
+  const drawings = listOf(parts.drawings ?? [], "drawings").map((item) => {
+    const props = propsOf(item, "A drawing");
+    const kind = oneOf(props.kind, DRAWING_KINDS, "kind");
+    const rest = validateProps<DrawingProps>(
+      restOf(props, ["kind"]),
+      DRAWING_VALIDATORS,
+      "drawing",
+    );
+    return { ...defaultDrawing(kind), kind, points: [] as readonly number[], ...rest };
+  });
+
   return {
     style: checkStyle(parts.style ?? {}),
     slots,
@@ -1762,6 +1786,7 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
     contours,
     axes,
     annotations,
+    ...(drawings.length > 0 ? { drawings } : {}),
     ...(plot ? { plot } : {}),
   };
 }
@@ -1805,6 +1830,76 @@ const putPage = (state: DocState, page: PageSpec): DocState => ({
   ...state,
   pages: withEntry(state.pages, page.name, page),
 });
+
+type DrawingProps = Omit<DrawingSpec, "name" | "kind">;
+const DRAWING_VALIDATORS: { [K in keyof DrawingProps]: (value: unknown) => DrawingProps[K] } = {
+  points: (value) => {
+    if (!Array.isArray(value) || value.length > 2000) {
+      throw new DocError("points must be a list of numbers: x0, y0, x1, y1, ...");
+    }
+    return value.map((item) => finite(item, "A point"));
+  },
+  coords: (value) => oneOf(value, DRAWING_COORDS, "coords"),
+  hAxis: (value) => textOf(value, "hAxis"),
+  vAxis: (value) => textOf(value, "vAxis"),
+  color: normalizeColor,
+  lineSize: (value) => {
+    const size = finite(value, "lineSize");
+    if (size < 0 || size > 50) throw new DocError("lineSize must be between 0 and 50.");
+    return size;
+  },
+  lineStyle: (value) => oneOf(value, LINE_STYLES, "lineStyle"),
+  fill: (value) => (value === null ? null : normalizeColor(value)),
+  fillOpacity: (value) => {
+    const opacity = finite(value, "fillOpacity");
+    if (opacity < 0 || opacity > 1) throw new DocError("fillOpacity must be between 0 and 1.");
+    return opacity;
+  },
+  arrow: (value) => oneOf(value, ARROW_ENDS, "arrow"),
+  closed: (value) => bool(value, "closed"),
+  text: (value) => textOf(value, "text"),
+  textSize: (value) => (value === null ? null : fontSize(value, "textSize")),
+  layer: (value) => oneOf(value, DRAWING_LAYERS, "layer"),
+};
+
+/** How many numbers the points of a drawing of each kind are. */
+const DRAWING_POINTS: Record<DrawingSpec["kind"], { least: number; most: number }> = {
+  line: { least: 4, most: 4 },
+  arrow: { least: 4, most: 4 },
+  rect: { least: 4, most: 4 },
+  roundrect: { least: 4, most: 4 },
+  oval: { least: 4, most: 4 },
+  text: { least: 2, most: 2 },
+  polygon: { least: 4, most: 2000 },
+};
+
+/** Checks a drawing as a whole: its points for its kind, and its axes when it is on them. */
+function checkDrawing(graph: GraphSpec, drawing: DrawingSpec): DrawingSpec {
+  const { least, most } = DRAWING_POINTS[drawing.kind];
+  const count = drawing.points.length;
+  if (count % 2 !== 0 || count < least || count > most) {
+    throw new DocError(
+      least === most
+        ? `A ${drawing.kind} has ${least / 2} point${least === 2 ? "" : "s"}: ${least} numbers, not ${count}.`
+        : `A ${drawing.kind} has at least ${least / 2} points (x, y pairs), not ${count} numbers.`,
+    );
+  }
+  if (drawing.coords === "axes") {
+    for (const [name, vertical] of [
+      [drawing.hAxis, false],
+      [drawing.vAxis, true],
+    ] as const) {
+      const axis = graph.axes[name];
+      if (!axis) throw new DocError(`${graph.name} has no axis named ${JSON.stringify(name)}.`);
+      if (isVerticalSide(axis.side) !== vertical) {
+        throw new DocError(
+          `Axis ${name} is ${vertical ? "horizontal" : "vertical"}; a drawing needs a ${vertical ? "vertical" : "horizontal"} one there.`,
+        );
+      }
+    }
+  }
+  return drawing;
+}
 
 function validateProps<T>(
   props: Props,
@@ -2074,6 +2169,7 @@ export function emptyGraph(name: string): GraphSpec {
     contours: [],
     axes: dict(AXIS_SIDES.map((side) => [side, defaultAxis(side)])),
     annotations: [],
+    drawings: [],
     cursors: dict(),
     fontSize: 12,
     fontFamily: DEFAULT_FONT_FAMILY,
@@ -2518,9 +2614,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if ((AXIS_SIDES as readonly string[]).includes(command.axis)) {
         throw new DocError("The left, bottom, right and top axes cannot be removed.");
       }
-      const users = [...graph.traces, ...graph.images, ...graph.contours].filter(
-        (item) => item.vAxis === command.axis || item.hAxis === command.axis,
-      );
+      const users = [
+        ...graph.traces,
+        ...graph.images,
+        ...graph.contours,
+        ...graph.drawings.filter((item) => item.coords === "axes"),
+      ].filter((item) => item.vAxis === command.axis || item.hAxis === command.axis);
       if (users.length > 0) {
         throw new DocError(
           `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
@@ -2741,6 +2840,48 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const target = requireItem(graph.annotations, command.annotation, graph.name, "annotation");
       const annotations = graph.annotations.filter((item) => item !== target);
       return { state: putGraph(state, { ...graph, annotations }), result: null };
+    }
+    case "addDrawing": {
+      const graph = requireGraph(state, command.graph);
+      const kind = oneOf(command.kind, DRAWING_KINDS, "kind");
+      const props = validateProps<DrawingProps>(
+        { ...command.props, points: command.points },
+        DRAWING_VALIDATORS,
+        "drawing",
+      );
+      const drawing = checkDrawing(graph, {
+        name: uniqueName("draw", (name) => graph.drawings.some((item) => item.name === name)),
+        kind,
+        points: [],
+        ...defaultDrawing(kind),
+        ...props,
+      });
+      return {
+        state: putGraph(state, { ...graph, drawings: [...graph.drawings, drawing] }),
+        result: drawing.name,
+      };
+    }
+    case "modifyDrawing": {
+      const graph = requireGraph(state, command.graph);
+      const target = requireItem(graph.drawings, command.drawing, graph.name, "drawing");
+      const props = validateProps<DrawingProps>(command.props, DRAWING_VALIDATORS, "drawing");
+      const next = checkDrawing(graph, { ...target, ...props });
+      const drawings = graph.drawings.map((item) => (item === target ? next : item));
+      return { state: putGraph(state, { ...graph, drawings }), result: null };
+    }
+    case "removeDrawing": {
+      const graph = requireGraph(state, command.graph);
+      const target = requireItem(graph.drawings, command.drawing, graph.name, "drawing");
+      const drawings = graph.drawings.filter((item) => item !== target);
+      return { state: putGraph(state, { ...graph, drawings }), result: null };
+    }
+    case "orderDrawing": {
+      const graph = requireGraph(state, command.graph);
+      const target = requireItem(graph.drawings, command.drawing, graph.name, "drawing");
+      const place = oneOf(command.place, ["front", "back"] as const, "place");
+      const others = graph.drawings.filter((item) => item !== target);
+      const drawings = place === "front" ? [...others, target] : [target, ...others];
+      return { state: putGraph(state, { ...graph, drawings }), result: null };
     }
     case "edit": {
       const name =
