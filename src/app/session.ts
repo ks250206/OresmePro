@@ -19,7 +19,7 @@ import { fittedWindowSize, graphWaveKey, windowFitCommands } from "../core/plot/
 import { KernelClient } from "../kernel/client";
 import { DEFAULT_EXPERIMENT, ExperimentSession, isExperimentId } from "./experiments";
 import { PresetStore } from "./importPresets";
-import { PluginHost } from "./plugins/host";
+import { PluginHost, type RunOptions } from "./plugins/host";
 import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } from "./plugins/store";
 import { measureText } from "./measure";
 import type { PackagesStatus, VariablesStatus } from "../kernel/rpc";
@@ -382,7 +382,8 @@ export const kernel: KernelClient = new KernelClient({
   history,
   files,
   pluginCatalog: () => plugins.catalog(),
-  invokePlugin: (action, args, writer) => plugins.run(action, args as ActionArgs, writer),
+  invokePlugin: (action, args, writer, options) =>
+    plugins.run(action, args as ActionArgs, writer, options),
   onStart: () => {
     pythonPackages.set({ status: null });
     pythonVariables.set({ status: null });
@@ -436,13 +437,14 @@ export async function invokeAction(
   id: string,
   args: ActionArgs,
   version?: number,
+  options: RunOptions = {},
 ): Promise<unknown> {
   if (!id.startsWith("plugin.")) return kernel.invoke(id, args, version);
   flushEchoes();
   const startedAt = Date.now();
-  const entry = history.add("gui", invokeCode(id, args), "running", startedAt);
+  const entry = history.add("gui", invokeCode(id, args, undefined, options), "running", startedAt);
   try {
-    const outcome = await plugins.run(id, args);
+    const outcome = await plugins.run(id, args, null, options);
     if (outcome.log)
       history.appendOutput(entry, { kind: "stream", name: "stdout", text: outcome.log });
     const made = Object.values(outcome.waves);

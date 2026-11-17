@@ -26,6 +26,7 @@ const manifest = (change: Record<string, unknown> = {}) => ({
         y: { type: "wave" },
         factor: { type: "number", default: 2 },
         labels: { type: "wave", text: true, optional: true },
+        parts: { type: "integer", optional: true },
       },
     },
   ],
@@ -258,27 +259,47 @@ function fakeSandbox(onRun?: (request: RunRequest) => void) {
       const input = request.inputs.y as { data: ArrayBuffer; x0: number; dx: number };
       const factor = (request.params.factor as number | undefined) ?? 2;
       const data = new Float64Array(input.data).map((value) => value * factor);
+      const made = (values: Float64Array) => ({
+        type: "float64",
+        shape: [values.length],
+        data: values,
+        imag: null,
+        x0: input.x0,
+        dx: input.dx,
+        xUnit: "",
+        y0: 0,
+        dy: 1,
+        yUnit: "",
+        unit: "",
+        note: "",
+      });
+      // With parts, also a wave for each part and a graph of them all.
+      const parts = (request.params.parts as number | undefined) ?? 0;
+      const roles = Array.from({ length: parts }, (_, index) => `part${index}`);
+      const trace = (y: string) => ({
+        y,
+        x: null,
+        vAxis: "left",
+        hAxis: "bottom",
+        legend: y,
+        props: {},
+      });
       return Promise.resolve({
         waves: [
-          [
-            "scaled",
-            {
-              type: "float64",
-              shape: [data.length],
-              data,
-              imag: null,
-              x0: input.x0,
-              dx: input.dx,
-              xUnit: "",
-              y0: 0,
-              dy: 1,
-              yUnit: "",
-              unit: "",
-              note: "",
-            },
-          ],
+          ["scaled", made(data)],
+          ...roles.map((role, index) => [role, made(data.map((value) => value + index))]),
         ],
         values: { result: { names: ["factor"], coef: [factor], sigma: [0] } },
+        graph:
+          parts > 0
+            ? {
+                name: "Parts",
+                traces: [trace("scaled"), ...roles.map(trace)],
+                axes: {},
+                graph: {},
+                annotations: [{ kind: "legend", text: null, props: {} }],
+              }
+            : null,
         log: "scaled\n",
       });
     },
@@ -423,6 +444,85 @@ describe("running a plugin's action", () => {
     expect(doc.getState().waves.staged_scaled).toBeUndefined();
     stage.commit();
     expect([...doc.getState().waves.staged_scaled!.data]).toEqual([10]);
+  });
+});
+
+describe("previews and runs that replace what the last run made", () => {
+  const id = "plugin.electrochem.scale";
+
+  it("previews without putting anything in the experiment", async () => {
+    const { doc, host } = await setUp();
+    const before = doc.getState();
+    const outcome = await host.preview(id, { y: "signal", factor: 4 });
+    expect([...(outcome.waves[0]![1].data as Float64Array)]).toEqual([4, 8, 12]);
+    expect(doc.getState()).toBe(before);
+  });
+
+  it("never replaces unless asked", async () => {
+    const { host } = await setUp();
+    await host.run(id, { y: "signal" });
+    const again = await host.run(id, { y: "signal" });
+    expect(again.waves).toEqual({ scaled: "signal_scaled_1" });
+  });
+
+  it("makes again under their names the waves its last run made from the same inputs", async () => {
+    const { doc, host } = await setUp();
+    doc.dispatch({ op: "makeWave", name: "other", data: new Float64Array([1, 1, 1]) });
+    await host.run(id, { y: "signal" });
+    // Another input's run is no reason to replace this one's.
+    await host.run(id, { y: "other" }, null, { replace: true });
+    const again = await host.run(id, { y: "signal", factor: 3 }, null, { replace: true });
+    expect(again.waves).toEqual({ scaled: "signal_scaled" });
+    const state = doc.getState();
+    expect([...state.waves.signal_scaled!.data]).toEqual([3, 6, 9]);
+    expect(state.waves.other_scaled).toBeDefined();
+    expect(Object.keys(state.results)).toHaveLength(3);
+    // As one change: undone, the wave is what the first run made.
+    doc.undo();
+    expect([...doc.getState().waves.signal_scaled!.data]).toEqual([2, 4, 6]);
+  });
+
+  it("leaves a wave changed since alone, and one the plugin did not make", async () => {
+    const { doc, host } = await setUp();
+    await host.run(id, { y: "signal" });
+    doc.dispatch({ op: "setWavePoints", name: "signal_scaled", start: 0, values: [100] });
+    const again = await host.run(id, { y: "signal" }, null, { replace: true });
+    expect(again.waves).toEqual({ scaled: "signal_scaled_1" });
+    expect(doc.getState().waves.signal_scaled!.data[0]).toBe(100);
+    // With no run of its own before, a wave of the same name is not its to replace.
+    doc.dispatch({ op: "makeWave", name: "mine", data: new Float64Array([7, 7, 7]) });
+    doc.dispatch({ op: "makeWave", name: "mine_scaled", data: new Float64Array([0]) });
+    const first = await host.run(id, { y: "mine" }, null, { replace: true });
+    expect(first.waves).toEqual({ scaled: "mine_scaled_1" });
+  });
+
+  it("updates the graph its last run made, and drops what it no longer makes", async () => {
+    const { doc, host } = await setUp();
+    const first = await host.run(id, { y: "signal", parts: 2 });
+    expect(first.graph).toBe("Parts0");
+    doc.dispatch({
+      op: "modifyTrace",
+      graph: "Parts0",
+      trace: "signal_scaled",
+      props: { color: "#123456" },
+    });
+    const again = await host.run(id, { y: "signal", parts: 1 }, null, { replace: true });
+    expect(again.graph).toBe("Parts0");
+    const state = doc.getState();
+    expect(Object.keys(state.graphs)).toEqual(["Parts0"]);
+    const graph = state.graphs.Parts0!;
+    expect(graph.traces.map((trace) => trace.y)).toEqual(["signal_scaled", "signal_part0"]);
+    // What was changed in the graph stays; the legend lists the traces again.
+    expect(graph.traces[0]!.color).toBe("#123456");
+    expect(graph.annotations[0]!.text.split("\n")).toHaveLength(2);
+    expect(state.waves.signal_part1).toBeUndefined();
+    // Two parts again: the trace goes back in.
+    await host.run(id, { y: "signal", parts: 2 }, null, { replace: true });
+    expect(doc.getState().graphs.Parts0!.traces.map((trace) => trace.y)).toEqual([
+      "signal_scaled",
+      "signal_part0",
+      "signal_part1",
+    ]);
   });
 });
 

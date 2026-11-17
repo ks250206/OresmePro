@@ -147,6 +147,124 @@ describe("plugin manifests", () => {
   });
 });
 
+describe("model editors in a manifest", () => {
+  const params = {
+    spectrum: { type: "wave" },
+    energy: { type: "wave", optional: true },
+    region: { type: "numbers", length: 2, optional: true },
+    components: { type: "json" },
+    shift: { type: "number", default: 0 },
+  };
+  const actions = [
+    { name: "xps_preview", title: "Preview", params },
+    { name: "xps_fit", title: "Fit", params },
+  ];
+  const editor = (change: Record<string, unknown> = {}) => ({
+    kind: "spectrum-fit",
+    name: "xps",
+    title: "XPS Peak Fitting",
+    preview: "xps_preview",
+    fit: "xps_fit",
+    data: "spectrum",
+    x: "energy",
+    range: "region",
+    items: {
+      param: "components",
+      title: "Component",
+      fields: [
+        { key: "name", type: "text" },
+        { key: "position", constraint: true },
+        { key: "fwhm", default: 1.2, constraint: true, min: 0.05 },
+        { key: "area", constraint: true },
+      ],
+      drag: {
+        x: "position",
+        height: { field: "area", rule: "proportional" },
+        width: { field: "fwhm", rule: "full", scale: ["area"] },
+      },
+      coef: "{letter}_{key}",
+    },
+    partner: {
+      title: "Doublet",
+      ratios: [["p (1:2)", 0.5]],
+      ties: { position: "{ref}+{offset}", area: "{ref}*{ratio}" },
+    },
+    settings: ["shift"],
+    axis: { label: "Binding Energy (eV)", reverse: true },
+    ...change,
+  });
+  const read = (change: Record<string, unknown> = {}) =>
+    parse({ actions, editors: [editor(change)] });
+
+  it("are read against the plugin's actions", () => {
+    const [spec] = read().editors;
+    expect(spec).toMatchObject({
+      name: "xps",
+      preview: "xps_preview",
+      fit: "xps_fit",
+      data: "spectrum",
+      x: "energy",
+      range: "region",
+      settings: ["shift"],
+      axis: { label: "Binding Energy (eV)", reverse: true },
+    });
+    expect(spec!.items.fields[2]).toEqual({
+      key: "fwhm",
+      title: "fwhm",
+      kind: "number",
+      default: 1.2,
+      choices: [],
+      constraint: true,
+      hint: "",
+      min: 0.05,
+    });
+    expect(spec!.partner!.offset).toBe("Offset");
+    expect(spec!.kind).toBe("spectrum-fit");
+    expect(spec!.items.drag).toEqual({
+      x: "position",
+      height: { field: "area", rule: "proportional" },
+      width: { field: "fwhm", rule: "full", scale: ["area"] },
+    });
+    // A plugin without editors has none; json arguments are taken.
+    expect(parse().editors).toEqual([]);
+    expect(read().actions[1]!.params.components!.type).toBe("json");
+  });
+
+  it("are refused whole when anything does not fit", () => {
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ fit: "nothing" }, /does not have/],
+      [{ data: "components" }, /no wave argument components/],
+      [{ range: "shift" }, /no numbers argument shift/],
+      [{ items: { ...editor().items, param: "spectrum" } }, /no json argument spectrum/],
+      [{ items: { ...editor().items, drag: { x: "name" } } }, /not one of its number fields/],
+      [
+        {
+          items: {
+            ...editor().items,
+            drag: { x: "position", height: { field: "area", rule: "square" } },
+          },
+        },
+        /one of proportional, value/,
+      ],
+      [{ items: { ...editor().items, drag: undefined } }, /what dragging an item does/],
+      [{ kind: undefined }, /must say its kind/],
+      [{ kind: "node-graph" }, /a kind this app does not draw/],
+      [
+        { items: { ...editor().items, fields: [{ key: "a" }, { key: "a" }], drag: { x: "a" } } },
+        /same key/,
+      ],
+      [
+        { partner: { title: "Pair", ratios: [["1", 1]], ties: { name: "{ref}" } } },
+        /not a field with a constraint/,
+      ],
+      [{ settings: ["components"] }, /twice/],
+      [{ colour: "red" }, /unknown key "colour"/],
+    ];
+    for (const [change, message] of cases) expect(() => read(change)).toThrow(message);
+    expect(() => parse({ actions, editors: [editor(), editor()] })).toThrow(/same name/);
+  });
+});
+
 describe("plugin sources", () => {
   it("read GitHub addresses, with a branch and folder in them or apart", () => {
     expect(parseGitHubSource("https://github.com/lab/ec-tools")).toEqual({

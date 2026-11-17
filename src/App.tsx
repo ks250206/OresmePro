@@ -13,6 +13,7 @@ import {
   useToolsShown,
 } from "./app/drawTools";
 import { openTool } from "./app/toolWindows";
+import { openEditor } from "./app/pluginEditors";
 import {
   activeGraph,
   addFilesForPython,
@@ -148,6 +149,20 @@ function useMenus(): MenuDefinition[] {
         onSelect: () => openActionWindow(plugin.manifest.name, action.name),
       })),
     ]);
+  // Their model editors, each opening on the wave selected, if one is.
+  const pluginEditors: MenuItem[] = installed
+    .filter((plugin) => plugin.enabled)
+    .flatMap((plugin) =>
+      plugin.manifest.editors.map((editor) => ({
+        label: `${editor.title}…`,
+        onSelect: () =>
+          openEditor(
+            plugin.manifest.name,
+            editor.name,
+            selected.length === 1 && doc.getState().waves[selected[0]!] ? selected[0]! : undefined,
+          ),
+      })),
+    );
   const open = (dialog: NonNullable<ReturnType<typeof ui.get>["dialog"]>) => () =>
     ui.set({ dialog });
   const graphItem = (
@@ -271,6 +286,8 @@ function useMenus(): MenuDefinition[] {
         analysis("Interpolate…", "interpolate"),
         { separator: true },
         analysis("Filter Image…", "filter_image"),
+        // The model editors of the plugins turned on (XPS Peak Fitting…, say).
+        ...(pluginEditors.length > 0 ? [{ separator: true } as MenuItem, ...pluginEditors] : []),
       ],
     },
     {

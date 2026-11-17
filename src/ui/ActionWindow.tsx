@@ -77,6 +77,15 @@ export function ActionForm({
         if (typed !== undefined && typed.trim() !== "") value = Number(typed);
         else if (typed !== undefined) value = undefined;
       }
+      if (spec.type === "json" && text[name] !== undefined) {
+        // JSON if it reads as JSON; otherwise the text itself (a table written out, say).
+        const typed = text[name]!.trim();
+        try {
+          value = typed === "" ? undefined : (JSON.parse(typed) as JsonValue);
+        } catch {
+          value = typed;
+        }
+      }
       if (spec.type === "numbers" && text[name] !== undefined) {
         value = text[name]!.split(/[\s,]+/)
           .filter(Boolean)

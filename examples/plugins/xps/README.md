@@ -3,6 +3,7 @@
 XPS スペクトルのピークモデルを、CasaXPS と同じ手順で作る OresmePro のプラグインです。領域(Region)を決め、その下に背景(Shirley・直線)を引き、CasaXPS の線形(GL、SGL、テール付き、LA)と成分の間の制約(`pos=A+1.5`、`area=A*0.5`、`fwhm=A`)を持つ合成成分を最小二乗でフィットします。領域の面積と感度係数(RSF)からの原子濃度も求めます。計算は合成スペクトルで検算してあります([検算](#検算))。
 
 - [入れ方](#入れ方)
+- [XPS Peak Fitting ウィンドウ](#xps-peak-fitting-ウィンドウ)
 - [`xps_fit`: ピークモデル](#xps_fit-ピークモデル)
 - [成分表の書き方](#成分表の書き方)
 - [線形](#線形)
@@ -28,6 +29,19 @@ op.invoke("plugin.xps.xps_fit", {
 })
 ```
 
+## XPS Peak Fitting ウィンドウ
+
+入れると **Analysis › XPS Peak Fitting…** が現れます。スペクトルの上で領域の端と成分をドラッグし、CasaXPS の Components ページのような表(成分ごとに列)で値と制約を書いて、**Fit Components** でフィットします。ウィンドウはアプリが描き、このプラグインは `xps_preview`(編集のたびに描くものを計算する。記録されない)と `xps_fit` を計算するだけです(`oresme-plugin.json` の `editors`)。フィットし直すと、前のフィットが作った wave とグラフ(その後に変えていないもの)を同じ名前で作り直します。使い方は [XPS ピークフィットのガイド](https://ks250206.github.io/OresmePro/docs/guides/xps/) にあります。
+
+ウィンドウは成分を dict のリストで渡します(`xps_fit` の `components` は、次の成分表の文字列でも、このリストでも受け付けます)。
+
+```python
+[{"name": "C-C", "shape": "GL(30)", "position": 284.8, "fwhm": 1.1, "area": 3000},
+ {"name": "C-O", "position": 286.3, "area": 900, "constraints": {"position": "A+1.5", "fwhm": "A"}}]
+```
+
+制約は `""`(自由)、`"284, 286"`(範囲)、`"fixed"`、`"A"`、`"A+1.5"`、`"A*0.5"`、`"A/2"`(成分 A に結ぶ)。範囲の外の始めの値は近い方の端から始めます(CasaXPS と同じ)。
+
 ## `xps_fit`: ピークモデル
 
 | 引数            | 内容                                                                                               |
@@ -36,7 +50,7 @@ op.invoke("plugin.xps.xps_fit", {
 | `components`    | 成分表([成分表の書き方](#成分表の書き方))                                                          |
 | `energy`        | 各点のエネルギーの wave。省くと `spectrum` の X スケーリング                                       |
 | `region`        | フィットする結合エネルギーの範囲 `[from, to]`(eV、`shift` を足したあと)。省くとスペクトル全体      |
-| `background`    | `Shirley`(既定)、`Linear`、`None`                                                                  |
+| `background`    | `Shirley`(既定)、`Linear`、`Tougaard`、`None`                                                      |
 | `average`       | 背景の両端の高さを、端の何点の平均にするか(CasaXPS の Av Width にあたる。既定 5)                   |
 | `energy_axis`   | エネルギーが `binding`(既定)か `kinetic` か。kinetic なら BE = hν − KE                             |
 | `photon_energy` | hν(eV、既定 1486.6 = Al Kα。Mg Kα は 1253.6)                                                       |
@@ -133,10 +147,9 @@ N 1s: 396 to 404 rsf=1.8
 
 ## 限界
 
-- 背景はデータから一度計算して固定します。フィットしながら背景を求め直す方法(active Shirley など)や、Tougaard 背景はありません(アプリ本体の `op.background` には Tougaard があります)
+- 背景はデータから一度計算して固定します。フィットしながら背景を求め直す方法(active Shirley など)はありません。Tougaard 背景は普遍断面積(C = 1643 eV²)で、B を高結合エネルギー側の端に合わせます
 - 不確かさに背景の不確かさは入りません。Monte Carlo による誤差評価もありません
 - 非対称な線形(テール付き、LA)の裾は領域の外まで伸びます。領域の端に裾が残っていると、データの端から作る背景が裾の一部を取り込みます。裾が十分小さくなるまで領域を広げてください(CasaXPS のマニュアルも、非対称な線形での定量には注意を促しています)
-- グラフの上でピークをドラッグして動かすことはできません。初期値は成分表で与えます
 - DS(Doniach–Šunjić)、LF、Voigt の線形はまだありません
 
 ## 検算
@@ -164,7 +177,9 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/xps/tes
 
 **xps** is an example OresmePro plugin that builds peak models of XPS spectra the way CasaXPS does, in the plugin sandbox (Python with NumPy and SciPy). Install it from **Python › Plugins…** with _Install from GitHub…_ (`https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps`) or _Install from Folder…_ (this folder).
 
-- **`xps_fit`** (spectrum, components, energy, region, background, average, energy_axis, photon_energy, shift, weighting): a region of binding energies, a background computed from the data and held fixed (Shirley, Linear or None, end levels averaged over `average` points), and synthetic components fitted by bounded least squares, weighted by 1/√counts by default. Components are a table, one per line or `;`, lettered A, B, C…: `name: shape pos=… fwhm=… area=… rsf=… gauss=…`. A value is a start (`284.8`), limits (`284.8[284,286]`), fixed (`284.8!`) or tied to another component as CasaXPS's constraints are (`A+1.5`, `A*0.5`, `A/2`, `A`). Shapes follow the CasaXPS manual: `GL(m)`, `SGL(m)`, `GL(m)T(k)`, `SGL(m)T(k)` and `LA(α,β)`; `gauss=` convolves any of them with a Gaussian of that FWHM in eV (CasaXPS's integer m of `LA(α,β,m)` is not documented, so it is refused). Kinetic energies are converted with the photon energy; `shift` is the charge correction. Makes the region's data, background, each component on the background, the envelope and the residual, and a graph with a reversed binding energy axis and the residual above; reports positions, F (the FWHM parameter), the true width, areas with uncertainties (which leave out the background's), and each component's share of area/RSF.
+- **`xps_fit`** (spectrum, components, energy, region, background, average, energy_axis, photon_energy, shift, weighting): a region of binding energies, a background computed from the data and held fixed (Shirley, Linear, Tougaard or None, end levels averaged over `average` points), and synthetic components fitted by bounded least squares, weighted by 1/√counts by default. Components are a table, one per line or `;`, lettered A, B, C…: `name: shape pos=… fwhm=… area=… rsf=… gauss=…`. A value is a start (`284.8`), limits (`284.8[284,286]`), fixed (`284.8!`) or tied to another component as CasaXPS's constraints are (`A+1.5`, `A*0.5`, `A/2`, `A`). Shapes follow the CasaXPS manual: `GL(m)`, `SGL(m)`, `GL(m)T(k)`, `SGL(m)T(k)` and `LA(α,β)`; `gauss=` convolves any of them with a Gaussian of that FWHM in eV (CasaXPS's integer m of `LA(α,β,m)` is not documented, so it is refused). Kinetic energies are converted with the photon energy; `shift` is the charge correction. Makes the region's data, background, each component on the background, the envelope and the residual, and a graph with a reversed binding energy axis and the residual above; reports positions, F (the FWHM parameter), the true width, areas with uncertainties (which leave out the background's), and each component's share of area/RSF.
 - **`quantify`** (spectra, regions, energies, background, average, energy_axis, photon_energy, shift, ke_exponent): regions `name: from to rsf=…`, each taken from the first spectrum that covers it (a survey or narrow scans), integrated over a background and divided by RSF (and KE^x); reports atomic percentages and makes the backgrounds.
 
-Limits: the background is not refined with the fit and there is no Tougaard background here; uncertainties leave out the background's; asymmetric tails reaching past the region bias the background; no dragging of peaks on the graph; no DS, LF or Voigt shapes yet. `tests/test_xps.py` checks every part on synthetic spectra with known answers.
+- **XPS Peak Fitting** (`editors` in the manifest): a window the app draws, under **Analysis › XPS Peak Fitting…**, where the region's ends and the components are dragged on the spectrum and their values and constraints written in a table with a column for each, as on CasaXPS's Components page. It calls `xps_preview` (what to draw after each edit; never recorded) and `xps_fit`, which takes the components as a list of dicts too: `{"name", "shape", "position", "fwhm", "area", "rsf", "gauss", "constraints": {"position": "A+1.5", "fwhm": "A", "area": "0, 1e5"}}`, a constraint being `""` (free), limits `"284, 286"`, `"fixed"`, or a tie `"A"`, `"A+1.5"`, `"A*0.5"`, `"A/2"`. Fitting again from it makes the waves and graph of the fit before again under their names, where unchanged since.
+
+Limits: the background is not refined with the fit; uncertainties leave out the background's; asymmetric tails reaching past the region bias the background; no DS, LF or Voigt shapes yet. `tests/test_xps.py` checks every part on synthetic spectra with known answers.

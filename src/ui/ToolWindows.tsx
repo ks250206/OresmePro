@@ -7,15 +7,28 @@ import {
   type Tool,
   type ToolWindowState,
 } from "../app/toolWindows";
+import { useSyncExternalStore } from "react";
+import { pluginStore } from "../app/session";
+import { PluginEditorWindow } from "./PluginEditorWindow";
 import { ProcedureBrowser } from "./ProcedureBrowser";
 import { VariablesView } from "./VariablesView";
 
-const TITLES: Record<Tool, string> = {
+const TITLES: Record<string, string> = {
   procedureBrowser: "Procedure Browser",
   variables: "Variables",
 };
 
+/** A tool window's title: a plugin's editor is named by its plugin. */
+function useTitle(tool: Tool): string {
+  const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
+  if (!tool.startsWith("editor:")) return TITLES[tool]!;
+  const [plugin, editor] = tool.slice("editor:".length).split("/");
+  const found = installed.find((item) => item.manifest.name === plugin);
+  return found?.manifest.editors.find((item) => item.name === editor)?.title ?? editor ?? tool;
+}
+
 function content(tool: Tool): ReactNode {
+  if (tool.startsWith("editor:")) return <PluginEditorWindow tool={tool} />;
   return tool === "procedureBrowser" ? <ProcedureBrowser /> : <VariablesView />;
 }
 
@@ -27,7 +40,7 @@ function ToolWindow({ window, front, z }: { window: ToolWindowState; front: bool
     from: ToolWindowState;
     resize: boolean;
   } | null>(null);
-  const title = TITLES[window.tool];
+  const title = useTitle(window.tool);
   const start = (event: React.PointerEvent, resize: boolean) => {
     if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -56,7 +69,16 @@ function ToolWindow({ window, front, z }: { window: ToolWindowState; front: bool
       className={`pointer-events-auto absolute flex flex-col rounded-md border bg-chrome ${
         front ? "border-[#8d95a1] shadow-[0_8px_28px_rgb(0_0_0/0.22)]" : "border-line shadow-md"
       }`}
-      style={{ left: window.x, top: window.y, width: window.w, height: window.h, zIndex: z }}
+      style={{
+        left: window.x,
+        top: window.y,
+        width: window.w,
+        height: window.h,
+        // Never past the bottom of the desktop, however big it was made.
+        maxHeight: `calc(100% - ${window.y + 4}px)`,
+        minHeight: 120,
+        zIndex: z,
+      }}
       onPointerDownCapture={() => raiseTool(window.tool)}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !(event.target instanceof HTMLInputElement)) {

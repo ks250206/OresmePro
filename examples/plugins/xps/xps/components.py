@@ -26,8 +26,21 @@ A value is
 * ``A+1.5``, ``A-1.5``, ``A*0.5``, ``A/2`` or ``A``: tied to the same
   parameter of component A, as CasaXPS's constraints are (a doublet: the
   2p1/2 at ``pos=A+5.7 area=A*0.5 fwhm=A``)
+
+The XPS Peak Fitting window (the app's model editor) gives the same as a
+list of dicts instead, as CasaXPS's Components page holds it::
+
+    [{"name": "C-C", "shape": "GL(30)", "position": 284.8, "fwhm": 1.1, "area": 3000,
+      "constraints": {"position": "", "fwhm": "0.6, 2", "area": ""}},
+     {"name": "C-O", "position": 286.3, "constraints": {"position": "A+1.5", "fwhm": "A"}}]
+
+where a constraint is ``""`` (free within the default limits), limits
+``"284, 286"``, ``"fixed"``, or a tie ``"A"``, ``"A+1.5"``, ``"A-1.5"``,
+``"A*0.5"``, ``"A/2"``. A start outside its limits begins at the nearest
+limit, as in CasaXPS.
 """
 
+import math
 import re
 
 import numpy as np
@@ -52,6 +65,19 @@ _TIED = re.compile(rf"^([A-Z])(?:([-+*/])({_NUM}))?$")
 _PLAIN = re.compile(rf"^{_NUM}$")
 #: Default limits of what is free (pos: the region, filled in when parsing).
 FWHM_LIMITS = (0.05, 20.0)
+#: The fields of a component as the window names them, and the parameter each is.
+FIELDS = {"position": "pos", "fwhm": "fwhm", "area": "area"}
+_LIMITS = re.compile(rf"^\[?\s*({_NUM})\s*(?:,|;|:|\.\.|\s+to\s+|\s)\s*({_NUM})\s*\]?$", re.IGNORECASE)
+_TIE = re.compile(rf"^([A-Za-z])\s*(?:([-+*/])\s*({_NUM}))?$")
+
+
+class ComponentError(PluginError):
+    """A component that cannot be fitted, with which one (index) and which field it is about."""
+
+    def __init__(self, message, item=None, field=None):
+        super().__init__(message)
+        self.item = item
+        self.field = field
 
 
 class Value:
@@ -141,8 +167,118 @@ def _tidy(text):
     return text
 
 
+def _constraint(text, start, limits, where, count, index, field):
+    """A constraint of the window's table: "", "284, 286", "fixed", "A", "A+1.5", "A*0.5"."""
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        raise ComponentError(f"{where}: a constraint is text.", index, field)
+    plain = text.strip()
+    if plain.lower() in ("fixed", "fix", "!"):
+        if start is None:
+            raise ComponentError(f"{where} is fixed, so it needs a value.", index, field)
+        return Value("fixed", start=float(start))
+    match = _TIE.match(plain)
+    if match:
+        letter = match.group(1).upper()
+        ref = LETTERS.index(letter)
+        if ref >= count:
+            raise ComponentError(f"{where} is tied to {letter}, but there is no component {letter}.", index, field)
+        if ref == index:
+            raise ComponentError(f"{where} is tied to itself.", index, field)
+        op, amount = match.group(2), match.group(3)
+        amount = 0.0 if amount is None else float(amount)
+        if op == "/":
+            if amount == 0:
+                raise ComponentError(f"{where} divides by 0.", index, field)
+            op, amount = "*", 1 / amount
+        elif op == "-":
+            op, amount = "+", -amount
+        return Value("tied", ref=ref, op=op, amount=amount)
+    low, high = limits
+    if plain:
+        match = _LIMITS.match(plain)
+        if not match:
+            raise ComponentError(
+                f"{where}: {plain!r} is not a constraint. Leave it empty (free), or write limits "
+                "'284, 286', 'fixed', or a tie to another component: 'A', 'A+1.5', 'A*0.5'.",
+                index, field,
+            )
+        low, high = sorted((float(match.group(1)), float(match.group(2))))
+        if not low < high:
+            raise ComponentError(f"{where}: the limits {low:g}, {high:g} leave nothing between them.", index, field)
+    if start is None:
+        if field == "area" and not plain:
+            return None  # estimated from the data
+        return Value("free", start=0.5 * (low + high) if np.isfinite(high) else max(low, 0.0), low=low, high=high)
+    return Value("free", start=min(max(float(start), low), high), low=low, high=high)
+
+
+def _number(value, where, index, field):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ComponentError(f"{where} is a number, not {value!r}.", index, field)
+    return float(value)
+
+
+_ITEM_KEYS = {"name", "shape", "position", "fwhm", "area", "rsf", "gauss", "constraints"}
+
+
+def parse_component_list(items, region):
+    """Components given as the window gives them: a list of dicts (see the module's text)."""
+    if not items:
+        raise ComponentError("There are no components: add one.")
+    if len(items) > len(LETTERS):
+        raise ComponentError(f"There are {len(items)} components; at most {len(LETTERS)} can be fitted.")
+    components = []
+    for index, item in enumerate(items):
+        letter = LETTERS[index]
+        if not isinstance(item, dict):
+            raise ComponentError(f"Component {letter} is a dict of name, shape, position, ...", index)
+        unknown = sorted(set(item) - _ITEM_KEYS)
+        if unknown:
+            raise ComponentError(
+                f"Component {letter} has {unknown[0]!r}; the keys are {', '.join(sorted(_ITEM_KEYS))}.", index
+            )
+        name = item.get("name") or letter
+        if not isinstance(name, str):
+            raise ComponentError(f"Component {letter}'s name is text.", index, "name")
+        where = f"Component {letter} ({name})"
+        try:
+            shape = parse_shape(item.get("shape") or "GL(30)")
+        except PluginError as error:
+            raise ComponentError(str(error), index, "shape") from None
+        constraints = item.get("constraints") or {}
+        if not isinstance(constraints, dict) or set(constraints) - set(FIELDS):
+            raise ComponentError(f"{where}: constraints are given for position, fwhm and area.", index)
+        limits = {"position": region, "fwhm": FWHM_LIMITS, "area": (0.0, np.inf)}
+        values = {}
+        for field, param in FIELDS.items():
+            given = item.get(field)
+            start = None if given is None else _number(given, f"{where}'s {field}", index, field)
+            values[param] = _constraint(
+                constraints.get(field, ""), start, limits[field], f"{where}'s {field}", len(items), index, field
+            )
+        if values["pos"] is None:
+            raise ComponentError(f"{where} has no position.", index, "position")
+        if values["fwhm"].kind == "free" and item.get("fwhm") is None:
+            values["fwhm"].start = min(max(1.5, values["fwhm"].low), values["fwhm"].high)
+        rsf = _number(item.get("rsf", 1.0), f"{where}'s rsf", index, "rsf")
+        if not rsf > 0:
+            raise ComponentError(f"{where}'s rsf must be more than 0.", index, "rsf")
+        gauss = _number(item.get("gauss", 0.0), f"{where}'s gauss", index, "gauss")
+        if gauss < 0:
+            raise ComponentError(f"{where}'s gauss must be 0 or more.", index, "gauss")
+        components.append(Component(index, name, shape, values, rsf, gauss))
+    return components
+
+
 def parse_components(text, region):
-    """The components of a table (see the module's text), with positions limited to ``region``."""
+    """The components, as a table (see the module's text) or as the window's list of dicts.
+
+    Positions are limited to ``region``.
+    """
+    if isinstance(text, (list, tuple)):
+        return parse_component_list(list(text), region)
     if not isinstance(text, str) or not text.strip():
         raise PluginError("The components are empty: give at least one, e.g. \"C-C: GL(30) pos=284.8\".")
     items = [item.strip() for item in re.split(r"[;\n]", text) if item.strip()]

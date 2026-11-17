@@ -228,7 +228,14 @@ export function argProblems(
  * The call as `op.invoke(...)` in Python: what the history shows for a call
  * until Python has checked it and written the call of the function itself.
  */
-export function invokeCode(id: string, args: ActionArgs, version?: number): string {
-  const tail = version === undefined ? "" : `, version=${version}`;
+export function invokeCode(
+  id: string,
+  args: ActionArgs,
+  version?: number,
+  options: { replace?: boolean } = {},
+): string {
+  const tail =
+    (version === undefined ? "" : `, version=${version}`) +
+    (options.replace ? ", replace=True" : "");
   return `op.invoke(${pyLiteral(id)}, ${pyLiteral(args)}${tail})`;
 }

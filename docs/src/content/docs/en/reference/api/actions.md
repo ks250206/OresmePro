@@ -79,7 +79,7 @@ with ``optional`` always given.
 ## `invoke`
 
 ```python
-op.invoke(id, args=None, *, version=None)
+op.invoke(id, args=None, *, version=None, replace=False)
 ```
 
 Call an action by its id with a dict of plain values, as the application does.
@@ -93,3 +93,11 @@ The arguments are checked against the action's parameters first (see
 nothing. Waves may be given by name or as ``op.Wave``. ``version`` picks
 a version of the action, the highest by default. The call runs in an
 ``op.atomic()`` block and returns what the function returns.
+
+A plugin's action makes waves of new names and never replaces a wave.
+With ``replace=True`` it makes again, under their names, the waves the
+last run of the same action on the same input waves made (as kept with
+its result), as long as they are still as that run left them, and
+updates the graph it made; a plugin's model editor fits this way.
+
+**Explicit exceptions** · `InvalidArgumentError`

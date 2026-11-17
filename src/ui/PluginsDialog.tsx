@@ -1,5 +1,7 @@
 import { useRef, useState, useSyncExternalStore } from "react";
 import { closePluginWindows, openActionWindow } from "../app/actionWindows";
+import { openEditor } from "../app/pluginEditors";
+import { closeEditorWindows } from "../app/toolWindows";
 import { contributionCommands } from "../app/plugins/contributions";
 import { fetchFromGitHub, readLocalPackage } from "../app/plugins/sources";
 import type { InstalledPlugin } from "../app/plugins/store";
@@ -71,6 +73,21 @@ function PackageSummary({ pkg, previous }: { pkg: VerifiedPackage; previous?: In
           This plugin has no code: only data (panels, templates, styles).
         </div>
       )}
+      {manifest.editors.length > 0 ? (
+        <div>
+          <div className="font-medium">Editors</div>
+          <ul className="m-0 pl-5">
+            {manifest.editors.map((editor) => (
+              <li key={editor.name}>
+                {editor.title}{" "}
+                <span className="text-muted">
+                  (a window the app draws; it calls {editor.preview} and {editor.fit})
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {manifest.actions.length > 0 ? (
         <div>
           <div className="font-medium">Actions</div>
@@ -242,6 +259,7 @@ export function PluginsDialog() {
       return;
     }
     closePluginWindows(current.manifest.name);
+    closeEditorWindows(current.manifest.name);
     pluginStore
       .remove(current.manifest.name)
       .catch((error: unknown) => fail(error, { kind: "list" }));
@@ -411,6 +429,33 @@ export function PluginsDialog() {
                 <Button onClick={() => remove(plugin)}>Remove…</Button>
               </div>
               <Contributions plugin={plugin} />
+              {plugin.enabled && plugin.manifest.editors.length > 0 ? (
+                <div className="flex flex-col gap-1 border-t border-line pt-2">
+                  <div className="font-medium">Editors</div>
+                  <p className="m-0 text-muted">
+                    Build a model on the plot and in a table, and fit it with the plugin. Also in
+                    the Analysis menu.
+                  </p>
+                  <ul aria-label="Editors" className="m-0 flex list-none flex-col gap-1 p-0">
+                    {plugin.manifest.editors.map((item) => (
+                      <li key={item.name} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate" title={item.description}>
+                          {item.title}
+                        </span>
+                        <Button
+                          aria-label={`Open ${item.title}`}
+                          onClick={() => {
+                            openEditor(plugin.manifest.name, item.name);
+                            close();
+                          }}
+                        >
+                          Open
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {plugin.enabled && plugin.manifest.actions.length > 0 ? (
                 <div className="flex flex-col gap-1 border-t border-line pt-2">
                   <div className="font-medium">Actions</div>
