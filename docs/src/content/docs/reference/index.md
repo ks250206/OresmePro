@@ -26,10 +26,11 @@ description: OresmePro の公開 Python API を分類ごとに調べる。
 | 実験に保存する Python ファイルを扱う       | [Procedure](./api/procedure/)                 | [Procedure](../guides/python/)                                      |
 | 実験に残すメモを Markdown で書く           | [ノート](./api/notes/)                        | [ノートを書く](../guides/experiments/#ノートを書く)                 |
 | パッケージを入れる・一覧する               | [パッケージ](./api/packages/)                 | [パッケージを追加する](../guides/python/#パッケージを追加する)      |
-| エラー、まとめて変更、時刻表示             | [全般](./api/global/)                         | [Python](../guides/python/)                                         |
+| アプリが拒否したときのエラーを見分ける     | [エラー](./api/errors/)                       | [Python](../guides/python/)                                         |
+| まとめて変更、時刻表示                     | [全般](./api/global/)                         | [Python](../guides/python/)                                         |
 
 ## シグネチャとエラー
 
 シグネチャと説明は公開モジュールのソース(docstring)から生成されます。説明の日本語訳は `docs/scripts/api-ja.json` にあり、docstring が変わると翻訳の更新を求めます。`*` に続く引数には名前を付けます。グラフやテーブルなどのオブジェクトは作成関数（`op.display`、`op.edit`）や検索関数（`op.graph`、`op.table`）から取得します。
 
-名前が存在しないなどアプリ側で操作が拒否される場合は `op.OresmeError` が発生します。NumPy などの処理からは Python の例外も伝播します。各項目の「明示的な例外」はソース中の `raise` から取得したものです。
+名前が存在しないなどアプリ側で操作が拒否される場合は `op.OresmeError` が発生します。拒否の種類ごとに `NotFoundError`・`InvalidArgumentError` などのクラスとコードがあり、`except` で見分けられます([エラー](./api/errors/))。NumPy などの処理からは Python の例外も伝播します。各項目の「明示的な例外」はソース中の `raise` から取得したものです。

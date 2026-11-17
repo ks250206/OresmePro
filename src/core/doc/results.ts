@@ -200,7 +200,11 @@ export function checkResult(value: unknown, name: string, state: DocState | null
     const given =
       isObject(input) && typeof input.fingerprint === "string" ? input.fingerprint : null;
     const now = state && Object.hasOwn(state.waves, wave) ? state.waves[wave] : undefined;
-    if (given === null && !now) throw new DocError(`No wave named ${JSON.stringify(wave)}.`);
+    if (given === null && !now)
+      throw new DocError(`No wave named ${JSON.stringify(wave)}.`, "NOT_FOUND", {
+        kind: "wave",
+        name: wave,
+      });
     inputs.push({ wave, fingerprint: given ?? waveFingerprint(now!) });
   }
   const waveNames = (given: unknown): Record<string, string> => {

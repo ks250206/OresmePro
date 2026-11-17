@@ -10,6 +10,7 @@ import { changedSampleInputs } from "../core/doc/analysisTemplates";
 import { templateWarnings } from "../core/doc/graphTemplates";
 import { resolveButton } from "../core/doc/panels";
 import {
+  errorInfo,
   DocError,
   type DocState,
   type GraphTemplate,
@@ -122,14 +123,22 @@ function transportData(wave: Wave): Float64Array {
 
 function requireTemplate(state: DocState, name: unknown): GraphTemplate {
   const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
-  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  if (!template)
+    throw new DocError(`No graph template named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "graph template",
+      name: name,
+    });
   return template;
 }
 
 function requirePanel(state: DocState, name: unknown): PanelSpec {
   const panel =
     typeof name === "string" && Object.hasOwn(state.panels, name) ? state.panels[name] : undefined;
-  if (!panel) throw new DocError(`No panel named ${JSON.stringify(name)}.`);
+  if (!panel)
+    throw new DocError(`No panel named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "panel",
+      name: name,
+    });
   return panel;
 }
 
@@ -137,7 +146,11 @@ const withoutRoot = (name: string): string => (name.startsWith("root:") ? name.s
 
 function requireWave(state: DocState, name: unknown): Wave {
   const wave = typeof name === "string" ? state.waves[withoutRoot(name)] : undefined;
-  if (!wave) throw new DocError(`No wave named ${JSON.stringify(name)}.`);
+  if (!wave)
+    throw new DocError(`No wave named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "wave",
+      name: name,
+    });
   return wave;
 }
 
@@ -193,7 +206,12 @@ export function handleRpc(
   };
   /** Pictures and files are made from the experiment as it is, which the block has not changed yet. */
   const outsideBlock = (what: string) => {
-    if (stage) throw new DocError(`${what} waits for the end of the op.atomic() block.`);
+    if (stage)
+      throw new DocError(
+        `${what} waits for the end of the op.atomic() block.`,
+        "INVALID_ARGUMENT",
+        { field: what },
+      );
   };
   switch (method) {
     case "dispatch": {
@@ -291,7 +309,10 @@ export function handleRpc(
       if (isFolderKey(target)) {
         const folder = target.slice(0, -1);
         if (!state.folders.includes(folder)) {
-          throw new DocError(`No data folder named ${JSON.stringify(folder)}.`);
+          throw new DocError(`No data folder named ${JSON.stringify(folder)}.`, "NOT_FOUND", {
+            kind: "data folder",
+            name: folder,
+          });
         }
         return {
           result: params.own ? { ...state.attributes[target] } : folderAttributes(state, folder),
@@ -308,7 +329,11 @@ export function handleRpc(
     }
     case "cursorInfo": {
       const graph = typeof params.graph === "string" ? state.graphs[params.graph] : undefined;
-      if (!graph) throw new DocError(`No graph named ${JSON.stringify(params.graph)}.`);
+      if (!graph)
+        throw new DocError(`No graph named ${JSON.stringify(params.graph)}.`, "NOT_FOUND", {
+          kind: "graph",
+          name: params.graph,
+        });
       const cursor = graph.cursors[params.cursor as "A" | "B"];
       if (!cursor) throw new DocError(`Cursor ${String(params.cursor)} is not on ${graph.name}.`);
       const trace = graph.traces.find((item) => item.name === cursor.trace);
@@ -327,7 +352,10 @@ export function handleRpc(
     }
     case "exportGraph": {
       if (typeof params.name !== "string" || !state.graphs[params.name]) {
-        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "graph",
+          name: params.name,
+        });
       }
       const filename = typeof params.filename === "string" ? params.filename : "";
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
@@ -349,14 +377,22 @@ export function handleRpc(
       };
     case "graphInfo": {
       const graph = typeof params.name === "string" ? state.graphs[params.name] : undefined;
-      if (!graph) throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+      if (!graph)
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "graph",
+          name: params.name,
+        });
       return { result: graph };
     }
     case "listStyles":
       return { result: { names: Object.keys(state.styles), default: state.defaultStyle } };
     case "styleInfo": {
       const style = typeof params.name === "string" ? state.styles[params.name] : undefined;
-      if (!style) throw new DocError(`No style named ${JSON.stringify(params.name)}.`);
+      if (!style)
+        throw new DocError(`No style named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "style",
+          name: params.name,
+        });
       return { result: style };
     }
     case "listGraphTemplates":
@@ -369,24 +405,38 @@ export function handleRpc(
     }
     case "tableInfo": {
       const table = typeof params.name === "string" ? state.tables[params.name] : undefined;
-      if (!table) throw new DocError(`No table named ${JSON.stringify(params.name)}.`);
+      if (!table)
+        throw new DocError(`No table named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "table",
+          name: params.name,
+        });
       return { result: table };
     }
     case "pageInfo": {
       const page = typeof params.name === "string" ? state.pages[params.name] : undefined;
-      if (!page) throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+      if (!page)
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "page layout",
+          name: params.name,
+        });
       return { result: page };
     }
     case "pageSvg": {
       if (typeof params.name !== "string" || !state.pages[params.name]) {
-        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "page layout",
+          name: params.name,
+        });
       }
       outsideBlock("Drawing a page layout");
       return { result: context.renderPageSvg(params.name) };
     }
     case "exportPage": {
       if (typeof params.name !== "string" || !state.pages[params.name]) {
-        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`);
+        throw new DocError(`No page layout named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "page layout",
+          name: params.name,
+        });
       }
       const filename = typeof params.filename === "string" ? params.filename : "";
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
@@ -421,17 +471,28 @@ export function handleRpc(
         typeof params.name === "string" && Object.hasOwn(state.notes, params.name)
           ? state.notes[params.name]
           : undefined;
-      if (!note) throw new DocError(`No note named ${JSON.stringify(params.name)}.`);
+      if (!note)
+        throw new DocError(`No note named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "note",
+          name: params.name,
+        });
       return { result: note };
     }
     case "procedureInfo": {
       const procedure = typeof params.name === "string" ? state.procedures[params.name] : undefined;
-      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`);
+      if (!procedure)
+        throw new DocError(`No procedure named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "procedure",
+          name: params.name,
+        });
       return { result: procedure };
     }
     case "graphScript": {
       if (typeof params.name !== "string" || !state.graphs[params.name]) {
-        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "graph",
+          name: params.name,
+        });
       }
       return { result: graphScript(state, params.name) };
     }
@@ -447,7 +508,12 @@ export function handleRpc(
       };
     case "readFile": {
       const file = typeof params.path === "string" ? context.files.get(params.path) : undefined;
-      if (!file) throw new DocError(`The experiment has no file ${JSON.stringify(params.path)}.`);
+      if (!file)
+        throw new DocError(
+          `The experiment has no file ${JSON.stringify(params.path)}.`,
+          "NOT_FOUND",
+          { kind: "file", name: params.path },
+        );
       return {
         result: { size: file.bytes.byteLength, version: file.version },
         data: bytesToWords(file.bytes),
@@ -469,14 +535,22 @@ export function handleRpc(
         typeof name === "string" && Object.hasOwn(state.results, name)
           ? state.results[name]
           : undefined;
-      if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+      if (!result)
+        throw new DocError(`No result named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+          kind: "result",
+          name: name,
+        });
       return { result: { ...result, changed: changedInputs(state, result) } };
     }
     case "listTemplates":
       return { result: Object.keys(state.templates) };
     case "templateInfo": {
       const template = typeof params.name === "string" ? state.templates[params.name] : undefined;
-      if (!template) throw new DocError(`No template named ${JSON.stringify(params.name)}.`);
+      if (!template)
+        throw new DocError(`No template named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "template",
+          name: params.name,
+        });
       return { result: template };
     }
     case "listRuns":
@@ -487,7 +561,11 @@ export function handleRpc(
       };
     case "runInfo": {
       const run = typeof params.name === "string" ? state.runs[params.name] : undefined;
-      if (!run) throw new DocError(`No run named ${JSON.stringify(params.name)}.`);
+      if (!run)
+        throw new DocError(`No run named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "run",
+          name: params.name,
+        });
       return {
         result: {
           ...run,
@@ -507,6 +585,8 @@ export function handleRpc(
           const names = context.importPresets().map((item) => item.name);
           throw new DocError(
             `No import preset named ${JSON.stringify(params.preset)}. Presets: ${names.join(", ") || "none"}.`,
+            "NOT_FOUND",
+            { kind: "import preset", name: params.preset },
           );
         }
         // What the call says goes before the preset, column by column.
@@ -556,7 +636,10 @@ export function handleRpc(
       return { result: context.files.remove(String(params.path)) };
     case "graphSvg": {
       if (typeof params.name !== "string" || !state.graphs[params.name]) {
-        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`);
+        throw new DocError(`No graph named ${JSON.stringify(params.name)}.`, "NOT_FOUND", {
+          kind: "graph",
+          name: params.name,
+        });
       }
       const size = (value: unknown) => (typeof value === "number" && value > 0 ? value : null);
       outsideBlock("Drawing a graph");
@@ -590,7 +673,22 @@ export function answerRpc(
       data: reply.data ?? null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { json: JSON.stringify({ ok: false, error: message }), data: null };
+    return { json: failureJson(error), data: null };
   }
+}
+
+/**
+ * A refusal as Python is told it: the message (as `error`, which older code
+ * reads) with its code and details, so Python raises the matching exception
+ * (see ERROR_CODES and oresme's OresmeError).
+ */
+export function failureJson(error: unknown): string {
+  const { code, message, details } = errorInfo(error);
+  let detailsJson: unknown = details;
+  try {
+    JSON.stringify(details);
+  } catch {
+    detailsJson = {};
+  }
+  return JSON.stringify({ ok: false, error: message, code, details: detailsJson });
 }

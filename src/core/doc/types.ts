@@ -1208,11 +1208,64 @@ export function windowSizeFor(
   };
 }
 
+/**
+ * What kind of error the app reports, for code (Python, plugins, tools) to
+ * tell them apart without reading the message. They are part of the public
+ * API: changing or removing one is a breaking change (see CHANGELOG.md).
+ */
+export const ERROR_CODES = [
+  /** A value, name or argument that is not allowed (`details.field` says which). */
+  "INVALID_ARGUMENT",
+  /** Something asked for by name is not there (`details.kind`, `details.name`). */
+  "NOT_FOUND",
+  /** A name is taken already (`details.kind`, `details.name`). */
+  "ALREADY_EXISTS",
+  /** Something cannot be removed while other things use it (`details.users`). */
+  "IN_USE",
+  /** What a step was computed from changed meanwhile: doing it again may work. */
+  "CONFLICT",
+  /** A file, format or package the app cannot handle. */
+  "UNSUPPORTED",
+  /** A plugin failed: it raised, timed out or returned what is not allowed. */
+  "PLUGIN_FAILED",
+  /** A fault of the app itself. */
+  "INTERNAL",
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+/** An error as it crosses to Python and other callers: what it is, in words and in data. */
+export interface ErrorInfo {
+  code: ErrorCode;
+  message: string;
+  details: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The app refused a request. `code` says what kind of refusal it is (see
+ * {@link ERROR_CODES}); most are arguments that are not allowed, the default.
+ */
 export class DocError extends Error {
-  constructor(message: string) {
+  readonly code: ErrorCode;
+  readonly details: Readonly<Record<string, unknown>>;
+  constructor(
+    message: string,
+    code: ErrorCode = "INVALID_ARGUMENT",
+    details: Readonly<Record<string, unknown>> = {},
+  ) {
     super(message);
     this.name = "DocError";
+    this.code = code;
+    this.details = details;
   }
+}
+
+/** An error of any kind as {@link ErrorInfo}: a DocError says its own; anything else is the app's fault. */
+export function errorInfo(error: unknown): ErrorInfo {
+  if (error instanceof DocError) {
+    return { code: error.code, message: error.message, details: error.details };
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return { code: "INTERNAL", message, details: {} };
 }
 
 export const DEFAULT_FONT_FAMILY = "Helvetica Neue, Helvetica, Arial, sans-serif";

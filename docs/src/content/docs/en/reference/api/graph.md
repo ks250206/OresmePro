@@ -81,7 +81,7 @@ as Igor's expand: 2 doubles it, 1 is none (from 0.125 to 8). The
 window grows with it; the figure, and what is exported, keep their
 size.
 
-**Explicit exceptions** · `ValueError`
+**Explicit exceptions** · `InvalidArgumentError`
 
 ### `Graph.unlink`
 
@@ -123,7 +123,7 @@ axis(name)
 
 Return the named `Axis`. A missing axis raises `OresmeError`.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ### `Graph.add_axis`
 
@@ -165,7 +165,7 @@ For a 3-D or 4-D wave, ``layer`` and ``chunk`` choose the plane.
 image(name=None)
 ```
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ### `Graph.contour`
 
@@ -173,7 +173,7 @@ image(name=None)
 contour(name=None)
 ```
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ### `Graph.cursor`
 
@@ -406,7 +406,7 @@ op.graph(name=None)
 
 A graph by name; with no name, the frontmost graph.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `graphs`
 

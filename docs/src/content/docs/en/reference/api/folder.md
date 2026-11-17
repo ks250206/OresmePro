@@ -98,7 +98,7 @@ op.folder(path='')
 
 An existing data folder; root with no argument.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ## `folders`
 

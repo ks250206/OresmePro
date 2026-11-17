@@ -56,7 +56,7 @@ set(*, title=None)
 control(name)
 ```
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ### `Panel.__getitem__`
 

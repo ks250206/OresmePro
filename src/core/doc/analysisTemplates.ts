@@ -349,7 +349,10 @@ export function withSampleOutcome(
 ): TemplateRun {
   const sample = run.samples[index];
   if (!sample || !Number.isInteger(index)) {
-    throw new DocError(`${run.name} has no sample ${index + 1}.`);
+    throw new DocError(`${run.name} has no sample ${index + 1}.`, "NOT_FOUND", {
+      kind: "sample",
+      index,
+    });
   }
   if (!RUN_STATES.includes(outcome.state)) {
     throw new DocError(`A sample's state is one of ${RUN_STATES.join(", ")}.`);

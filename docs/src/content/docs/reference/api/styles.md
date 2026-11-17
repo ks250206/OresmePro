@@ -54,7 +54,7 @@ op.style(name)
 
 この名前のスタイル。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ## `styles`
 
@@ -163,7 +163,7 @@ op.graph_template(source, name=None, fixed=())
 
 ``op.graph_template("IV")`` は IV という名前のテンプレートです。``op.graph_template(g, "IV")`` はグラフ ``g``(Graph かグラフの名前)を IV という名前のテンプレートとして残し、返します。``fixed`` は ``Graph.save_template`` を参照してください。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ## `graph_templates`
 

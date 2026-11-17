@@ -182,14 +182,20 @@ function itemNames(value: unknown): string[] {
 
 function count(value: unknown, what: string): number {
   if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > MAX_CELLS_PER_SIDE) {
-    throw new DocError(`${what} must be a whole number from 1 to ${MAX_CELLS_PER_SIDE}.`);
+    throw new DocError(
+      `${what} must be a whole number from 1 to ${MAX_CELLS_PER_SIDE}.`,
+      "INVALID_ARGUMENT",
+      { field: what },
+    );
   }
   return value as number;
 }
 
 function room(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new DocError(`${what} must be a number of points, 0 or more.`);
+    throw new DocError(`${what} must be a number of points, 0 or more.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value;
 }
@@ -242,14 +248,22 @@ export function checkArrangement(request: Readonly<Record<string, unknown>>): Ar
 function findPage(state: DocState, name: string): PageSpec {
   // Not `pages[name]`: a page called "constructor" must not find Object's own.
   const page = Object.hasOwn(state.pages, name) ? state.pages[name] : undefined;
-  if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
+  if (!page)
+    throw new DocError(`No page layout named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "page layout",
+      name: name,
+    });
   return page;
 }
 
 function findItems(page: PageSpec, names: readonly string[]): PageItem[] {
   return names.map((name) => {
     const item = page.items.find((other) => other.name === name);
-    if (!item) throw new DocError(`${page.name} has no item named ${JSON.stringify(name)}.`);
+    if (!item)
+      throw new DocError(`${page.name} has no item named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+        kind: "item",
+        name,
+      });
     return item;
   });
 }

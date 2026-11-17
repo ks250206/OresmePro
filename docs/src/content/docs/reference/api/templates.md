@@ -80,7 +80,7 @@ op.template(name)
 
 この名前の解析テンプレート。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ## `templates`
 
@@ -159,7 +159,7 @@ op.run(name=None)
 
 名前で Run を取得します。名前を省くと最新のもの。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `runs`
 

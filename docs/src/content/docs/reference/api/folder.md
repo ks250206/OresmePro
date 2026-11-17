@@ -98,7 +98,7 @@ op.folder(path='')
 
 既存のデータフォルダ。引数なしならルート。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ## `folders`
 

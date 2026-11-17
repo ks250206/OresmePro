@@ -112,7 +112,7 @@ with op.atomic():
     op.display(corrected)
 ```
 
-`op.fit`、`op.fit_peaks`、`op.background` など Wave と結果を作る解析は、それぞれこのブロックの中で動きます。ブロックの実行中に画面で行った変更は、ブロックの変更とぶつからなければ両方残ります。ブロックが読んだ Wave が途中で変わっていた場合は何も残さず `OresmeError` になります。ブロックの中ではグラフを描画・保存できません。
+`op.fit`、`op.fit_peaks`、`op.background` など Wave と結果を作る解析は、それぞれこのブロックの中で動きます。ブロックの実行中に画面で行った変更は、ブロックの変更とぶつからなければ両方残ります。ブロックが読んだ Wave が途中で変わっていた場合は何も残さず `ConflictError`(`OresmeError` の一種)になります。ブロックの中ではグラフを描画・保存できません。
 
 ## 解析を名前で呼ぶ
 
@@ -123,7 +123,7 @@ op.actions()                                                    # 登録され�
 r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})  # op.fit("gauss", op.wave("signal")) と同じ
 ```
 
-引数は呼ぶ前に検査され、知らない Action や版、余分な引数・足りない引数、型の違い、選択肢にない値、範囲外の数、存在しない Wave は、何もせずに `OresmeError` になります。通った呼び出しは `op.atomic()` の中で動きます。
+引数は呼ぶ前に検査され、知らない Action や版、余分な引数・足りない引数、型の違い、選択肢にない値、範囲外の数、存在しない Wave は、何もせずに `OresmeError`(引数の誤りは `InvalidArgumentError`、見つからないものは `NotFoundError`)になります。通った呼び出しは `op.atomic()` の中で動きます。
 
 Procedure の関数も `@op.action` で登録できます。`core.` は本体、`plugin.` はプラグイン用の名前なので、それ以外の小文字の点区切りの名前を使います。
 

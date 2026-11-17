@@ -66,7 +66,7 @@ op.style(name)
 
 The style with this name.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ## `styles`
 
@@ -201,7 +201,7 @@ A graph template: the one named ``source``, or one made from a graph.
 graph name) as a template named IV and returns it; see
 ``Graph.save_template`` for ``fixed``.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ## `graph_templates`
 

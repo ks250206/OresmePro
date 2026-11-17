@@ -49,7 +49,7 @@ export const normalizePackageName = (name: string): string =>
 
 const text = (value: unknown, what: string, limit = 2000): string => {
   if (typeof value !== "string" || value.length > limit) {
-    throw new DocError(`${what} must be text.`);
+    throw new DocError(`${what} must be text.`, "INVALID_ARGUMENT", { field: what });
   }
   return value;
 };

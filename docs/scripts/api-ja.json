@@ -1,4 +1,8 @@
 {
+  "AlreadyExistsError": {
+    "source": "54bc1eca9035",
+    "ja": "その名前はもう使われている(コード \"ALREADY_EXISTS\")。"
+  },
   "Annotation": {
     "source": "b4c55220c0b9",
     "ja": "グラフの凡例・テキストボックス・カラースケール・タグ。\n\n``x`` と ``y`` は、アンカー(タグなら点)からどれだけ動かしたか(プロット領域に対する割合)です。"
@@ -18,6 +22,10 @@
   "Axis.set": {
     "source": "d5bd75fb5395",
     "ja": "プロパティを変えます。``range=(lo, hi)`` で両端を設定し、``range=None`` で自動範囲にします。"
+  },
+  "ConflictError": {
+    "source": "bea298ea7993",
+    "ja": "計算のもとになったものが途中で変わった(コード \"CONFLICT\")。やり直せば通ることがあります。"
   },
   "Contour": {
     "source": "6e7f92df8e50",
@@ -291,6 +299,18 @@
     "source": "1d028cfae1cb",
     "ja": "複数のプロパティをまとめて変えます。self を返します。"
   },
+  "InUseError": {
+    "source": "062d7aaa180a",
+    "ja": "ほかのものが使っているので消せない(コード \"IN_USE\")。"
+  },
+  "InternalError": {
+    "source": "b27044132076",
+    "ja": "アプリ自身の不具合(コード \"INTERNAL\")。"
+  },
+  "InvalidArgumentError": {
+    "source": "e8d53a680efb",
+    "ja": "使えない値・名前・引数(コード \"INVALID_ARGUMENT\")。"
+  },
   "Layout": {
     "source": "8a9db7b6a20a",
     "ja": "ページレイアウト: 紙の上にグラフとテキストを並べたもの。\n\n``width`` と ``height`` は紙の大きさ(pt)です。ページはグラフをそのまま表示するので、グラフを変えるとページも変わります。"
@@ -359,6 +379,10 @@
     "source": "aca1650f4acb",
     "ja": "紙の上の長さ: ``op.cm(8)``、``op.inch(3)``、``op.pt(200)``。\n\n数としては pt(1/72 inch)単位の長さなので、pt を受け取る所(ページレイアウトの項目の位置など)にそのまま使えます。また、指定した単位を ``value`` と ``unit`` として覚えていて、グラフのプロット領域はそれを同じ形で表示し直します。"
   },
+  "NotFoundError": {
+    "source": "eb97386844d6",
+    "ja": "名前で指定したものがない(コード \"NOT_FOUND\")。"
+  },
   "Note": {
     "source": "715e25ec6baa",
     "ja": "ノート: 実験に保存される Markdown の文章。ウィンドウに整形して表示されます。\n\n::\n\n    n = op.new_note(\"log\", \"# Run 12\")\n    n.append(\"Baseline from 0 to 5 s.\")\n    n.append(f\"Peak at {r.coef[1]:.3g} eV\")\n\n文章中の HTML は文字としてそのまま表示されます。リンクは http、https、mailto のアドレスだけが有効で、画像はデータを文章に含むもの(``data:image/png;base64,...``)だけを表示します。アドレスで指定した画像は、その画像へのリンクになります。"
@@ -392,8 +416,8 @@
     "ja": "``op.onset`` の結果: 立ち上がりの直線がベースラインと交わる位置と、2 本の直線。"
   },
   "OresmeError": {
-    "source": "175cfdc3ff96",
-    "ja": "アプリが要求を拒否しました(不正な名前、存在しない wave など)。"
+    "source": "558437c992c0",
+    "ja": "アプリが要求を拒否しました(不正な名前、存在しない wave など)。\n\n``code`` は拒否の種類、``details`` はそれが何についてかを表します。メッセージを読まずに、コードでエラーを見分けられます::\n\n    try:\n        op.wave(\"signal\")\n    except op.NotFoundError as error:\n        print(error.details)          # {'kind': 'wave', 'name': 'signal'}\n\nコードごとにクラスがあり、どれも OresmeError です:\n\n- ``InvalidArgumentError``(\"INVALID_ARGUMENT\"、ValueError でもある): 使えない値・名前・引数。分かるときは ``details[\"field\"]`` がその名前です。\n- ``NotFoundError``(\"NOT_FOUND\"、LookupError でもある): 名前で指定したものがない。``details[\"kind\"]`` と ``details[\"name\"]``。\n- ``AlreadyExistsError``(\"ALREADY_EXISTS\"): その名前はもう使われている。\n- ``InUseError``(\"IN_USE\"): ほかのものが使っているので消せない。``details[\"users\"]``。\n- ``ConflictError``(\"CONFLICT\"): 計算のもとになったものが途中で変わった。やり直せば通ることがあります。\n- ``UnsupportedError``(\"UNSUPPORTED\"): アプリが扱えないファイル・形式・パッケージ。\n- ``PluginFailedError``(\"PLUGIN_FAILED\"): プラグインが失敗した。``details[\"phase\"]`` は \"start\"、\"load\"、\"run\"、\"timeout\"、\"stopped\"、\"invalid_output\" のどれか。\n- ``InternalError``(\"INTERNAL\"): アプリ自身の不具合。\n\nコードを指定せずに投げた OresmeError のコードは \"UNSPECIFIED\" です。コードは API の一部で、バージョンが変わっても保たれます。NumPy、SciPy、Python 自体のエラーは、これらに変換しません。"
   },
   "Panel": {
     "source": "901529de9f99",
@@ -482,6 +506,10 @@
   "PeakFitResult.template": {
     "source": "0291781efb51",
     "ja": "このフィットを解析テンプレートとして残します。``Result.template`` を参照。"
+  },
+  "PluginFailedError": {
+    "source": "cde6660adc82",
+    "ja": "プラグインが失敗した(コード \"PLUGIN_FAILED\")。``details[\"phase\"]`` がどこで失敗したかを示します。"
   },
   "Procedure": {
     "source": "68a322ec5ce6",
@@ -670,6 +698,10 @@
   "Trace.set": {
     "source": "1d028cfae1cb",
     "ja": "複数のプロパティをまとめて変えます。self を返します。"
+  },
+  "UnsupportedError": {
+    "source": "7ee4f8fa6498",
+    "ja": "アプリが扱えないファイル・形式・パッケージ(コード \"UNSUPPORTED\")。"
   },
   "Wave": {
     "source": "03479102c7b2",

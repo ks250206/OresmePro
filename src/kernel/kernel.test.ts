@@ -180,7 +180,7 @@ describe("oresme Python API", () => {
 
   it("reports application errors as Python exceptions", async () => {
     expect(await run('op.wave("nope")')).toBe(false);
-    expect(errors[0]).toBe('OresmeError: No wave named "nope".');
+    expect(errors[0]).toBe('NotFoundError: No wave named "nope".');
     expect(await run('g.trace().colour = "red"')).toBe(false);
     expect(errors[0]).toMatch(/AttributeError: Trace has no property 'colour'/);
     expect(await run("op.kill(w)")).toBe(false);
@@ -822,6 +822,53 @@ describe("oresme Python API", () => {
     expect(stdout).toBe("[]\n");
   });
 
+  it("raises an exception for each kind of refusal, with its code and details", async () => {
+    expect(
+      await run(
+        [
+          'ey = op.make("ey", [1.0, 2, 3])',
+          'eg = op.display(ey, name="ErrG")',
+          "def caught(call):",
+          "    try:",
+          "        call()",
+          "    except op.OresmeError as error:",
+          "        return [type(error).__name__, error.code, error.details]",
+          "print(caught(lambda: op.wave('nope').data))",
+          "print(caught(lambda: op.display(ey, name='ErrG')))",
+          "print(caught(lambda: op.kill('ey')))",
+          "print(caught(lambda: eg.trace('ey').set(line_size=-1)))",
+          "print(caught(lambda: op.invoke('lab.nothing', {})))",
+          "print(caught(lambda: op.make('bad', [float('nan')], unit=object())))",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout.split("\n").slice(0, 5)).toEqual([
+      "['NotFoundError', 'NOT_FOUND', {'kind': 'wave', 'name': 'nope'}]",
+      "['AlreadyExistsError', 'ALREADY_EXISTS', {'name': 'ErrG'}]",
+      "['InUseError', 'IN_USE', {'kind': 'wave', 'name': 'ey', 'users': ['ErrG']}]",
+      "['InvalidArgumentError', 'INVALID_ARGUMENT', {'field': 'lineSize'}]",
+      "['NotFoundError', 'NOT_FOUND', {'kind': 'action', 'name': 'lab.nothing'}]",
+    ]);
+    // They are the Python errors they are like too, and an OresmeError raised by hand has no code yet.
+    expect(
+      await run(
+        [
+          "try:",
+          "    op.wave('nope').data",
+          "except LookupError as error:",
+          "    print('lookup', isinstance(error, op.OresmeError))",
+          "try:",
+          "    eg.trace('ey').set(line_size=-1)",
+          "except ValueError:",
+          "    print('value')",
+          "print(op.OresmeError('mine').code, op.NotFoundError('x').code)",
+          "eg.kill()",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe("lookup True\nvalue\nUNSPECIFIED NOT_FOUND\n");
+  });
+
   it("keeps notes of Markdown text", async () => {
     expect(
       await run(
@@ -840,7 +887,7 @@ describe("oresme Python API", () => {
     expect(await run("n.rename('log'); print(n.text, op.windows('note'))")).toBe(true);
     expect(stdout).toBe("typed ['log']\n");
     expect(await run("op.note('nope')")).toBe(false);
-    expect(errors[0]).toBe("OresmeError: No note named 'nope'.");
+    expect(errors[0]).toBe("NotFoundError: No note named 'nope'.");
     expect(await run("n.kill(); print(op.notes())")).toBe(true);
     expect(stdout).toBe("[]\n");
   });
@@ -2203,7 +2250,7 @@ describe("oresme Python API", () => {
     doc.undo();
     expect(doc.getState().pages.Lineup!.items).toEqual(before);
     expect(await run('lp.align(["graph0", "nope"], "left")')).toBe(false);
-    expect(errors[0]).toMatch(/OresmeError: Lineup has no item named "nope"/);
+    expect(errors[0]).toMatch(/NotFoundError: Lineup has no item named "nope"/);
     expect(await run('lp.distribute(li[:2], "vertical")')).toBe(false);
     expect(errors[0]).toMatch(/three or more/);
   });
@@ -2234,14 +2281,14 @@ describe("oresme Python API", () => {
       "toLocaleString",
     ]);
     for (const [code, error] of [
-      ['op.wave("__proto__")', 'OresmeError: No wave named "__proto__".'],
-      ['op.wave("valueOf")', 'OresmeError: No wave named "valueOf".'],
-      ['op.make("__proto__", [1.0])', /OresmeError: "__proto__" is not a valid wave name/],
-      ['cw.rename("__proto__")', /OresmeError: "__proto__" is not a valid wave name/],
-      ['op.graph("constructor")', "OresmeError: No graph named 'constructor'."],
-      ['cg.axis("constructor")', /OresmeError: valueOf has no axis named 'constructor'/],
-      ['cg.axis("__proto__").label = "x"', /OresmeError: valueOf has no axis named '__proto__'/],
-      ['op.kill_window("__proto__")', 'OresmeError: No window named "__proto__".'],
+      ['op.wave("__proto__")', 'NotFoundError: No wave named "__proto__".'],
+      ['op.wave("valueOf")', 'NotFoundError: No wave named "valueOf".'],
+      ['op.make("__proto__", [1.0])', /InvalidArgumentError: "__proto__" is not a valid wave name/],
+      ['cw.rename("__proto__")', /InvalidArgumentError: "__proto__" is not a valid wave name/],
+      ['op.graph("constructor")', "NotFoundError: No graph named 'constructor'."],
+      ['cg.axis("constructor")', /NotFoundError: valueOf has no axis named 'constructor'/],
+      ['cg.axis("__proto__").label = "x"', /NotFoundError: valueOf has no axis named '__proto__'/],
+      ['op.kill_window("__proto__")', 'NotFoundError: No window named "__proto__".'],
     ] as const) {
       expect(await run(code), code).toBe(false);
       expect(errors[0]).toMatch(error);
@@ -2582,12 +2629,12 @@ describe("oresme Python API", () => {
         "('plan', 1, 'bottom', 'left') op.pt(200)",
         "('per_unit', 2, 'cm', 'bottom') ('per_unit', 1, 'inch', 'left')",
         "auto op.inch(3)",
-        "OresmeError The width and the height of the plot area cannot both be siz",
-        "OresmeError The plan of the width needs a horizontal axis; left is verti",
-        'OresmeError PlotSize has no axis named "nowhere" for the per unit size o',
-        "OresmeError width's value must be greater than 0",
-        "ValueError width must be \"auto\", a length or a tuple, not 'big'",
-        "ValueError width has no mode 'wide': \"auto\", a length (op",
+        "InvalidArgumentError The width and the height of the plot area cannot both be siz",
+        "InvalidArgumentError The plan of the width needs a horizontal axis; left is verti",
+        'NotFoundError PlotSize has no axis named "nowhere" for the per unit size o',
+        "InvalidArgumentError width's value must be greater than 0",
+        "InvalidArgumentError width must be \"auto\", a length or a tuple, not 'big'",
+        "InvalidArgumentError width has no mode 'wide': \"auto\", a length (op",
         "auto",
         "g.set(height=op.inch(3))",
         "",
@@ -2643,11 +2690,11 @@ describe("oresme Python API", () => {
         "1 2 3 4",
         "None 5",
         "2",
-        "OresmeError marginLeft must be between 0 and 360 points, or None for aut",
-        'ValueError margin_left must be "auto", a length or a number of points, ',
-        "ValueError margins must be (left, bottom, right, top)",
-        "OresmeError magnification must be between 0",
-        "OresmeError labels must be one of: on, axis only, of",
+        "InvalidArgumentError marginLeft must be between 0 and 360 points, or None for aut",
+        'InvalidArgumentError margin_left must be "auto", a length or a number of points, ',
+        "InvalidArgumentError margins must be (left, bottom, right, top)",
+        "InvalidArgumentError magnification must be between 0",
+        "InvalidArgumentError labels must be one of: on, axis only, of",
         "",
       ].join("\n"),
     );
