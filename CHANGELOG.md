@@ -32,6 +32,12 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   writes them (`eis_circuit`: `R0-p(R1,CPE1)-W1`, with R, C, L, CPE, W, Wo and Ws), without
   impedance.py and the matplotlib and altair it needs.
 - Optuna is among the recommended packages of **Python › Packages…**.
+- An example plugin for XPS peak fitting in the way of CasaXPS (`examples/plugins/xps`):
+  `xps_fit` fits synthetic components over a Shirley or linear background in a region, with
+  CasaXPS's line shapes (GL, SGL, GL(m)T(k), LA(α,β), optionally convolved with a Gaussian)
+  and constraints between components (`pos=A+1.5`, `area=A*0.5`, `fwhm=A`), and draws the fit
+  on a reversed binding energy axis with the residual above; `quantify` gives atomic
+  concentrations from region areas and sensitivity factors.
 - Errors say what kind of refusal they are: a code (`INVALID_ARGUMENT`, `NOT_FOUND`,
   `ALREADY_EXISTS`, `IN_USE`, `CONFLICT`, `UNSUPPORTED`, `PLUGIN_FAILED`, `INTERNAL`) and
   details (what was not found, which argument, what uses it, at which phase a plugin failed),
