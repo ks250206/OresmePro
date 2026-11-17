@@ -54,9 +54,9 @@ g.trace("peaks").set(mode="markers", text_marker=names, text_anchor="LB", text_s
 
 ## Draw shapes
 
-As with Igor Pro's drawing tools (⌘T), lines, arrows, rectangles, rounded rectangles, ovals, polygons and text can be drawn on a graph: arrows to point things out, boxes to mark ranges.
+As with Igor Pro's drawing tools (Show Tools), lines, arrows, rectangles, rounded rectangles, ovals, polygons and text can be drawn on a graph: arrows to point things out, boxes to mark ranges.
 
-**Graph → Show Tools** (**Ctrl+T** / **⌘T**, or the graph's right-click menu) shows or hides the tool palette at the left of the graph. A browser tab may keep ⌘T / Ctrl+T for a new tab; then show the tools from the menu.
+**Graph → Show Tools** (**⌥T** / **Alt+T**, or the graph's right-click menu) shows or hides the tool palette at the left of the graph. Igor's ⌘T is the browser's (a new tab) and never reaches the page, so it is ⌥T here.
 
 | Tool                     | How it draws                                                                      |
 | ------------------------ | --------------------------------------------------------------------------------- |
@@ -67,6 +67,7 @@ As with Igor Pro's drawing tools (⌘T), lines, arrows, rectangles, rounded rect
 | Text                     | Click where it starts and type it                                                 |
 
 - After drawing, the tool goes back to Select. **Delete** removes the drawing selected; **Escape** clears the selection or what is being drawn
+- **Shift**-click adds a drawing to the selection or takes it out. With the tools out, **⌘A** / **Ctrl+A** selects every drawing instead of autoscaling the axes. Drawings selected are moved and removed together (and removing them is undone in one step)
 - Double-click a drawing for **Modify Drawing**: color, line size and style, fill (color and opacity), arrowheads (end, start, both), text and its size, and layer
 - Its right-click menu brings it to the front or sends it to the back, moves it behind or in front of the traces, pins it to the axes or the plot area, and removes it
 - **Coordinates**: by default a drawing is placed as fractions of the plot area, so it stays where it is when the graph is zoomed. With the axes button of the palette on, new drawings are placed in axis values and move with the data (an arrow pointing at a peak). The right-click menu changes it afterwards

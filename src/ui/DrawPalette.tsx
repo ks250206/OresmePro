@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
-import { setTools, toggleTools, type DrawTool, type GraphTools } from "../app/drawTools";
+import {
+  setTools,
+  SHOW_TOOLS_KEYS,
+  toggleTools,
+  type DrawTool,
+  type GraphTools,
+} from "../app/drawTools";
 
 /** The icon of each tool: what it draws, in a 16×16 box. */
 const ICONS: Record<DrawTool, ReactNode> = {
@@ -120,9 +126,7 @@ export function DrawPalette({ graph, tools }: { graph: string; tools: GraphTools
           }
           title={TITLES[tool]}
           pressed={tools.tool === tool}
-          onClick={() =>
-            setTools(graph, { tool, ...(tool === "select" ? {} : { selected: null }) })
-          }
+          onClick={() => setTools(graph, { tool, ...(tool === "select" ? {} : { selected: [] }) })}
         >
           {ICONS[tool]}
         </ToolButton>
@@ -148,7 +152,7 @@ export function DrawPalette({ graph, tools }: { graph: string; tools: GraphTools
       <span className="flex-1" />
       <ToolButton
         label="Hide the drawing tools"
-        title="Hide the drawing tools (⌘T / Ctrl+T)"
+        title={`Hide the drawing tools (${SHOW_TOOLS_KEYS})`}
         pressed={false}
         onClick={() => toggleTools(graph, false)}
       >

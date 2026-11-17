@@ -1,22 +1,29 @@
 import type { DrawingKind } from "../core/doc/types";
+import { doc, isMac } from "./session";
 import { createStore, useStore } from "./store";
 
 /**
- * The drawing tools of graphs, as Igor shows them with ⌘T: a palette beside
+ * The drawing tools of graphs, as Igor shows them with Show Tools: a palette beside
  * the graph, the tool chosen in it, and the drawing selected. They are the
  * state of the work, not of the figure, so they are not saved.
  */
 export type DrawTool = "select" | DrawingKind;
 
+/**
+ * The shortcut of Show Tools: ⌥T / Alt+T. Igor's ⌘T / Ctrl+T is kept by
+ * browsers for a new tab and never reaches the page.
+ */
+export const SHOW_TOOLS_KEYS = isMac ? "⌥T" : "Alt+T";
+
 export interface GraphTools {
   tool: DrawTool;
-  /** The drawing selected, to move, resize, change or remove. */
-  selected: string | null;
+  /** The drawings selected, to move or remove together; one alone can be resized and changed. */
+  selected: readonly string[];
   /** New drawings are pinned to the axes (they move with the data) instead of the plot area. */
   onAxes: boolean;
 }
 
-const OFF: GraphTools = { tool: "select", selected: null, onAxes: false };
+const OFF: GraphTools = { tool: "select", selected: [], onAxes: false };
 
 /** The tools of each graph that shows them, by graph name. */
 export const drawTools = createStore<{ graphs: Readonly<Record<string, GraphTools>> }>({
@@ -50,4 +57,10 @@ export function setTools(graph: string, change: Partial<GraphTools>): void {
   drawTools.set(({ graphs }) => ({
     graphs: { ...graphs, [graph]: { ...(graphs[graph] ?? OFF), ...change } },
   }));
+}
+
+/** Selects every drawing of a graph, with the select tool. */
+export function selectAllDrawings(graph: string): void {
+  const names = doc.getState().graphs[graph]?.drawings.map((drawing) => drawing.name) ?? [];
+  setTools(graph, { tool: "select", selected: names });
 }
