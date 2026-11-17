@@ -79,6 +79,31 @@ g = op.display(y)`);
     await page.mouse.click(box.x + 100, box.y + 65);
     await page.keyboard.press("Delete");
     expect((await drawings()).map((item) => item.name)).toEqual(["draw0", "draw2", "draw3"]);
+
+    // Select All takes every drawing (not the axes' autoscale); Delete removes them, as one step.
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Delete");
+    expect(await drawings()).toEqual([]);
+    await page.keyboard.press("ControlOrMeta+z");
+    expect(await drawings()).toHaveLength(3);
+
+    // Shift-click adds to the selection; dragging one of them moves both.
+    const [arrow, , text] = await drawings();
+    await page.keyboard.press("Escape");
+    await page.mouse.click(box.x + 380, box.y + 255);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(box.x + 395, box.y + 75);
+    await page.keyboard.up("Shift");
+    await drag(380, 255, 400, 275);
+    const [movedArrow, , movedText] = await drawings();
+    expect(movedText!.points[0]).toBeGreaterThan(text!.points[0]!);
+    expect(movedArrow!.points).toEqual(arrow!.points);
+
+    // ⌥T / Alt+T hides the tools and shows them again; the drawings stay.
+    await page.keyboard.press("Alt+KeyT");
+    await expect(palette).toBeHidden();
+    await page.keyboard.press("Alt+KeyT");
+    await expect(palette).toBeVisible();
     await palette.getByRole("button", { name: "Hide the drawing tools" }).click();
     await expect(palette).toBeHidden();
     expect(await drawings()).toHaveLength(3);

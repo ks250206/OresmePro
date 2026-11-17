@@ -28,7 +28,13 @@ import {
   type GraphSpec,
   type Wave,
 } from "../core/doc/types";
-import { setTools, toggleTools, useDrawTools, type DrawTool } from "../app/drawTools";
+import {
+  setTools,
+  SHOW_TOOLS_KEYS,
+  toggleTools,
+  useDrawTools,
+  type DrawTool,
+} from "../app/drawTools";
 import { drawPrims } from "../core/plot/canvas";
 import {
   dragHandle,
@@ -304,8 +310,13 @@ type Gesture =
     }
   /** Drawing a new shape from where the drag began. */
   | { kind: "create"; tool: DrawTool }
-  /** Moving a drawing: its pixels when the drag began. */
-  | { kind: "moveDrawing"; name: string; x: number; y: number; from: number[] }
+  /** Moving drawings: their pixels when the drag began. */
+  | {
+      kind: "moveDrawing";
+      x: number;
+      y: number;
+      from: { drawing: string; pixels: readonly number[] }[];
+    }
   /** Dragging a handle of a drawing (see drawingHandles). */
   | { kind: "handle"; name: string; handle: number };
 
@@ -503,23 +514,40 @@ export function GraphWindow({ name }: { name: string }) {
           }
         : {}),
     });
-    if (typeof made === "string") setTools(name, { tool: "select", selected: made });
+    if (typeof made === "string") setTools(name, { tool: "select", selected: [made] });
   };
-  /** Moves a drawing to new pixels, as one step however long the drag. */
-  const placeDrawing = (drawing: string, pixels: readonly number[]) => {
-    const spec = graph.drawings.find((item) => item.name === drawing);
-    const points = spec && toDrawing(pixels, spec);
-    if (!points) return;
-    const command: Command = { op: "modifyDrawing", graph: name, drawing, props: { points } };
-    runGuiCoalesced(`drawing:${name}:${drawing}`, [command], () => {
-      const now = doc.getState().graphs[name]?.drawings.find((item) => item.name === drawing);
-      return now ? (echoPython({ ...command, props: { points: now.points } }) ?? "") : "";
-    });
+  /** Moves drawings to new pixels, as one step however long the drag. */
+  const placeDrawings = (moves: readonly { drawing: string; pixels: readonly number[] }[]) => {
+    const commands: Command[] = [];
+    for (const { drawing, pixels } of moves) {
+      const spec = graph.drawings.find((item) => item.name === drawing);
+      const points = spec && toDrawing(pixels, spec);
+      if (points) commands.push({ op: "modifyDrawing", graph: name, drawing, props: { points } });
+    }
+    if (commands.length === 0) return;
+    const names = moves.map((move) => move.drawing);
+    runGuiCoalesced(`drawing:${name}:${names.join(",")}`, commands, () =>
+      names
+        .flatMap((drawing) => {
+          const now = doc.getState().graphs[name]?.drawings.find((item) => item.name === drawing);
+          const line =
+            now &&
+            echoPython({
+              op: "modifyDrawing",
+              graph: name,
+              drawing,
+              props: { points: now.points },
+            });
+          return line ? [line] : [];
+        })
+        .join("\n"),
+    );
   };
-  const selected =
-    tools?.selected && graph.drawings.some((item) => item.name === tools.selected)
-      ? tools.selected
-      : null;
+  /** The drawings selected that are there; one alone is the one handles and dialogs act on. */
+  const selection = (tools?.selected ?? []).filter((drawing) =>
+    graph.drawings.some((item) => item.name === drawing),
+  );
+  const selected = selection.length === 1 ? selection[0]! : null;
 
   /** Starts what a press does with the drawing tools out; false leaves it to the graph. */
   const drawingPointerDown = (event: ReactPointerEvent<HTMLDivElement>, x: number, y: number) => {
@@ -572,14 +600,32 @@ export function GraphWindow({ name }: { name: string }) {
       }
     }
     const hit = drawingAt(graph.drawings, layout.drawings, x, y);
-    const hitGeometry = hit ? layout.drawings.find((item) => item.name === hit) : undefined;
-    if (hit && hitGeometry) {
-      setTools(name, { selected: hit });
+    if (hit) {
+      // Shift adds a drawing to the selection, or takes it out.
+      if (event.shiftKey) {
+        setTools(name, {
+          selected: selection.includes(hit)
+            ? selection.filter((item) => item !== hit)
+            : [...selection, hit],
+        });
+        return true;
+      }
+      // Dragging one of the drawings selected moves them all.
+      const moving = selection.includes(hit) ? selection : [hit];
+      if (!selection.includes(hit)) setTools(name, { selected: [hit] });
       event.currentTarget.setPointerCapture(event.pointerId);
-      gesture.current = { kind: "moveDrawing", name: hit, x, y, from: hitGeometry.points };
+      gesture.current = {
+        kind: "moveDrawing",
+        x,
+        y,
+        from: moving.flatMap((drawing) => {
+          const geometry = layout.drawings.find((item) => item.name === drawing);
+          return geometry ? [{ drawing, pixels: geometry.points }] : [];
+        }),
+      };
       return true;
     }
-    if (selected) setTools(name, { selected: null });
+    if (selection.length > 0) setTools(name, { selected: [] });
     return false;
   };
 
@@ -624,15 +670,20 @@ export function GraphWindow({ name }: { name: string }) {
     } else if (current?.kind === "moveDrawing") {
       const dx = x - current.x;
       const dy = y - current.y;
-      placeDrawing(
-        current.name,
-        current.from.map((value, index) => value + (index % 2 === 0 ? dx : dy)),
+      placeDrawings(
+        current.from.map(({ drawing, pixels }) => ({
+          drawing,
+          pixels: pixels.map((value, index) => value + (index % 2 === 0 ? dx : dy)),
+        })),
       );
     } else if (current?.kind === "handle") {
       const spec = graph.drawings.find((item) => item.name === current.name);
       const geometry = layout.drawings.find((item) => item.name === current.name);
-      if (spec && geometry)
-        placeDrawing(current.name, dragHandle(spec, geometry, current.handle, x, y));
+      if (spec && geometry) {
+        placeDrawings([
+          { drawing: current.name, pixels: dragHandle(spec, geometry, current.handle, x, y) },
+        ]);
+      }
     } else if (draft?.tool === "polygon") {
       setDraft({ ...draft, hover: [x, y] });
     }
@@ -743,15 +794,15 @@ export function GraphWindow({ name }: { name: string }) {
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (tools && (event.key === "Delete" || event.key === "Backspace") && selected) {
+    if (tools && (event.key === "Delete" || event.key === "Backspace") && selection.length > 0) {
       event.preventDefault();
-      runGui({ op: "removeDrawing", graph: name, drawing: selected });
-      setTools(name, { selected: null });
+      runGui(selection.map((drawing) => ({ op: "removeDrawing", graph: name, drawing })));
+      setTools(name, { selected: [] });
       return;
     }
     if (tools && event.key === "Escape") {
       if (draft) setDraft(null);
-      else if (selected) setTools(name, { selected: null });
+      else if (selection.length > 0) setTools(name, { selected: [] });
       else setTools(name, { tool: "select" });
       return;
     }
@@ -842,7 +893,7 @@ export function GraphWindow({ name }: { name: string }) {
       ? layout.drawings.find((item) => item.name === drawing)
       : undefined;
     if (drawing && drawingSpec && drawingGeometry) {
-      setTools(name, { selected: drawing });
+      setTools(name, { selected: [drawing] });
       const axes = drawingAxes();
       /** Pins the drawing to the axes or the plot area, where it is now. */
       const pin = (coords: "plot" | "axes") => () => {
@@ -897,7 +948,7 @@ export function GraphWindow({ name }: { name: string }) {
           label: `Remove ${drawing}`,
           onSelect: () => {
             runGui({ op: "removeDrawing", graph: name, drawing });
-            setTools(name, { selected: null });
+            setTools(name, { selected: [] });
           },
         },
       ]);
@@ -924,7 +975,7 @@ export function GraphWindow({ name }: { name: string }) {
       { label: "Autoscale Axes", shortcut: "Ctrl+A", onSelect: () => autoscaleGraph(name) },
       {
         label: "Show Tools",
-        shortcut: "Ctrl+T",
+        shortcut: SHOW_TOOLS_KEYS,
         checked: tools !== null,
         onSelect: () => toggleTools(name),
       },
@@ -1093,19 +1144,24 @@ export function GraphWindow({ name }: { name: string }) {
             />
           )
         ) : null}
-        {selectedSpec && selectedGeometry ? (
-          <>
+        {selection.map((drawing) => {
+          const geometry = layout.drawings.find((item) => item.name === drawing);
+          return geometry ? (
             <rect
-              x={selectedGeometry.box.x - 3}
-              y={selectedGeometry.box.y - 3}
-              width={selectedGeometry.box.w + 6}
-              height={selectedGeometry.box.h + 6}
+              key={drawing}
+              x={geometry.box.x - 3}
+              y={geometry.box.y - 3}
+              width={geometry.box.w + 6}
+              height={geometry.box.h + 6}
               fill="none"
               stroke="#2760c4"
               strokeWidth={1}
               strokeDasharray="3 2"
             />
-            {drawingHandles(selectedSpec, selectedGeometry).map(([hx, hy], index) => (
+          ) : null;
+        })}
+        {selectedSpec && selectedGeometry
+          ? drawingHandles(selectedSpec, selectedGeometry).map(([hx, hy], index) => (
               <rect
                 key={index}
                 x={hx - 3.5}
@@ -1116,9 +1172,8 @@ export function GraphWindow({ name }: { name: string }) {
                 stroke="#2760c4"
                 strokeWidth={1.2}
               />
-            ))}
-          </>
-        ) : null}
+            ))
+          : null}
       </svg>
     ) : null;
 

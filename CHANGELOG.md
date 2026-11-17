@@ -22,6 +22,15 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ## [Unreleased]
 
+### Added
+
+- With the drawing tools out, ⌘A / Ctrl+A selects every drawing, and Shift-click adds to the
+  selection; drawings selected are moved and removed together.
+
+### Changed
+
+- Show Tools is ⌥T / Alt+T: browsers keep ⌘T / Ctrl+T for a new tab and never pass it on.
+
 ## [0.2.0] - 2026-11-17
 
 The first version numbered: OresmePro as it was built up to here.

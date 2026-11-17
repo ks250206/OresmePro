@@ -5,7 +5,13 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { openActionWindow } from "./app/actionWindows";
-import { toggleTools, useToolsShown } from "./app/drawTools";
+import {
+  selectAllDrawings,
+  SHOW_TOOLS_KEYS,
+  toggleTools,
+  toolsShown,
+  useToolsShown,
+} from "./app/drawTools";
 import { openTool } from "./app/toolWindows";
 import {
   activeGraph,
@@ -285,7 +291,7 @@ function useMenus(): MenuDefinition[] {
         graphDialog("Modify Graph…", (name) => ({ kind: "modifyGraph", graph: name })),
         { separator: true },
         {
-          ...graphItem("Show Tools", (name) => toggleTools(name), `${MOD}T`),
+          ...graphItem("Show Tools", (name) => toggleTools(name), SHOW_TOOLS_KEYS),
           checked: graph ? toolsShownNow : false,
         },
         graphItem("Autoscale Axes", autoscaleGraph, `${MOD}A`),
@@ -458,6 +464,16 @@ function onGlobalKey(event: KeyboardEvent) {
     // The panels of an editor (find, problems) are part of it: Ctrl+Z there is the editor's.
     Boolean(target?.closest?.(".cm-editor"));
   const mod = event.metaKey || event.ctrlKey;
+  // Show Tools: ⌥T / Alt+T, which browsers leave to the page; ⌘T / Ctrl+T is theirs (a new tab).
+  // By the key's place, as Option+T on a Mac types "†".
+  if (event.altKey && !mod && !event.shiftKey && event.code === "KeyT") {
+    const graph = typing || ui.get().dialog ? null : activeGraph();
+    if (graph) {
+      event.preventDefault();
+      toggleTools(graph);
+    }
+    return;
+  }
   const key = event.key.toLowerCase();
   if (mod && key === "s") {
     // Everywhere, so the browser's own "save page" never takes over.
@@ -488,11 +504,13 @@ function onGlobalKey(event: KeyboardEvent) {
     const graph = activeGraph();
     if (graph) {
       event.preventDefault();
-      if (key === "a") autoscaleGraph(graph);
+      // With the drawing tools out, Select All selects the drawings, as in a page layout.
+      if (key === "a" && toolsShown(graph)) selectAllDrawings(graph);
+      else if (key === "a") autoscaleGraph(graph);
       else toggleInfo(graph);
     }
   } else if (key === "t" && !event.shiftKey) {
-    // Igor's Show Tools. A browser tab may keep ⌘T / Ctrl+T for a new tab; the installed app gets it.
+    // Igor's ⌘T, where the browser lets the page have it (most keep it for a new tab: ⌥T is the shortcut).
     const graph = activeGraph();
     if (graph) {
       event.preventDefault();

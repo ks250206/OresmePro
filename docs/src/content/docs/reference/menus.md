@@ -70,7 +70,7 @@ sidebar:
 | Modify Axis…                                     | 範囲・対数・目盛り・ラベル・表示するラベル(on/axis only/off)・ラベルの向き・軸線 | `g.axis("left").set(log=True)`             |
 | Modify Graph…                                    | フォント・プロット領域の大きさ・余白・表示倍率                                   | `g.set(width=op.cm(8))`                    |
 | Autoscale Axes                                   | 全軸を自動範囲に戻す(**Ctrl+A** / **⌘A**)                                        | `g.axis("left").autoscale()`               |
-| Show Tools                                       | 図形を描くツールのパレットを出し入れする(**Ctrl+T** / **⌘T**)                    | `g.draw("arrow", [...])`                   |
+| Show Tools                                       | 図形を描くツールのパレットを出し入れする(**⌥T** / **Alt+T**)                     | `g.draw("arrow", [...])`                   |
 | Show Cursor Info                                 | カーソル情報の欄を出し入れする(**Ctrl+I** / **⌘I**)                              | `g.show_info = True`                       |
 | Add Legend / Add Text… / Add Color Scale         | 凡例・テキスト・カラースケールを置く                                             | `g.legend()`、`g.textbox("...")`           |
 | Styles…                                          | グラフスタイルの保存・適用・既定の設定                                           | `op.set_style(...)`、`op.apply_style(...)` |
