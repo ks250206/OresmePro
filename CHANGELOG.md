@@ -135,6 +135,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - An Igor file that cannot be read (not from Igor, damaged, or of a version this reader does
   not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
   for it, where it was `INTERNAL`.
+- Saving the experiment as a .oresme file, and opening one, compresses and decompresses the
+  large files in workers: the page goes on answering meanwhile. Load Data reads a workbook once,
+  where it read it to show it and again to load it.
 - Dragging or sizing a window draws again its frame alone, not every window's contents and
   the menus. A page layout lays out again only the graphs that a change touches, not every
   graph on the page at any change to any wave.

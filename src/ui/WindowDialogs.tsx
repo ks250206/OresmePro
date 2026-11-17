@@ -166,7 +166,7 @@ export function SaveExperimentDialog() {
       submitLabel="Save"
       submitDisabled={filename === null}
       onSubmit={() => {
-        if (filename && saveExperimentAs(filename)) close();
+        if (filename) void saveExperimentAs(filename).then((saved) => saved && close());
       }}
     >
       <Field label="File name">

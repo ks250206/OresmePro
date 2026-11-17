@@ -5,7 +5,12 @@ import { columnsFromRows, parseDelimited } from "./delimited";
 import { checkSettings, decodeText, importPython, planImport } from "./importData";
 import { Doc } from "../doc/doc";
 import { History } from "../history/history";
-import { unzipExperiment, zipExperiment } from "./experiment";
+import {
+  unzipExperiment,
+  unzipExperimentAsync,
+  zipExperiment,
+  zipExperimentAsync,
+} from "./experiment";
 import { decodeNpy, encodeNpy } from "./npy";
 import { pythonLoader } from "./pythonFormats";
 import excelWorkbook from "./testdata/excel.xlsx?inline";
@@ -391,6 +396,28 @@ describe("experiment files", () => {
   it("rejects other files", () => {
     expect(() => unzipExperiment(new Uint8Array([1, 2, 3]))).toThrow(/not an OresmePro experiment/);
   });
+
+  it("packs and unpacks in workers as it does at once, leaving the experiment's arrays be", async () => {
+    const doc = new Doc();
+    // Large enough for fflate to compress it in a worker.
+    const big = Float64Array.from({ length: 50_000 }, (_, index) => Math.sin(index));
+    doc.dispatch({ op: "makeWave", name: "big", data: big });
+    doc.dispatch({ op: "makeWave", name: "small", data: Float64Array.of(1, 2) });
+    const stored = [{ path: "raw.bin", bytes: Uint8Array.of(0, 255, 1) }];
+    const file = await zipExperimentAsync(doc.getState(), [], stored);
+    // Copied to the workers, not handed over.
+    expect(doc.getState().waves.big!.data.length).toBe(50_000);
+    expect(stored[0]!.bytes.length).toBe(3);
+    const opened = await unzipExperimentAsync(file);
+    expect(Array.from(opened.state.waves.big!.data)).toEqual(Array.from(big));
+    const atOnce = unzipExperiment(zipExperiment(doc.getState(), [], stored));
+    expect(opened.state.waveOrder).toEqual(atOnce.state.waveOrder);
+    expect(Array.from(opened.state.waves.small!.data)).toEqual([1, 2]);
+    expect(opened.files).toEqual(atOnce.files);
+    await expect(unzipExperimentAsync(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+      /not an OresmePro experiment/,
+    );
+  });
 });
 
 describe("Excel workbooks", () => {
@@ -402,6 +429,18 @@ describe("Excel workbooks", () => {
     readXlsx(
       Uint8Array.from(atob(dataUrl.slice(dataUrl.indexOf(",") + 1)), (char) => char.charCodeAt(0)),
     );
+
+  it("reads the same bytes once, as Load Data shows a workbook and then loads it", () => {
+    const bytes = Uint8Array.from(
+      atob(excelWorkbook.slice(excelWorkbook.indexOf(",") + 1)),
+      (char) => char.charCodeAt(0),
+    );
+    const shown = readXlsx(bytes);
+    expect(readXlsx(bytes)).toBe(shown);
+    // Other bytes, even the same file read again, are read anew.
+    expect(readXlsx(bytes.slice())).not.toBe(shown);
+    expect(readXlsx(bytes.slice())).toEqual(shown);
+  });
 
   it("reads the sheets that have cells, as rows of text", () => {
     const sheets = load(excelWorkbook);

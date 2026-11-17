@@ -1,4 +1,4 @@
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, unzip, unzipSync, zip, zipSync } from "fflate";
 import {
   applyCommand,
   checkGraphTemplate,
@@ -468,12 +468,12 @@ export function trimHistory(entries: readonly HistoryEntry[]): HistoryEntry[] {
   }));
 }
 
-/** Packs an experiment into a single .oresme file (a zip archive). */
-export function zipExperiment(
+/** The files of an experiment's .oresme archive, by their path in it. */
+function experimentFiles(
   state: DocState,
   entries: readonly HistoryEntry[],
-  stored: Iterable<{ path: string; bytes: Uint8Array }> = [],
-): Uint8Array {
+  stored: Iterable<{ path: string; bytes: Uint8Array }>,
+): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {};
   for (const { path, bytes } of stored) files[FILES_PREFIX + path] = bytes;
   let counter = 0;
@@ -485,22 +485,63 @@ export function zipExperiment(
   });
   files["experiment.json"] = strToU8(JSON.stringify(saved));
   files["history.json"] = strToU8(JSON.stringify(trimHistory(entries)));
-  return zipSync(files, { level: 6 });
+  return files;
 }
 
-export function unzipExperiment(bytes: Uint8Array): {
+/** Packs an experiment into a single .oresme file (a zip archive). */
+export function zipExperiment(
+  state: DocState,
+  entries: readonly HistoryEntry[],
+  stored: Iterable<{ path: string; bytes: Uint8Array }> = [],
+): Uint8Array {
+  return zipSync(experimentFiles(state, entries, stored), { level: 6 });
+}
+
+/**
+ * As zipExperiment, with the large files compressed in workers, so that the
+ * page goes on answering meanwhile. What is given is copied to them, not
+ * handed over: the experiment's arrays stay as they are.
+ */
+export function zipExperimentAsync(
+  state: DocState,
+  entries: readonly HistoryEntry[],
+  stored: Iterable<{ path: string; bytes: Uint8Array }> = [],
+): Promise<Uint8Array> {
+  const files = experimentFiles(state, entries, stored);
+  return new Promise((resolve, reject) =>
+    zip(files, { level: 6 }, (error, data) => (error ? reject(error) : resolve(data))),
+  );
+}
+
+type OpenedExperiment = {
   state: DocState;
   history: HistoryEntry[];
   files: [string, Uint8Array][];
-} {
+};
+
+const NOT_AN_EXPERIMENT = "This is not an OresmePro experiment file.";
+
+export function unzipExperiment(bytes: Uint8Array): OpenedExperiment {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes);
   } catch {
-    throw new Error("This is not an OresmePro experiment file.");
+    throw new Error(NOT_AN_EXPERIMENT);
   }
+  return readExperimentFiles(files);
+}
+
+/** As unzipExperiment, with the large files decompressed in workers. */
+export async function unzipExperimentAsync(bytes: Uint8Array): Promise<OpenedExperiment> {
+  const files = await new Promise<Record<string, Uint8Array>>((resolve, reject) =>
+    unzip(bytes, (error, data) => (error ? reject(new Error(NOT_AN_EXPERIMENT)) : resolve(data))),
+  );
+  return readExperimentFiles(files);
+}
+
+function readExperimentFiles(files: Record<string, Uint8Array>): OpenedExperiment {
   const index = files["experiment.json"];
-  if (!index) throw new Error("This is not an OresmePro experiment file.");
+  if (!index) throw new Error(NOT_AN_EXPERIMENT);
   const saved = JSON.parse(strFromU8(index)) as SavedExperiment;
   const history = files["history.json"]
     ? (JSON.parse(strFromU8(files["history.json"])) as HistoryEntry[])
