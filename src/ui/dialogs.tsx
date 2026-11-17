@@ -2789,6 +2789,10 @@ function TimeZoneDialog() {
 function AboutDialog() {
   return (
     <Dialog title="About OresmePro" onClose={close} width={460}>
+      <p className="selectable m-0 text-[13px]">
+        <b>OresmePro</b> <span aria-label="Version">{__APP_VERSION__}</span>
+        <span className="text-muted"> · Python (Pyodide {__PYODIDE_VERSION__})</span>
+      </p>
       <p className="selectable m-0 leading-relaxed">
         OresmePro is named after <b>Nicole Oresme</b> (c. 1320&ndash;1382), the French scholar
         credited with drawing the first graphs: in the 1350s he plotted how a quantity varies by

@@ -1,6 +1,16 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "./fixtures";
 
 test.describe("help and finding waves", () => {
+  test("About says the version, as package.json has it", async ({ app, page }) => {
+    const { version } = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    await app.menu("Help", "About OresmePro");
+    await expect(
+      page.getByRole("dialog", { name: "About OresmePro" }).getByLabel("Version"),
+    ).toHaveText(version);
+  });
+
   test("the GitHub link sits at the top right, and Help opens the documentation", async ({
     app,
     page,
