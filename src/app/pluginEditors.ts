@@ -375,6 +375,53 @@ export function removeItem(
     .filter((_, at) => at !== index);
 }
 
+/** The fields dragging changes: always passed to the plugin, whatever their value. */
+export function draggedFields(spec: EditorSpec): string[] {
+  const { drag } = spec.items;
+  return [drag.x, drag.height?.field, drag.width?.field, ...(drag.width?.scale ?? [])].filter(
+    (field): field is string => field !== undefined,
+  );
+}
+
+/**
+ * The fields of an item after a drag, by the plugin's rules (see EditorDrag):
+ * of its top to (x, height above its base), or of a half-width handle to x.
+ * `start` is the item's values when the drag began, and `tied` the fields that
+ * follow another item, which dragging leaves alone.
+ */
+export function dragged(
+  spec: EditorSpec,
+  start: Record<string, string | number>,
+  tied: readonly string[],
+  drop:
+    | { kind: "top"; x: number; height: number; startHeight: number }
+    | { kind: "width"; x: number; centre: number; startWidth: number },
+): Record<string, number> {
+  const { drag } = spec.items;
+  const change: Record<string, number> = {};
+  const free = (field: string) => !tied.includes(field) && typeof start[field] === "number";
+  if (drop.kind === "top") {
+    if (!tied.includes(drag.x)) change[drag.x] = drop.x;
+    const rule = drag.height;
+    if (rule && free(rule.field)) {
+      if (rule.rule === "value") change[rule.field] = drop.height;
+      else if (drop.startHeight > 0)
+        change[rule.field] = ((start[rule.field] as number) * drop.height) / drop.startHeight;
+    }
+    return change;
+  }
+  const rule = drag.width;
+  if (!rule || !free(rule.field)) return change;
+  const least = spec.items.fields.find((field) => field.key === rule.field)?.min ?? 0;
+  const distance = Math.abs(drop.x - drop.centre);
+  const width = Math.max(least, 1e-12, rule.rule === "full" ? 2 * distance : distance);
+  change[rule.field] = width;
+  if (drop.startWidth > 0)
+    for (const field of rule.scale)
+      if (free(field)) change[field] = ((start[field] as number) * width) / drop.startWidth;
+  return change;
+}
+
 /** Ten significant digits: enough to start a fit where it was, short enough to read in the history. */
 const round = (value: number): number =>
   Number.isFinite(value) ? Number(value.toPrecision(10)) : value;
@@ -388,7 +435,7 @@ export function editorArgs(context: EditorContext, setup: EditorSetup): ActionAr
   args[spec.items.param] = setup.items.map((item) => {
     const out: Record<string, JsonValue> = {};
     // The fields dragged on the plot always go; the others only when they differ from their defaults.
-    const placed = [spec.items.position, spec.items.width, spec.items.amount];
+    const placed = draggedFields(spec);
     for (const field of spec.items.fields) {
       const value = item.values[field.key];
       if (!placed.includes(field.key) && value === field.default) continue;
@@ -517,8 +564,9 @@ function sizeNewItem(
   drawn: EditorSetup,
 ): boolean {
   const { sizing, setup } = store.get();
-  const amount = context.spec.items.amount;
-  if (!sizing || !amount || setup !== drawn) return false;
+  const rule = context.spec.items.drag.height;
+  if (!sizing || rule?.rule !== "proportional" || setup !== drawn) return false;
+  const amount = rule.field;
   store.set({ sizing: null });
   const peak = preview.itemValues[sizing.index]?.peak;
   const item = setup.items[sizing.index];
@@ -561,6 +609,7 @@ export function addItemAt(context: EditorContext, position: number): void {
   const { spec } = context;
   if (!setup || !preview || setup.items.length >= spec.items.max) return;
   const item = blankItem(spec);
+  const { drag } = spec.items;
   const last = setup.items.at(-1);
   // A new item looks like the one made before it: its widths and the like, and its kind (a
   // text field with choices, such as a line shape); not its name, place or size.
@@ -568,13 +617,13 @@ export function addItemAt(context: EditorContext, position: number): void {
     for (const field of spec.items.fields) {
       const like =
         field.kind === "number"
-          ? field.key !== spec.items.position && field.key !== spec.items.amount
+          ? field.key !== drag.x && field.key !== drag.height?.field
           : field.choices.length > 0;
       const value = last.values[field.key];
       if (like && value !== undefined) item.values[field.key] = value;
     }
   }
-  item.values[spec.items.position] = position;
+  item.values[drag.x] = position;
   let height = 0;
   if (preview.data) {
     let others = preview.background ? interpolate(preview.x, preview.background, position) : 0;
@@ -584,14 +633,17 @@ export function addItemAt(context: EditorContext, position: number): void {
       peak = Math.max(peak, Math.abs(preview.data[i]! - (preview.background?.[i] ?? 0)));
     height = Math.max(interpolate(preview.x, preview.data, position) - others, 0.05 * peak);
   }
-  const width = spec.items.width ? item.values[spec.items.width] : 1;
-  if (spec.items.amount)
-    item.values[spec.items.amount] = height * (typeof width === "number" ? width : 1);
+  // A height field is the height itself, or grows with it: then the preview says by how much,
+  // and the item is sized once it has drawn it (see sizeNewItem).
+  const width = drag.width ? item.values[drag.width.field] : 1;
+  if (drag.height?.rule === "value") item.values[drag.height.field] = height;
+  else if (drag.height)
+    item.values[drag.height.field] = height * (typeof width === "number" ? width : 1);
   const index = setup.items.length;
   editSetup(context.key, (current) => ({ ...current, items: [...current.items, item] }));
   store.set({
     selected: index,
-    sizing: spec.items.amount && height > 0 ? { index, height } : null,
+    sizing: drag.height?.rule === "proportional" && height > 0 ? { index, height } : null,
   });
 }
 

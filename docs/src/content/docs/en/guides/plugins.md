@@ -122,6 +122,7 @@ A plugin can declare, under `editors`, a window for building a model of peaks or
 
 ```json
 "editors": [{
+  "kind": "spectrum-fit",
   "name": "xps",
   "title": "XPS Peak Fitting",
   "preview": "xps_preview",
@@ -139,7 +140,11 @@ A plugin can declare, under `editors`, a window for building a model of peaks or
       {"key": "fwhm", "title": "FWHM (eV)", "default": 1.2, "constraint": true, "min": 0.05},
       {"key": "area", "title": "Area", "constraint": true, "min": 0}
     ],
-    "position": "position", "width": "fwhm", "amount": "area",
+    "drag": {
+      "x": "position",
+      "height": {"field": "area", "rule": "proportional"},
+      "width": {"field": "fwhm", "rule": "full", "scale": ["area"]}
+    },
     "coef": "{letter}_{key}"
   },
   "partner": {"title": "Doublet", "offset": "Δ (eV)", "ratios": [["p (1:2)", 0.5]],
@@ -150,8 +155,10 @@ A plugin can declare, under `editors`, a window for building a model of peaks or
 ```
 
 - `preview` and `fit` name two of the plugin's actions, which take the same arguments: `data` (the data, a `wave`), `x` (X values, a `wave`, optional), `range` (`numbers` of length 2, dragged on the plot as dashed lines), `items.param` (`json`, the list of items) and `settings` (plain arguments, set in the Settings tab)
-- Items are lettered A, B, C …, a column each in the table. A field's `type` is `"number"` (the default) or `"text"`; `"constraint": true` gives it a row for its constraint. `position`, `width` and `amount` are the fields dragged on the plot (the square at the top moves and heightens an item, the ◇ widen it; the height is taken to grow with `amount`)
-- Each item is passed as `{"<key>": value, …, "constraints": {"<key>": "text"}}`. A field at its default (other than `position`, `width` and `amount`) is left out, so a plugin takes a missing field as its default. What a constraint means is the plugin's, except that a capital letter standing alone names an item, which the app renames when an item is taken out
+- `kind` is which window it is. The only one so far is `"spectrum-fit"` (items on a background, over a range of data); a plugin with an editor of a kind the app does not know is not installed
+- Items are lettered A, B, C …, a column each in the table. A field's `type` is `"number"` (the default) or `"text"`; `"constraint": true` gives it a row for its constraint
+- `drag` says what dragging on the plot does to the fields; the app follows it and knows nothing of what they mean. `x`: the field set to the X where the square at an item's top is dropped. `height`: the field moving that square up and down changes: `"proportional"` multiplies it by the new height over the old (an area, which grows with the height), `"value"` sets it to the height (the top above the background, as the preview gives it). `width`: the field the ◇ change: `"full"` is the distance between them (a FWHM), `"half"` from the item's X to one of them; the fields in `scale` are multiplied by the new width over the old (to keep the height of a shape whose area grows with its width)
+- Each item is passed as `{"<key>": value, …, "constraints": {"<key>": "text"}}`. A field at its default (other than those `drag` changes) is left out, so a plugin takes a missing field as its default. What a constraint means is the plugin's, except that a capital letter standing alone names an item, which the app renames when an item is taken out
 - `preview` is called after each edit, recorded nowhere and changing nothing in the experiment. It returns the waves `x` (X across the range), `data`, `background`, `fit`, `residual`, `item0`, `item1`, … (each item alone, without the background) and `all_x`, `all_y` (all of the data, drawn grey), and in its `values`: `items` (for each, `values`: its numbers as the constraints leave them, `tied`: the fields tied to another item, `peak`: `[x, the top, the background under it]`), `errors` (a list of `{"item", "field", "message"}`) and `problem` (text or null)
 - `fit` is an ordinary run of an action, kept in the history and among the results. The `items` of its `values` (each item's numbers found) go back into the table, and its `report` (`columns`, `rows`, `lines`, `warnings`) into the Report tab. With `coef`, an editor opened again reads the values back from the coefficients of the result kept (`A_position`, say)
 - The window fits with `replace=True` (below)

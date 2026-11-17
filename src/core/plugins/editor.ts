@@ -46,7 +46,33 @@ export interface EditorPartner {
   ties: Record<string, string>;
 }
 
+/**
+ * What dragging an item on the plot changes, as the plugin says: the app
+ * applies these rules and knows nothing of what the fields mean.
+ *
+ * - `x`: the number field set to where the square at the item's top is dropped.
+ * - `height`: what moving that square up and down changes: `proportional`
+ *   multiplies the field by the new height over the old (an area, which
+ *   grows with the height), `value` sets it to the height itself. The height
+ *   is the item's top above its base, as the preview says.
+ * - `width`: the field the half-width handles change: `full` is the distance
+ *   between them (a FWHM), `half` from the item's X to one of them; the
+ *   fields in `scale` are multiplied by the new width over the old (to keep
+ *   the height of a shape whose area grows with its width).
+ */
+export interface EditorDrag {
+  x: string;
+  height: { field: string; rule: "proportional" | "value" } | null;
+  width: { field: string; rule: "full" | "half"; scale: string[] } | null;
+}
+
+/** The kinds of editor this app draws. */
+export const EDITOR_KINDS = ["spectrum-fit"] as const;
+export type EditorKind = (typeof EDITOR_KINDS)[number];
+
 export interface EditorSpec {
+  /** Which window the app draws for it: only spectrum-fit so far (data, a range, items on a background). */
+  kind: EditorKind;
   name: string;
   title: string;
   description: string;
@@ -65,10 +91,8 @@ export interface EditorSpec {
     title: string;
     max: number;
     fields: EditorField[];
-    /** The number fields dragged on the plot: where, how wide, how much (the area, to scale with height). */
-    position: string;
-    width: string | null;
-    amount: string | null;
+    /** What dragging an item on the plot does to its fields (see EditorDrag). */
+    drag: EditorDrag;
     /** How the fit's result names a field of an item: "{letter}_{key}" (A_position). */
     coef: string | null;
   };
@@ -158,6 +182,7 @@ export function parseEditor(
   onlyKeys(
     value,
     [
+      "kind",
       "name",
       "title",
       "description",
@@ -173,6 +198,14 @@ export function parseEditor(
     ],
     where,
   );
+  const kind = value.kind;
+  if (typeof kind !== "string")
+    throw new PluginError(`${where} must say its kind ("kind": "spectrum-fit").`);
+  if (!(EDITOR_KINDS as readonly string[]).includes(kind))
+    throw new PluginError(
+      `${where} is of a kind this app does not draw (${JSON.stringify(kind)}); it draws ${EDITOR_KINDS.join(", ")}.`,
+      "UNSUPPORTED",
+    );
   const name = text(value.name, `The name of ${where}`, 40);
   if (!NAME.test(name))
     throw new PluginError(`${JSON.stringify(name)} is not a usable editor name (a-z, 0-9 and _).`);
@@ -205,11 +238,7 @@ export function parseEditor(
 
   if (!isRecord(value.items)) throw new PluginError(`${what} must describe its items.`);
   const rawItems = value.items;
-  onlyKeys(
-    rawItems,
-    ["param", "title", "max", "fields", "position", "width", "amount", "coef"],
-    `The items of ${what}`,
-  );
+  onlyKeys(rawItems, ["param", "title", "max", "fields", "drag", "coef"], `The items of ${what}`);
   const itemsParam = (() => {
     const named = text(rawItems.param, `The items' argument of ${what}`, 40);
     for (const used of [preview, fit]) {
@@ -230,13 +259,52 @@ export function parseEditor(
   const fields = rawItems.fields.map((item, at) => field(item, `field ${at + 1} of ${what}`));
   if (new Set(fields.map((item) => item.key)).size !== fields.length)
     throw new PluginError(`${what} has two fields with the same key.`);
-  const numberField = (key: string, optional: boolean): string | null => {
-    if (rawItems[key] === undefined && optional) return null;
-    const named = text(rawItems[key], `The ${key} field of ${what}`, 40);
-    if (fields.find((item) => item.key === named)?.kind !== "number")
-      throw new PluginError(`${what}: the ${key} field ${named} is not one of its number fields.`);
-    return named;
+  const numberField = (named: unknown, what_: string): string => {
+    const key = text(named, what_, 40);
+    if (fields.find((item) => item.key === key)?.kind !== "number")
+      throw new PluginError(
+        `${what}: ${what_.toLowerCase()} ${key} is not one of its number fields.`,
+      );
+    return key;
   };
+  if (!isRecord(rawItems.drag))
+    throw new PluginError(`${what} must say what dragging an item does (items.drag).`);
+  const rawDrag = rawItems.drag;
+  onlyKeys(rawDrag, ["x", "height", "width"], `The drag of ${what}`);
+  const ruleOf = <T extends string>(raw: unknown, rules: readonly T[], where: string): T => {
+    if (typeof raw !== "string" || !(rules as readonly string[]).includes(raw))
+      throw new PluginError(`${where} is one of ${rules.join(", ")}.`);
+    return raw as T;
+  };
+  let height: EditorDrag["height"] = null;
+  if (rawDrag.height !== undefined) {
+    if (!isRecord(rawDrag.height))
+      throw new PluginError(`The drag height of ${what} is not described.`);
+    onlyKeys(rawDrag.height, ["field", "rule"], `The drag height of ${what}`);
+    height = {
+      field: numberField(rawDrag.height.field, "The height field"),
+      rule: ruleOf(
+        rawDrag.height.rule ?? "proportional",
+        ["proportional", "value"],
+        `The height rule of ${what}`,
+      ),
+    };
+  }
+  let width: EditorDrag["width"] = null;
+  if (rawDrag.width !== undefined) {
+    if (!isRecord(rawDrag.width))
+      throw new PluginError(`The drag width of ${what} is not described.`);
+    onlyKeys(rawDrag.width, ["field", "rule", "scale"], `The drag width of ${what}`);
+    const scale = rawDrag.width.scale ?? [];
+    if (!Array.isArray(scale) || scale.length > EDITOR_LIMITS.fields)
+      throw new PluginError(`The fields the width of ${what} scales are a list.`);
+    width = {
+      field: numberField(rawDrag.width.field, "The width field"),
+      rule: ruleOf(rawDrag.width.rule ?? "full", ["full", "half"], `The width rule of ${what}`),
+      scale: scale.map((item) => numberField(item, "A field the width scales")),
+    };
+  }
+  const drag: EditorDrag = { x: numberField(rawDrag.x, "The x field"), height, width };
   const max = rawItems.max ?? EDITOR_LIMITS.items;
   if (typeof max !== "number" || !Number.isInteger(max) || max < 1 || max > EDITOR_LIMITS.items)
     throw new PluginError(`${what}: max is a whole number from 1 to ${EDITOR_LIMITS.items}.`);
@@ -308,6 +376,7 @@ export function parseEditor(
     throw new PluginError(`The axis of ${what}: reverse is true or false.`);
 
   return {
+    kind: kind as EditorKind,
     name,
     title: text(value.title, `The title of ${what}`, 80),
     description: text(value.description, `The description of ${what}`, 2000, ""),
@@ -321,9 +390,7 @@ export function parseEditor(
       title: text(rawItems.title, `The items' title of ${what}`, 40, "Item"),
       max,
       fields,
-      position: numberField("position", false)!,
-      width: numberField("width", true),
-      amount: numberField("amount", true),
+      drag,
       coef,
     },
     partner,

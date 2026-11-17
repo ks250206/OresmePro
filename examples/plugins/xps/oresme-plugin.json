@@ -219,6 +219,7 @@
   ],
   "editors": [
     {
+      "kind": "spectrum-fit",
       "name": "xps",
       "title": "XPS Peak Fitting",
       "description": "Components of a region of an XPS spectrum, dragged on the spectrum and written in a table as on CasaXPS's Components page, fitted over a background.",
@@ -284,9 +285,18 @@
             "min": 0
           }
         ],
-        "position": "position",
-        "width": "fwhm",
-        "amount": "area",
+        "drag": {
+          "x": "position",
+          "height": {
+            "field": "area",
+            "rule": "proportional"
+          },
+          "width": {
+            "field": "fwhm",
+            "rule": "full",
+            "scale": ["area"]
+          }
+        },
         "coef": "{letter}_{key}"
       },
       "partner": {

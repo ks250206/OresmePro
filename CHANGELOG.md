@@ -35,8 +35,11 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   action computes what is drawn, in its sandbox, recorded nowhere and changing nothing; Fit runs
   its fit action, kept in the history and among the results, and takes what it found back into
   the table and a Report tab. Edits and fits are undone in the window, and data fitted before
-  open with their last fit. No code of the plugin runs in the app: the description is data,
-  checked field by field when the plugin is installed. Editors are listed in the Analysis menu
+  open with their last fit. What dragging does to an item's fields is the plugin's to say
+  (`drag`: the field set to X, one scaled with the height or set to it, one set by the width
+  and those scaled with it). No code of the plugin runs in the app: the description is data,
+  checked field by field when the plugin is installed. Each editor names its kind; the only
+  kind so far is `spectrum-fit`. Editors are listed in the Analysis menu
   and in Python › Plugins….
 - The arguments of plugins' actions can be of type `json` (lists and dicts), as the app's own.
 - `op.invoke(..., replace=True)` makes again, under their names, the waves the last run of the

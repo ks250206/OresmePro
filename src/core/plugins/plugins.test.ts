@@ -160,6 +160,7 @@ describe("model editors in a manifest", () => {
     { name: "xps_fit", title: "Fit", params },
   ];
   const editor = (change: Record<string, unknown> = {}) => ({
+    kind: "spectrum-fit",
     name: "xps",
     title: "XPS Peak Fitting",
     preview: "xps_preview",
@@ -176,9 +177,11 @@ describe("model editors in a manifest", () => {
         { key: "fwhm", default: 1.2, constraint: true, min: 0.05 },
         { key: "area", constraint: true },
       ],
-      position: "position",
-      width: "fwhm",
-      amount: "area",
+      drag: {
+        x: "position",
+        height: { field: "area", rule: "proportional" },
+        width: { field: "fwhm", rule: "full", scale: ["area"] },
+      },
       coef: "{letter}_{key}",
     },
     partner: {
@@ -216,6 +219,12 @@ describe("model editors in a manifest", () => {
       min: 0.05,
     });
     expect(spec!.partner!.offset).toBe("Offset");
+    expect(spec!.kind).toBe("spectrum-fit");
+    expect(spec!.items.drag).toEqual({
+      x: "position",
+      height: { field: "area", rule: "proportional" },
+      width: { field: "fwhm", rule: "full", scale: ["area"] },
+    });
     // A plugin without editors has none; json arguments are taken.
     expect(parse().editors).toEqual([]);
     expect(read().actions[1]!.params.components!.type).toBe("json");
@@ -227,9 +236,21 @@ describe("model editors in a manifest", () => {
       [{ data: "components" }, /no wave argument components/],
       [{ range: "shift" }, /no numbers argument shift/],
       [{ items: { ...editor().items, param: "spectrum" } }, /no json argument spectrum/],
-      [{ items: { ...editor().items, position: "name" } }, /not one of its number fields/],
+      [{ items: { ...editor().items, drag: { x: "name" } } }, /not one of its number fields/],
       [
-        { items: { ...editor().items, fields: [{ key: "a" }, { key: "a" }], position: "a" } },
+        {
+          items: {
+            ...editor().items,
+            drag: { x: "position", height: { field: "area", rule: "square" } },
+          },
+        },
+        /one of proportional, value/,
+      ],
+      [{ items: { ...editor().items, drag: undefined } }, /what dragging an item does/],
+      [{ kind: undefined }, /must say its kind/],
+      [{ kind: "node-graph" }, /a kind this app does not draw/],
+      [
+        { items: { ...editor().items, fields: [{ key: "a" }, { key: "a" }], drag: { x: "a" } } },
         /same key/,
       ],
       [

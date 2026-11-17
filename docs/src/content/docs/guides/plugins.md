@@ -122,6 +122,7 @@ return {
 
 ```json
 "editors": [{
+  "kind": "spectrum-fit",
   "name": "xps",
   "title": "XPS Peak Fitting",
   "preview": "xps_preview",
@@ -139,7 +140,11 @@ return {
       {"key": "fwhm", "title": "FWHM (eV)", "default": 1.2, "constraint": true, "min": 0.05},
       {"key": "area", "title": "Area", "constraint": true, "min": 0}
     ],
-    "position": "position", "width": "fwhm", "amount": "area",
+    "drag": {
+      "x": "position",
+      "height": {"field": "area", "rule": "proportional"},
+      "width": {"field": "fwhm", "rule": "full", "scale": ["area"]}
+    },
     "coef": "{letter}_{key}"
   },
   "partner": {"title": "Doublet", "offset": "Δ (eV)", "ratios": [["p (1:2)", 0.5]],
@@ -150,8 +155,10 @@ return {
 ```
 
 - `preview` と `fit` は、そのプラグインの Action の名前です。どちらも同じ引数を取ります: `data`(データの `wave`)、`x`(X の `wave`、省略可)、`range`(長さ 2 の `numbers`。プロット上の破線をドラッグして動かします)、`items.param`(`json`。項目のリスト)、`settings`(Settings タブに並ぶ、普通の値の引数)
-- 項目(items)は A, B, C … と文字が付き、表では項目ごとに列が並びます。`fields` の `type` は `"number"`(既定)か `"text"`、`"constraint": true` の欄にはその下に制約の行が付きます。`position`・`width`・`amount` は、プロット上で動かす欄です(頂上の四角で位置と高さ、◇ で幅。高さは `amount` に比例するとして変えます)
-- 項目は `{"<key>": 値, …, "constraints": {"<key>": "制約の文字列"}}` として渡ります。既定値のままの欄(`position`・`width`・`amount` 以外)は省くので、プラグインは欄がないときにその既定値を使います。制約の文字列の意味はプラグインが決めます。ただし、文字列の中で単独の大文字は項目を指すとみなし、項目を消したときにアプリが付け替えます
+- `kind` は画面の種類です。今あるのは `"spectrum-fit"`(データ・範囲・背景の上の項目)だけで、知らない種類のエディタを持つプラグインは入れられません
+- 項目(items)は A, B, C … と文字が付き、表では項目ごとに列が並びます。`fields` の `type` は `"number"`(既定)か `"text"`、`"constraint": true` の欄にはその下に制約の行が付きます
+- `drag` は、プロット上のドラッグでどの欄がどう変わるかの決まりです。アプリはこの決まりどおりに動かすだけで、欄の意味は知りません。`x`: 頂上の四角を落とした X にする欄。`height`: 四角を上下に動かしたとき変わる欄で、`"proportional"` なら新旧の高さの比を掛け(面積のように高さに比例する量)、`"value"` なら高さそのもの(高さは preview が返す頂上と背景の差)。`width`: ◇ で変わる欄で、`"full"` なら ◇ の間の距離(FWHM)、`"half"` なら中心から ◇ までの距離。`scale` に挙げた欄には新旧の幅の比を掛けます(幅に比例して面積が増える形で高さを保つため)
+- 項目は `{"<key>": 値, …, "constraints": {"<key>": "制約の文字列"}}` として渡ります。既定値のままの欄(`drag` が変える欄以外)は省くので、プラグインは欄がないときにその既定値を使います。制約の文字列の意味はプラグインが決めます。ただし、文字列の中で単独の大文字は項目を指すとみなし、項目を消したときにアプリが付け替えます
 - `preview` は編集のたびに呼ばれ、履歴に残らず、Experiment も変えません。返すのは wave `x`(範囲の中の X)、`data`、`background`、`fit`、`residual`、`item0`, `item1`, …(各項目だけ。背景は含めない)、`all_x`・`all_y`(データ全体、灰色の点に)、そして `values` に `items`(項目ごとに `values`: 制約を当てはめた数値、`tied`: 他の項目に結ばれた欄、`peak`: `[x, 頂上の y, その下の背景]`)、`errors`(`{"item", "field", "message"}` のリスト)、`problem`(文字列か null)です
 - `fit` は普通の Action の実行として履歴と解析結果に残ります。`values` の `items`(項目ごとの求まった数値)を表に戻し、`report`(`columns`、`rows`、`lines`、`warnings`)を Report タブに出します。`coef` を書くと、再び開いたときに、残った結果の係数(`A_position` など)から値を読み戻します
 - ウィンドウのフィットは `replace=True` で実行します(下)

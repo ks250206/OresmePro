@@ -5,6 +5,7 @@ import {
   beginDrag,
   chooseData,
   dragSetup,
+  dragged,
   editItem,
   editSetup,
   editorStore,
@@ -372,8 +373,20 @@ function NumberInput({
 
 type Drag =
   | { kind: "range"; end: 0 | 1 }
-  | { kind: "top"; index: number; amount: number; height: number; base: number }
-  | { kind: "width"; index: number; amount: number; width: number }
+  | {
+      kind: "top";
+      index: number;
+      start: Record<string, string | number>;
+      height: number;
+      base: number;
+    }
+  | {
+      kind: "width";
+      index: number;
+      start: Record<string, string | number>;
+      width: number;
+      centre: number;
+    }
   | null;
 
 interface Geometry {
@@ -389,6 +402,9 @@ interface Geometry {
 }
 
 const MARGIN = { left: 60, right: 14, top: 8, bottom: 32 };
+
+/** How far from an item's X its half-width handles are, by the rule of its width field. */
+const handleReach = (rule: "full" | "half", width: number) => (rule === "full" ? width / 2 : width);
 
 /** The ends of the range fitted, as the preview drew it. */
 function rangeOf(preview: EditorPreview | null): [number, number] | null {
@@ -501,9 +517,8 @@ function Plot({
     if (geometry && preview) draw(ctx, geometry, context, setup, preview, selected, hover);
   }, [geometry, size, context, setup, preview, selected, hover]);
 
-  const widthKey = spec.items.width;
-  const tied = (index: number, field: string | null) =>
-    field !== null && (preview?.itemValues[index]?.tied.includes(field) ?? false);
+  const widthRule = spec.items.drag.width;
+  const tiedOf = (index: number) => preview?.itemValues[index]?.tied ?? [];
 
   /** What is under the pointer: a handle to drag, an item to select, or nothing. */
   const hitTest = (px: number, py: number): Drag | { kind: "select"; index: number } | null => {
@@ -511,19 +526,19 @@ function Plot({
     const { xs, ys } = geometry;
     const peaks = preview.itemValues;
     const selectedPeak = peaks[selected]?.peak;
-    const selectedWidth = widthKey ? peaks[selected]?.values[widthKey] : undefined;
-    if (selectedPeak && selectedWidth !== undefined) {
+    const selectedWidth = widthRule ? peaks[selected]?.values[widthRule.field] : undefined;
+    if (selectedPeak && selectedWidth !== undefined && widthRule) {
       const [position, topValue, base] = selectedPeak;
       const half = ys.toPixel((topValue + base) / 2);
       for (const side of [-1, 1]) {
-        const hx = xs.toPixel(position + (side * selectedWidth) / 2);
+        const hx = xs.toPixel(position + side * handleReach(widthRule.rule, selectedWidth));
         if (Math.abs(px - hx) <= 6 && Math.abs(py - half) <= 6) {
-          const amount = spec.items.amount ? setup.items[selected]?.values[spec.items.amount] : 0;
           return {
             kind: "width",
             index: selected,
-            amount: typeof amount === "number" ? amount : 0,
+            start: { ...setup.items[selected]!.values },
             width: selectedWidth,
+            centre: position,
           };
         }
       }
@@ -532,11 +547,10 @@ function Plot({
       const peak = peaks[index]?.peak;
       if (!peak) continue;
       if (Math.abs(px - xs.toPixel(peak[0])) <= 6 && Math.abs(py - ys.toPixel(peak[1])) <= 6) {
-        const amount = spec.items.amount ? setup.items[index]?.values[spec.items.amount] : 0;
         return {
           kind: "top",
           index,
-          amount: typeof amount === "number" ? amount : 0,
+          start: { ...setup.items[index]!.values },
           height: peak[1] - peak[2],
           base: peak[2],
         };
@@ -593,24 +607,21 @@ function Plot({
       dragSetup(key, (setupNow) => ({ ...setupNow, range: next }));
       return;
     }
-    const { position, amount } = spec.items;
-    const change: Record<string, number> = {};
-    if (current.kind === "top") {
-      if (!tied(current.index, position)) change[position] = value;
-      if (amount && !tied(current.index, amount) && current.height > 0) {
-        const height = Math.max(geometry.ys.toValue(py) - current.base, current.height * 1e-3);
-        change[amount] = (current.amount * height) / current.height;
-      }
-    } else if (widthKey && !tied(current.index, widthKey)) {
-      const centre = preview.itemValues[current.index]?.values[position];
-      if (centre === undefined) return;
-      const least = spec.items.fields.find((field) => field.key === widthKey)?.min ?? 0;
-      const width = Math.max(least, 1e-6, 2 * Math.abs(value - centre));
-      change[widthKey] = width;
-      // The height stays: the amount grows with the width.
-      if (amount && !tied(current.index, amount) && current.width > 0)
-        change[amount] = (current.amount * width) / current.width;
-    }
+    // What the drag does to the fields is the plugin's to say (items.drag).
+    const change =
+      current.kind === "top"
+        ? dragged(spec, current.start, tiedOf(current.index), {
+            kind: "top",
+            x: value,
+            height: Math.max(geometry.ys.toValue(py) - current.base, current.height * 1e-3),
+            startHeight: current.height,
+          })
+        : dragged(spec, current.start, tiedOf(current.index), {
+            kind: "width",
+            x: value,
+            centre: current.centre,
+            startWidth: current.width,
+          });
     if (Object.keys(change).length > 0) setItem(current.index, change);
   };
 
@@ -895,11 +906,12 @@ function draw(
     ctx.textAlign = "center";
     ctx.font = `bold 11px ${FONT}`;
     ctx.fillText(LETTERS[index]!, px, py - 8);
-    const width = spec.items.width ? item.values[spec.items.width] : undefined;
-    if (index === selected && width !== undefined) {
+    const rule = spec.items.drag.width;
+    const width = rule ? item.values[rule.field] : undefined;
+    if (index === selected && width !== undefined && rule) {
       const half = ys.toPixel((topValue + base) / 2);
       for (const side of [-1, 1]) {
-        const hx = xs.toPixel(position + (side * width) / 2);
+        const hx = xs.toPixel(position + side * handleReach(rule.rule, width));
         ctx.beginPath();
         ctx.moveTo(hx, half - 5);
         ctx.lineTo(hx + 5, half);
@@ -1053,15 +1065,19 @@ function ItemsTab({
         </Button>
         <Button
           disabled={selected < 0 || full}
-          title={`A copy of the selected ${spec.items.title.toLowerCase()}, a little higher in X`}
+          title={`A copy of the selected ${spec.items.title.toLowerCase()}, moved over by its width`}
           onClick={() => {
             const source = items[selected];
             if (!source) return;
-            const position = preview?.itemValues[selected]?.values[spec.items.position];
+            const { drag } = spec.items;
+            const position = preview?.itemValues[selected]?.values[drag.x];
+            // Moved over by its own width (or by 1, without one), so the two can be told apart.
+            const width = drag.width ? Number(source.values[drag.width.field]) : NaN;
+            const step = Number.isFinite(width) && width > 0 ? width : 1;
             const copy = {
               values: {
                 ...source.values,
-                [spec.items.position]: (position ?? Number(source.values[spec.items.position])) + 1,
+                [drag.x]: (position ?? Number(source.values[drag.x])) + step,
                 ...(Object.hasOwn(source.values, "name") ? { name: "" } : {}),
               },
               constraints: Object.fromEntries(
@@ -1091,11 +1107,9 @@ function ItemsTab({
                     .replaceAll("{ratio}", formatNumber(ratio, 4));
                 const values: Record<string, string | number> = { ...source.values };
                 for (const [field, value] of Object.entries(resolved)) values[field] = value;
-                values[spec.items.position] =
-                  (resolved[spec.items.position] ?? Number(values[spec.items.position])) + offset;
-                if (spec.items.amount)
-                  values[spec.items.amount] =
-                    (resolved[spec.items.amount] ?? Number(values[spec.items.amount])) * ratio;
+                // Its X moved by the offset; whatever the ties set, the plugin works out.
+                const x = spec.items.drag.x;
+                values[x] = (resolved[x] ?? Number(values[x])) + offset;
                 if (typeof source.values.name === "string" && source.values.name)
                   values.name = `${source.values.name} (2)`;
                 const constraints = Object.fromEntries(
@@ -1124,7 +1138,7 @@ function ItemsTab({
             </span>
             <Select
               aria-label="Ratio"
-              title={`What the partner's ${spec.items.amount ?? "amount"} is, as a part of the selected one's`}
+              title="The ratio the partner's ties use"
               value={String(ratio)}
               onChange={(event) => setRatio(Number(event.target.value))}
             >

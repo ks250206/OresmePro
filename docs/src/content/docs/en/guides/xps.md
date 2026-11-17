@@ -58,7 +58,7 @@ Constraints:
 The buttons on the left:
 
 - **Create** adds a component where, in the region, the data stands highest above the model so far
-- **Copy** adds a copy of the selected component 1 eV higher
+- **Copy** adds a copy of the selected component, higher by its FWHM
 - **Doublet** adds the spin-orbit partner of the selected component X, tied to it: position `X+Δ`, FWHM `X`, area `X*ratio`. Choose Δ (eV) and the ratio (p 1:2, d 2:3, f 3:4) below it
 - **Delete** removes the selected component; constraints tied to it are let go, keeping the values they had
 
