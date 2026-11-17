@@ -22,6 +22,8 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Added
 
 - With the drawing tools out, ⌘A / Ctrl+A selects every drawing, and Shift-click adds to the
@@ -61,5 +63,6 @@ The first version numbered: OresmePro as it was built up to here.
   experiments saved in the browser and as `.oresme` files; export to PDF, SVG and PNG.
 - Documentation in Japanese and English, with a reference of the Python API.
 
-[Unreleased]: https://github.com/ks250206/OresmePro/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ks250206/OresmePro/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ks250206/OresmePro/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ks250206/OresmePro/releases/tag/v0.2.0
