@@ -444,6 +444,59 @@ def test_eis_circuit_with_noise_and_a_guess():
             raise AssertionError(f"no error for {arguments}")
 
 
+def test_circuit_diagrams_read_back_as_the_circuits_they_draw():
+    """A circuit laid out as a diagram reads back as itself; one that is not a circuit says why."""
+    from electrochem.diagram import circuit_of, diagram_of, same_circuit
+    for text in ("R0-p(R1,C1)", "R0-p(R1-W1,CPE1)", "R0-p(R1,CPE1)-p(R2,CPE2)",
+                 "L0-R0-p(R1,CPE1)-Wo1", "R0-p(R1-p(R2,C2),C1)", "R0", "p(R1,C1,L1)"):
+        assert same_circuit(circuit_of(diagram_of(text)), text), text
+    assert same_circuit("p(R1,C1)", "p(C1,R1)") and not same_circuit("R0-C1", "R0-p(R1,C1)")
+
+    def wired(text, change):
+        diagram = diagram_of(text)
+        change(diagram)
+        return diagram
+
+    def add(diagram, *nodes, edges=()):
+        diagram["nodes"].extend({"id": name, "kind": kind, "x": 0, "y": 0} for name, kind in nodes)
+        diagram["edges"].extend({"from": list(a), "to": list(b)} for a, b in edges)
+
+    # Drawn in parallel with R1 and C1: a third branch, written so.
+    third = wired("R0-p(R1,C1)", lambda d: add(d, ("W1", "W"),
+                                                edges=[(("W1", "a"), ("C1", "a")), (("W1", "b"), ("C1", "b"))]))
+    assert same_circuit(circuit_of(third), "R0-p(R1,C1,W1)")
+    # Put in series after the end's last element, the end wired to it instead.
+    def series(d):
+        d["edges"] = [e for e in d["edges"] if e["to"] != ["end", "p"]]
+        add(d, ("L0", "L"), edges=[(("R1", "b"), ("L0", "a")), (("L0", "b"), ("end", "p"))])
+    assert same_circuit(circuit_of(wired("R0-p(R1,C1)", series)), "R0-p(R1,C1)-L0")
+    cases = [
+        (lambda d: add(d, ("R2", "R")), "R2 has an end wired to nothing"),
+        (lambda d: d.update(edges=[e for e in d["edges"] if e["to"] != ["end", "p"]]),
+         "Nothing is wired to the end"),
+        (lambda d: add(d, ("R5", "C")), "not the name of a C"),
+        (lambda d: add(d, edges=[(("start", "p"), ("end", "p"))]), "straight to the end"),
+        (lambda d: d["nodes"].pop(0), "lost its start"),
+    ]
+    # A bridge: R2 across the middles of two branches of two elements each.
+    def bridge(d):
+        d["nodes"] = [n for n in d["nodes"] if n["id"] in ("start", "end")]
+        add(d, ("R1", "R"), ("R2", "R"), ("R3", "R"), ("R4", "R"), ("C1", "C"))
+        d["edges"] = []
+        add(d, edges=[(("start", "p"), ("R1", "a")), (("start", "p"), ("C1", "a")),
+                      (("R1", "b"), ("R3", "a")), (("C1", "b"), ("R4", "a")),
+                      (("R3", "b"), ("end", "p")), (("R4", "b"), ("end", "p")),
+                      (("R2", "a"), ("R1", "b")), (("R2", "b"), ("C1", "b"))])
+    cases.append((bridge, "cannot be taken apart"))
+    for change, message in cases:
+        try:
+            circuit_of(wired("R0-p(R1,C1)", change))
+        except PluginError as error:
+            assert message in str(error), (message, str(error))
+        else:
+            raise AssertionError(f"no error for {message}")
+
+
 # --- Running ---------------------------------------------------------------------
 
 
@@ -505,6 +558,27 @@ def test_eis_view_draws_guesses_and_takes_a_fit_back():
     outcome, _, _ = call(state, {"type": "change", "paths": ["circuit"]})
     assert outcome["values"]["message"]
 
+    # The diagram: drawn from the circuit, and a circuit drawn in it is the circuit.
+    state["circuit"] = "R0-p(R1,CPE1)"
+    _, state, layout = call(state, {"type": "change", "paths": ["circuit"]})
+    assert {node["id"] for node in state["diagram"]["nodes"]} == {"start", "R0", "R1", "CPE1", "end"}
+    assert "nodes" in json.dumps(layout)
+    state["diagram"]["nodes"].append({"id": "W1", "kind": "W", "x": 0, "y": 0})
+    # W1 put after R1 in its branch: R1 no longer wired to CPE1 and the end, W1 is.
+    state["diagram"]["edges"] = [
+        {"from": ["W1", "b"] if edge["from"] == ["R1", "b"] else edge["from"],
+         "to": ["W1", "b"] if edge["to"] == ["R1", "b"] else edge["to"]}
+        for edge in state["diagram"]["edges"]
+    ] + [{"from": ["R1", "b"], "to": ["W1", "a"]}]
+    outcome, state, _ = call(state, {"type": "change", "paths": ["diagram"]})
+    assert state["circuit"] == "R0-p(R1-W1,CPE1)", state["circuit"]
+    assert [row["name"] for row in state["params"]] == ["R0", "R1", "W1", "Q1", "n1"]
+    # One being drawn, not yet a circuit: said, and the circuit stays.
+    state["diagram"]["nodes"].append({"id": "C2", "kind": "C", "x": 0, "y": 0})
+    outcome, state, _ = call(state, {"type": "change", "paths": ["diagram"]})
+    assert state["circuit"] == "R0-p(R1-W1,CPE1)" and "C2 has an end" in outcome["values"]["message"]
+    assert any(node["id"] == "C2" for node in state["diagram"]["nodes"])
+
     # Opened again, it starts from the last fit kept.
     last = {"action": "eis_circuit", "result": "Plugin0",
             "inputs": {"frequency": "f", "zre": "re", "zim": "im"},
@@ -512,6 +586,12 @@ def test_eis_view_draws_guesses_and_takes_a_fit_back():
             "coef": truth.tolist(), "sigma": [0.0] * 4}
     _, state, _ = call(None, {"type": "open", "last": last}, with_waves=False)
     assert state["frequency"] == "f" and state["params"][1]["value"] == 100.0
+    # Where it was left, when the experiment kept that, comes before the last fit.
+    left = dict(state, circuit="R0-p(R1,C1)", params=[{"name": "R0", "value": 7.0}], extra=1)
+    saved = {"state": left, "version": "0.2.0"}
+    _, state, _ = call(None, {"type": "open", "last": last, "saved": saved}, with_waves=False)
+    assert state["circuit"] == "R0-p(R1,C1)" and state["params"][0]["value"] == 7.0
+    assert "extra" not in state
 
 
 def run_all():

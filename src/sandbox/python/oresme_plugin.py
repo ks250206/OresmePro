@@ -155,7 +155,8 @@ def view(name):
     ``message`` of None takes it away); ``waves`` are those of this answer only. ``waves`` given to it are copies of
     those chosen in the window's ``ui.wave`` parts, by the path they are bound
     to. ``event`` is ``{"type": "open", "last": ...}``, ``{"type": "change",
-    "paths": [...]}``, ``{"type": "command", "id": ...}`` or ``{"type":
+    "paths": [...]}``, ``{"type": "command", "id": ...}`` (with ``"x"`` and
+    ``"y"`` for a plot's ``on_click``) or ``{"type":
     "done", "id": ..., "args": ..., "ok": ..., "values": ..., "result": ...,
     "error": ...}`` (``args``: what the action ran with, to check that a result is
     for what the view shows now).
@@ -282,9 +283,23 @@ class ui:
 
     @staticmethod
     def plot(series, x_label=None, y_label=None, x_log=None, y_log=None, equal=None,
-             x_reverse=None, height=None):
+             x_reverse=None, height=None, handles=None, on_click=None):
+        """Series made by ``ui.series``; ``handles`` made by ``ui.handle``; ``on_click``: a
+        command sent with the place clicked (``event["x"]``, ``event["y"]``)."""
         return _part("plot", series=list(series), x_label=x_label, y_label=y_label, x_log=x_log,
-                     y_log=y_log, equal=equal, x_reverse=x_reverse, height=height)
+                     y_log=y_log, equal=equal, x_reverse=x_reverse, height=height,
+                     handles=None if handles is None else list(handles), on_click=on_click)
+
+    @staticmethod
+    def handle(x=None, y=None, bind_x=None, bind_y=None, label=None, color=None):
+        """A handle on a plot, at ``x``, ``y`` in its units: a point, or a line across it
+        when one of them is None. Dragged, it moves the values at ``bind_x`` and ``bind_y``
+        by as much as it moves (by the same ratio on a log axis); each step is a change of
+        those paths. Without a bind it only marks a place."""
+        return {key: value for key, value in {
+            "x": None if x is None else float(x), "y": None if y is None else float(y),
+            "bind_x": bind_x, "bind_y": bind_y, "label": label, "color": color,
+        }.items() if value is not None}
 
     @staticmethod
     def series(y, x=None, mode=None, color=None, label=None):
@@ -297,6 +312,25 @@ class ui:
         """Calls the view with a command (``on``), or runs one of the plugin's actions (``action``)."""
         return _part("button", label=label, on=on, action=action, args=args, replace=replace,
                      primary=primary, disabled=disabled)
+
+    @staticmethod
+    def nodes(label, bind, palette, height=None):
+        """Boxes joined at their ports, edited in the window: the graph at ``bind`` is
+        ``{"nodes": [{"id", "kind", "label", "x", "y", "fixed"}], "edges": [{"from": [id,
+        port], "to": [id, port]}]}``. ``palette``: the kinds, made by ``ui.kind``. A node
+        added gets the id of its kind and the least number not taken (``R0``, ``R1``)."""
+        return _part("nodes", label=label, bind=bind, palette=list(palette), height=height)
+
+    @staticmethod
+    def kind(kind, title=None, ports=("a", "b"), color=None, add=None):
+        """A kind of node: its ports are names (on the left and right in turn) or
+        ``(name, side)`` pairs, the side "left", "right", "top" or "bottom". ``add=False``
+        for kinds only the view makes, such as fixed ends."""
+        return {key: value for key, value in {
+            "kind": kind, "title": title,
+            "ports": [list(port) if isinstance(port, tuple) else port for port in ports],
+            "color": color, "add": add,
+        }.items() if value is not None}
 
     @staticmethod
     def bind(path):

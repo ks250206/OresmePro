@@ -75,3 +75,10 @@ export function closeEditorWindows(plugin: string): void {
     windows: windows.filter((window) => !window.tool.startsWith(`editor:${plugin}/`)),
   }));
 }
+
+/** Closes the windows of every plugin's editors: another experiment was opened. */
+export function closeAllEditorWindows(): void {
+  toolWindows.set(({ windows }) => ({
+    windows: windows.filter((window) => !window.tool.startsWith("editor:")),
+  }));
+}

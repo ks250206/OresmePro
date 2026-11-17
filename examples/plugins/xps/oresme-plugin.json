@@ -2,8 +2,8 @@
   "manifestVersion": 1,
   "name": "xps",
   "title": "XPS Peak Fitting",
-  "version": "0.2.0",
-  "description": "Peak models of XPS spectra in the way CasaXPS builds them: a region, a Shirley, linear or Tougaard background, and synthetic components with CasaXPS's line shapes (GL, SGL, GL(m)T(k), LA(α,β)) and constraints between components (position A+1.5, area A*0.5, FWHM A), fitted by least squares with uncertainties, in a window where the components are dragged on the spectrum and written in a table (Analysis › XPS Peak Fitting…); and atomic concentrations from region areas and sensitivity factors. Binding energies in eV.",
+  "version": "0.3.0",
+  "description": "Peak models of XPS spectra in the way CasaXPS builds them: a region, a Shirley, linear or Tougaard background, and synthetic components with CasaXPS's line shapes (GL, SGL, GL(m)T(k), LA(α,β)) and constraints between components (position A+1.5, area A*0.5, FWHM A), fitted by least squares with uncertainties, in a window where the components are dragged on the spectrum and written in a table (Analysis › XPS Peak Fitting…); and atomic concentrations from region areas and sensitivity factors, in a window where the regions are dragged on the spectrum (Analysis › XPS Quantification…). Binding energies in eV.",
   "license": "MIT",
   "python": {
     "entry": "xps",
@@ -15,7 +15,8 @@
     "xps/shapes.py",
     "xps/components.py",
     "xps/fit.py",
-    "xps/quantify.py"
+    "xps/quantify.py",
+    "xps/quant_view.py"
   ],
   "actions": [
     {
@@ -218,6 +219,12 @@
     }
   ],
   "editors": [
+    {
+      "kind": "view",
+      "name": "quant",
+      "title": "XPS Quantification",
+      "description": "Atomic concentrations from regions of a survey or of narrow scans: the regions' bounds dragged on the spectrum, their areas over a background and atomic % worked out as they are edited, and Quantify to keep the result."
+    },
     {
       "kind": "spectrum-fit",
       "name": "xps",

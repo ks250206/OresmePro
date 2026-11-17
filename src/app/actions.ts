@@ -6,6 +6,9 @@ import {
   type DistributeDirection,
   type MatchDimension,
 } from "../core/doc/arrange";
+import { forgetEditors } from "./pluginEditors";
+import { forgetViews } from "./pluginViews";
+import { closeAllEditorWindows } from "./toolWindows";
 import { type Command, uniqueName } from "../core/doc/commands";
 import { dict } from "../core/doc/dict";
 import { echoArrangement } from "../core/doc/echo";
@@ -391,6 +394,17 @@ export function leaveFor(id: string): void {
 }
 
 /**
+ * Closes plugins' editors and forgets what they hold, with what they had yet
+ * to put into the experiment: the document is about to be replaced, and they
+ * start again from what the new one kept of them.
+ */
+function forgetEditorWindows(): void {
+  closeAllEditorWindows();
+  forgetEditors();
+  forgetViews();
+}
+
+/**
  * Starts a new experiment. The one that was open stays as it is among the
  * browser's experiments; where the browser keeps none, there is only the
  * one, and it is cleared.
@@ -402,6 +416,7 @@ export async function newExperiment(): Promise<void> {
   }
   if (!window.confirm("Start a new experiment? All waves, graphs and tables will be removed."))
     return;
+  forgetEditorWindows();
   doc.load(emptyDoc());
   history.clear();
   files.load([]);
@@ -417,6 +432,7 @@ export async function revertExperiment(): Promise<void> {
   const lost = experiment.getState().kind === "unread" ? "" : " What was done since is lost.";
   if (!window.confirm(`Go back to the experiment as it was when it was last opened?${lost}`))
     return;
+  forgetEditorWindows();
   if (await experiment.revert()) {
     kernel.restart("Went back to the experiment as it was when it was last opened.");
   } else {
@@ -509,6 +525,7 @@ async function openExperimentFile(file: File): Promise<void> {
             { ...procedure, autoRun: false },
           ]),
         );
+    forgetEditorWindows();
     doc.load({ ...opened.state, procedures });
     history.load(opened.history);
     files.load(opened.files);

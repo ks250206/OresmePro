@@ -193,13 +193,16 @@ def eis_view(state, event, waves):
 ```
 
 - ハンドラは、画面のイベントのたびに `(state, event, waves)` で呼ばれます。`state` はアプリが持ち、毎回渡す値で、ハンドラ自身は何も覚えません。`waves` は、画面の `ui.wave` で選ばれた wave の**コピー**だけです(キーはその部品の `bind`)
-- `event` は `open`(`last`: このプラグインが最後に残した結果)、`change`(`paths`: 変わった道筋。元に戻したときは `"*"`)、`command`(`id`: `ui.button(on=...)`)、`done`(`ui.button(action=...)` の実行が終わった: `args`(実行した引数。今の画面への結果か確かめるため)、`ok`、`values`、`result`、`error`)。ハンドラが状態の中で wave を選んだとき(`open` で前の結果から戻したときなど)は、アプリがその wave を付けて続けて `change` を送ります
+- `event` は `open`(`saved`: Experiment に残っていた、この画面の前の状態 `{"state", "version"}`(残したプラグインの版)、なければ null。`last`: このプラグインが最後に残した結果)、`change`(`paths`: 変わった道筋。元に戻したときは `"*"`)、`command`(`id`: `ui.button(on=...)`。プロットの `on_click` なら、押した位置 `x`・`y` も)、`done`(`ui.button(action=...)` の実行が終わった: `args`(実行した引数。今の画面への結果か確かめるため)、`ok`、`values`、`result`、`error`)。ハンドラが状態の中で wave を選んだとき(`open` で前の結果から戻したときなど)は、アプリがその wave を付けて続けて `change` を送ります
 - 返す `state`・`ui`・`message` を省くと前のまま、`waves` はその返事で描く配列だけ(Experiment には入りません)。`bind` は状態の中の道筋(`params.2.value`)で、入力した値はすぐ状態に入り、ハンドラにはまとめて伝わります。ウィンドウの中の編集は Ctrl+Z で戻せます
 - Experiment を変えるのは `ui.button(action=...)` だけです。そのプラグインの action を、`args` の値(`ui.bind(道筋)` は押したときの状態の値)で実行し、履歴に `op.invoke(...)` として残ります。`replace=True` なら上の上書きの規則で実行します
-- 部品は `ui.view`、`column`、`row`、`split`、`tabs`、`group`、`text`、`number`、`string`、`choice`、`checkbox`、`wave`、`table`(`ui.col` で列)、`plot`(`ui.series` で系列。`x_log`、`y_log`、`equal`、`x_reverse`)、`button` です。アプリは知らない部品や props があると全体を断り、理由を表示します
+- 部品は `ui.view`、`column`、`row`、`split`、`tabs`、`group`、`text`、`number`、`string`、`choice`、`checkbox`、`wave`、`table`(`ui.col` で列)、`plot`(`ui.series` で系列。`x_log`、`y_log`、`equal`、`x_reverse`、`handles`、`on_click`)、`nodes`、`button` です。アプリは知らない部品や props があると全体を断り、理由を表示します
+- `ui.plot(..., handles=[ui.handle(x=280, bind_x="regions.0.low")])` は、ドラッグできる印です。`x` と `y` の両方で点、片方だけならプロットを横切る線になります。動かすと、`bind_x`・`bind_y` の値が同じだけ(対数軸では同じ比で)変わり、`change` として伝わります。ドラッグ 1 回が元に戻す 1 回です。`on_click="add"` は、ハンドルのない所を押したとき、その位置を付けた `command` を送ります
+- `ui.nodes(label, bind, palette)` は、箱(ノード)とその端子を線でつなぐ図を編集する部品です。`bind` の値は `{"nodes": [{"id", "kind", "label", "x", "y", "fixed"}], "edges": [{"from": [id, 端子], "to": [id, 端子]}]}` で、`palette` は `ui.kind(kind, title, ports=("a", "b"))` で作ります。パレットのボタンで足し(id は種類と、使われていない最小の番号: `R0`、`R1`)、ドラッグで動かし、端子から端子へドラッグしてつなぎ、Delete で消します(`fixed` のノードは消せません)。図が何を意味するか(回路など)は Python が読みます
+- 画面の状態は、プラグイン名と版を付けて Experiment に保存されます(Experiment の元に戻すの対象外)。開き直すと `open` の `saved` で渡るので、ハンドラはそこから続けられます。版が変わったときにどう読むかは、プラグインが決めます
 
 見本として、次のプラグインを置いています。
 
-- 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)。view **EIS Circuit Fitting** で、回路とパラメータを編集しながら Nyquist・Bode 図を見て、フィットできます
+- 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)。view **EIS Circuit Fitting** で、回路を文字か回路図で描き、パラメータを編集しながら Nyquist・Bode 図を見て、フィットできます
 - 3元相図: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary)。枠、グリッド、目盛りの数値、頂点の名前を、普通のトレースと文字マーカーで描き、グラフとして返します
-- XPS のピークフィット(CasaXPS のような領域・Shirley/Tougaard 背景・GL/SGL/LA の線形・成分間の制約、RSF による定量): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps)。モデル編集ウィンドウ **XPS Peak Fitting** を持ちます([使い方](../xps/))。結合エネルギーの軸を反転し、残差を上に並べたグラフを返します
+- XPS のピークフィット(CasaXPS のような領域・Shirley/Tougaard 背景・GL/SGL/LA の線形・成分間の制約、RSF による定量): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps)。モデル編集ウィンドウ **XPS Peak Fitting** と、領域の境をスペクトル上でドラッグして原子 % を求める view **XPS Quantification** を持ちます([使い方](../xps/))。結合エネルギーの軸を反転し、残差を上に並べたグラフを返します

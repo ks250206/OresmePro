@@ -194,6 +194,7 @@ export function echoPython(
     case "resizeColumn":
     case "setProcedure":
     case "setNote":
+    case "keepEditorState":
     // Recorded by the Python that installs or removes them (op.install, %pip).
     case "recordPackages":
     case "forgetPackages":

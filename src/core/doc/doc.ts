@@ -52,6 +52,7 @@ function withDicts(state: DocState): DocState {
   const results = asDict(state.results);
   const templates = asDict(state.templates);
   const runs = asDict(state.runs);
+  const editors = asDict(state.editors);
   const same =
     graphs === state.graphs &&
     tables === state.tables &&
@@ -64,7 +65,8 @@ function withDicts(state: DocState): DocState {
     graphTemplates === state.graphTemplates &&
     results === state.results &&
     templates === state.templates &&
-    runs === state.runs;
+    runs === state.runs &&
+    editors === state.editors;
   return same
     ? state
     : {
@@ -78,6 +80,7 @@ function withDicts(state: DocState): DocState {
         notes,
         styles,
         graphTemplates,
+        editors,
         results,
         templates,
         runs,
@@ -457,8 +460,8 @@ export class Doc {
 
   /**
    * Undo restores content, not what is outside its reach: where the user has
-   * since dragged windows, column widths, and the text of procedures and
-   * notes (their editors have their own undo). Whatever exists in both states keeps its
+   * since dragged windows, column widths, the text of procedures and
+   * notes, and what plugins' editors hold (their editors have their own undo). Whatever exists in both states keeps its
    * current value. The one exception is a window the step itself resized (a
    * style with a size does), as long as it is still as the step left it
    * (`stepWindows`): its size is part of what is undone. A graph's window
@@ -491,6 +494,8 @@ export class Doc {
       tables,
       procedures,
       notes,
+      // What the windows of plugins' editors hold is theirs to undo.
+      editors: now.editors,
       windows: target.windows.map((window) => {
         const live = current.get(window.name);
         if (!live) return window;

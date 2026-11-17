@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test as base, expect, type Download, type Locator, type Page } from "@playwright/test";
+import type { ExperimentSession } from "../src/app/experiments";
 import type { Doc } from "../src/core/doc/doc";
 import type { FileStore } from "../src/core/files/files";
 import type { History } from "../src/core/history/history";
@@ -12,6 +13,8 @@ declare global {
     history: History;
     kernel: KernelClient;
     files: FileStore;
+    /** The experiment kept in the browser: its save state, and flush() to save now. */
+    experiment: ExperimentSession;
     /** How many files the service worker holds for starting offline, once it has them. */
     offlineFiles?: number;
   };

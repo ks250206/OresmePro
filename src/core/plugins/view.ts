@@ -49,6 +49,16 @@ export type ViewNode =
       equal: boolean;
       xReverse: boolean;
       height: number;
+      handles: ViewHandle[];
+      /** The handler told where the plot was clicked, away from its handles. */
+      onClick: string | null;
+    }
+  | {
+      type: "nodes";
+      label: string;
+      bind: string;
+      palette: ViewNodeKind[];
+      height: number;
     }
   | {
       type: "button";
@@ -81,6 +91,57 @@ export interface ViewSeries {
   label: string;
 }
 
+/**
+ * A kind of node a nodes part draws and adds: a box with its ports, the
+ * places edges join it at. Nodes of kinds that cannot be added (add false)
+ * come only from the view: the two ends of a circuit, say.
+ */
+export interface ViewNodeKind {
+  kind: string;
+  title: string;
+  ports: { name: string; side: ViewPortSide }[];
+  color: string | null;
+  add: boolean;
+}
+
+export type ViewPortSide = "left" | "right" | "top" | "bottom";
+
+/** What a nodes part edits, at its bind: nodes where they are, and edges between their ports. */
+export interface ViewGraph {
+  nodes: ViewGraphNode[];
+  edges: ViewGraphEdge[];
+}
+
+export interface ViewGraphNode {
+  id: string;
+  kind: string;
+  label: string;
+  x: number;
+  y: number;
+  /** A node that cannot be taken out. */
+  fixed: boolean;
+}
+
+export interface ViewGraphEdge {
+  from: [string, string];
+  to: [string, string];
+}
+
+/**
+ * A point, or a line across the plot, that can be dragged: at x, y in the
+ * plot's units (a vertical line without y, a horizontal one without x). The
+ * values at bindX and bindY move as it does: by as much as it moves on a
+ * linear axis, by the same ratio on a log one.
+ */
+export interface ViewHandle {
+  x: number | null;
+  y: number | null;
+  bindX: string | null;
+  bindY: string | null;
+  label: string;
+  color: string | null;
+}
+
 /** An argument of a button's action: a plain value, or the value at a path of the state. */
 export type ViewValue = JsonValue | { $bind: string };
 
@@ -105,6 +166,10 @@ export const VIEW_LIMITS = {
   columns: 40,
   rows: 2000,
   series: 32,
+  handles: 200,
+  kinds: 40,
+  graphNodes: 500,
+  graphEdges: 2000,
   /** The state and the definition, as JSON text. */
   bytes: 1024 * 1024,
 } as const;
@@ -130,9 +195,25 @@ const KEYS: Record<string, readonly string[]> = {
   checkbox: ["label", "bind"],
   wave: ["label", "bind", "optional"],
   table: ["bind", "columns", "add", "remove"],
-  plot: ["series", "x_label", "y_label", "x_log", "y_log", "equal", "x_reverse", "height"],
+  plot: [
+    "series",
+    "x_label",
+    "y_label",
+    "x_log",
+    "y_log",
+    "equal",
+    "x_reverse",
+    "height",
+    "handles",
+    "on_click",
+  ],
   button: ["label", "on", "action", "args", "replace", "primary", "disabled"],
+  nodes: ["label", "bind", "palette", "height"],
 };
+
+const KIND = /^[A-Za-z][A-Za-z0-9_]{0,15}$/;
+const NODE_ID = /^[A-Za-z0-9_]{1,32}$/;
+const SIDES: readonly ViewPortSide[] = ["left", "right", "top", "bottom"];
 
 /** Reads a view's definition, as its Python returned it; refuses all of it if any part is off. */
 export function checkView(raw: unknown): ViewDefinition {
@@ -359,6 +440,49 @@ export function checkView(raw: unknown): ViewDefinition {
             label: text(item.label, "A series' label", VIEW_LIMITS.label, ""),
           };
         });
+        const rawHandles = value.handles ?? [];
+        if (!Array.isArray(rawHandles) || rawHandles.length > VIEW_LIMITS.handles)
+          throw new PluginError(`A plot has at most ${VIEW_LIMITS.handles} handles.`);
+        const handles = rawHandles.map((item): ViewHandle => {
+          if (!isRecord(item))
+            throw new PluginError("A handle is {x, y, bind_x, bind_y, label, color}.");
+          for (const key of Object.keys(item))
+            if (!["x", "y", "bind_x", "bind_y", "label", "color"].includes(key))
+              throw new PluginError(`A handle has no ${JSON.stringify(key)}.`);
+          const x = number(item.x, "A handle's x");
+          const y = number(item.y, "A handle's y");
+          if (x === null && y === null) throw new PluginError("A handle has an x, a y or both.");
+          const bindX =
+            item.bind_x === undefined || item.bind_x === null
+              ? null
+              : path(item.bind_x, "A handle's bind_x");
+          const bindY =
+            item.bind_y === undefined || item.bind_y === null
+              ? null
+              : path(item.bind_y, "A handle's bind_y");
+          if ((bindX !== null && x === null) || (bindY !== null && y === null))
+            throw new PluginError("A handle moves only along the axes it has a place on.");
+          const color =
+            item.color === undefined || item.color === null
+              ? null
+              : text(item.color, "A handle's color", 20);
+          if (color !== null && !COLOR.test(color))
+            throw new PluginError(`${JSON.stringify(color)} is not a color (#rrggbb).`);
+          return {
+            x,
+            y,
+            bindX,
+            bindY,
+            label: text(item.label, "A handle's label", VIEW_LIMITS.label, ""),
+            color,
+          };
+        });
+        const onClick =
+          value.on_click === undefined || value.on_click === null
+            ? null
+            : text(value.on_click, "A plot's on_click", 64);
+        if (onClick !== null && !HANDLER.test(onClick))
+          throw new PluginError(`${JSON.stringify(onClick)} is not a handler's name.`);
         const height = number(value.height, "A plot's height") ?? 240;
         if (!(height >= 80 && height <= 1200))
           throw new PluginError("A plot's height is from 80 to 1200.");
@@ -371,6 +495,66 @@ export function checkView(raw: unknown): ViewDefinition {
           yLog: flag(value.y_log, "A plot's y_log", false),
           equal: flag(value.equal, "A plot's equal", false),
           xReverse: flag(value.x_reverse, "A plot's x_reverse", false),
+          height,
+          handles,
+          onClick,
+        };
+      }
+      case "nodes": {
+        if (
+          !Array.isArray(value.palette) ||
+          value.palette.length === 0 ||
+          value.palette.length > VIEW_LIMITS.kinds
+        )
+          throw new PluginError(`A nodes part has 1 to ${VIEW_LIMITS.kinds} kinds in its palette.`);
+        const seen = new Set<string>();
+        const palette = value.palette.map((item): ViewNodeKind => {
+          if (!isRecord(item))
+            throw new PluginError("A kind of node is {kind, title, ports, ...}.");
+          for (const key of Object.keys(item))
+            if (!["kind", "title", "ports", "color", "add"].includes(key))
+              throw new PluginError(`A kind of node has no ${JSON.stringify(key)}.`);
+          const kind = text(item.kind, "A kind of node", 16);
+          if (!KIND.test(kind)) throw new PluginError(`${JSON.stringify(kind)} is not a kind.`);
+          if (seen.has(kind)) throw new PluginError(`The kind ${kind} is in the palette twice.`);
+          seen.add(kind);
+          if (!Array.isArray(item.ports) || item.ports.length > 8)
+            throw new PluginError("A kind of node has at most 8 ports.");
+          const names = new Set<string>();
+          const ports = item.ports.map((port, index) => {
+            const [name, side] = Array.isArray(port)
+              ? port
+              : [port, index % 2 === 0 ? "left" : "right"];
+            const checked = text(name, "A port", 16);
+            if (!KIND.test(checked) || names.has(checked))
+              throw new PluginError(`${JSON.stringify(checked)} is not a port of its own.`);
+            names.add(checked);
+            if (!SIDES.includes(side as ViewPortSide))
+              throw new PluginError("A port's side is left, right, top or bottom.");
+            return { name: checked, side: side as ViewPortSide };
+          });
+          const color =
+            item.color === undefined || item.color === null
+              ? null
+              : text(item.color, "A kind's color", 20);
+          if (color !== null && !COLOR.test(color))
+            throw new PluginError(`${JSON.stringify(color)} is not a color (#rrggbb).`);
+          return {
+            kind,
+            title: text(item.title, "A kind's title", VIEW_LIMITS.label, kind),
+            ports,
+            color,
+            add: flag(item.add, "A kind's add", true),
+          };
+        });
+        const height = number(value.height, "A nodes part's height") ?? 260;
+        if (!(height >= 80 && height <= 1200))
+          throw new PluginError("A nodes part's height is from 80 to 1200.");
+        return {
+          type,
+          label: text(value.label, `${what}'s label`, VIEW_LIMITS.label, ""),
+          bind: path(value.bind, `${what}'s bind`),
+          palette,
           height,
         };
       }
@@ -466,4 +650,54 @@ export function* viewNodes(node: ViewNode): Generator<ViewNode> {
     for (const child of node.children) yield* viewNodes(child);
   else if (node.type === "tabs") for (const tab of node.tabs) yield* viewNodes(tab.body);
   else if (node.type === "group") yield* viewNodes(node.body);
+}
+
+/**
+ * The graph at a nodes part's bind, as far as it can be read: nodes with
+ * ids of their own and a place, and edges between ports of nodes that are
+ * there. What cannot be read is left out, not refused: it is the view's state.
+ */
+export function readGraph(value: unknown): ViewGraph {
+  const graph: ViewGraph = { nodes: [], edges: [] };
+  if (!isRecord(value)) return graph;
+  const ids = new Set<string>();
+  const nodes = Array.isArray(value.nodes) ? value.nodes.slice(0, VIEW_LIMITS.graphNodes) : [];
+  for (const item of nodes) {
+    if (!isRecord(item)) continue;
+    const { id, kind, label, x, y, fixed } = item;
+    if (typeof id !== "string" || !NODE_ID.test(id) || ids.has(id)) continue;
+    if (typeof kind !== "string" || !KIND.test(kind)) continue;
+    if (
+      typeof x !== "number" ||
+      !Number.isFinite(x) ||
+      typeof y !== "number" ||
+      !Number.isFinite(y)
+    )
+      continue;
+    ids.add(id);
+    graph.nodes.push({
+      id,
+      kind,
+      label: typeof label === "string" ? label.slice(0, VIEW_LIMITS.label) : id,
+      x,
+      y,
+      fixed: fixed === true,
+    });
+  }
+  const end = (raw: unknown): [string, string] | null =>
+    Array.isArray(raw) &&
+    raw.length === 2 &&
+    typeof raw[0] === "string" &&
+    typeof raw[1] === "string" &&
+    ids.has(raw[0])
+      ? [raw[0], raw[1]]
+      : null;
+  const edges = Array.isArray(value.edges) ? value.edges.slice(0, VIEW_LIMITS.graphEdges) : [];
+  for (const item of edges) {
+    if (!isRecord(item)) continue;
+    const from = end(item.from);
+    const to = end(item.to);
+    if (from && to) graph.edges.push({ from, to });
+  }
+  return graph;
 }

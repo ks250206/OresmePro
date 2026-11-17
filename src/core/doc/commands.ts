@@ -134,6 +134,8 @@ import {
   type PageItem,
   type PageSpec,
   type ProcedureSpec,
+  type EditorMemory,
+  MAX_EDITOR_MEMORY,
 } from "./types";
 
 type Props = Readonly<Record<string, unknown>>;
@@ -406,19 +408,70 @@ export type Command =
   /** Gives a graph, table, procedure, page layout, panel or note and its window another name. */
   | { op: "renameWindow"; name: string; newName: string }
   | { op: "moveWindow"; name: string; x?: number; y?: number; w?: number; h?: number }
-  | { op: "activateWindow"; name: string };
+  | { op: "activateWindow"; name: string }
+  /**
+   * Keeps what a plugin's editor or view has in its window (see
+   * EditorMemory); a state of null forgets it.
+   */
+  | { op: "keepEditorState"; plugin: string; editor: string; version: string; state: unknown };
 
 /**
  * Window geometry, focus and column widths are view state: not undoable and
  * not echoed. Neither is the text of a procedure or a note: its editor has
  * its own undo.
  */
+const EDITOR_PART = /^[a-z][a-z0-9_-]{0,63}$/;
+const EDITOR_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+
+export const editorMemoryKey = (plugin: string, editor: string): string => {
+  if (typeof plugin !== "string" || !EDITOR_PART.test(plugin))
+    throw new DocError(`${JSON.stringify(plugin)} is not a plugin's name.`, "INVALID_ARGUMENT", {
+      field: "plugin",
+    });
+  if (typeof editor !== "string" || !EDITOR_NAME.test(editor))
+    throw new DocError(`${JSON.stringify(editor)} is not an editor's name.`, "INVALID_ARGUMENT", {
+      field: "editor",
+    });
+  return `${plugin}/${editor}`;
+};
+
+/** An editor's state as kept: plain JSON (a copy), not too large. */
+export function checkEditorMemory(value: unknown): EditorMemory {
+  const given = (value ?? {}) as Partial<EditorMemory>;
+  editorMemoryKey(given.plugin as string, given.editor as string);
+  if (typeof given.version !== "string" || given.version.length > 64)
+    throw new DocError("An editor's state needs the plugin's version.", "INVALID_ARGUMENT", {
+      field: "version",
+    });
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(given.state);
+  } catch {
+    text = undefined;
+  }
+  if (text === undefined)
+    throw new DocError("An editor's state is plain JSON.", "INVALID_ARGUMENT", { field: "state" });
+  if (text.length > MAX_EDITOR_MEMORY)
+    throw new DocError(
+      `An editor's state is larger than ${MAX_EDITOR_MEMORY / 1024} KiB.`,
+      "INVALID_ARGUMENT",
+      { field: "state" },
+    );
+  return {
+    plugin: given.plugin!,
+    editor: given.editor!,
+    version: given.version,
+    state: JSON.parse(text) as unknown,
+  };
+}
+
 export const isTransient = (command: Command): boolean =>
   command.op === "moveWindow" ||
   command.op === "activateWindow" ||
   command.op === "resizeColumn" ||
   command.op === "setProcedure" ||
-  command.op === "setNote";
+  command.op === "setNote" ||
+  command.op === "keepEditorState";
 
 export interface CommandOutcome {
   state: DocState;
@@ -3700,6 +3753,15 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         state: { ...state, python: withoutPackages(state.python, command.names) },
         result: null,
       };
+    }
+    case "keepEditorState": {
+      const key = editorMemoryKey(command.plugin, command.editor);
+      if (command.state === null || command.state === undefined) {
+        if (!(key in state.editors)) return { state, result: null };
+        return { state: { ...state, editors: withoutEntries(state.editors, [key]) }, result: null };
+      }
+      const memory = checkEditorMemory({ ...command });
+      return { state: { ...state, editors: withEntry(state.editors, key, memory) }, result: null };
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
