@@ -1,6 +1,6 @@
 import type { ParamSpec, ParamType } from "../actions";
-import { DocError, type ErrorCode } from "../doc/types";
 import { EDITOR_LIMITS, parseEditor, type EditorSpec } from "./editor";
+import { PluginError } from "./errors";
 
 /**
  * A plugin's description of itself: oresme-plugin.json at the root of its
@@ -16,17 +16,8 @@ import { EDITOR_LIMITS, parseEditor, type EditorSpec } from "./editor";
 
 export const MANIFEST_FILE = "oresme-plugin.json";
 
-/** A plugin, its package or a call of its action is refused: PLUGIN_FAILED unless said otherwise. */
-export class PluginError extends DocError {
-  constructor(
-    message: string,
-    code: ErrorCode = "PLUGIN_FAILED",
-    details: Readonly<Record<string, unknown>> = {},
-  ) {
-    super(message, code, details);
-    this.name = "PluginError";
-  }
-}
+// Its own module, which ./editor needs without the manifest; exported from here as it always was.
+export { PluginError } from "./errors";
 
 /** What a package may hold at most. */
 export const PACKAGE_LIMITS = {
