@@ -30,12 +30,22 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   from the app through to Python. Python raises a class for each code (`op.NotFoundError`,
   `op.InvalidArgumentError`, ...), all of them `op.OresmeError`; `InvalidArgumentError` is
   also a `ValueError` and `NotFoundError` a `LookupError`. The codes are part of the API.
+- A run stopped with Python › Interrupt, or by restarting Python while it ran, is recorded as
+  stopped (■), not as failed (red); a plugin stopped while it runs is too.
+- A dialog or a plugin action's form marks in red the field a refusal is about (an argument out
+  of range, a name that is taken), and moves the focus to it.
+- A plugin's failure says where it failed (starting its sandbox, loading, running, the time
+  limit, or what it returned), in the history and in the action's form.
+- The Python guide explains the codes, their details, stopped runs and plugin failures.
 
 ### Changed
 
 - The command window names the kind of error (`NotFoundError: No wave named "x".` where it
   said `OresmeError: ...`), and `ValueError`s the Python API raised for bad arguments are
   `InvalidArgumentError`s, which are still `ValueError`s.
+- An action called from the app (`kernel.invoke`) that Python refuses is rejected with the
+  message alone (no `OresmeError: ` before it), with its code and details; one that was
+  interrupted is rejected as stopped.
 
 ## [0.3.0] - 2026-11-17
 

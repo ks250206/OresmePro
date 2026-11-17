@@ -263,7 +263,7 @@ export class Stage implements DocWriter {
   }
 
   private checkOpen(): void {
-    if (this.closed) throw new DocError("The changes were already put in or dropped.");
+    if (this.closed) throw new DocError("The changes were already put in or dropped.", "CONFLICT");
   }
 }
 

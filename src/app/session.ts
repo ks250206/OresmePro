@@ -1,8 +1,15 @@
 import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
+import { pluginFailure } from "../core/plugins/failure";
 import { type Command, isTransient } from "../core/doc/commands";
 import { Doc } from "../core/doc/doc";
 import { echoPython } from "../core/doc/echo";
-import { figureSize, frontWindow, type DocState } from "../core/doc/types";
+import {
+  errorField,
+  figureSize,
+  frontWindow,
+  type DocState,
+  CancelledError,
+} from "../core/doc/types";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
 import { layoutGraph } from "../core/plot/layout";
@@ -117,6 +124,12 @@ export interface UiState {
   dialog: DialogRequest | null;
   /** A message shown in a modal box; errors from GUI actions land here. */
   alert: { title: string; message: string } | null;
+  /**
+   * The argument or property the last refusal shown was about
+   * (`details.field`): the dialog still open marks the row that sets it,
+   * until something in the dialog is changed.
+   */
+  invalidField: string | null;
   contextMenu: { x: number; y: number; items: MenuItem[] } | null;
   /** Cursor position readout shown in the status bar. */
   readout: string;
@@ -216,6 +229,7 @@ export const importPresets = new PresetStore();
 export const ui = createStore<UiState>({
   dialog: null,
   alert: null,
+  invalidField: null,
   contextMenu: null,
   readout: "",
   packagesHeld: false,
@@ -440,20 +454,21 @@ export async function invokeAction(
     history.update(entry, { status: "ok", durationMs: Date.now() - startedAt });
     return outcome;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    history.appendOutput(entry, {
-      kind: "error",
-      name: "PluginError",
-      message,
-      traceback: message,
+    const failure = pluginFailure(error);
+    history.appendOutput(entry, failure.output);
+    history.update(entry, {
+      status: failure.cancelled ? "cancelled" : "error",
+      durationMs: Date.now() - startedAt,
     });
-    history.update(entry, { status: "error", durationMs: Date.now() - startedAt });
-    throw error;
+    throw failure.cancelled ? new CancelledError(failure.output.message) : error;
   }
 }
 
 export function showError(title: string, error: unknown): void {
-  ui.set({ alert: { title, message: error instanceof Error ? error.message : String(error) } });
+  ui.set({
+    alert: { title, message: error instanceof Error ? error.message : String(error) },
+    invalidField: errorField(error),
+  });
 }
 
 let batchCounter = 0;

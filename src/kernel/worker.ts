@@ -68,9 +68,9 @@ async function boot(indexURL: string, interruptBuffer: SharedArrayBuffer): Promi
           bundle: JSON.parse(bundleJson) as Record<string, string>,
         });
       },
-      error: (name, message, traceback) => {
+      error: (name, message, traceback, info) => {
         flushStream();
-        post({ type: "error", id: currentId, name, message, traceback });
+        post({ type: "error", id: currentId, name, message, traceback, ...refusalInfo(info) });
       },
       actions: (catalogJson) =>
         post({ type: "actions", catalog: JSON.parse(catalogJson) as ActionSpec[] }),
@@ -163,3 +163,21 @@ scope.onmessage = (event: MessageEvent<ToWorker>) => {
     );
   }
 };
+
+/** The code and details Python sent with a refusal, or nothing if it sent none it could read. */
+function refusalInfo(info: string): { code?: string; details?: Record<string, unknown> } {
+  if (!info) return {};
+  try {
+    const parsed = JSON.parse(info) as { code?: unknown; details?: unknown };
+    if (typeof parsed.code !== "string") return {};
+    const details =
+      typeof parsed.details === "object" &&
+      parsed.details !== null &&
+      !Array.isArray(parsed.details)
+        ? (parsed.details as Record<string, unknown>)
+        : {};
+    return { code: parsed.code, details };
+  } catch {
+    return {};
+  }
+}

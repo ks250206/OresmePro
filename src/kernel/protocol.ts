@@ -24,7 +24,16 @@ export type FromWorker =
   | { type: "echo"; id: number; code: string }
   | { type: "stream"; id: number; name: "stdout" | "stderr"; text: string }
   | { type: "display"; id: number; bundle: Record<string, string> }
-  | { type: "error"; id: number; name: string; message: string; traceback: string }
+  | {
+      type: "error";
+      id: number;
+      name: string;
+      message: string;
+      traceback: string;
+      /** For a refusal (an OresmeError): its code and details. */
+      code?: string;
+      details?: Record<string, unknown>;
+    }
   /** `result` is the JSON `{"result": ...}` of an action call that succeeded. */
   | { type: "done"; id: number; ok: boolean; result?: string }
   | { type: "interrupt-ack" }

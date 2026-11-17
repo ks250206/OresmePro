@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { failureJson } from "../../kernel/rpc";
 import { PluginError } from "../plugins/manifest";
-import { SandboxError } from "../sandbox/validate";
+import { pluginFailure } from "../plugins/failure";
+import { pluginPhase, SandboxError } from "../sandbox/validate";
 import { Doc } from "./doc";
-import { DocError, ERROR_CODES, errorInfo } from "./types";
+import { DocError, ERROR_CLASSES, ERROR_CODES, errorField, errorInfo } from "./types";
 
 /** What a command is refused with, as code and details. */
 function refusal(run: () => unknown) {
@@ -53,6 +54,39 @@ describe("errors the app refuses requests with", () => {
     ).toMatchObject({ code: "NOT_FOUND", details: { kind: "axis", name: "R9" } });
   });
 
+  it("say which property or name was not allowed, for a dialog to mark", () => {
+    const doc = setup();
+    const field = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return errorField(error);
+      }
+      return "not refused";
+    };
+    expect(
+      field(() =>
+        doc.dispatch({ op: "modifyAxis", graph: "G", axis: "left", props: { tickFormat: "?" } }),
+      ),
+    ).toBe("tickFormat");
+    expect(
+      field(() =>
+        doc.dispatch({
+          op: "modifyAxis",
+          graph: "G",
+          axis: "left",
+          props: { nonsense: 1 } as never,
+        }),
+      ),
+    ).toBe("nonsense");
+    expect(field(() => doc.dispatch({ op: "display", y: ["y"], name: "1st" }))).toBe("name");
+    expect(field(() => doc.dispatch({ op: "setTimeZone", zone: "Mars/Olympus" }))).toBe("zone");
+    // A name that is taken is about the name.
+    expect(field(() => doc.dispatch({ op: "display", y: ["y"], name: "G" }))).toBe("name");
+    expect(field(() => doc.dispatch({ op: "killWaves", names: ["nope"] }))).toBeNull();
+    expect(errorField(new Error("plain"))).toBeNull();
+  });
+
   it("are INVALID_ARGUMENT unless said otherwise, and anything that is not one is INTERNAL", () => {
     expect(errorInfo(new DocError("bad"))).toEqual({
       code: "INVALID_ARGUMENT",
@@ -77,6 +111,30 @@ describe("errors the app refuses requests with", () => {
       "UNSUPPORTED",
     );
     expect(errorInfo(new PluginError("Bad manifest.")).code).toBe("PLUGIN_FAILED");
+    expect(pluginPhase(new SandboxError("Took too long.", "timeout"))).toBe("timeout");
+    expect(pluginPhase(new DocError("No phase."))).toBeNull();
+  });
+
+  it("from plugins are named in the history as Python names them, with the phase", () => {
+    expect(pluginFailure(new SandboxError("ZeroDivisionError: division by zero", "run"))).toEqual({
+      output: {
+        kind: "error",
+        name: "PluginFailedError",
+        message: "ZeroDivisionError: division by zero",
+        traceback: "PluginFailedError (run): ZeroDivisionError: division by zero",
+        code: "PLUGIN_FAILED",
+        details: { phase: "run" },
+      },
+      cancelled: false,
+    });
+    expect(
+      pluginFailure(new PluginError('lab.x needs "y".', "INVALID_ARGUMENT", { field: "y" })).output
+        .traceback,
+    ).toBe('InvalidArgumentError: lab.x needs "y".');
+    // A plugin stopped (turned off, say) while it ran did not fail.
+    expect(pluginFailure(new SandboxError("The sandbox was stopped.", "stopped")).cancelled).toBe(
+      true,
+    );
   });
 
   it("cross to Python with their message where it always was, and their code and details", () => {
@@ -100,6 +158,11 @@ describe("errors the app refuses requests with", () => {
       code: "INTERNAL",
       details: {},
     });
+  });
+
+  it("each have a class in Python", () => {
+    expect(Object.keys(ERROR_CLASSES)).toEqual([...ERROR_CODES]);
+    expect(Object.values(ERROR_CLASSES).every((name) => name.endsWith("Error"))).toBe(true);
   });
 
   it("are a fixed list, which is part of the API", () => {

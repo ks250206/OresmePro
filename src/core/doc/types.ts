@@ -1268,6 +1268,50 @@ export function errorInfo(error: unknown): ErrorInfo {
   return { code: "INTERNAL", message, details: {} };
 }
 
+/** The Python class of each code (`op.NotFoundError`, ...): the name the history gives an error. */
+export const ERROR_CLASSES: Record<ErrorCode, string> = {
+  INVALID_ARGUMENT: "InvalidArgumentError",
+  NOT_FOUND: "NotFoundError",
+  ALREADY_EXISTS: "AlreadyExistsError",
+  IN_USE: "InUseError",
+  CONFLICT: "ConflictError",
+  UNSUPPORTED: "UnsupportedError",
+  PLUGIN_FAILED: "PluginFailedError",
+  INTERNAL: "InternalError",
+};
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === "string" && (ERROR_CODES as readonly string[]).includes(value);
+}
+
+/**
+ * The argument or property an error is about (`details.field`), or null: a
+ * value not allowed there, or a wave named there that is not to be found.
+ * A name that is taken (ALREADY_EXISTS) is about the name.
+ */
+export function errorField(error: unknown): string | null {
+  if (!(error instanceof DocError)) return null;
+  const field = error.details.field;
+  if (typeof field === "string" && field !== "") return field;
+  return error.code === "ALREADY_EXISTS" ? "name" : null;
+}
+
+/**
+ * A run that was stopped (interrupted, or its plugin stopped) before it
+ * ended. It is not a failure, so it has no {@link ErrorCode}: the history
+ * marks it as stopped, and a dialog that started it says nothing went wrong.
+ */
+export class CancelledError extends Error {
+  constructor(message = "Stopped.") {
+    super(message);
+    this.name = "CancelledError";
+  }
+}
+
+export function isCancelled(error: unknown): error is CancelledError {
+  return error instanceof CancelledError;
+}
+
 export const DEFAULT_FONT_FAMILY = "Helvetica Neue, Helvetica, Arial, sans-serif";
 
 export const defaultAxis = (side: AxisSide): AxisSpec => ({

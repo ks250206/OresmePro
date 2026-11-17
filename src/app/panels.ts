@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { ActionSpec } from "../core/actions";
 import { uniqueName, windowTaken } from "../core/doc/commands";
 import { codeActions, panelFile, readPanelFile, resolveButton } from "../core/doc/panels";
+import { isCancelled } from "../core/doc/types";
 import { download, pickFile } from "./actions";
 import {
   actionCatalog,
@@ -86,8 +87,9 @@ export function pressButton(panel: string, button: string): Promise<void> {
     }));
   return invokeAction(call.action, call.args, call.version ?? undefined).then(
     () => done(null),
+    // A refusal's message stands on its own; a run that was stopped did not go wrong.
     (error: unknown) =>
-      done((error instanceof Error ? error.message : String(error)).replace(/^OresmeError: /, "")),
+      done(isCancelled(error) ? null : error instanceof Error ? error.message : String(error)),
   );
 }
 

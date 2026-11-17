@@ -101,18 +101,29 @@ const EntryView = memo(function EntryView({ entry }: { entry: HistoryEntry }) {
     return <div className="px-2 py-0.5 pl-6 italic text-muted">{entry.code}</div>;
   }
   const failed = entry.status === "error";
+  const stopped = entry.status === "cancelled";
   return (
     <div className="group relative flex gap-1.5 px-2 py-[2px] hover:bg-chrome/70">
       <span
         className={`flex h-[1.45em] w-3 shrink-0 items-center justify-center ${
-          failed ? "text-danger" : entry.source === "gui" ? "text-muted/70" : "text-ink"
+          failed ? "text-danger" : stopped || entry.source === "gui" ? "text-muted/70" : "text-ink"
         }`}
-        title={entry.source === "gui" ? "From a menu or dialog" : undefined}
+        title={
+          stopped
+            ? "Stopped before it ended"
+            : entry.source === "gui"
+              ? "From a menu or dialog"
+              : undefined
+        }
       >
         {entry.status === "running" ? (
           <span className="spinner" role="status" aria-label="Running" />
         ) : entry.status === "queued" ? (
           "…"
+        ) : stopped ? (
+          <span role="img" aria-label="Stopped" className="text-[8px]">
+            {"■"}
+          </span>
         ) : (
           "•"
         )}

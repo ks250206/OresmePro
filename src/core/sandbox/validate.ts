@@ -34,6 +34,32 @@ export class SandboxError extends DocError {
   }
 }
 
+const PHASES: readonly PluginPhase[] = [
+  "start",
+  "load",
+  "run",
+  "timeout",
+  "stopped",
+  "invalid_output",
+];
+
+/** The phase a plugin failed at (`details.phase`), or null for an error that does not say. */
+export function pluginPhase(error: unknown): PluginPhase | null {
+  if (!(error instanceof DocError)) return null;
+  const phase = error.details.phase;
+  return PHASES.includes(phase as PluginPhase) ? (phase as PluginPhase) : null;
+}
+
+/** Each phase in words: where a plugin's run was when it failed. */
+export const PHASE_TITLES: Record<PluginPhase, string> = {
+  start: "starting its sandbox",
+  load: "loading the plugin",
+  run: "running the action",
+  timeout: "the time limit",
+  stopped: "stopped",
+  invalid_output: "checking what it returned",
+};
+
 /** A wave from a sandbox, checked, with its values in the typed array of its type. */
 export interface CheckedWave {
   type: WaveType;

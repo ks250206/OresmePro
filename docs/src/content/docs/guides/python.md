@@ -140,4 +140,49 @@ def normalize(wave, to=1.0):
 
 画面から呼んだ Action は、同じ意味の Python(`op.fit("gauss", op.wave("signal"))` など)として履歴に残ります。パネルのボタンも Action を呼びます([パネル](../panels/))。
 
-[Python API の使い方](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)
+## エラーを見分ける
+
+アプリが要求を断ったときの例外には、拒否の種類を表すコード(`error.code`)と、何についての拒否かを表す詳細(`error.details`)が付きます。メッセージを読まなくても、`except` とコードで見分けられます。コードは API の一部です。変えたり消したりするときは、互換性を壊す変更として扱います。
+
+| コード             | クラス                 | 起きるとき                         | `details`                                     | どうするか            |
+| ------------------ | ---------------------- | ---------------------------------- | --------------------------------------------- | --------------------- |
+| `INVALID_ARGUMENT` | `InvalidArgumentError` | 使えない値・名前・引数             | `field`: 引数やプロパティの名前               | その値を直す          |
+| `NOT_FOUND`        | `NotFoundError`        | 名前で指定したものがない           | `kind`、`name`(引数で渡したものは `field` も) | 名前を確かめる        |
+| `ALREADY_EXISTS`   | `AlreadyExistsError`   | その名前がもう使われている         | `kind`、`name`                                | 別の名前にする        |
+| `IN_USE`           | `InUseError`           | ほかのものが使っているので消せない | `kind`、`name`、`users`                       | 先に `users` から外す |
+| `CONFLICT`         | `ConflictError`        | 計算のもとの Wave が途中で変わった | —                                             | もう一度実行する      |
+| `UNSUPPORTED`      | `UnsupportedError`     | 扱えないファイル・形式・パッケージ | —                                             | 別の形式にする        |
+| `PLUGIN_FAILED`    | `PluginFailedError`    | プラグインが失敗した               | `phase`: どこで失敗したか(下の表)             | `phase` で見分ける    |
+| `INTERNAL`         | `InternalError`        | アプリ自身の不具合                 | —                                             | 不具合として報告する  |
+
+```python
+try:
+    op.invoke("core.smooth", {"wave": "signal", "n": 0})
+except op.InvalidArgumentError as error:
+    print(error.details["field"])  # 'n'
+except op.ConflictError:
+    pass  # もとの Wave が変わった: もう一度呼べば通ることがある
+```
+
+`InvalidArgumentError` は `ValueError`、`NotFoundError` は `LookupError` でもあるので、それらで受けるコードもそのまま動きます。NumPy や SciPy、Python 自体のエラーは、そのままの例外で届きます。
+
+画面では、コマンドウィンドウが例外の種類の名前で表示します(`NotFoundError: No wave named "x".`)。ダイアログやプラグインの Action のフォームでは、`details.field` の欄が赤くなり、値を変えると元に戻ります。
+
+### 中断
+
+**Python → Interrupt** で止めた実行と、実行中に Python を再起動して止めた実行は、失敗ではなく「中断」として履歴に残ります。印が ■ になり、赤くはなりません。Python の中では、今まで通り `KeyboardInterrupt` です。解析テンプレートの一括実行を止めると、まだ終わっていなかった試料が `cancelled` になります。実行中のプラグインが止められたとき(プラグインをオフにしたときなど)も中断です。
+
+### プラグインの失敗
+
+プラグインの失敗は `PluginFailedError` になり、`details["phase"]` がどこで失敗したかを示します。履歴には `PluginFailedError (timeout): …` のように phase 付きで残り、Action のフォームにも表示されます。
+
+| `phase`          | 意味                                 |
+| ---------------- | ------------------------------------ |
+| `start`          | サンドボックスを起動できなかった     |
+| `load`           | プラグインのコードを読み込めなかった |
+| `run`            | Action がエラーを出した              |
+| `timeout`        | 時間内に終わらなかった               |
+| `stopped`        | 止められた(中断として扱う)           |
+| `invalid_output` | 返したものをアプリが受け取れなかった |
+
+[Python API の使い方](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/) · [エラー](../../reference/api/errors/)

@@ -3,7 +3,8 @@ import type { ActionSpec } from "../core/actions";
 import { Doc } from "../core/doc/doc";
 import { FileStore } from "../core/files/files";
 import { History } from "../core/history/history";
-import { KernelClient, type KernelOptions } from "./client";
+import { DocError, errorField, errorInfo, isCancelled } from "../core/doc/types";
+import { KernelClient, rejection, type KernelOptions } from "./client";
 import type { FromWorker, ToWorker } from "./protocol";
 
 /** Stands in for the Python worker: records what it is sent, and answers as the test says. */
@@ -105,7 +106,7 @@ describe("KernelClient actions", () => {
     expect(kernel.getState().status).toBe("ready");
   });
 
-  it("rejects a refused call with its error", async () => {
+  it("rejects a refused call with its error, its code and its details", async () => {
     const { kernel, history, worker } = client();
     worker.reply({ type: "ready" });
     const call = kernel.invoke("core.smooth", { wave: 3 }, 1);
@@ -115,18 +116,87 @@ describe("KernelClient actions", () => {
     worker.reply({
       type: "error",
       id,
-      name: "OresmeError",
+      name: "InvalidArgumentError",
       message: "core.smooth: wave must be the name of a wave, not 3.",
       traceback: "",
+      code: "INVALID_ARGUMENT",
+      details: { field: "wave" },
     });
     worker.reply({ type: "done", id, ok: false });
-    await expect(call).rejects.toThrow(
-      "OresmeError: core.smooth: wave must be the name of a wave, not 3.",
-    );
+    const error = await call.catch((reason: unknown) => reason);
+    // A refusal's message stands on its own; what kind it is, is its code.
+    expect(error).toBeInstanceOf(DocError);
+    expect(errorInfo(error)).toEqual({
+      code: "INVALID_ARGUMENT",
+      message: "core.smooth: wave must be the name of a wave, not 3.",
+      details: { field: "wave" },
+    });
+    expect(errorField(error)).toBe("wave");
     expect(history.getEntries().at(-1)).toMatchObject({
       code: 'op.invoke("core.smooth", {"wave": 3}, version=1)',
       status: "error",
+      outputs: [{ kind: "error", code: "INVALID_ARGUMENT", details: { field: "wave" } }],
     });
+  });
+
+  it("rejects a call that raised something else with the exception's name", () => {
+    expect(rejection({ name: "ZeroDivisionError", message: "division by zero" })).toMatchObject({
+      message: "ZeroDivisionError: division by zero",
+    });
+    expect(errorInfo(rejection({ name: "ZeroDivisionError", message: "" })).code).toBe("INTERNAL");
+    // An OresmeError raised by hand, without a code, is a refusal of the default kind.
+    expect(
+      errorInfo(
+        rejection({ name: "OresmeError", message: "No.", code: "UNSPECIFIED", details: {} }),
+      ),
+    ).toEqual({ code: "INVALID_ARGUMENT", message: "No.", details: {} });
+  });
+
+  it("marks an interrupted run as stopped, not failed", async () => {
+    const { kernel, history, worker } = client();
+    worker.reply({ type: "ready" });
+    const call = kernel.invoke("core.smooth", { wave: "sig" });
+    const id = (worker.sent.at(-1) as { id: number }).id;
+    worker.reply({ type: "started", id });
+    worker.reply({
+      type: "error",
+      id,
+      name: "KeyboardInterrupt",
+      message: "",
+      traceback: "KeyboardInterrupt",
+    });
+    worker.reply({ type: "done", id, ok: false });
+    const error = await call.catch((reason: unknown) => reason);
+    expect(isCancelled(error)).toBe(true);
+    expect(history.getEntries().at(-1)!.status).toBe("cancelled");
+
+    // Code typed and interrupted is stopped too.
+    kernel.execute("while True: pass");
+    const typed = (worker.sent.at(-1) as { id: number }).id;
+    worker.reply({ type: "started", id: typed });
+    worker.reply({
+      type: "error",
+      id: typed,
+      name: "KeyboardInterrupt",
+      message: "",
+      traceback: "",
+    });
+    worker.reply({ type: "done", id: typed, ok: false });
+    expect(history.getEntries().at(-1)!.status).toBe("cancelled");
+
+    // So is code waiting on await, which is cancelled instead.
+    kernel.execute("await asyncio.sleep(60)");
+    const awaiting = (worker.sent.at(-1) as { id: number }).id;
+    worker.reply({ type: "started", id: awaiting });
+    worker.reply({
+      type: "error",
+      id: awaiting,
+      name: "CancelledError",
+      message: "",
+      traceback: "",
+    });
+    worker.reply({ type: "done", id: awaiting, ok: false });
+    expect(history.getEntries().at(-1)!.status).toBe("cancelled");
   });
 
   it("rejects calls that Python will never answer", async () => {
@@ -134,7 +204,10 @@ describe("KernelClient actions", () => {
     worker.reply({ type: "ready" });
     const call = kernel.invoke("core.smooth", { wave: "sig" });
     kernel.restart("Python was restarted.");
-    await expect(call).rejects.toThrow("Python was restarted.");
+    // Restarting is asked for: the call is stopped, not failed.
+    const error = await call.catch((reason: unknown) => reason);
+    expect(isCancelled(error)).toBe(true);
+    expect((error as Error).message).toBe("Python was restarted.");
 
     vi.stubGlobal("crossOriginIsolated", false);
     const unavailable = new KernelClient({

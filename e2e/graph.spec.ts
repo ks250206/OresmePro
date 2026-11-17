@@ -278,7 +278,17 @@ test.describe("graph interaction", () => {
       .locator("canvas")
       .click({ button: "right", position: { x: 300, y: 30 } });
     await page.getByRole("menuitem", { name: "Add Axis…" }).click();
+    // A name that is taken is refused; back in the dialog, its row is marked and has the focus.
+    await page.getByLabel("Axis name").fill("left");
+    await app.doIt();
+    const refusal = page.getByRole("dialog", { name: "That did not work" });
+    await expect(refusal).toContainText('Graph0 already has an axis named "left".');
+    await refusal.getByRole("button", { name: "Close" }).click();
+    const nameRow = page.getByRole("dialog", { name: /Add Axis/ }).locator("[data-invalid]");
+    await expect(nameRow).toContainText("Name");
+    await expect(page.getByLabel("Axis name")).toBeFocused();
     await page.getByLabel("Axis name").fill("R2");
+    await expect(nameRow).toHaveCount(0);
     await page.getByLabel("Side").selectOption("right");
     await app.doIt();
     // Adding an axis leads straight to its settings.

@@ -45,6 +45,12 @@ button {
   color: inherit;
 }
 
+/* The row of a dialog a refusal was about (details.field): its controls, in red. */
+.field-invalid :is(input:not([type="checkbox"]), select, textarea, [role="listbox"]) {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 1px var(--color-danger);
+}
+
 .selectable {
   user-select: text;
 }

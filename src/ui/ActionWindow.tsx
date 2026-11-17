@@ -9,7 +9,17 @@ import {
 import { invokeAction, pluginStore, useDoc } from "../app/session";
 import type { ActionArgs, JsonValue, ParamSpec } from "../core/actions";
 import { pluginActionId, type PluginAction, type PluginManifest } from "../core/plugins/manifest";
-import { Button, Checkbox, Field, ListBox, Select, TextInput } from "./controls";
+import { errorField, isCancelled } from "../core/doc/types";
+import { PHASE_TITLES, pluginPhase, type PluginPhase } from "../core/sandbox/validate";
+import {
+  Button,
+  Checkbox,
+  Field,
+  InvalidFieldContext,
+  ListBox,
+  Select,
+  TextInput,
+} from "./controls";
 
 /** A plain value as a form shows it. */
 const shown = (value: JsonValue | undefined): string =>
@@ -48,7 +58,11 @@ export function ActionForm({
   );
   const [text, setText] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<{
+    message: string;
+    phase: PluginPhase | null;
+    field: string | null;
+  } | null>(null);
   const set = (name: string, value: JsonValue | undefined) =>
     setValues((current) => ({ ...current, [name]: value }));
 
@@ -74,110 +88,127 @@ export function ActionForm({
       () => setBusy(false),
       (error: unknown) => {
         setBusy(false);
-        setProblem(error instanceof Error ? error.message : String(error));
+        // Stopped is not a failure: the history says so, and there is nothing to put right.
+        if (isCancelled(error)) return;
+        setProblem({
+          message: error instanceof Error ? error.message : String(error),
+          phase: pluginPhase(error),
+          field: errorField(error),
+        });
       },
     );
   };
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {action.description ? <p className="m-0 text-muted">{action.description}</p> : null}
-      {Object.entries(action.params).map(([name, spec]) => {
-        const label = spec.title ?? name;
-        switch (spec.type) {
-          case "wave":
-            return (
-              <Field key={name} label={label}>
-                <Select
-                  value={typeof values[name] === "string" ? (values[name] as string) : ""}
-                  onChange={(event) => set(name, event.target.value || undefined)}
-                >
-                  <option value="">{spec.optional ? "(none)" : "Choose a wave"}</option>
-                  {waves.map((wave) => (
-                    <option key={wave} value={wave}>
-                      {wave}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            );
-          case "waves":
-            return (
-              <Field key={name} label={label} group>
-                <ListBox
-                  label={label}
-                  items={waves.map((wave) => ({ key: wave, text: wave }))}
-                  selected={Array.isArray(values[name]) ? (values[name] as string[]) : []}
-                  onChange={(selected) => set(name, selected)}
-                  style={{ height: 96 }}
-                />
-              </Field>
-            );
-          case "boolean":
-            return (
-              <Field key={name} label="" group>
-                <Checkbox
-                  label={label}
-                  checked={values[name] === true}
-                  onChange={(event) => set(name, event.target.checked)}
-                />
-              </Field>
-            );
-          case "choice":
-            return (
-              <Field key={name} label={label}>
-                <Select
-                  value={shown(values[name])}
-                  onChange={(event) => {
-                    const chosen = (spec.choices ?? []).find(
-                      (item) => String(item) === event.target.value,
-                    );
-                    set(name, chosen ?? null);
-                  }}
-                >
-                  {(spec.choices ?? []).map((choice) => (
-                    <option key={String(choice)} value={String(choice)}>
-                      {String(choice)}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            );
-          case "string":
-            return (
-              <Field key={name} label={label}>
-                <TextInput
-                  value={typeof values[name] === "string" ? (values[name] as string) : ""}
-                  onChange={(event) => set(name, event.target.value)}
-                />
-              </Field>
-            );
-          default:
-            return (
-              <Field key={name} label={label}>
-                <TextInput
-                  inputMode="decimal"
-                  placeholder={spec.optional ? "default" : ""}
-                  value={text[name] ?? shown(values[name])}
-                  onChange={(event) =>
-                    setText((current) => ({ ...current, [name]: event.target.value }))
-                  }
-                />
-              </Field>
-            );
+    <InvalidFieldContext.Provider value={problem?.field ?? null}>
+      <div
+        className="flex flex-col gap-1.5"
+        // Changing a value takes the mark off the argument that was refused.
+        onInput={() =>
+          setProblem((current) => (current?.field ? { ...current, field: null } : current))
         }
-      })}
-      <div className="flex items-center gap-2">
-        <Button primary disabled={busy} onClick={run}>
-          {busy ? "Running…" : "Run"}
-        </Button>
-        {problem ? (
-          <span role="alert" className="text-red-700">
-            {problem}
-          </span>
-        ) : null}
+      >
+        {action.description ? <p className="m-0 text-muted">{action.description}</p> : null}
+        {Object.entries(action.params).map(([name, spec]) => {
+          const label = spec.title ?? name;
+          switch (spec.type) {
+            case "wave":
+              return (
+                <Field key={name} name={name} label={label}>
+                  <Select
+                    value={typeof values[name] === "string" ? (values[name] as string) : ""}
+                    onChange={(event) => set(name, event.target.value || undefined)}
+                  >
+                    <option value="">{spec.optional ? "(none)" : "Choose a wave"}</option>
+                    {waves.map((wave) => (
+                      <option key={wave} value={wave}>
+                        {wave}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              );
+            case "waves":
+              return (
+                <Field key={name} name={name} label={label} group>
+                  <ListBox
+                    label={label}
+                    items={waves.map((wave) => ({ key: wave, text: wave }))}
+                    selected={Array.isArray(values[name]) ? (values[name] as string[]) : []}
+                    onChange={(selected) => set(name, selected)}
+                    style={{ height: 96 }}
+                  />
+                </Field>
+              );
+            case "boolean":
+              return (
+                <Field key={name} name={name} label="" group>
+                  <Checkbox
+                    label={label}
+                    checked={values[name] === true}
+                    onChange={(event) => set(name, event.target.checked)}
+                  />
+                </Field>
+              );
+            case "choice":
+              return (
+                <Field key={name} name={name} label={label}>
+                  <Select
+                    value={shown(values[name])}
+                    onChange={(event) => {
+                      const chosen = (spec.choices ?? []).find(
+                        (item) => String(item) === event.target.value,
+                      );
+                      set(name, chosen ?? null);
+                    }}
+                  >
+                    {(spec.choices ?? []).map((choice) => (
+                      <option key={String(choice)} value={String(choice)}>
+                        {String(choice)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              );
+            case "string":
+              return (
+                <Field key={name} name={name} label={label}>
+                  <TextInput
+                    value={typeof values[name] === "string" ? (values[name] as string) : ""}
+                    onChange={(event) => set(name, event.target.value)}
+                  />
+                </Field>
+              );
+            default:
+              return (
+                <Field key={name} name={name} label={label}>
+                  <TextInput
+                    inputMode="decimal"
+                    placeholder={spec.optional ? "default" : ""}
+                    value={text[name] ?? shown(values[name])}
+                    onChange={(event) =>
+                      setText((current) => ({ ...current, [name]: event.target.value }))
+                    }
+                  />
+                </Field>
+              );
+          }
+        })}
+        <div className="flex items-center gap-2">
+          <Button primary disabled={busy} onClick={run}>
+            {busy ? "Running…" : "Run"}
+          </Button>
+          {problem ? (
+            <span role="alert" className="text-red-700">
+              {problem.phase ? (
+                <span className="mr-1 font-medium">Failed at {PHASE_TITLES[problem.phase]}:</span>
+              ) : null}
+              {problem.message}
+            </span>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </InvalidFieldContext.Provider>
   );
 }
 

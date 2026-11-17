@@ -1,7 +1,15 @@
 export type HistoryOutput =
   | { kind: "stream"; name: "stdout" | "stderr"; text: string }
   | { kind: "result"; text: string; svg?: string; png?: string }
-  | { kind: "error"; name: string; message: string; traceback: string };
+  | {
+      kind: "error";
+      name: string;
+      message: string;
+      traceback: string;
+      /** For a refusal (an OresmeError): its code (see ERROR_CODES) and details. */
+      code?: string;
+      details?: Record<string, unknown>;
+    };
 
 export interface HistoryEntry {
   id: number;
@@ -9,7 +17,8 @@ export interface HistoryEntry {
   source: "user" | "gui" | "system";
   code: string;
   outputs: HistoryOutput[];
-  status: "queued" | "running" | "ok" | "error";
+  /** cancelled: stopped before it ended (interrupted), which is not a failure. */
+  status: "queued" | "running" | "ok" | "error" | "cancelled";
   /** Milliseconds since the epoch. */
   startedAt: number;
   durationMs: number | null;

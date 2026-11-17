@@ -2,6 +2,7 @@ import { invokeCode, type ActionArgs, type ActionSpec } from "../core/actions";
 import type { Doc } from "../core/doc/doc";
 import type { FileStore } from "../core/files/files";
 import type { History } from "../core/history/history";
+import { CancelledError, DocError, isErrorCode } from "../core/doc/types";
 import type { CompletionItem } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
 import type { DocWriter } from "../core/doc/doc";
@@ -48,13 +49,40 @@ export interface KernelOptions {
   indexURL: string;
 }
 
+interface ReportedError {
+  name: string;
+  message: string;
+  code?: string;
+  details?: Record<string, unknown>;
+}
+
+/** What Python raises in code that was interrupted: in a loop, and in code waiting on await. */
+const STOPPED = new Set(["KeyboardInterrupt", "CancelledError"]);
+
+/**
+ * What an action call that Python did not finish is rejected with: a
+ * CancelledError if it was interrupted; a DocError with Python's code and
+ * details if it was refused (an OresmeError, whose message then stands on
+ * its own); otherwise an Error naming the exception.
+ */
+export function rejection(reported: ReportedError | undefined): Error {
+  if (!reported) return new Error("The action failed.");
+  if (STOPPED.has(reported.name)) return new CancelledError("Interrupted.");
+  if (reported.code !== undefined) {
+    // An OresmeError raised without a code is a refusal of the default kind.
+    const code = isErrorCode(reported.code) ? reported.code : "INVALID_ARGUMENT";
+    return new DocError(reported.message, code, reported.details ?? {});
+  }
+  return new Error(reported.message ? `${reported.name}: ${reported.message}` : reported.name);
+}
+
 interface Running {
   historyId: number;
   startedAt: number;
   /** For an action call: settles its promise when it is done. */
-  settle?: (outcome: { ok: true; value: unknown } | { ok: false; error: string }) => void;
+  settle?: (outcome: { ok: true; value: unknown } | { ok: false; error: Error }) => void;
   /** The last error it reported, which an action call is rejected with. */
-  error?: string;
+  error?: ReportedError;
 }
 
 /**
@@ -204,8 +232,7 @@ export class KernelClient {
       this.running.set(id, {
         historyId,
         startedAt: Date.now(),
-        settle: (outcome) =>
-          outcome.ok ? resolve(outcome.value) : reject(new Error(outcome.error)),
+        settle: (outcome) => (outcome.ok ? resolve(outcome.value) : reject(outcome.error)),
       });
       this.send({ type: "invoke", id, action, version: version ?? null, argsJson });
       this.refreshStatus();
@@ -304,7 +331,8 @@ export class KernelClient {
     this.worker = null;
     this.inputBuffer = null;
     this.inputHistoryId = null;
-    this.failAll(reason);
+    // Restarting is asked for: what was running is stopped, not failed.
+    this.failAll(reason, true);
     this.options.history.add("system", "Python restarted. Waves, graphs and tables are kept.");
     this.start();
   }
@@ -377,12 +405,17 @@ export class KernelClient {
       case "error": {
         const run = this.running.get(message.id);
         if (run) {
-          run.error = message.message ? `${message.name}: ${message.message}` : message.name;
+          const info =
+            message.code === undefined
+              ? {}
+              : { code: message.code, details: message.details ?? {} };
+          run.error = { name: message.name, message: message.message, ...info };
           history.appendOutput(run.historyId, {
             kind: "error",
             name: message.name,
             message: message.message,
             traceback: message.traceback,
+            ...info,
           });
         }
         break;
@@ -400,15 +433,16 @@ export class KernelClient {
             text: "An op.atomic() block was still open at the end, so its changes were dropped.\n",
           });
         }
+        const interrupted = !message.ok && STOPPED.has(run.error?.name ?? "");
         history.update(run.historyId, {
-          status: message.ok ? "ok" : "error",
+          status: message.ok ? "ok" : interrupted ? "cancelled" : "error",
           durationMs: Date.now() - run.startedAt,
         });
         if (message.ok) {
           const reply = (message.result ? JSON.parse(message.result) : {}) as { result?: unknown };
           run.settle?.({ ok: true, value: reply.result ?? null });
         } else {
-          run.settle?.({ ok: false, error: run.error ?? "The action failed." });
+          run.settle?.({ ok: false, error: rejection(run.error) });
         }
         // The input that would not stop has ended: the one running now was not asked to.
         if (this.running.size > 0 && this.state.interrupting) {
@@ -493,7 +527,11 @@ export class KernelClient {
     );
   }
 
-  private failAll(reason: string): void {
+  /**
+   * Ends every run Python will never finish: as stopped (`cancelled`) when
+   * Python was restarted on purpose, as failed when it crashed.
+   */
+  private failAll(reason: string, cancelled = false): void {
     const { history } = this.options;
     // Python stopped: an atomic block it had open will never be finished.
     dropStage(this.options.doc);
@@ -504,8 +542,14 @@ export class KernelClient {
         message: reason,
         traceback: reason,
       });
-      history.update(run.historyId, { status: "error", durationMs: Date.now() - run.startedAt });
-      run.settle?.({ ok: false, error: reason });
+      history.update(run.historyId, {
+        status: cancelled ? "cancelled" : "error",
+        durationMs: Date.now() - run.startedAt,
+      });
+      run.settle?.({
+        ok: false,
+        error: cancelled ? new CancelledError(reason) : new Error(reason),
+      });
     }
     this.running.clear();
     for (const resolve of this.completions.values()) resolve([]);

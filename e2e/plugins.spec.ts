@@ -41,7 +41,16 @@ test.describe("plugins", () => {
     const after = (await form.boundingBox())!;
     expect(Math.round(after.x - before.x)).toBeGreaterThan(80);
     expect(Math.round(after.y - before.y)).toBeGreaterThan(40);
+    // Run without the wave it needs: refused, with the row of that argument marked in red.
+    await form.getByRole("button", { name: "Run" }).click();
+    await expect(form.getByRole("alert")).toContainText('plugin.scale.scale needs "y".');
+    await expect(form.locator("[data-invalid]")).toContainText("Wave");
+    expect((await app.lastEntry()).output).toBe(
+      'InvalidArgumentError: plugin.scale.scale needs "y".',
+    );
+    // Choosing a value takes the mark away.
     await form.getByRole("combobox", { name: /^Wave/ }).selectOption("signal");
+    await expect(form.locator("[data-invalid]")).toHaveCount(0);
     await form.getByLabel("Factor", { exact: true }).fill("3");
     await form.getByRole("button", { name: "Run" }).click();
     await expect(form.getByRole("button", { name: "Run" })).toBeEnabled({ timeout: 90_000 });
