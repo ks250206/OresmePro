@@ -202,7 +202,7 @@ op.layout(name=None)
 
 A page layout by name; with no name, the frontmost one.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `layouts`
 

@@ -96,7 +96,7 @@ with op.atomic():
     op.display(corrected)
 ```
 
-Analyses that make waves and results, such as `op.fit`, `op.fit_peaks`, and `op.background`, each run in such a block. Changes made in the interface while a block runs are kept alongside the block's changes when they do not overlap. If a wave the block read has changed meanwhile, nothing is kept and `OresmeError` is raised. Graphs cannot be drawn or saved inside a block.
+Analyses that make waves and results, such as `op.fit`, `op.fit_peaks`, and `op.background`, each run in such a block. Changes made in the interface while a block runs are kept alongside the block's changes when they do not overlap. If a wave the block read has changed meanwhile, nothing is kept and `ConflictError` (an `OresmeError`) is raised. Graphs cannot be drawn or saved inside a block.
 
 ## Call analyses by name
 
@@ -107,7 +107,7 @@ op.actions()                                                    # the registered
 r = op.invoke("core.fit", {"function": "gauss", "y": "signal"})  # the same as op.fit("gauss", op.wave("signal"))
 ```
 
-The arguments are checked before the call. An unknown action or version, an extra or missing argument, a value of the wrong type, a value not among the choices, a number out of range, or a wave that does not exist is refused with `OresmeError`, and nothing is done. A call that passes runs in an `op.atomic()` block.
+The arguments are checked before the call. An unknown action or version, an extra or missing argument, a value of the wrong type, a value not among the choices, a number out of range, or a wave that does not exist is refused with `OresmeError` (`InvalidArgumentError` for arguments, `NotFoundError` for what is not there), and nothing is done. A call that passes runs in an `op.atomic()` block.
 
 A procedure can register its own functions with `@op.action`. Names starting with `core.` belong to the app and `plugin.` to plugins, so use another lowercase dotted name.
 

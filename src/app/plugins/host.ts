@@ -133,7 +133,12 @@ export class PluginHost {
     writer: DocWriter | null = null,
   ): Promise<PluginRunOutcome> {
     const found = this.resolve(id);
-    if (!found) throw new PluginError(`No installed plugin has the action ${id}.`);
+    if (!found) {
+      throw new PluginError(`No installed plugin has the action ${id}.`, "NOT_FOUND", {
+        kind: "action",
+        name: id,
+      });
+    }
     const { plugin, action } = found;
     if (!plugin.enabled)
       throw new PluginError(`The plugin ${plugin.manifest.title} is turned off.`);
@@ -143,7 +148,7 @@ export class PluginHost {
     const problems = validateArgs(spec, args, {
       waveExists: (name) => Object.hasOwn(before.waves, name),
     });
-    if (problems.length > 0) throw new PluginError(problems.join(" "));
+    if (problems.length > 0) throw new PluginError(problems.join(" "), "INVALID_ARGUMENT");
 
     const named = waveArgs(action, args);
     const inputs: Record<string, SandboxWave | SandboxWave[]> = {};
@@ -184,6 +189,8 @@ export class PluginHost {
         if (state.waves[name]?.rev !== rev) {
           throw new DocError(
             `${name} changed while the plugin was running, so nothing it made was kept. Run it again.`,
+            "CONFLICT",
+            { name },
           );
         }
       }

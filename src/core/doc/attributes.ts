@@ -37,7 +37,9 @@ export function checkAttributeName(name: unknown): string {
 export function checkAttributeValue(value: unknown, name: string): AttributeValue {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.length <= 1000) return value;
-  throw new DocError(`${name} must be a finite number or text.`);
+  throw new DocError(`${name} must be a finite number or text.`, "INVALID_ARGUMENT", {
+    field: name,
+  });
 }
 
 /** The attributes a wave has: those of its folders, from root down, then its own. */

@@ -108,7 +108,7 @@ op.table(name=None)
 
 A table by name; with no name, the frontmost table.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `tables`
 

@@ -22,6 +22,21 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ## [Unreleased]
 
+### Added
+
+- Errors say what kind of refusal they are: a code (`INVALID_ARGUMENT`, `NOT_FOUND`,
+  `ALREADY_EXISTS`, `IN_USE`, `CONFLICT`, `UNSUPPORTED`, `PLUGIN_FAILED`, `INTERNAL`) and
+  details (what was not found, which argument, what uses it, at which phase a plugin failed),
+  from the app through to Python. Python raises a class for each code (`op.NotFoundError`,
+  `op.InvalidArgumentError`, ...), all of them `op.OresmeError`; `InvalidArgumentError` is
+  also a `ValueError` and `NotFoundError` a `LookupError`. The codes are part of the API.
+
+### Changed
+
+- The command window names the kind of error (`NotFoundError: No wave named "x".` where it
+  said `OresmeError: ...`), and `ValueError`s the Python API raised for bad arguments are
+  `InvalidArgumentError`s, which are still `ValueError`s.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added

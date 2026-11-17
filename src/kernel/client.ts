@@ -5,7 +5,7 @@ import type { History } from "../core/history/history";
 import type { CompletionItem } from "./boot";
 import type { FromWorker, ToWorker } from "./protocol";
 import type { DocWriter } from "../core/doc/doc";
-import { answerRpc, dropStage, openStage, type RpcContext } from "./rpc";
+import { failureJson, answerRpc, dropStage, openStage, type RpcContext } from "./rpc";
 import { writeSyncReply } from "./syncChannel";
 
 export interface KernelState {
@@ -469,13 +469,7 @@ export class KernelClient {
       const answer = { json, data: null };
       this.pendingReply = writeSyncReply(buffer, json, null) ? null : answer;
     };
-    const fail = (error: unknown) =>
-      reply(
-        JSON.stringify({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
+    const fail = (error: unknown) => reply(failureJson(error));
     let params: { action?: unknown; args?: unknown };
     try {
       params = JSON.parse(paramsJson) as typeof params;

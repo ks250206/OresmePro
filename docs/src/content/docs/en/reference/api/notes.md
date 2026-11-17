@@ -90,7 +90,7 @@ op.note(name=None)
 
 A note by name; with no name, the frontmost one.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `notes`
 

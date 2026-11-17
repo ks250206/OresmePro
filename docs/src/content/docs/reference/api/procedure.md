@@ -96,7 +96,7 @@ op.procedure(name=None)
 
 名前で Procedure を取得します。名前を省くと最前面のもの。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `procedures`
 

@@ -60,7 +60,7 @@ auto でない辺があると、図の大きさはプロット領域に余白を
 
 ``magnification`` はウィンドウの中でグラフを拡大・縮小して表示します(Igor の expand)。2 で 2 倍、1 で等倍(0.125〜8)。ウィンドウも一緒に大きさを変え、図そのものと書き出しの大きさは変わりません。
 
-**明示的な例外** · `ValueError`
+**明示的な例外** · `InvalidArgumentError`
 
 ### `Graph.unlink`
 
@@ -102,7 +102,7 @@ axis(name)
 
 指定名の `Axis` を返します。その軸が存在しない場合は `OresmeError` です。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ### `Graph.add_axis`
 
@@ -144,7 +144,7 @@ append_contour(wave_, *, axis='left', haxis='bottom', **props)
 image(name=None)
 ```
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ### `Graph.contour`
 
@@ -152,7 +152,7 @@ image(name=None)
 contour(name=None)
 ```
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`
 
 ### `Graph.cursor`
 
@@ -354,7 +354,7 @@ op.graph(name=None)
 
 名前でグラフを取得します。名前を省くと最前面のグラフ。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `graphs`
 

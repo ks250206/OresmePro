@@ -88,7 +88,7 @@ op.note(name=None)
 
 名前でノートを取得します。名前を省くと最前面のもの。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `notes`
 

@@ -471,49 +471,66 @@ export function uniqueName(base: string, taken: (name: string) => boolean): stri
 function requireWave(state: DocState, name: string): Wave {
   const key = typeof name === "string" && name.startsWith("root:") ? name.slice(5) : name;
   const wave = state.waves[key];
-  if (!wave) throw new DocError(`No wave named ${JSON.stringify(name)}.`);
+  if (!wave)
+    throw new DocError(`No wave named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "wave",
+      name: name,
+    });
   return wave;
 }
 
 function requireGraph(state: DocState, name: string): GraphSpec {
   const graph = state.graphs[name];
-  if (!graph) throw new DocError(`No graph named ${JSON.stringify(name)}.`);
+  if (!graph)
+    throw new DocError(`No graph named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "graph",
+      name: name,
+    });
   return graph;
 }
 
 function requireTable(state: DocState, name: string): TableSpec {
   const table = state.tables[name];
-  if (!table) throw new DocError(`No table named ${JSON.stringify(name)}.`);
+  if (!table)
+    throw new DocError(`No table named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "table",
+      name: name,
+    });
   return table;
 }
 
 function finite(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new DocError(`${what} must be a finite number.`);
+    throw new DocError(`${what} must be a finite number.`, "INVALID_ARGUMENT", { field: what });
   }
   return value;
 }
 
 function positive(value: unknown, what: string): number {
   const number = finite(value, what);
-  if (number <= 0) throw new DocError(`${what} must be greater than 0.`);
+  if (number <= 0)
+    throw new DocError(`${what} must be greater than 0.`, "INVALID_ARGUMENT", { field: what });
   return number;
 }
 
 function step(value: unknown, what: string): number {
   const number = finite(value, what);
-  if (number === 0) throw new DocError(`${what} must not be 0.`);
+  if (number === 0)
+    throw new DocError(`${what} must not be 0.`, "INVALID_ARGUMENT", { field: what });
   return number;
 }
 
 function bool(value: unknown, what: string): boolean {
-  if (typeof value !== "boolean") throw new DocError(`${what} must be true or false.`);
+  if (typeof value !== "boolean")
+    throw new DocError(`${what} must be true or false.`, "INVALID_ARGUMENT", { field: what });
   return value;
 }
 
 export function oneOf<T extends string>(value: unknown, choices: readonly T[], what: string): T {
   if (typeof value !== "string" || !choices.includes(value as T)) {
-    throw new DocError(`${what} must be one of: ${choices.join(", ")}.`);
+    throw new DocError(`${what} must be one of: ${choices.join(", ")}.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value as T;
 }
@@ -832,7 +849,11 @@ export function procedureName(name: unknown): string {
 
 function requireWindow(state: DocState, name: string): WindowState {
   const window = state.windows.find((item) => item.name === name);
-  if (!window) throw new DocError(`No window named ${JSON.stringify(name)}.`);
+  if (!window)
+    throw new DocError(`No window named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "window",
+      name: name,
+    });
   return window;
 }
 
@@ -913,7 +934,9 @@ function checkPlane(wave: Wave, item: { layer: number; chunk: number }): void {
 
 function index(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new DocError(`${what} must be a whole number, 0 or more.`);
+    throw new DocError(`${what} must be a whole number, 0 or more.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value;
 }
@@ -923,6 +946,8 @@ function requireAxis(graph: GraphSpec, name: string, vertical: boolean): string 
   if (!axis) {
     throw new DocError(
       `${graph.name} has no axis named ${JSON.stringify(name)}. Axes: ${Object.keys(graph.axes).join(", ")}.`,
+      "NOT_FOUND",
+      { kind: "axis", name },
     );
   }
   if (isVerticalSide(axis.side) !== vertical) {
@@ -970,7 +995,11 @@ const errorSource =
   (value: unknown): ErrorSource => {
     if (value === null || typeof value === "string") return value;
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
-    throw new DocError(`${what} must be a wave name, a number that is not negative, or null.`);
+    throw new DocError(
+      `${what} must be a wave name, a number that is not negative, or null.`,
+      "INVALID_ARGUMENT",
+      { field: what },
+    );
   };
 
 const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyle[K] } = {
@@ -1021,7 +1050,8 @@ const nullableNumber = (what: string) => (value: unknown) =>
 
 function fontSize(value: unknown, what: string): number {
   const size = positive(value, what);
-  if (size < 4 || size > 96) throw new DocError(`${what} must be between 4 and 96.`);
+  if (size < 4 || size > 96)
+    throw new DocError(`${what} must be between 4 and 96.`, "INVALID_ARGUMENT", { field: what });
   return size;
 }
 
@@ -1074,7 +1104,11 @@ function margin(value: unknown, what: string): number | null {
   if (value === null) return null;
   const points = typeof value === "number" ? value : NaN;
   if (!(points >= 0 && points <= MAX_MARGIN)) {
-    throw new DocError(`${what} must be between 0 and ${MAX_MARGIN} points, or None for auto.`);
+    throw new DocError(
+      `${what} must be between 0 and ${MAX_MARGIN} points, or None for auto.`,
+      "INVALID_ARGUMENT",
+      { field: what },
+    );
   }
   return points;
 }
@@ -1108,7 +1142,10 @@ const MAX_PLOT_POINTS = MAX_PLOT_SIZE / SCREEN_UNITS_PER_POINT;
 /** A factor of an aspect or a plan: from 1/100 to 100. */
 function sizeFactor(value: unknown, what: string): number {
   const factor = positive(value, what);
-  if (factor < 0.01 || factor > 100) throw new DocError(`${what} must be between 0.01 and 100.`);
+  if (factor < 0.01 || factor > 100)
+    throw new DocError(`${what} must be between 0.01 and 100.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   return factor;
 }
 
@@ -1191,7 +1228,11 @@ function checkPlotSize(
   const axisOn = (axis: string, vertical: boolean, use: string) => {
     const side = sideOf(axis);
     if (side === undefined) {
-      throw new DocError(`${owner} has no axis named ${JSON.stringify(axis)} for ${use}.`);
+      throw new DocError(
+        `${owner} has no axis named ${JSON.stringify(axis)} for ${use}.`,
+        "NOT_FOUND",
+        { kind: "axis", name: axis },
+      );
     }
     if (isVerticalSide(side) !== vertical) {
       throw new DocError(
@@ -1295,7 +1336,9 @@ const TRACE_LOOK_VALIDATORS = someOf<TraceStyle, keyof TraceLook>(TRACE_VALIDATO
 const figureSide = (what: string, least: number) => (value: unknown) => {
   const size = finite(value, what);
   if (size < least || size > 4000) {
-    throw new DocError(`${what} must be between ${least} and 4000 pixels.`);
+    throw new DocError(`${what} must be between ${least} and 4000 pixels.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return size;
 };
@@ -1304,7 +1347,9 @@ const SIZE_VALIDATORS = { width: figureSide("width", 160), height: figureSide("h
 /** A dict of properties, or an error naming what it should have been. */
 function propsOf(value: unknown, what: string): Props {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new DocError(`${what} must be a dict of properties.`);
+    throw new DocError(`${what} must be a dict of properties.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value as Props;
 }
@@ -1395,7 +1440,11 @@ export function checkStyle(value: unknown): StyleSpec {
 
 function requireStyle(state: DocState, name: unknown): StyleSpec {
   const style = typeof name === "string" ? state.styles[name] : undefined;
-  if (!style) throw new DocError(`No style named ${JSON.stringify(name)}.`);
+  if (!style)
+    throw new DocError(`No style named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "style",
+      name: name,
+    });
   return style;
 }
 
@@ -1461,7 +1510,10 @@ const ANNOTATION_VALIDATORS: {
 
 const pageSide = (what: string) => (value: unknown) => {
   const size = positive(value, what);
-  if (size < 72 || size > 5000) throw new DocError(`${what} must be between 72 and 5000 points.`);
+  if (size < 72 || size > 5000)
+    throw new DocError(`${what} must be between 72 and 5000 points.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   return size;
 };
 const PAGE_VALIDATORS = { width: pageSide("width"), height: pageSide("height") };
@@ -1493,12 +1545,14 @@ const AXIS_DATA_VALIDATORS = someOf<Omit<AxisSpec, "side">, (typeof AXIS_DATA)[n
 );
 
 function listOf(value: unknown, what: string): readonly unknown[] {
-  if (!Array.isArray(value) || value.length > 1000) throw new DocError(`${what} must be a list.`);
+  if (!Array.isArray(value) || value.length > 1000)
+    throw new DocError(`${what} must be a list.`, "INVALID_ARGUMENT", { field: what });
   return value;
 }
 
 function textOf(value: unknown, what: string): string {
-  if (typeof value !== "string") throw new DocError(`${what} must be text.`);
+  if (typeof value !== "string")
+    throw new DocError(`${what} must be text.`, "INVALID_ARGUMENT", { field: what });
   return value;
 }
 
@@ -1793,7 +1847,11 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
 
 function requireTemplate(state: DocState, name: unknown): GraphTemplate {
   const template = typeof name === "string" ? state.graphTemplates[name] : undefined;
-  if (!template) throw new DocError(`No graph template named ${JSON.stringify(name)}.`);
+  if (!template)
+    throw new DocError(`No graph template named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "graph template",
+      name: name,
+    });
   return template;
 }
 
@@ -1804,7 +1862,11 @@ const putTemplate = (state: DocState, name: string, template: GraphTemplate): Do
 
 function requireAnalysisTemplate(state: DocState, name: unknown): AnalysisTemplate {
   const template = typeof name === "string" ? state.templates[name] : undefined;
-  if (!template) throw new DocError(`No template named ${JSON.stringify(name)}.`);
+  if (!template)
+    throw new DocError(`No template named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "template",
+      name: name,
+    });
   return template;
 }
 
@@ -1816,13 +1878,21 @@ const putAnalysisTemplate = (
 
 function requireRun(state: DocState, name: unknown): TemplateRun {
   const run = typeof name === "string" ? state.runs[name] : undefined;
-  if (!run) throw new DocError(`No run named ${JSON.stringify(name)}.`);
+  if (!run)
+    throw new DocError(`No run named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "run",
+      name: name,
+    });
   return run;
 }
 
 function requirePage(state: DocState, name: string): PageSpec {
   const page = state.pages[name];
-  if (!page) throw new DocError(`No page layout named ${JSON.stringify(name)}.`);
+  if (!page)
+    throw new DocError(`No page layout named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "page layout",
+      name: name,
+    });
   return page;
 }
 
@@ -1890,7 +1960,12 @@ function checkDrawing(graph: GraphSpec, drawing: DrawingSpec): DrawingSpec {
       [drawing.vAxis, true],
     ] as const) {
       const axis = graph.axes[name];
-      if (!axis) throw new DocError(`${graph.name} has no axis named ${JSON.stringify(name)}.`);
+      if (!axis)
+        throw new DocError(
+          `${graph.name} has no axis named ${JSON.stringify(name)}.`,
+          "NOT_FOUND",
+          { kind: "axis", name },
+        );
       if (isVerticalSide(axis.side) !== vertical) {
         throw new DocError(
           `Axis ${name} is ${vertical ? "horizontal" : "vertical"}; a drawing needs a ${vertical ? "vertical" : "horizontal"} one there.`,
@@ -2144,6 +2219,8 @@ function removeWaves(state: DocState, names: readonly string[]): DocState {
             ? ", or kill the closed window"
             : ""
         }.`,
+        "IN_USE",
+        { kind: "wave", name, users: named },
       );
     }
   }
@@ -2193,7 +2270,11 @@ function requireItem<T extends { name: string }>(
   what: string,
 ): T {
   const item = items.find((candidate) => candidate.name === name);
-  if (!item) throw new DocError(`${graph} has no ${what} named ${JSON.stringify(name)}.`);
+  if (!item)
+    throw new DocError(`${graph} has no ${what} named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: what,
+      name: name,
+    });
   return item;
 }
 
@@ -2238,7 +2319,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const name = checkPath(command.name, "wave");
       const existing = state.waves[name];
       if (existing && command.overwrite === false) {
-        throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
+        throw new DocError(`Wave ${JSON.stringify(name)} already exists.`, "ALREADY_EXISTS", {
+          name: name,
+        });
       }
       const wave: Wave = {
         name,
@@ -2387,7 +2470,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const newName = checkPath(command.newName, "wave");
       if (newName === wave.name) return { state, result: null };
       if (newName in state.waves) {
-        throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`, "ALREADY_EXISTS", {
+          name: newName,
+        });
       }
       const waves = withEntry(
         withoutEntries(state.waves, [wave.name]),
@@ -2409,7 +2494,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const wave = requireWave(state, command.name);
       const newName = checkPath(command.newName, "wave");
       if (newName in state.waves && command.overwrite === false) {
-        throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(`Wave ${JSON.stringify(newName)} already exists.`, "ALREADY_EXISTS", {
+          name: newName,
+        });
       }
       return {
         // The copy has the values but not the formula, as in Igor.
@@ -2468,7 +2555,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "newFolder": {
       const path = checkPath(command.path, "data folder");
       if (state.folders.includes(path)) {
-        throw new DocError(`Data folder ${JSON.stringify(path)} already exists.`);
+        throw new DocError(
+          `Data folder ${JSON.stringify(path)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: path },
+        );
       }
       return { state: withFolders(state, path), result: path };
     }
@@ -2476,7 +2567,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const path = checkPath(command.path, "data folder");
       const newPath = checkPath(command.newPath, "data folder");
       if (!state.folders.includes(path)) {
-        throw new DocError(`No data folder named ${JSON.stringify(path)}.`);
+        throw new DocError(`No data folder named ${JSON.stringify(path)}.`, "NOT_FOUND", {
+          kind: "data folder",
+          name: path,
+        });
       }
       if (newPath === path) return { state, result: null };
       if (state.folders.includes(newPath) || newPath.startsWith(`${path}:`)) {
@@ -2488,7 +2582,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       for (const wave of Object.values(state.waves)) {
         const name = move(wave.name);
         if (name !== wave.name && name in state.waves) {
-          throw new DocError(`Wave ${JSON.stringify(name)} already exists.`);
+          throw new DocError(`Wave ${JSON.stringify(name)} already exists.`, "ALREADY_EXISTS", {
+            name: name,
+          });
         }
         waves[name] = name === wave.name ? wave : moved(wave, name);
       }
@@ -2507,7 +2603,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "killFolder": {
       const path = checkPath(command.path, "data folder");
       if (!state.folders.includes(path)) {
-        throw new DocError(`No data folder named ${JSON.stringify(path)}.`);
+        throw new DocError(`No data folder named ${JSON.stringify(path)}.`, "NOT_FOUND", {
+          kind: "data folder",
+          name: path,
+        });
       }
       const inside = (name: string) => name === path || name.startsWith(`${path}:`);
       const emptied = removeWaves(state, state.waveOrder.filter(inside));
@@ -2529,7 +2628,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? uniqueName("Graph", windowTaken(state))
           : checkName(command.name, "graph");
       if (windowTaken(state)(name)) {
-        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       }
       const style = command.style === undefined ? state.defaultStyle : command.style;
       if (style !== null) requireStyle(state, style);
@@ -2609,7 +2712,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "removeAxis": {
       const graph = requireGraph(state, command.graph);
       if (!(command.axis in graph.axes)) {
-        throw new DocError(`${graph.name} has no axis named ${JSON.stringify(command.axis)}.`);
+        throw new DocError(
+          `${graph.name} has no axis named ${JSON.stringify(command.axis)}.`,
+          "NOT_FOUND",
+          { kind: "axis", name: command.axis },
+        );
       }
       if ((AXIS_SIDES as readonly string[]).includes(command.axis)) {
         throw new DocError("The left, bottom, right and top axes cannot be removed.");
@@ -2623,6 +2730,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (users.length > 0) {
         throw new DocError(
           `Axis ${command.axis} is in use by ${users.map((item) => item.name).join(", ")}.`,
+          "IN_USE",
+          { kind: "axis", name: command.axis, users: users.map((item) => item.name) },
         );
       }
       const sizing = (["width", "height"] as const).filter((side) =>
@@ -2642,6 +2751,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!current) {
         throw new DocError(
           `${graph.name} has no axis named ${JSON.stringify(command.axis)}. Axes: ${Object.keys(graph.axes).join(", ")}.`,
+          "NOT_FOUND",
+          { kind: "axis", name: command.axis },
         );
       }
       const axis = {
@@ -2889,7 +3000,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? uniqueName("Table", windowTaken(state))
           : checkName(command.name, "table");
       if (windowTaken(state)(name)) {
-        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       }
       const columns = [...new Set(command.waves.map((wave) => requireWave(state, wave).name))];
       return {
@@ -2951,7 +3066,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           ? uniqueName("Layout", windowTaken(state))
           : checkName(command.name, "layout");
       if (windowTaken(state)(name)) {
-        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       }
       const page: PageSpec = {
         name,
@@ -3057,7 +3176,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         for (let count = 1; windowTaken(state)(name); count += 1) name = `Procedure${count}`;
       }
       if (windowTaken(state)(name)) {
-        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       }
       if (command.code !== undefined && typeof command.code !== "string") {
         throw new DocError("code must be text.");
@@ -3079,7 +3202,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "setProcedure": {
       const procedure = state.procedures[command.name];
-      if (!procedure) throw new DocError(`No procedure named ${JSON.stringify(command.name)}.`);
+      if (!procedure)
+        throw new DocError(`No procedure named ${JSON.stringify(command.name)}.`, "NOT_FOUND", {
+          kind: "procedure",
+          name: command.name,
+        });
       if (command.code !== undefined && typeof command.code !== "string") {
         throw new DocError("code must be text.");
       }
@@ -3112,7 +3239,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         for (let count = 1; windowTaken(state)(name); count += 1) name = `Note${count}`;
       }
       if (windowTaken(state)(name)) {
-        throw new DocError(`A window named ${JSON.stringify(name)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       }
       if (command.text !== undefined && typeof command.text !== "string") {
         throw new DocError("text must be text.");
@@ -3128,7 +3259,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "setNote": {
       const note = state.notes[command.name];
-      if (!note) throw new DocError(`No note named ${JSON.stringify(command.name)}.`);
+      if (!note)
+        throw new DocError(`No note named ${JSON.stringify(command.name)}.`, "NOT_FOUND", {
+          kind: "note",
+          name: command.name,
+        });
       if (typeof command.text !== "string") throw new DocError("text must be text.");
       if (command.text === note.text) return { state, result: null };
       return {
@@ -3177,7 +3312,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       let next = state;
       for (const name of command.names) {
         const result = state.results[name];
-        if (!result) throw new DocError(`No result named ${JSON.stringify(name)}.`);
+        if (!result)
+          throw new DocError(`No result named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+            kind: "result",
+            name: name,
+          });
         next = dropKept(next, result);
       }
       return {
@@ -3187,11 +3326,19 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "renameResult": {
       const result = state.results[command.name];
-      if (!result) throw new DocError(`No result named ${JSON.stringify(command.name)}.`);
+      if (!result)
+        throw new DocError(`No result named ${JSON.stringify(command.name)}.`, "NOT_FOUND", {
+          kind: "result",
+          name: command.name,
+        });
       const newName = checkName(command.newName, "result");
       if (newName === command.name) return { state, result: newName };
       if (newName in state.results) {
-        throw new DocError(`A result named ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(
+          `A result named ${JSON.stringify(newName)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: newName },
+        );
       }
       // Its copies move with it, and whatever names them follows (graphs, the result itself).
       let moved = state;
@@ -3235,7 +3382,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const newName = checkName(command.newName, "template");
       if (newName === command.name) return { state, result: newName };
       if (newName in state.templates) {
-        throw new DocError(`Template ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(
+          `Template ${JSON.stringify(newName)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: newName },
+        );
       }
       const templates = withEntry(
         withoutEntries(state.templates, [command.name]),
@@ -3248,7 +3399,12 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const taken = (name: string) => name in state.runs;
       const name =
         command.name === undefined ? uniqueName(RUN_BASE, taken) : checkName(command.name, "run");
-      if (taken(name)) throw new DocError(`A run named ${JSON.stringify(name)} already exists.`);
+      if (taken(name))
+        throw new DocError(
+          `A run named ${JSON.stringify(name)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: name },
+        );
       const run = checkRun(command.run, name);
       return { state: { ...state, runs: withEntry(state.runs, name, run) }, result: name };
     }
@@ -3283,7 +3439,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const newName = checkName(command.newName, "style");
       if (newName === command.name) return { state, result: null };
       if (newName in state.styles) {
-        throw new DocError(`Style ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(`Style ${JSON.stringify(newName)} already exists.`, "ALREADY_EXISTS", {
+          name: newName,
+        });
       }
       const follow = (name: string | null) => (name === command.name ? newName : name);
       const graphs = dict<GraphSpec>();
@@ -3345,7 +3503,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const newName = checkName(command.newName, "graph template");
       if (newName === command.name) return { state, result: null };
       if (newName in state.graphTemplates) {
-        throw new DocError(`Graph template ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(
+          `Graph template ${JSON.stringify(newName)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: newName },
+        );
       }
       const graphTemplates = withEntry(
         withoutEntries(state.graphTemplates, [command.name]),
@@ -3412,7 +3574,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (typeof target !== "string") throw new DocError("target must be a wave or a data folder.");
       if (isFolderKey(target)) {
         if (!state.folders.includes(target.slice(0, -1))) {
-          throw new DocError(`No data folder named ${JSON.stringify(target.slice(0, -1))}.`);
+          throw new DocError(
+            `No data folder named ${JSON.stringify(target.slice(0, -1))}.`,
+            "NOT_FOUND",
+            { kind: "data folder", name: target.slice(0, -1) },
+          );
         }
       } else {
         requireWave(state, target);
@@ -3450,7 +3616,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "killWindow": {
       if (!windowTaken(state)(command.name)) {
-        throw new DocError(`No window named ${JSON.stringify(command.name)}.`);
+        throw new DocError(`No window named ${JSON.stringify(command.name)}.`, "NOT_FOUND", {
+          kind: "window",
+          name: command.name,
+        });
       }
       const gone = [command.name];
       let pages = withoutEntries(state.pages, gone);
@@ -3514,7 +3683,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           : checkName(command.newName, target.kind === "page" ? "page layout" : target.kind);
       if (newName === target.name) return { state, result: newName };
       if (windowTaken(state)(newName)) {
-        throw new DocError(`A window named ${JSON.stringify(newName)} already exists.`);
+        throw new DocError(
+          `A window named ${JSON.stringify(newName)} already exists.`,
+          "ALREADY_EXISTS",
+          { name: newName },
+        );
       }
       const { name } = target;
       let pages = renamedEntry(state.pages, name, newName);

@@ -343,6 +343,7 @@ export class Doc {
       if (current.waves[name]?.rev !== rev) {
         throw new DocError(
           `${name} changed while this was running, so nothing it did was kept. Run it again.`,
+          "CONFLICT",
         );
       }
     }
@@ -351,6 +352,7 @@ export class Doc {
         if (writer.dispatch(command) !== result) {
           throw new DocError(
             "The experiment changed while this was running, so nothing it did was kept. Run it again.",
+            "CONFLICT",
           );
         }
       }

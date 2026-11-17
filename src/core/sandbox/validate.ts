@@ -1,4 +1,11 @@
-import { AXIS_SIDES, type AxisSide, type WaveData, type WaveType } from "../doc/types";
+import {
+  AXIS_SIDES,
+  DocError,
+  type AxisSide,
+  type ErrorCode,
+  type WaveData,
+  type WaveType,
+} from "../doc/types";
 import { SANDBOX_DTYPES, SANDBOX_LIMITS, type Json, type SandboxDtype } from "./protocol";
 
 /**
@@ -8,9 +15,21 @@ import { SANDBOX_DTYPES, SANDBOX_LIMITS, type Json, type SandboxDtype } from "./
  * whole message. Nothing here throws for bad input; it says why instead.
  */
 
-export class SandboxError extends Error {
-  constructor(message: string) {
-    super(message);
+/**
+ * Where in a plugin's run it failed: starting its sandbox, loading its code,
+ * running the action (the plugin raised), taking too long, being stopped, or
+ * returning what is not allowed.
+ */
+export type PluginPhase = "start" | "load" | "run" | "timeout" | "stopped" | "invalid_output";
+
+/** A plugin's sandbox failed: a PLUGIN_FAILED error (see ERROR_CODES), saying at which phase. */
+export class SandboxError extends DocError {
+  constructor(
+    message: string,
+    phase: PluginPhase = "invalid_output",
+    code: ErrorCode = "PLUGIN_FAILED",
+  ) {
+    super(message, code, { phase });
     this.name = "SandboxError";
   }
 }

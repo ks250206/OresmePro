@@ -69,7 +69,7 @@ Change the panel's title (what its window shows; its name when empty). Returns s
 control(name)
 ```
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ### `Panel.__getitem__`
 

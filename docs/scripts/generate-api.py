@@ -70,7 +70,13 @@ SECTIONS = {
     "notes": ("Notes", "ノート", "Note new_note note notes"),
     "packages": ("Packages", "パッケージ", "install uninstall packages"),
     "panel": ("Panels", "パネル", "Panel Control panel panels new_panel set_panel control"),
-    "global": ("General", "全般", "OresmeError atomic time_zone set_time_zone"),
+    "errors": (
+        "Errors",
+        "エラー",
+        "OresmeError InvalidArgumentError NotFoundError AlreadyExistsError InUseError "
+        "ConflictError UnsupportedError PluginFailedError InternalError",
+    ),
+    "global": ("General", "全般", "atomic time_zone set_time_zone"),
 }
 
 # Python protocols intentionally exposed to users.

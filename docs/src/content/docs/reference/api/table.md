@@ -108,7 +108,7 @@ op.table(name=None)
 
 名前でテーブルを取得します。名前を省くと最前面のテーブル。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `tables`
 

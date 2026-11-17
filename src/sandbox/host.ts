@@ -108,7 +108,7 @@ const KEY = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 async function fetchBytes(url: string): Promise<ArrayBuffer> {
   const response = await fetch(url);
-  if (!response.ok) throw new SandboxError(`Could not fetch ${url} (${response.status}).`);
+  if (!response.ok) throw new SandboxError(`Could not fetch ${url} (${response.status}).`, "start");
   return response.arrayBuffer();
 }
 
@@ -195,10 +195,15 @@ export class Sandbox {
       if (answer.type === "unsupported") {
         throw new SandboxError(
           `This browser cannot keep plugin code apart from the app (${checkLog(answer.reason)}), so plugins with code cannot run here.`,
+          "start",
+          "UNSUPPORTED",
         );
       }
       if (answer.type === "boot-failed") {
-        throw new SandboxError(`Python did not start in the sandbox: ${checkLog(answer.error)}`);
+        throw new SandboxError(
+          `Python did not start in the sandbox: ${checkLog(answer.error)}`,
+          "start",
+        );
       }
       return sandbox;
     } catch (error) {
@@ -209,7 +214,8 @@ export class Sandbox {
 
   /** Puts a plugin's files in the sandbox and imports it; returns the actions it registered. */
   load(plugin: PluginFiles, timeoutMs = 60_000): Promise<string[]> {
-    if (!KEY.test(plugin.key)) throw new SandboxError(`${plugin.key} is not a usable plugin key.`);
+    if (!KEY.test(plugin.key))
+      throw new SandboxError(`${plugin.key} is not a usable plugin key.`, "load");
     return this.serial(async () => {
       const answer = this.expect(
         (message) => message.type === "loaded" || message.type === "load-failed",
@@ -228,7 +234,7 @@ export class Sandbox {
       this.port.postMessage(message, Object.values(files));
       const reply = await answer;
       if (reply.type === "load-failed") {
-        throw new SandboxError(`The plugin did not load: ${checkLog(reply.error)}`);
+        throw new SandboxError(`The plugin did not load: ${checkLog(reply.error)}`, "load");
       }
       return checkLoaded((reply as { actions: unknown }).actions, plugin.actions);
     });
@@ -269,7 +275,7 @@ export class Sandbox {
       this.port.postMessage(message, transfer);
       const reply = (await answer) as unknown as Record<string, unknown>;
       if (reply.ok !== true) {
-        throw new SandboxError(checkLog(reply.error) || "The action failed.");
+        throw new SandboxError(checkLog(reply.error) || "The action failed.", "run");
       }
       return checkResult(reply);
     });
@@ -283,7 +289,7 @@ export class Sandbox {
     this.port.close();
     this.frame.remove();
     for (const pending of this.pending)
-      pending.reject(new SandboxError("The sandbox was stopped."));
+      pending.reject(new SandboxError("The sandbox was stopped.", "stopped"));
     this.pending.clear();
   }
 
@@ -307,7 +313,8 @@ export class Sandbox {
     timeoutMs = 30_000,
     signal?: AbortSignal,
   ): Promise<SandboxToHost> {
-    if (this.destroyed) return Promise.reject(new SandboxError("The sandbox was stopped."));
+    if (this.destroyed)
+      return Promise.reject(new SandboxError("The sandbox was stopped.", "stopped"));
     return new Promise((resolve, reject) => {
       const pending: Pending = {
         accepts,
@@ -322,7 +329,7 @@ export class Sandbox {
       };
       const stop = (reason: string) => {
         finish();
-        reject(new SandboxError(reason));
+        reject(new SandboxError(reason, "timeout"));
         this.destroy();
       };
       const timer = setTimeout(

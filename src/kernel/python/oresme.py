@@ -38,6 +38,14 @@ import _oresme_js
 
 __all__ = [
     "OresmeError",
+    "InvalidArgumentError",
+    "NotFoundError",
+    "AlreadyExistsError",
+    "InUseError",
+    "ConflictError",
+    "UnsupportedError",
+    "PluginFailedError",
+    "InternalError",
     "atomic",
     "action",
     "actions",
@@ -136,7 +144,116 @@ __all__ = [
 
 
 class OresmeError(Exception):
-    """The application rejected a request (bad name, missing wave, ...)."""
+    """The application rejected a request (bad name, missing wave, ...).
+
+    ``code`` says what kind of refusal it is and ``details`` holds what it is
+    about, for code to tell errors apart without reading the message::
+
+        try:
+            op.wave("signal")
+        except op.NotFoundError as error:
+            print(error.details)          # {'kind': 'wave', 'name': 'signal'}
+
+    Each code has a class of its own, all of them OresmeError:
+
+    - ``InvalidArgumentError`` ("INVALID_ARGUMENT", also a ValueError): a
+      value, name or argument that is not allowed; ``details["field"]``
+      names it when it is known.
+    - ``NotFoundError`` ("NOT_FOUND", also a LookupError): something asked
+      for by name is not there; ``details["kind"]`` and ``details["name"]``.
+    - ``AlreadyExistsError`` ("ALREADY_EXISTS"): the name is taken.
+    - ``InUseError`` ("IN_USE"): it cannot be removed while other things use
+      it; ``details["users"]``.
+    - ``ConflictError`` ("CONFLICT"): what the step was computed from changed
+      meanwhile; doing it again may work.
+    - ``UnsupportedError`` ("UNSUPPORTED"): a file, format or package the app
+      cannot handle.
+    - ``PluginFailedError`` ("PLUGIN_FAILED"): a plugin failed;
+      ``details["phase"]`` is "start", "load", "run", "timeout", "stopped" or
+      "invalid_output".
+    - ``InternalError`` ("INTERNAL"): a fault of the app itself.
+
+    An OresmeError raised without a code has the code "UNSPECIFIED". The
+    codes are part of the API, and kept from one version to the next.
+    Errors of NumPy, SciPy and Python itself are not turned into these.
+    """
+
+    code = "UNSPECIFIED"
+
+    def __init__(self, message="", *, code=None, details=None):
+        super().__init__(message)
+        self.code = code or type(self).code
+        self.details = dict(details or {})
+
+
+class InvalidArgumentError(OresmeError, ValueError):
+    """A value, name or argument that is not allowed (code "INVALID_ARGUMENT")."""
+
+    code = "INVALID_ARGUMENT"
+
+
+class NotFoundError(OresmeError, LookupError):
+    """Something asked for by name is not there (code "NOT_FOUND")."""
+
+    code = "NOT_FOUND"
+
+
+class AlreadyExistsError(OresmeError):
+    """The name is taken already (code "ALREADY_EXISTS")."""
+
+    code = "ALREADY_EXISTS"
+
+
+class InUseError(OresmeError):
+    """It cannot be removed while other things use it (code "IN_USE")."""
+
+    code = "IN_USE"
+
+
+class ConflictError(OresmeError):
+    """What the step was computed from changed meanwhile (code "CONFLICT"): doing it again may work."""
+
+    code = "CONFLICT"
+
+
+class UnsupportedError(OresmeError):
+    """A file, format or package the app cannot handle (code "UNSUPPORTED")."""
+
+    code = "UNSUPPORTED"
+
+
+class PluginFailedError(OresmeError):
+    """A plugin failed (code "PLUGIN_FAILED"); ``details["phase"]`` says where."""
+
+    code = "PLUGIN_FAILED"
+
+
+class InternalError(OresmeError):
+    """A fault of the app itself (code "INTERNAL")."""
+
+    code = "INTERNAL"
+
+
+_ERROR_CLASSES = {
+    cls.code: cls
+    for cls in (
+        InvalidArgumentError,
+        NotFoundError,
+        AlreadyExistsError,
+        InUseError,
+        ConflictError,
+        UnsupportedError,
+        PluginFailedError,
+        InternalError,
+    )
+}
+
+
+def _refusal(result):
+    """The exception for a refusal the application answered with (its code, message and details)."""
+    code = result.get("code")
+    cls = _ERROR_CLASSES.get(code, OresmeError)
+    return cls(result.get("error", ""), code=code, details=result.get("details"))
 
 
 def _call(method, params=None, data=None):
@@ -144,7 +261,7 @@ def _call(method, params=None, data=None):
     try:
         payload = json.dumps(params or {}, allow_nan=False)
     except ValueError:
-        raise OresmeError("Values must be finite numbers (no NaN or infinity here).") from None
+        raise InvalidArgumentError("Values must be finite numbers (no NaN or infinity here).") from None
     js_data = None
     if data is not None:
         from pyodide.ffi import to_js
@@ -153,7 +270,7 @@ def _call(method, params=None, data=None):
     reply = _oresme_js.rpc(method, payload, js_data)
     result = json.loads(reply[0])
     if not result["ok"]:
-        raise OresmeError(result["error"])
+        raise _refusal(result)
     binary = reply[1]
     array = None
     if binary is not None:
@@ -850,7 +967,7 @@ class Trace(_Props):
         for trace in self._graph._info()["traces"]:
             if trace["name"] == self._name:
                 return trace
-        raise OresmeError(f"{self._graph.name} has no trace named {self._name!r}.")
+        raise NotFoundError(f"{self._graph.name} has no trace named {self._name!r}.", details={"kind": "trace", "name": self._name})
 
     def _set(self, props):
         for key in ("yError", "xError", "colorWave", "textMarker"):
@@ -998,7 +1115,7 @@ class Annotation(_Props):
         for annotation in self._graph._info()["annotations"]:
             if annotation["name"] == self._name:
                 return annotation
-        raise OresmeError(f"{self._graph.name} has no annotation named {self._name!r}.")
+        raise NotFoundError(f"{self._graph.name} has no annotation named {self._name!r}.", details={"kind": "annotation", "name": self._name})
 
     def _set(self, props):
         _dispatch(
@@ -1066,7 +1183,7 @@ class Drawing(_Props):
         for drawing in self._graph._info()["drawings"]:
             if drawing["name"] == self._name:
                 return drawing
-        raise OresmeError(f"{self._graph.name} has no drawing named {self._name!r}.")
+        raise NotFoundError(f"{self._graph.name} has no drawing named {self._name!r}.", details={"kind": "drawing", "name": self._name})
 
     def _set(self, props):
         if "points" in props:
@@ -1113,7 +1230,7 @@ class Image(_Props):
         for image in self._graph._info()["images"]:
             if image["name"] == self._name:
                 return image
-        raise OresmeError(f"{self._graph.name} has no image named {self._name!r}.")
+        raise NotFoundError(f"{self._graph.name} has no image named {self._name!r}.", details={"kind": "image", "name": self._name})
 
     def _set(self, props):
         _dispatch(
@@ -1144,7 +1261,7 @@ class Contour(_Props):
         for contour in self._graph._info()["contours"]:
             if contour["name"] == self._name:
                 return contour
-        raise OresmeError(f"{self._graph.name} has no contour named {self._name!r}.")
+        raise NotFoundError(f"{self._graph.name} has no contour named {self._name!r}.", details={"kind": "contour", "name": self._name})
 
     def _set(self, props):
         _dispatch(
@@ -1229,7 +1346,7 @@ class Length(float):
 
     def __new__(cls, value, unit="pt"):
         if unit not in _POINTS_PER:
-            raise ValueError(f"unit must be one of {', '.join(_POINTS_PER)}, not {unit!r}.")
+            raise InvalidArgumentError(f"unit must be one of {', '.join(_POINTS_PER)}, not {unit!r}.")
         value = float(value)
         length = super().__new__(cls, value * _POINTS_PER[unit])
         length.value = value
@@ -1270,7 +1387,7 @@ def _plot_dimension(value, what):
     if isinstance(value, str):
         if value == "auto":
             return {"mode": "auto"}
-        raise ValueError(f'{what} must be "auto", a length or a tuple, not {value!r}.')
+        raise InvalidArgumentError(f'{what} must be "auto", a length or a tuple, not {value!r}.')
     if isinstance(value, (tuple, list)) and value and isinstance(value[0], str):
         mode, *rest = value
         try:
@@ -1297,8 +1414,8 @@ def _plot_dimension(value, what):
                     number, unit = _length_parts(length, what)
                 return {"mode": "perUnit", "value": _plain(number), "unit": unit, "axis": axis}
         except ValueError:
-            raise ValueError(f"{what}: {_PLOT_FORMS}") from None
-        raise ValueError(f"{what} has no mode {mode!r}: {_PLOT_FORMS}")
+            raise InvalidArgumentError(f"{what}: {_PLOT_FORMS}") from None
+        raise InvalidArgumentError(f"{what} has no mode {mode!r}: {_PLOT_FORMS}")
     number, unit = _length_parts(value, what)
     return {"mode": "absolute", "value": number, "unit": unit}
 
@@ -1331,7 +1448,7 @@ def _margin(value, what):
     if value is None or (isinstance(value, str) and value == "auto"):
         return None
     if isinstance(value, str):
-        raise ValueError(f'{what} must be "auto", a length or a number of points, not {value!r}.')
+        raise InvalidArgumentError(f'{what} must be "auto", a length or a number of points, not {value!r}.')
     number, unit = _length_parts(value, what)
     return number * _POINTS_PER[unit]
 
@@ -1400,7 +1517,7 @@ class Graph(_Props):
             margins = props.pop("margins")
             if isinstance(margins, (tuple, list)):
                 if len(margins) != 4:
-                    raise ValueError("margins must be (left, bottom, right, top).")
+                    raise InvalidArgumentError("margins must be (left, bottom, right, top).")
             else:
                 margins = (margins,) * 4
             for side, value in zip(_MARGIN_SIDES, margins):
@@ -1489,7 +1606,7 @@ class Graph(_Props):
     def axis(self, name):
         axes = self._info()["axes"]
         if name not in axes:
-            raise OresmeError(f"{self._name} has no axis named {name!r}. Axes: {', '.join(axes)}.")
+            raise NotFoundError(f"{self._name} has no axis named {name!r}. Axes: {', '.join(axes)}.", details={"kind": "axis", "name": name})
         return Axis(self, name)
 
     @property
@@ -1543,7 +1660,7 @@ class Graph(_Props):
         if name is None and len(names) == 1:
             name = names[0]
         if name not in names:
-            raise OresmeError(f"{self._name} has no image named {name!r}.")
+            raise NotFoundError(f"{self._name} has no image named {name!r}.", details={"kind": "image", "name": name})
         return Image(self, name)
 
     @property
@@ -1555,7 +1672,7 @@ class Graph(_Props):
         if name is None and len(names) == 1:
             name = names[0]
         if name not in names:
-            raise OresmeError(f"{self._name} has no contour named {name!r}.")
+            raise NotFoundError(f"{self._name} has no contour named {name!r}.", details={"kind": "contour", "name": name})
         return Contour(self, name)
 
     def cursor(self, name, trace=None, point=None):
@@ -2034,7 +2151,7 @@ class LayoutItem(_Props):
         for item in self._layout._get()["items"]:
             if item["name"] == self._name:
                 return item
-        raise OresmeError(f"{self._layout.name} has no item named {self._name!r}.")
+        raise NotFoundError(f"{self._layout.name} has no item named {self._name!r}.", details={"kind": "item", "name": self._name})
 
     def _set(self, props):
         _dispatch(
@@ -2226,7 +2343,7 @@ def layout(name=None):
             raise OresmeError("There are no page layouts.")
         return Layout(names[-1])
     if name not in names:
-        raise OresmeError(f"No page layout named {name!r}.")
+        raise NotFoundError(f"No page layout named {name!r}.")
     return Layout(name)
 
 
@@ -2414,7 +2531,7 @@ def folder(path=""):
     """An existing data folder; root with no argument."""
     path = _wave_name(path) if path else ""
     if path and path not in _call("listFolders")[0]:
-        raise OresmeError(f"No data folder named {path!r}.")
+        raise NotFoundError(f"No data folder named {path!r}.")
     return Folder(path)
 
 
@@ -3253,7 +3370,7 @@ def graph(name=None):
             raise OresmeError("There are no graphs.")
         return Graph(names[-1])
     if name not in names:
-        raise OresmeError(f"No graph named {name!r}.")
+        raise NotFoundError(f"No graph named {name!r}.")
     return Graph(name)
 
 
@@ -3269,7 +3386,7 @@ def table(name=None):
             raise OresmeError("There are no tables.")
         return Table(names[-1])
     if name not in names:
-        raise OresmeError(f"No table named {name!r}.")
+        raise NotFoundError(f"No table named {name!r}.")
     return Table(name)
 
 
@@ -3318,7 +3435,7 @@ def procedure(name=None):
             raise OresmeError("There are no procedures.")
         return Procedure(names[-1])
     if name not in names:
-        raise OresmeError(f"No procedure named {name!r}.")
+        raise NotFoundError(f"No procedure named {name!r}.")
     return Procedure(name)
 
 
@@ -3346,7 +3463,7 @@ def note(name=None):
             raise OresmeError("There are no notes.")
         return Note(names[-1])
     if name not in names:
-        raise OresmeError(f"No note named {name!r}.")
+        raise NotFoundError(f"No note named {name!r}.")
     return Note(name)
 
 
@@ -3546,7 +3663,7 @@ def styles():
 def style(name):
     """The style with this name."""
     if name not in _call("listStyles")[0]["names"]:
-        raise OresmeError(f"No style named {name!r}.")
+        raise NotFoundError(f"No style named {name!r}.")
     return Style(name)
 
 
@@ -3674,7 +3791,7 @@ def _json_value(value, where):
         return value
     if _is_number(value):
         if not math.isfinite(float(value)):
-            raise OresmeError(f"{where} must be made of finite numbers, not {value!r}.")
+            raise InvalidArgumentError(f"{where} must be made of finite numbers, not {value!r}.")
         return int(value) if _is_integer(value) and not isinstance(value, float) else float(value)
     if isinstance(value, (list, tuple, np.ndarray)):
         return [_json_value(item, f"{where}[{index}]") for index, item in enumerate(value)]
@@ -3682,10 +3799,10 @@ def _json_value(value, where):
         plain = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise OresmeError(f"{where}: keys must be text, not {key!r}.")
+                raise InvalidArgumentError(f"{where}: keys must be text, not {key!r}.")
             plain[key] = _json_value(item, f"{where}[{key!r}]")
         return plain
-    raise OresmeError(
+    raise InvalidArgumentError(
         f"{where} must be made of dicts, lists, text, numbers, True, False and None, not {value!r}."
     )
 
@@ -3694,34 +3811,34 @@ def _check_value(spec, value, where, resolve_names=True):
     """The value of one argument as plain JSON, or OresmeError saying what is wrong with it."""
     kind = spec["type"]
     if value is None:
-        raise OresmeError(f"{where} cannot be None (null): leave it out instead.")
+        raise InvalidArgumentError(f"{where} cannot be None (null): leave it out instead.")
 
     def number(item, what):
         if not _is_number(item):
-            raise OresmeError(f"{what} must be a number, not {item!r}.")
+            raise InvalidArgumentError(f"{what} must be a number, not {item!r}.")
         if not math.isfinite(float(item)):
-            raise OresmeError(f"{what} must be a finite number, not {item!r}.")
+            raise InvalidArgumentError(f"{what} must be a finite number, not {item!r}.")
         if kind == "integer" and not _is_integer(item):
-            raise OresmeError(f"{what} must be a whole number, not {item!r}.")
+            raise InvalidArgumentError(f"{what} must be a whole number, not {item!r}.")
         plain = int(item) if kind == "integer" else float(item)
         if "min" in spec and plain < spec["min"]:
-            raise OresmeError(f"{what} must be at least {spec['min']:g}, not {plain:g}.")
+            raise InvalidArgumentError(f"{what} must be at least {spec['min']:g}, not {plain:g}.")
         if "max" in spec and plain > spec["max"]:
-            raise OresmeError(f"{what} must be at most {spec['max']:g}, not {plain:g}.")
+            raise InvalidArgumentError(f"{what} must be at most {spec['max']:g}, not {plain:g}.")
         return plain
 
     def wave_name(item, what):
         if isinstance(item, Wave):
             return item.name
         if not isinstance(item, str) or not item:
-            raise OresmeError(f"{what} must be the name of a wave, not {item!r}.")
+            raise InvalidArgumentError(f"{what} must be the name of a wave, not {item!r}.")
         return _wave_name(item) if resolve_names else item
 
     def items():
         if not isinstance(value, (list, tuple)):
-            raise OresmeError(f"{where} must be a list, not {value!r}.")
+            raise InvalidArgumentError(f"{where} must be a list, not {value!r}.")
         if "length" in spec and len(value) != spec["length"]:
-            raise OresmeError(f"{where} must have {spec['length']} items, not {len(value)}.")
+            raise InvalidArgumentError(f"{where} must have {spec['length']} items, not {len(value)}.")
         return list(value)
 
     if kind == "wave":
@@ -3734,11 +3851,11 @@ def _check_value(spec, value, where, resolve_names=True):
         return [number(item, f"{where}[{index}]") for index, item in enumerate(items())]
     if kind == "string":
         if not isinstance(value, str):
-            raise OresmeError(f"{where} must be a string, not {value!r}.")
+            raise InvalidArgumentError(f"{where} must be a string, not {value!r}.")
         return value
     if kind == "boolean":
         if not isinstance(value, (bool, np.bool_)):
-            raise OresmeError(f"{where} must be True or False, not {value!r}.")
+            raise InvalidArgumentError(f"{where} must be True or False, not {value!r}.")
         return bool(value)
     if kind == "json":
         return _json_value(value, where)
@@ -3747,7 +3864,7 @@ def _check_value(spec, value, where, resolve_names=True):
         rows = []
         for index, row in enumerate(items()):
             if not isinstance(row, dict) or not row:
-                raise OresmeError(f"{where}[{index}] must give a wave for each input, as a dict.")
+                raise InvalidArgumentError(f"{where}[{index}] must give a wave for each input, as a dict.")
             rows.append({
                 str(slot): wave_name(item, f"{where}[{index}][{slot!r}]")
                 for slot, item in row.items()
@@ -3759,60 +3876,60 @@ def _check_value(spec, value, where, resolve_names=True):
             if isinstance(choice, str) == isinstance(value, str) and choice == value:
                 return choice
     listed = ", ".join(_py_literal(choice) for choice in spec["choices"])
-    raise OresmeError(f"{where} must be one of {listed}, not {value!r}.")
+    raise InvalidArgumentError(f"{where} must be one of {listed}, not {value!r}.")
 
 
 def _check_spec(action_id, name, spec):
     """A parameter's description, checked, with ``optional`` filled in."""
     where = f"{action_id}: parameter {name!r}"
     if not isinstance(name, str) or not name.isidentifier() or name.startswith("_"):
-        raise OresmeError(f"{action_id}: {name!r} is not a parameter name (letters, digits and _).")
+        raise InvalidArgumentError(f"{action_id}: {name!r} is not a parameter name (letters, digits and _).")
     if not isinstance(spec, dict):
-        raise OresmeError(f"{where} must be described by a dict, such as {{'type': 'wave'}}.")
+        raise InvalidArgumentError(f"{where} must be described by a dict, such as {{'type': 'wave'}}.")
     unknown = sorted(set(spec) - _PARAM_KEYS)
     if unknown:
-        raise OresmeError(f"{where}: unknown key {unknown[0]!r}. Keys: {', '.join(sorted(_PARAM_KEYS))}.")
+        raise InvalidArgumentError(f"{where}: unknown key {unknown[0]!r}. Keys: {', '.join(sorted(_PARAM_KEYS))}.")
     kind = spec.get("type")
     if kind not in _PARAM_TYPES:
-        raise OresmeError(f"{where}: type must be one of {', '.join(_PARAM_TYPES)}, not {kind!r}.")
+        raise InvalidArgumentError(f"{where}: type must be one of {', '.join(_PARAM_TYPES)}, not {kind!r}.")
     checked = {"type": kind}
     for key in ("title", "description", "arg"):
         if key in spec:
             if not isinstance(spec[key], str) or not spec[key]:
-                raise OresmeError(f"{where}: {key} must be a string.")
+                raise InvalidArgumentError(f"{where}: {key} must be a string.")
             checked[key] = spec[key]
     if "arg" in checked and not checked["arg"].isidentifier():
-        raise OresmeError(f"{where}: arg must be the name of a parameter of the function.")
+        raise InvalidArgumentError(f"{where}: arg must be the name of a parameter of the function.")
     if "choices" in spec or kind == "choice":
         choices = spec.get("choices")
         if kind != "choice":
-            raise OresmeError(f"{where}: only a choice has choices.")
+            raise InvalidArgumentError(f"{where}: only a choice has choices.")
         if (
             not isinstance(choices, (list, tuple))
             or not choices
             or not all(isinstance(item, str) or _is_number(item) for item in choices)
             or len(set(choices)) != len(choices)
         ):
-            raise OresmeError(f"{where}: choices must be a list of different strings or numbers.")
+            raise InvalidArgumentError(f"{where}: choices must be a list of different strings or numbers.")
         checked["choices"] = [_plain(item) for item in choices]
     for key in ("min", "max"):
         if key in spec:
             if kind not in ("number", "integer", "numbers"):
-                raise OresmeError(f"{where}: only numbers have {key}.")
+                raise InvalidArgumentError(f"{where}: only numbers have {key}.")
             if not _is_number(spec[key]) or not math.isfinite(spec[key]):
-                raise OresmeError(f"{where}: {key} must be a finite number.")
+                raise InvalidArgumentError(f"{where}: {key} must be a finite number.")
             checked[key] = _plain(spec[key])
     if "min" in checked and "max" in checked and checked["min"] > checked["max"]:
-        raise OresmeError(f"{where}: min is above max.")
+        raise InvalidArgumentError(f"{where}: min is above max.")
     if "length" in spec:
         if kind not in ("waves", "numbers"):
-            raise OresmeError(f"{where}: only lists (waves, numbers) have a length.")
+            raise InvalidArgumentError(f"{where}: only lists (waves, numbers) have a length.")
         if not _is_integer(spec["length"]) or spec["length"] < 0:
-            raise OresmeError(f"{where}: length must be a whole number.")
+            raise InvalidArgumentError(f"{where}: length must be a whole number.")
         checked["length"] = int(spec["length"])
     optional = spec.get("optional", False)
     if not isinstance(optional, bool):
-        raise OresmeError(f"{where}: optional must be True or False.")
+        raise InvalidArgumentError(f"{where}: optional must be True or False.")
     if "default" in spec:
         checked["default"] = _check_value(checked, spec["default"], f"{where}: default", False)
         optional = True
@@ -3994,7 +4111,10 @@ def _plugin_action(id):
                 id, spec["version"], spec["title"], spec.get("description"), params,
                 lambda **passed: _invoke_plugin(id, passed),
             )
-    raise OresmeError(f"No installed plugin has the action {id}, or it is turned off.")
+    raise NotFoundError(
+        f"No installed plugin has the action {id}, or it is turned off.",
+        details={"kind": "action", "name": id},
+    )
 
 
 def _find_action(id, version):
@@ -4004,7 +4124,7 @@ def _find_action(id, version):
             raise OresmeError(f"{id} has no version {version!r} (it has {found.version}).")
         return found
     if not isinstance(id, str) or id not in _actions:
-        raise OresmeError(f"No action named {id!r}.")
+        raise NotFoundError(f"No action named {id!r}.", details={"kind": "action", "name": id})
     versions = _actions[id]
     if version is None:
         return versions[max(versions)]
@@ -4318,7 +4438,7 @@ def graph_template(source, name=None, fixed=()):
         if isinstance(source, GraphTemplate):
             return source
         if source not in _call("listGraphTemplates")[0]:
-            raise OresmeError(f"No graph template named {source!r}.")
+            raise NotFoundError(f"No graph template named {source!r}.")
         return GraphTemplate(source)
     graph_ = source if isinstance(source, Graph) else graph(source)
     return graph_.save_template(name, fixed=fixed)
@@ -4501,7 +4621,7 @@ def template(name):
     if isinstance(name, Template):
         return name
     if name not in _call("listTemplates")[0]:
-        raise OresmeError(f"No template named {name!r}.")
+        raise NotFoundError(f"No template named {name!r}.")
     return Template(name)
 
 
@@ -4695,7 +4815,7 @@ def run(name=None):
             raise OresmeError("There are no runs yet.")
         return Run(names[-1])
     if name not in names:
-        raise OresmeError(f"No run named {name!r}.")
+        raise NotFoundError(f"No run named {name!r}.")
     return Run(name)
 
 
@@ -5138,7 +5258,7 @@ class Control:
         for item in self._panel._get()["controls"]:
             if item["name"] == self._name:
                 return item
-        raise OresmeError(f"{self._panel.name} has no control named {self._name!r}.")
+        raise NotFoundError(f"{self._panel.name} has no control named {self._name!r}.", details={"kind": "control", "name": self._name})
 
     @property
     def kind(self):
@@ -5319,7 +5439,7 @@ class Panel:
     def control(self, name):
         names = [item["name"] for item in self._get()["controls"]]
         if name not in names:
-            raise OresmeError(f"{self._name} has no control named {name!r}.")
+            raise NotFoundError(f"{self._name} has no control named {name!r}.", details={"kind": "control", "name": name})
         return Control(self, name)
 
     def __getitem__(self, name):

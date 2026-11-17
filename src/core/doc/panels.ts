@@ -61,14 +61,16 @@ export const isControlRef = (value: unknown): value is ControlRef =>
   typeof (value as { $control?: unknown }).$control === "string";
 
 function text(value: unknown, what: string): string {
-  if (typeof value !== "string") throw new DocError(`${what} must be text.`);
-  if (value.length > MAX_TEXT) throw new DocError(`${what} is too long.`);
+  if (typeof value !== "string")
+    throw new DocError(`${what} must be text.`, "INVALID_ARGUMENT", { field: what });
+  if (value.length > MAX_TEXT)
+    throw new DocError(`${what} is too long.`, "INVALID_ARGUMENT", { field: what });
   return value;
 }
 
 function finite(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new DocError(`${what} must be a finite number.`);
+    throw new DocError(`${what} must be a finite number.`, "INVALID_ARGUMENT", { field: what });
   }
   return value;
 }
@@ -79,35 +81,41 @@ const orNull =
     value === null ? null : check(value, what);
 
 function bool(value: unknown, what: string): boolean {
-  if (typeof value !== "boolean") throw new DocError(`${what} must be true or false.`);
+  if (typeof value !== "boolean")
+    throw new DocError(`${what} must be true or false.`, "INVALID_ARGUMENT", { field: what });
   return value;
 }
 
 function option(value: unknown, what: string): string | number {
   if (typeof value === "string") return text(value, what);
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  throw new DocError(`${what} must be text or a number.`);
+  throw new DocError(`${what} must be text or a number.`, "INVALID_ARGUMENT", { field: what });
 }
 
 function options(value: unknown, what: string): (string | number)[] {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) {
-    throw new DocError(`${what} must be a list.`);
+    throw new DocError(`${what} must be a list.`, "INVALID_ARGUMENT", { field: what });
   }
   const list = value.map((item: unknown, index) => option(item, `${what}[${index}]`));
-  if (new Set(list).size !== list.length) throw new DocError(`${what} must all be different.`);
+  if (new Set(list).size !== list.length)
+    throw new DocError(`${what} must all be different.`, "INVALID_ARGUMENT", { field: what });
   return list;
 }
 
 function dims(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 4) {
-    throw new DocError(`${what} must be a whole number from 1 to 4.`);
+    throw new DocError(`${what} must be a whole number from 1 to 4.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value;
 }
 
 function version(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-    throw new DocError(`${what} must be a whole number from 1.`);
+    throw new DocError(`${what} must be a whole number from 1.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value;
 }
@@ -115,7 +123,11 @@ function version(value: unknown, what: string): number {
 function actionId(value: unknown, what: string): string {
   if (value === "") return "";
   if (typeof value !== "string" || !ACTION_ID.test(value)) {
-    throw new DocError(`${what} must be the id of an action, such as "core.fit".`);
+    throw new DocError(
+      `${what} must be the id of an action, such as "core.fit".`,
+      "INVALID_ARGUMENT",
+      { field: what },
+    );
   }
   return value;
 }
@@ -133,31 +145,47 @@ function arg(value: unknown, what: string, depth = 0): ControlArg {
   if (typeof value === "number") return finite(value, what);
   if (value === null) {
     // An action is never passed null for an argument; within a value, null may mean something.
-    if (depth === 0) throw new DocError(`${what} cannot be null: leave it out instead.`);
+    if (depth === 0)
+      throw new DocError(`${what} cannot be null: leave it out instead.`, "INVALID_ARGUMENT", {
+        field: what,
+      });
     return null;
   }
-  if (depth >= MAX_DEPTH) throw new DocError(`${what} is nested too deeply.`);
+  if (depth >= MAX_DEPTH)
+    throw new DocError(`${what} is nested too deeply.`, "INVALID_ARGUMENT", { field: what });
   if (Array.isArray(value)) {
-    if (value.length > MAX_ITEMS) throw new DocError(`${what} has too many items.`);
+    if (value.length > MAX_ITEMS)
+      throw new DocError(`${what} has too many items.`, "INVALID_ARGUMENT", { field: what });
     return value.map((item: unknown, index) => arg(item, `${what}[${index}]`, depth + 1));
   }
   if (typeof value === "object") {
     if (Object.hasOwn(value, "$control")) {
       if (!isControlRef(value)) {
-        throw new DocError(`${what}: a control is given as {"$control": name} and nothing else.`);
+        throw new DocError(
+          `${what}: a control is given as {"$control": name} and nothing else.`,
+          "INVALID_ARGUMENT",
+          { field: what },
+        );
       }
       return { $control: checkName(value.$control, "control") };
     }
     const entries = Object.entries(value);
-    if (entries.length > MAX_ITEMS) throw new DocError(`${what} has too many items.`);
+    if (entries.length > MAX_ITEMS)
+      throw new DocError(`${what} has too many items.`, "INVALID_ARGUMENT", { field: what });
     return dict(entries.map(([key, item]) => [key, arg(item, `${what}.${key}`, depth + 1)]));
   }
-  throw new DocError(`${what} must be text, a number, true or false, a list or a dict.`);
+  throw new DocError(
+    `${what} must be text, a number, true or false, a list or a dict.`,
+    "INVALID_ARGUMENT",
+    { field: what },
+  );
 }
 
 function args(value: unknown, what: string): Dict<ControlArg> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new DocError(`${what} must be an object of argument name: value.`);
+    throw new DocError(`${what} must be an object of argument name: value.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   const result = dict<ControlArg>();
   for (const [name, item] of Object.entries(value)) {
@@ -174,7 +202,11 @@ const pixels =
   (value: unknown, what: string): number => {
     const number = Math.round(finite(value, what));
     if (number < least || number > MAX_PIXELS) {
-      throw new DocError(`${what} must be from ${least} to ${MAX_PIXELS} pixels.`);
+      throw new DocError(
+        `${what} must be from ${least} to ${MAX_PIXELS} pixels.`,
+        "INVALID_ARGUMENT",
+        { field: what },
+      );
     }
     return number;
   };
@@ -184,13 +216,13 @@ function color(value: unknown, what: string): string {
   try {
     return normalizeColor(value);
   } catch (error) {
-    throw new DocError(`${what}: ${(error as Error).message}`);
+    throw new DocError(`${what}: ${(error as Error).message}`, "INVALID_ARGUMENT", { field: what });
   }
 }
 
 function order(value: unknown, what: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) > 1_000_000) {
-    throw new DocError(`${what} must be a whole number.`);
+    throw new DocError(`${what} must be a whole number.`, "INVALID_ARGUMENT", { field: what });
   }
   return value;
 }
@@ -198,10 +230,13 @@ function order(value: unknown, what: string): number {
 /** The waves a list holds: names of waves, each once. */
 function waveNames(value: unknown, what: string): string[] {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) {
-    throw new DocError(`${what} must be a list of the names of waves.`);
+    throw new DocError(`${what} must be a list of the names of waves.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   const names = value.map((item: unknown, index) => checkPath(item, `${what}[${index}]`));
-  if (new Set(names).size !== names.length) throw new DocError(`${what} names a wave twice.`);
+  if (new Set(names).size !== names.length)
+    throw new DocError(`${what} names a wave twice.`, "INVALID_ARGUMENT", { field: what });
   return names;
 }
 
@@ -211,7 +246,9 @@ function waveNames(value: unknown, what: string): string[] {
  */
 function plotTraces(value: unknown, what: string): PlotTrace[] {
   if (!Array.isArray(value) || value.length > 100) {
-    throw new DocError(`${what} must be a list of at most 100 waves to plot.`);
+    throw new DocError(`${what} must be a list of at most 100 waves to plot.`, "INVALID_ARGUMENT", {
+      field: what,
+    });
   }
   return value.map((item: unknown, index): PlotTrace => {
     const where = `${what}[${index}]`;
@@ -245,7 +282,8 @@ const KIND_PROPS: Record<ControlKind, Record<string, Check>> = {
     max: orNull(finite),
     step: orNull((value, what) => {
       const number = finite(value, what);
-      if (number <= 0) throw new DocError(`${what} must be greater than 0.`);
+      if (number <= 0)
+        throw new DocError(`${what} must be greater than 0.`, "INVALID_ARGUMENT", { field: what });
       return number;
     }),
   },
@@ -403,7 +441,7 @@ export function changeControl(control: PanelControl, props: Props): PanelControl
 
 function propsOf(value: unknown, what: string): Props {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new DocError(`${what} must be an object.`);
+    throw new DocError(`${what} must be an object.`, "INVALID_ARGUMENT", { field: what });
   }
   return value as Props;
 }
@@ -485,13 +523,21 @@ export function readPanelFile(source: string): Pick<PanelSpec, "name" | "title" 
 
 function requirePanel(state: DocState, name: string): PanelSpec {
   const panel = Object.hasOwn(state.panels, name) ? state.panels[name] : undefined;
-  if (!panel) throw new DocError(`No panel named ${JSON.stringify(name)}.`);
+  if (!panel)
+    throw new DocError(`No panel named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "panel",
+      name: name,
+    });
   return panel;
 }
 
 function requireControl(panel: PanelSpec, name: string): PanelControl {
   const control = panel.controls.find((item) => item.name === name);
-  if (!control) throw new DocError(`${panel.name} has no control named ${JSON.stringify(name)}.`);
+  if (!control)
+    throw new DocError(`${panel.name} has no control named ${JSON.stringify(name)}.`, "NOT_FOUND", {
+      kind: "control",
+      name,
+    });
   return control;
 }
 
@@ -503,7 +549,11 @@ const putPanel = (state: DocState, panel: PanelSpec): DocState => ({
 /** A panel made with its window, after checking the name is free. */
 function withNewPanel(state: DocState, panel: PanelSpec): DocState {
   if (windowTaken(state)(panel.name)) {
-    throw new DocError(`A window named ${JSON.stringify(panel.name)} already exists.`);
+    throw new DocError(
+      `A window named ${JSON.stringify(panel.name)} already exists.`,
+      "ALREADY_EXISTS",
+      { name: panel.name },
+    );
   }
   return {
     ...putPanel(state, panel),

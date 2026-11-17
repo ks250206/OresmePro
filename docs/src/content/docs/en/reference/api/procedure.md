@@ -116,7 +116,7 @@ op.procedure(name=None)
 
 A procedure by name; with no name, the frontmost one.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `procedures`
 

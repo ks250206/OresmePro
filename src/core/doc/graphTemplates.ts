@@ -114,10 +114,17 @@ export function captureTemplate(
   fixed: readonly string[] = [],
 ): GraphTemplate {
   const graph = state.graphs[graphName];
-  if (!graph) throw new DocError(`No graph named ${JSON.stringify(graphName)}.`);
+  if (!graph)
+    throw new DocError(`No graph named ${JSON.stringify(graphName)}.`, "NOT_FOUND", {
+      kind: "graph",
+      name: graphName,
+    });
   for (const axis of fixed) {
     if (!(axis in graph.axes)) {
-      throw new DocError(`${graph.name} has no axis named ${JSON.stringify(axis)}.`);
+      throw new DocError(`${graph.name} has no axis named ${JSON.stringify(axis)}.`, "NOT_FOUND", {
+        kind: "axis",
+        name: axis,
+      });
     }
   }
   const { slots, slotOf } = slotsOf(state, graph);
@@ -328,7 +335,11 @@ export function sampleWaves(
     if (typeof value !== "string") throw new DocError(`Slot ${slot} needs a wave name.`);
     const name = value.startsWith("root:") ? value.slice(5) : value;
     const wave = state.waves[name];
-    if (!wave) throw new DocError(`No wave named ${JSON.stringify(value)} for slot ${slot}.`);
+    if (!wave)
+      throw new DocError(`No wave named ${JSON.stringify(value)} for slot ${slot}.`, "NOT_FOUND", {
+        kind: "wave",
+        name: value,
+      });
     waves.set(slot, wave);
   }
   const missing = [...requiredSlots(template)].filter((slot) => !waves.has(slot));

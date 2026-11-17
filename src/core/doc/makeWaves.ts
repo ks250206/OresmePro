@@ -103,7 +103,10 @@ export function planMakeWaves(
 ): { commands: Command[]; echo: string } {
   if (request.names.length === 0) throw new DocError("Give at least one name.");
   if (request.folder && !state.folders.includes(request.folder)) {
-    throw new DocError(`There is no data folder named ${request.folder}.`);
+    throw new DocError(`There is no data folder named ${request.folder}.`, "NOT_FOUND", {
+      kind: "folder",
+      name: request.folder,
+    });
   }
   const problems = nameProblems(state, request.names, request.folder, request.overwrite).filter(
     (problem): problem is string => problem !== null,

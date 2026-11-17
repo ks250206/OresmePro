@@ -191,7 +191,7 @@ op.layout(name=None)
 
 名前でページレイアウトを取得します。名前を省くと最前面のもの。
 
-**明示的な例外** · `OresmeError`
+**明示的な例外** · `NotFoundError`, `OresmeError`
 
 ## `layouts`
 

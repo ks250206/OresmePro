@@ -26,10 +26,11 @@ Use `import oresme as op` in the Command Window or a procedure. For code you use
 | Work with Python files kept in the experiment        | [Procedures](./api/procedure/)               | [Python](../guides/python/)                                                 |
 | Write notes in Markdown kept in the experiment       | [Notes](./api/notes/)                        | [Write notes](../guides/experiments/#write-notes)                           |
 | Install and list Python packages                     | [Packages](./api/packages/)                  | [Add packages](../guides/python/#add-packages)                              |
-| Errors, changes made at once, and time zones         | [General](./api/global/)                     | [Python](../guides/python/)                                                 |
+| Tell apart the errors the app refuses with           | [Errors](./api/errors/)                      | [Python](../guides/python/)                                                 |
+| Changes made at once, and time zones                 | [General](./api/global/)                     | [Python](../guides/python/)                                                 |
 
 ## Signatures and errors
 
 Signatures and docstrings come from the public Python module source. Pass arguments following `*` by keyword. Use creation functions (`op.display`, `op.edit`) or lookup functions (`op.graph`, `op.table`) to obtain objects representing windows.
 
-The app reports rejected operations, such as a missing name, as `op.OresmeError`. Exceptions from NumPy and other Python operations can propagate as well. “Explicit exceptions” lists the `raise` expressions in the documented implementation.
+The app reports rejected operations, such as a missing name, as `op.OresmeError`. Each kind of refusal has a class and a code of its own, such as `NotFoundError` and `InvalidArgumentError`, to tell them apart with `except` ([Errors](./api/errors/)). Exceptions from NumPy and other Python operations can propagate as well. “Explicit exceptions” lists the `raise` expressions in the documented implementation.

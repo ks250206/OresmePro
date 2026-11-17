@@ -38,7 +38,7 @@ test.describe("actions", () => {
         (reason: Error) => reason.message,
       ),
     );
-    expect(error).toBe("OresmeError: core.smooth: n must be a number, not 'five'.");
+    expect(error).toBe("InvalidArgumentError: core.smooth: n must be a number, not 'five'.");
     const entry = await app.lastEntry();
     expect(entry.code).toBe('op.invoke("core.smooth", {"wave": "w", "n": "five"})');
     expect(entry.status).toBe("error");

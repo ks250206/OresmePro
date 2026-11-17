@@ -113,7 +113,7 @@ op.template(name)
 
 The analysis template with this name.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`
 
 ## `templates`
 
@@ -217,7 +217,7 @@ op.run(name=None)
 
 A run by name; with no name, the latest.
 
-**Explicit exceptions** · `OresmeError`
+**Explicit exceptions** · `NotFoundError`, `OresmeError`
 
 ## `runs`
 
