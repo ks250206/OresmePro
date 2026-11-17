@@ -9,6 +9,7 @@ OresmePro のプラグインの見本です。サイクリックボルタモグ�
 - [`eis_circuit`: 任意の等価回路のフィット](#eis_circuit-任意の等価回路のフィット)
 - [Nyquist 図のグラフテンプレート](#nyquist-図のグラフテンプレート)
 - [EIS フィットのパネル](#eis-フィットのパネル)
+- [EIS Circuit Fitting: 回路を見ながら編集する画面](#eis-circuit-fitting-回路を見ながら編集する画面)
 - [English](#english)
 
 ## 入れ方
@@ -170,6 +171,15 @@ op.graph_template("Nyquist").make(zre="zre", zim="zim", zre_fit="f_zre_fit", zim
 
 `panels/eis_fit.json` は、周波数・Z′・Z″ の wave、虚部の向き、モデル、重みを選んで **Fit** を押すと `eis_fit` を呼ぶパネルです。プラグインダイアログの **Add Panels to Experiment** で実験に入ります(パネル `EISFit`)。ボタンが呼ぶのはプラグインの Action だけなので、パネルは「データのみ」です。プラグインを外してもパネルは残り、ボタンを押すと、プラグインを入れるか有効にするよう表示します。
 
+## EIS Circuit Fitting: 回路を見ながら編集する画面
+
+**Analysis › EIS Circuit Fitting…**(入れると現れます)は、このプラグインの view `eis`(`electrochem/view.py`)です。画面はプラグインの Python がアプリの部品で組み立て、アプリが描きます。
+
+- 上段で周波数・Z′・Z″ の wave、虚部の向き、回路(`R0-p(R1,CPE1)` など。よく使う回路は候補に出ます)を選びます
+- 右の表にパラメータが並び、値は spectrum から推定されます(**Guess** でもう一度)。値を書き換えるたびに、左の Nyquist 図と Bode 図(|Z| と位相)に回路の曲線が描き直されます。回路を変えると、同じ名前のパラメータは値を引き継ぎます
+- **Fit** は `eis_circuit` を表の値から実行し(履歴に `op.invoke(..., replace=True)` として残り、2 回目からは前の `zre_fit`/`zim_fit` を作り直します)、求まった値と σ を表に戻します
+- ウィンドウの中の編集は Ctrl+Z で戻せます。開き直すと、最後に残したフィットから始まります
+
 ## 検算
 
 `tests/test_electrochem.py` が、答えのわかっている合成データで確かめます。
@@ -198,6 +208,7 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/electro
 - **`eis_fit`** (frequency, zre, zim, model, imaginary, weighting, f_min, f_max): complex nonlinear least squares (`scipy.optimize.least_squares` on stacked real and imaginary residuals, modulus weighting by default) of `R(RC)` = R0 + R1∥C1, `R(RQ)` = R0 + R1∥CPE, or `Randles` = R0 + CPE∥(R1 + semi-infinite Warburg σ). The imaginary wave holds −Z″ by default (`imaginary="Z''"` for Z″ itself). Initial guesses come from the high-frequency intercept, the arc's apex and the low-frequency Warburg slope; uncertainties from the Jacobian, χ² and reduced χ². Makes `zre_fit`/`zim_fit` at the measured frequencies, in the same sign convention as the input.
 - **`eis_circuit`** (frequency, zre, zim, circuit, guess, imaginary, weighting, f_min, f_max): the same fit for any circuit written as [impedance.py](https://github.com/ECSHackWeek/impedance.py) writes them, implemented here because impedance.py needs matplotlib and altair (about 11 MB more if the app shipped it); its elements give the same Z as impedance.py's. Series is `-`, parallel `p(a, b, ...)`; elements are a kind and a label starting with a digit or `_`: `R` (Ω), `C` (F), `L` (H), `CPE` or `Q` (`Q1`, `n1`), `W` (semi-infinite Warburg σ), `Wo` and `Ws` (finite Warburg, open and short: `Wo1_Z0`, `Wo1_tau`). Starting values are guessed from the spectrum for any circuit (series resistors share the high-frequency intercept, resistors in parallel branches the span of Z′, capacitors and CPEs the arc's time constant, those written first the shorter ones) or given as `guess` in the order of the parameters; the best of fits from the guess and 15 starts scattered around it is kept. Reports `circuit`, `parameters`, each parameter with its `_sigma`, χ² and reduced χ²; makes `zre_fit`/`zim_fit`.
 - **Nyquist graph template** (`templates/nyquist.json`, in the app's export format): slots `zre`, `zim` (data, markers) and `zre_fit`, `zim_fit` (fit, line); axes Z′ (Ω) and −Z″ (Ω); the plot area is 7 cm tall and its width is Plan 1, so an ohm is as long along Z′ as along −Z″ and a semicircle looks like one.
+- **EIS Circuit Fitting** (the view `eis`, `electrochem/view.py`; **Analysis › EIS Circuit Fitting…** once installed): a window its Python builds of the app's parts. Choose the frequency, Z′ and Z″ waves and a circuit; the parameters, guessed from the spectrum, are a table, and every edit draws the circuit again on Nyquist and Bode plots. **Fit** runs `eis_circuit` from the table's values (recorded as `op.invoke(..., replace=True)`, making its waves again in place) and puts what it found, with σ, back into the table. Edits are undone with Ctrl+Z; opened again, it starts from the last fit kept.
 - **EIS fit panel** (`panels/eis_fit.json`): pick the frequency, Z′ and Z″ waves, the sign of Z″, the model and the weighting, and click **Fit** to call `eis_fit`. Add it with **Add Panels to Experiment**; it calls only the plugin's action, so it is data only.
 
 Limits: only a semi-infinite Warburg element (no finite-length diffusion), no inductive high-frequency points (exclude them with `f_max`), and initial guesses that expect a visible arc. `tests/test_electrochem.py` checks every action on synthetic data with known answers (a simulated reversible CV against Randles–Ševčík and the 28.5 mV peak offset, Butler–Volmer currents, the three circuits with and without noise); run it with any Python that has NumPy and SciPy.

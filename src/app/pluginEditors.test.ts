@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseEditor } from "../core/plugins/editor";
+import { parseEditor, type SpectrumFitSpec } from "../core/plugins/editor";
 import type { PluginAction } from "../core/plugins/manifest";
 import { dragged, draggedFields, removeItem } from "./pluginEditors";
 
@@ -34,7 +34,7 @@ const spec = (drag: Record<string, unknown>) =>
     },
     0,
     actions,
-  );
+  ) as SpectrumFitSpec;
 
 describe("dragging an item of a model editor", () => {
   const start = { x: 10, height: 4, area: 20, sigma: 2, other: 3 };

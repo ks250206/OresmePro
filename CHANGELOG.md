@@ -41,6 +41,17 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   checked field by field when the plugin is installed. Each editor names its kind; the only
   kind so far is `spectrum-fit`. Editors are listed in the Analysis menu
   and in Python › Plugins….
+- Plugins can have **views**: editors of kind `view`, whose window their Python builds out of
+  the app's parts (rows, columns, splits, tabs, groups, text, number, text and choice fields,
+  checkboxes, wave choices, editable tables, plots with log and equal axes, buttons) and whose
+  events it answers, in its sandbox, with the state the app keeps for it. What is entered goes
+  into the state at once and to the view in turn; edits are undone in the window; only buttons
+  that run one of the plugin's actions change the experiment, recorded and kept as any run. The
+  app checks every part and prop before drawing, and draws no HTML or script of the plugin. The
+  design is in `docs/design/plugin-views.md`.
+- The example plugin electrochem (0.2.0) has the view **EIS Circuit Fitting**: a circuit and its
+  parameters, drawn on Nyquist and Bode plots at each edit, guessed from the spectrum and fitted
+  with `eis_circuit`, the values found coming back into the table.
 - The arguments of plugins' actions can be of type `json` (lists and dicts), as the app's own.
 - `op.invoke(..., replace=True)` makes again, under their names, the waves the last run of the
   same action of the same plugin on the same input waves made (as its result kept them), where

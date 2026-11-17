@@ -81,7 +81,9 @@ function PackageSummary({ pkg, previous }: { pkg: VerifiedPackage; previous?: In
               <li key={editor.name}>
                 {editor.title}{" "}
                 <span className="text-muted">
-                  (a window the app draws; it calls {editor.preview} and {editor.fit})
+                  {editor.kind === "spectrum-fit"
+                    ? `(a window the app draws; it calls ${editor.preview} and ${editor.fit})`
+                    : "(a window the app draws from the app's own parts, as the plugin's Python builds it)"}
                 </span>
               </li>
             ))}

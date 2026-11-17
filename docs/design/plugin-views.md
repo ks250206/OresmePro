@@ -1,6 +1,6 @@
 # 設計: 組み合わせて作るプラグインの画面(plugin views)
 
-状態: 提案(この文書に沿って第 1 版を実装する)
+状態: 第 1 版を実装済み(`src/core/plugins/view.ts`、`src/app/pluginViews.ts`、`src/ui/PluginViewWindow.tsx`、SDK の `view` と `ui`)。検証用の EIS の view は `examples/plugins/electrochem/electrochem/view.py`
 対象: OresmePro の本体と、プラグインの SDK(`src/sandbox/python/oresme_plugin.py`)
 
 ## 1. 目的
@@ -92,7 +92,7 @@ def eis_view(state, event, waves):
     }
 ```
 
-- ハンドラは `(state, event, waves)` を受け取り、`state`・`ui`・`waves` を含む dict を返す。どれかを省くと、本体は前の値を使い続ける
+- ハンドラは `(state, event, waves)` を受け取り、`state`・`ui`・`waves`・`message` を含む dict を返す。`state`・`ui`・`message` を省くと、本体は前の値を使い続ける。`waves` は毎回その返事で描くものだけになる(省けば何も描かない)
 - `state` は JSON にできる値(dict が基本)。本体が保持し、毎回ハンドラに渡す。ハンドラ自身は何も覚えない(サンドボックスが作り直されても続けられる)
 - `waves` は、画面の `wave` 部品で選ばれた wave の**コピー**で、キーはその部品の `bind` の道筋である。それ以外のデータは渡さない
 - 返す `waves` は、プロットが役割の名前で参照する配列である。Experiment には入らない
@@ -105,7 +105,7 @@ def eis_view(state, event, waves):
 | 型        | 中身                                                                                                            | いつ                                                   |
 | --------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `open`    | `last`: このプラグインが最後に残した結果(`action`、`inputs`、`params`、`names`、`coef`、`sigma`)。なければ null | 画面を開いたとき                                       |
-| `change`  | `paths`: 変わった `bind` の道筋のリスト                                                                         | 部品で値が変わったとき。状態はもう新しい値になっている |
+| `change`  | `paths`: 変わった `bind` の道筋のリスト。ウィンドウの中で元に戻したときは `"*"`                                 | 部品で値が変わったとき。状態はもう新しい値になっている |
 | `command` | `id`: ボタンの `on`                                                                                             | `on` を持つボタンが押されたとき                        |
 | `done`    | `id`、`ok`、`values`(action が返した値)、`result`(残した結果の名前)、`error`                                    | `action` を持つボタンの実行が終わったとき              |
 

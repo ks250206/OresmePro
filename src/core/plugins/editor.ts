@@ -66,13 +66,27 @@ export interface EditorDrag {
   width: { field: string; rule: "full" | "half"; scale: string[] } | null;
 }
 
-/** The kinds of editor this app draws. */
-export const EDITOR_KINDS = ["spectrum-fit"] as const;
+/**
+ * The kinds of editor this app draws: "spectrum-fit", a window of a fixed
+ * layout (data, a range, items on a background) described here field by
+ * field; and "view", a window the plugin's Python builds out of the app's
+ * components and answers the events of (see src/core/plugins/view.ts).
+ */
+export const EDITOR_KINDS = ["spectrum-fit", "view"] as const;
 export type EditorKind = (typeof EDITOR_KINDS)[number];
 
-export interface EditorSpec {
-  /** Which window the app draws for it: only spectrum-fit so far (data, a range, items on a background). */
-  kind: EditorKind;
+/** A view: its Python, registered with @view(name), builds its window and answers its events. */
+export interface ViewSpec {
+  kind: "view";
+  name: string;
+  title: string;
+  description: string;
+}
+
+export type EditorSpec = SpectrumFitSpec | ViewSpec;
+
+export interface SpectrumFitSpec {
+  kind: "spectrum-fit";
   name: string;
   title: string;
   description: string;
@@ -179,6 +193,20 @@ export function parseEditor(
 ): EditorSpec {
   const where = `Editor ${index + 1}`;
   if (!isRecord(value)) throw new PluginError(`${where} is not described.`);
+  if (value.kind === "view") {
+    onlyKeys(value, ["kind", "name", "title", "description"], where);
+    const name = text(value.name, `The name of ${where}`, 40);
+    if (!NAME.test(name))
+      throw new PluginError(
+        `${JSON.stringify(name)} is not a usable editor name (a-z, 0-9 and _).`,
+      );
+    return {
+      kind: "view",
+      name,
+      title: text(value.title, `The title of the editor ${name}`, 80),
+      description: text(value.description, `The description of the editor ${name}`, 2000, ""),
+    };
+  }
   onlyKeys(
     value,
     [
@@ -376,7 +404,7 @@ export function parseEditor(
     throw new PluginError(`The axis of ${what}: reverse is true or false.`);
 
   return {
-    kind: kind as EditorKind,
+    kind: "spectrum-fit",
     name,
     title: text(value.title, `The title of ${what}`, 80),
     description: text(value.description, `The description of ${what}`, 2000, ""),

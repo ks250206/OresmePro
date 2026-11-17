@@ -10,6 +10,7 @@ import {
   splitPluginActionId,
   type PluginManifest,
 } from "./manifest";
+import type { SpectrumFitSpec } from "./editor";
 import { planOutcome } from "./outcome";
 import { checkAgainstLock, sha256, verifyPackage } from "./package";
 
@@ -197,7 +198,7 @@ describe("model editors in a manifest", () => {
     parse({ actions, editors: [editor(change)] });
 
   it("are read against the plugin's actions", () => {
-    const [spec] = read().editors;
+    const spec = read().editors[0] as SpectrumFitSpec;
     expect(spec).toMatchObject({
       name: "xps",
       preview: "xps_preview",

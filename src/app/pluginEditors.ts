@@ -1,7 +1,10 @@
 import type { ActionArgs, JsonValue, ParamSpec } from "../core/actions";
 import type { AnalysisResult } from "../core/doc/results";
 import type { DocState } from "../core/doc/types";
-import type { EditorSpec } from "../core/plugins/editor";
+import type {
+  EditorSpec as AnyEditorSpec,
+  SpectrumFitSpec as EditorSpec,
+} from "../core/plugins/editor";
 import { pluginActionId, type PluginAction } from "../core/plugins/manifest";
 import type { CheckedResult } from "../core/sandbox/validate";
 import type { PluginRunOutcome } from "./plugins/host";
@@ -123,14 +126,25 @@ export interface EditorContext {
   fit: PluginAction;
 }
 
-/** The installed plugin and the editor a key names, or why it cannot be used. */
-export function findEditor(key: string): EditorContext | string {
+/** The installed plugin and the editor (of any kind) a key names, or why it cannot be used. */
+export function findEditorSpec(
+  key: string,
+): { plugin: InstalledPlugin; spec: AnyEditorSpec } | string {
   const [pluginName, editorName] = key.split("/");
   const plugin = pluginStore.list().find((item) => item.manifest.name === pluginName);
   if (!plugin) return "The plugin of this editor is not installed.";
   if (!plugin.enabled) return `${plugin.manifest.title} is turned off.`;
   const spec = plugin.manifest.editors.find((item) => item.name === editorName);
   if (!spec) return `${plugin.manifest.title} has no editor ${editorName}.`;
+  return { plugin, spec };
+}
+
+/** The spectrum-fit editor a key names, with its actions, or why it cannot be used. */
+export function findEditor(key: string): EditorContext | string {
+  const found = findEditorSpec(key);
+  if (typeof found === "string") return found;
+  const { plugin, spec } = found;
+  if (spec.kind !== "spectrum-fit") return `${spec.title} is not a spectrum-fit editor.`;
   const action = (name: string) => plugin.manifest.actions.find((item) => item.name === name)!;
   return { key, plugin, spec, preview: action(spec.preview), fit: action(spec.fit) };
 }
