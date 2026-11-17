@@ -5,13 +5,6 @@
 [![Downloads](https://img.shields.io/github/downloads/ks250206/OresmePro/total)](https://github.com/ks250206/OresmePro/releases)
 [![License](https://img.shields.io/github/license/ks250206/OresmePro)](LICENSE)
 
-<!-- Discord: enable once the server's invite URL and ID are known
-[![Discord](https://img.shields.io/discord/<SERVER_ID>?label=Discord&logo=discord)](<DISCORD_INVITE_URL>)
--->
-<!-- Remade Stars: enable once the listing page's URL is known
-[![Listed on Remade Stars](<REMADE_STARS_BADGE_URL>)](<REMADE_STARS_LISTING_URL>)
--->
-
 [日本語](README.md) | English
 
 OresmePro is a scientific data analysis environment that runs in the browser: load experimental data, edit tables, make graphs and analyze them in one workspace.

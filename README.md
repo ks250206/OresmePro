@@ -5,13 +5,6 @@
 [![Downloads](https://img.shields.io/github/downloads/ks250206/OresmePro/total)](https://github.com/ks250206/OresmePro/releases)
 [![License](https://img.shields.io/github/license/ks250206/OresmePro)](LICENSE)
 
-<!-- Discord: サーバーの招待 URL とサーバー ID が決まったら有効にする
-[![Discord](https://img.shields.io/discord/<SERVER_ID>?label=Discord&logo=discord)](<DISCORD_INVITE_URL>)
--->
-<!-- Remade Stars: 掲載ページの URL が決まったら有効にする
-[![Listed on Remade Stars](<REMADE_STARS_BADGE_URL>)](<REMADE_STARS_LISTING_URL>)
--->
-
 日本語 | [English](README.en.md)
 
 OresmePro は、実験データの読み込み・表編集・グラフ作成・解析を 1 つのワークスペースで行う、ブラウザで動く科学データ解析環境です。
