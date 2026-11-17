@@ -52,6 +52,33 @@ g.trace("peaks").set(mode="markers", text_marker=names, text_anchor="LB", text_s
 - `g.textbox("Run 1")` adds text anchored to the graph.
 - `g.tag(trace, point, "Y = {y}")` adds a label attached to a point. Point indices start at zero.
 
+## Draw shapes
+
+As with Igor Pro's drawing tools (⌘T), lines, arrows, rectangles, rounded rectangles, ovals, polygons and text can be drawn on a graph: arrows to point things out, boxes to mark ranges.
+
+**Graph → Show Tools** (**Ctrl+T** / **⌘T**, or the graph's right-click menu) shows or hides the tool palette at the left of the graph. A browser tab may keep ⌘T / Ctrl+T for a new tab; then show the tools from the menu.
+
+| Tool                     | How it draws                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| Select (arrow)           | Click a drawing to select it and drag it to move it; drag a □ handle to resize it |
+| Line, arrow              | Drag from one end to the other                                                    |
+| Rectangle, rounded, oval | Drag from one corner to the opposite one                                          |
+| Polygon                  | Click each corner; double-click the last (or press Enter)                         |
+| Text                     | Click where it starts and type it                                                 |
+
+- After drawing, the tool goes back to Select. **Delete** removes the drawing selected; **Escape** clears the selection or what is being drawn
+- Double-click a drawing for **Modify Drawing**: color, line size and style, fill (color and opacity), arrowheads (end, start, both), text and its size, and layer
+- Its right-click menu brings it to the front or sends it to the back, moves it behind or in front of the traces, pins it to the axes or the plot area, and removes it
+- **Coordinates**: by default a drawing is placed as fractions of the plot area, so it stays where it is when the graph is zoomed. With the axes button of the palette on, new drawings are placed in axis values and move with the data (an arrow pointing at a peak). The right-click menu changes it afterwards
+- Drawings are part of the graph and saved with the experiment. They are in exported SVG, PNG and PDF files, page layouts, graph templates and recreation scripts, and can be undone; drawing is written in the history as Python
+
+```python
+g.draw("arrow", [2.6, 0.85, 3.75, 0.95], coords="axes", color="red", line_size=2)
+g.draw("rect", [0.1, 0.1, 0.4, 0.3], fill="#ffee88", fill_opacity=0.5, layer="back")
+g.draw("text", [0.05, 0.05], text="Peak A", text_size=14)
+g.drawing("draw0").set(arrow="both")
+```
+
 ## Inspect points with cursors
 
 Place cursor A or B from a trace's context menu. Move it along the trace to inspect samples. In Python, use `Graph.cursor` to position or retrieve a cursor.

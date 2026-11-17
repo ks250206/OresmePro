@@ -47,6 +47,7 @@ __all__ = [
     "Trace",
     "Axis",
     "Annotation",
+    "Drawing",
     "Image",
     "Contour",
     "Cursor",
@@ -1018,6 +1019,83 @@ class Annotation(_Props):
         return f"Annotation({self._name!r} in {self._graph.name})"
 
 
+class Drawing(_Props):
+    """A shape or text drawn on a graph (see ``Graph.draw``).
+
+    ``points`` are x, y pairs, in fractions of the plot area from its top
+    left corner (``coords="plot"``) or in values on the axes ``h_axis`` and
+    ``v_axis`` (``coords="axes"``). ``color``, ``line_size`` (0: no
+    outline) and ``line_style`` ("solid", "dash", "dot", "dashdot") draw its
+    outline; ``fill`` (a color, or None) and ``fill_opacity`` fill a closed
+    shape. ``arrow`` puts arrowheads on a line: "none", "end", "start" or
+    "both". A polygon with ``closed=False`` is a line through its corners.
+    ``text`` and ``text_size`` are those of text. ``layer`` is "front"
+    (over the traces and axes) or "back" (behind the traces).
+    """
+
+    _props = (
+        "points",
+        "coords",
+        "h_axis",
+        "v_axis",
+        "color",
+        "line_size",
+        "line_style",
+        "fill",
+        "fill_opacity",
+        "arrow",
+        "closed",
+        "text",
+        "text_size",
+        "layer",
+    )
+
+    def __init__(self, graph, name):
+        self._graph = graph
+        self._name = name
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def kind(self):
+        return self._get()["kind"]
+
+    def _get(self):
+        for drawing in self._graph._info()["drawings"]:
+            if drawing["name"] == self._name:
+                return drawing
+        raise OresmeError(f"{self._graph.name} has no drawing named {self._name!r}.")
+
+    def _set(self, props):
+        if "points" in props:
+            props["points"] = [float(value) for value in np.asarray(props["points"], dtype=float).ravel()]
+        _dispatch(
+            {"op": "modifyDrawing", "graph": self._graph.name, "drawing": self._name, "props": props}
+        )
+
+    def remove(self):
+        _dispatch({"op": "removeDrawing", "graph": self._graph.name, "drawing": self._name})
+
+    def to_front(self):
+        """Draw it in front of the other drawings of its layer. Returns self."""
+        _dispatch(
+            {"op": "orderDrawing", "graph": self._graph.name, "drawing": self._name, "place": "front"}
+        )
+        return self
+
+    def to_back(self):
+        """Draw it behind the other drawings of its layer. Returns self."""
+        _dispatch(
+            {"op": "orderDrawing", "graph": self._graph.name, "drawing": self._name, "place": "back"}
+        )
+        return self
+
+    def __repr__(self):
+        return f"Drawing({self._name!r} in {self._graph.name})"
+
+
 class Image(_Props):
     """A 2-D wave shown as an image in a graph."""
 
@@ -1590,6 +1668,45 @@ class Graph(_Props):
 
     def annotation(self, name):
         return Annotation(self, name)
+
+    def draw(self, kind, points, **props):
+        """Draw a shape or text on the graph, as Igor's drawing tools do, and return it.
+
+        ``kind`` is "line", "arrow", "rect", "roundrect", "oval", "polygon"
+        or "text". ``points`` are x, y pairs in a flat list: the two ends of a
+        line or arrow, two opposite corners of a rectangle or oval, the
+        corners of a polygon, the top left corner of text.
+
+        By default the points are fractions of the plot area, from its top
+        left corner (0 to 1 across and down): the drawing stays where it is
+        when the graph is zoomed. With ``coords="axes"`` they are values on
+        the axes ``h_axis`` and ``v_axis`` (bottom and left by default), and
+        the drawing moves with the data::
+
+            g.draw("arrow", [2.0, 0.8, 2.6, 0.3], coords="axes", color="red", line_size=2)
+            g.draw("rect", [0.1, 0.1, 0.4, 0.3], fill="#ffee88", fill_opacity=0.5)
+            g.draw("text", [0.7, 0.05], text="Peak A", text_size=14)
+
+        See ``Drawing`` for the other properties.
+        """
+        command = {"op": "addDrawing", "graph": self._name, "kind": str(kind)}
+        command["points"] = [float(value) for value in np.asarray(points, dtype=float).ravel()]
+        unknown = set(props) - set(Drawing._props)
+        if unknown:
+            raise AttributeError(
+                f"A drawing has no property {sorted(unknown)[0]!r}. "
+                f"Properties: {', '.join(Drawing._props)}."
+            )
+        if props:
+            command["props"] = {_camel(key): _plain(value) for key, value in props.items()}
+        return Drawing(self, _dispatch(command))
+
+    def drawings(self):
+        """The shapes and text drawn on the graph, back to front."""
+        return [Drawing(self, item["name"]) for item in self._info()["drawings"]]
+
+    def drawing(self, name):
+        return Drawing(self, name)
 
     def save_style(self, name, size=False):
         """Keep this graph's look as a style named ``name`` and return it.

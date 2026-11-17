@@ -4,6 +4,7 @@ import {
   AXIS_SIDES,
   CURSOR_NAMES,
   TAG_OFFSET,
+  defaultDrawing,
   emptyDoc,
   type DocState,
   type GraphSpec,
@@ -141,6 +142,21 @@ export function recreationCommands(
       run({ op: "modifyAnnotation", graph: name, annotation: made, props });
     }
   }
+  for (const drawing of target.drawings) {
+    const base = defaultDrawing(drawing.kind);
+    const props = difference(
+      { ...base, name: drawing.name, kind: drawing.kind, points: drawing.points },
+      drawing,
+      ["name", "kind", "points"],
+    );
+    run({
+      op: "addDrawing",
+      graph: name,
+      kind: drawing.kind,
+      points: drawing.points,
+      ...(hasKeys(props) ? { props } : {}),
+    });
+  }
   for (const cursor of CURSOR_NAMES) {
     const spec = target.cursors[cursor];
     const trace = spec ? traceNames.get(spec.trace) : undefined;
@@ -153,6 +169,7 @@ export function recreationCommands(
     "contours",
     "axes",
     "annotations",
+    "drawings",
     "cursors",
     // Which style the graph was given is not part of how it looks.
     "style",

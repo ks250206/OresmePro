@@ -34,7 +34,7 @@ SECTIONS = {
     "graph": (
         "Graph",
         "グラフ",
-        "Graph display graph graphs Annotation Length pt cm inch link_graphs unlink_graphs",
+        "Graph display graph graphs Annotation Drawing Length pt cm inch link_graphs unlink_graphs",
     ),
     "trace": ("Trace", "トレース", "Trace"),
     "axis": ("Axis", "軸", "Axis"),

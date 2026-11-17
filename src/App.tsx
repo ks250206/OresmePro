@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { openActionWindow } from "./app/actionWindows";
+import { toggleTools, useToolsShown } from "./app/drawTools";
 import { openTool } from "./app/toolWindows";
 import {
   activeGraph,
@@ -118,6 +119,7 @@ function useMenus(): MenuDefinition[] {
   // The Table menu acts on the frontmost window when it is a table.
   const table = top?.kind === "table" ? top.name : null;
   const spec = graph ? graphs[graph] : undefined;
+  const toolsShownNow = useToolsShown(graph);
   // The Layout menu acts on the frontmost window when it is a page layout.
   const page = top?.kind === "page" && Object.hasOwn(pages, top.name) ? pages[top.name] : undefined;
   const layoutItems = pageMenuItems(
@@ -282,6 +284,10 @@ function useMenus(): MenuDefinition[] {
         graphDialog("Modify Axis…", (name) => ({ kind: "modifyAxis", graph: name })),
         graphDialog("Modify Graph…", (name) => ({ kind: "modifyGraph", graph: name })),
         { separator: true },
+        {
+          ...graphItem("Show Tools", (name) => toggleTools(name), `${MOD}T`),
+          checked: graph ? toolsShownNow : false,
+        },
         graphItem("Autoscale Axes", autoscaleGraph, `${MOD}A`),
         {
           ...graphItem("Show Cursor Info", toggleInfo, `${MOD}I`),
@@ -484,6 +490,13 @@ function onGlobalKey(event: KeyboardEvent) {
       event.preventDefault();
       if (key === "a") autoscaleGraph(graph);
       else toggleInfo(graph);
+    }
+  } else if (key === "t" && !event.shiftKey) {
+    // Igor's Show Tools. A browser tab may keep ⌘T / Ctrl+T for a new tab; the installed app gets it.
+    const graph = activeGraph();
+    if (graph) {
+      event.preventDefault();
+      toggleTools(graph);
     }
   }
 }

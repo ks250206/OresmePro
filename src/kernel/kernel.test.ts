@@ -798,6 +798,30 @@ describe("oresme Python API", () => {
     expect(listed("v")).toEqual([]);
   });
 
+  it("draws shapes and text on graphs", async () => {
+    expect(
+      await run(
+        [
+          'dg = op.display(op.make("dy", [0.0, 1, 0]), name="DrawG")',
+          'a = dg.draw("arrow", np.array([[0.5, 2.0], [1.0, 0.9]]), coords="axes", color="red", line_size=2)',
+          'b = dg.draw("text", [0.1, 0.1], text="Peak", layer="back")',
+          "b.text_size = 16",
+          "a.to_back()",
+          "print(a, a.kind, a.points, a.color, b.text, b.text_size, [d.name for d in dg.drawings()])",
+        ].join("\n"),
+      ),
+    ).toBe(true);
+    expect(stdout).toBe(
+      "Drawing('draw0' in DrawG) arrow [0.5, 2, 1, 0.9] #ff0000 Peak 16 ['draw0', 'draw1']\n",
+    );
+    expect(await run('dg.draw("star", [0, 0])')).toBe(false);
+    expect(errors[0]).toMatch(/kind must be one of/);
+    expect(await run('dg.draw("line", [0, 0, 1, 1], width=3)')).toBe(false);
+    expect(errors[0]).toMatch(/has no property 'width'/);
+    expect(await run("a.remove(); b.remove(); print(dg.drawings()); dg.kill()")).toBe(true);
+    expect(stdout).toBe("[]\n");
+  });
+
   it("keeps notes of Markdown text", async () => {
     expect(
       await run(

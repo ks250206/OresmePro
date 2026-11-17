@@ -78,6 +78,17 @@ export type DialogRequest =
   /** Asks whether to close a window (keeping what it shows) or kill it. */
   | { kind: "closeWindow"; name: string }
   | { kind: "renameWindow"; name: string }
+  /** Changes how a drawing on a graph looks (see DrawingSpec). */
+  | { kind: "modifyDrawing"; graph: string; drawing: string }
+  /** Asks for the text to draw at a point of a graph, in its drawing's own terms. */
+  | {
+      kind: "drawText";
+      graph: string;
+      point: [number, number];
+      coords: "plot" | "axes";
+      hAxis: string;
+      vAxis: string;
+    }
   /** Adds waves to a table as columns, or takes columns out. */
   | { kind: "tableColumns"; table: string; mode: "append" | "remove" }
   | { kind: "newProcedure" }

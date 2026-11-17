@@ -60,6 +60,7 @@ import {
   type AxisSide,
   type AxisSpec,
   type ContourSpec,
+  type DrawingSpec,
   type ErrorSource,
   type GraphSpec,
   type ImageSpec,
@@ -1705,6 +1706,232 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
 }
 
 /** Adds a text box, or changes a legend, text box, color scale or tag that is there. */
+/**
+ * How a drawing looks: its outline, fill, arrowheads, text and layer. Only
+ * what is changed is applied. Where it is (and whether it is pinned to the
+ * axes) is changed on the graph, with the mouse and its right-click menu.
+ */
+function ModifyDrawingDialog({ graph, drawing }: { graph: string; drawing: string }) {
+  const spec = useDoc((state) =>
+    state.graphs[graph]?.drawings.find((item) => item.name === drawing),
+  );
+  const [changes, setChanges] = useState<Partial<DrawingSpec>>({});
+  const [lineSize, setLineSize] = useState<string | null>(null);
+  const [opacity, setOpacity] = useState<string | null>(null);
+  const [textSize, setTextSize] = useState<string | null>(null);
+  const field = useRef<HTMLTextAreaElement>(null);
+  if (!spec) return null;
+  const current = { ...spec, ...changes };
+  const set = (patch: Partial<DrawingSpec>) => setChanges({ ...changes, ...patch });
+  const isLine = spec.kind === "line" || spec.kind === "arrow";
+  const isText = spec.kind === "text";
+  const closedShape = !isLine && !isText && (spec.kind !== "polygon" || current.closed);
+
+  const props: Record<string, unknown> = { ...changes };
+  const parsedLine = lineSize === null ? undefined : parseNumber(lineSize);
+  if (typeof parsedLine === "number") props.lineSize = parsedLine;
+  const parsedOpacity = opacity === null ? undefined : parseNumber(opacity);
+  const opacityBad =
+    parsedOpacity === null ||
+    (parsedOpacity !== undefined && (parsedOpacity < 0 || parsedOpacity > 100));
+  if (typeof parsedOpacity === "number" && !opacityBad) props.fillOpacity = parsedOpacity / 100;
+  const parsedText =
+    textSize === null ? undefined : textSize.trim() === "" ? null : parseNumber(textSize);
+  const textSizeBad =
+    textSize !== null &&
+    textSize.trim() !== "" &&
+    (parsedText === null || parsedText! < 4 || parsedText! > 96);
+  if (textSize !== null && !textSizeBad) props.textSize = parsedText;
+  const invalid = parsedLine === null || opacityBad || textSizeBad;
+
+  return (
+    <Dialog
+      title={`Modify ${drawing} — ${graph}`}
+      help="guides/axes-and-annotations/"
+      width={440}
+      onClose={close}
+      submitDisabled={invalid || Object.keys(props).length === 0}
+      onSubmit={() => submit({ op: "modifyDrawing", graph, drawing, props })}
+    >
+      {isText ? (
+        <>
+          <textarea
+            ref={field}
+            aria-label="Text"
+            autoFocus
+            rows={3}
+            spellCheck={false}
+            value={current.text}
+            onChange={(event) => set({ text: event.target.value })}
+            className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+          />
+          <MarkupButtons field={field} value={current.text} onChange={(text) => set({ text })} />
+          <Field label="Size">
+            <TextInput
+              aria-label="Text size"
+              aria-invalid={textSizeBad}
+              className="w-16"
+              placeholder="graph"
+              value={textSize ?? (spec.textSize === null ? "" : String(spec.textSize))}
+              onChange={(event) => setTextSize(event.target.value)}
+            />
+            <span className="text-muted">points; empty is the graph's font size</span>
+          </Field>
+        </>
+      ) : null}
+      <Field label="Color">
+        <ColorField value={current.color} onChange={(color) => set({ color })} />
+      </Field>
+      {isText ? null : (
+        <Field label="Line">
+          <TextInput
+            aria-label="Line size"
+            aria-invalid={parsedLine === null}
+            className="w-14"
+            value={lineSize ?? String(spec.lineSize)}
+            onChange={(event) => setLineSize(event.target.value)}
+          />
+          <Select
+            aria-label="Line style"
+            value={current.lineStyle}
+            onChange={(event) => set({ lineStyle: event.target.value as DrawingSpec["lineStyle"] })}
+          >
+            {LINE_STYLES.map((style) => (
+              <option key={style}>{style}</option>
+            ))}
+          </Select>
+          <span className="text-muted">0 draws no outline</span>
+        </Field>
+      )}
+      {isLine ? (
+        <Field label="Arrowheads">
+          <Select
+            aria-label="Arrowheads"
+            value={current.arrow}
+            onChange={(event) => set({ arrow: event.target.value as DrawingSpec["arrow"] })}
+          >
+            <option value="none">none</option>
+            <option value="end">at the end</option>
+            <option value="start">at the start</option>
+            <option value="both">at both ends</option>
+          </Select>
+        </Field>
+      ) : null}
+      {spec.kind === "polygon" ? (
+        <Field label="">
+          <Checkbox
+            label="Closed (back to the first corner)"
+            checked={current.closed}
+            onChange={(event) => set({ closed: event.target.checked })}
+          />
+        </Field>
+      ) : null}
+      {closedShape ? (
+        <Field label="Fill">
+          <Checkbox
+            label="Fill"
+            checked={current.fill !== null}
+            onChange={(event) =>
+              set({ fill: event.target.checked ? (spec.fill ?? "#ffee88") : null })
+            }
+          />
+          {current.fill !== null ? (
+            <>
+              <input
+                type="color"
+                aria-label="Fill color"
+                value={current.fill}
+                onChange={(event) => set({ fill: event.target.value })}
+                className="h-6 w-9 cursor-pointer rounded border border-line bg-paper p-0.5"
+              />
+              <TextInput
+                aria-label="Fill opacity"
+                aria-invalid={opacityBad}
+                className="w-12"
+                value={opacity ?? String(Math.round(spec.fillOpacity * 100))}
+                onChange={(event) => setOpacity(event.target.value)}
+              />
+              <span className="text-muted">% opaque</span>
+            </>
+          ) : null}
+        </Field>
+      ) : null}
+      <Field label="Layer">
+        <Select
+          aria-label="Layer"
+          value={current.layer}
+          onChange={(event) => set({ layer: event.target.value as DrawingSpec["layer"] })}
+        >
+          <option value="front">in front of the traces and axes</option>
+          <option value="back">behind the traces</option>
+        </Select>
+      </Field>
+      <p className="m-0 pl-[104px] text-[11px] leading-relaxed text-muted">
+        {spec.coords === "axes"
+          ? `Pinned to the axes ${spec.hAxis} and ${spec.vAxis}: it moves with the data.`
+          : "Pinned to the plot area: it stays where it is when the graph is zoomed."}{" "}
+        Move it and resize it with the mouse; its right-click menu pins it to the axes or the plot
+        area.
+      </p>
+    </Dialog>
+  );
+}
+
+/** Asks for the text to draw where the text tool was clicked. */
+function DrawTextDialog({
+  graph,
+  point,
+  coords,
+  hAxis,
+  vAxis,
+}: {
+  graph: string;
+  point: [number, number];
+  coords: "plot" | "axes";
+  hAxis: string;
+  vAxis: string;
+}) {
+  const [text, setText] = useState("");
+  const field = useRef<HTMLTextAreaElement>(null);
+  return (
+    <Dialog
+      title={`Draw Text — ${graph}`}
+      onClose={close}
+      submitDisabled={text.trim() === ""}
+      onSubmit={() =>
+        submit({
+          op: "addDrawing",
+          graph,
+          kind: "text",
+          points: point,
+          props: {
+            text,
+            ...(coords === "axes"
+              ? {
+                  coords,
+                  ...(hAxis !== "bottom" ? { hAxis } : {}),
+                  ...(vAxis !== "left" ? { vAxis } : {}),
+                }
+              : {}),
+          },
+        })
+      }
+    >
+      <textarea
+        ref={field}
+        aria-label="Text"
+        autoFocus
+        rows={3}
+        spellCheck={false}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+      />
+      <MarkupButtons field={field} value={text} onChange={setText} />
+    </Dialog>
+  );
+}
+
 function AddTextDialog({ graph, annotation }: { graph: string; annotation?: string }) {
   const existing = useDoc((state) =>
     state.graphs[graph]?.annotations.find((item) => item.name === annotation),
@@ -3316,6 +3543,18 @@ function renderDialog(dialog: DialogRequest) {
       return <NewTableDialog />;
     case "tableColumns":
       return <TableColumnsDialog table={dialog.table} mode={dialog.mode} />;
+    case "modifyDrawing":
+      return <ModifyDrawingDialog graph={dialog.graph} drawing={dialog.drawing} />;
+    case "drawText":
+      return (
+        <DrawTextDialog
+          graph={dialog.graph}
+          point={dialog.point}
+          coords={dialog.coords}
+          hAxis={dialog.hAxis}
+          vAxis={dialog.vAxis}
+        />
+      );
     case "makeWaves":
       return <MakeWavesDialog folder={dialog.folder} />;
     case "modifyTrace":
