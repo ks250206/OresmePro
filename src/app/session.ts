@@ -24,7 +24,7 @@ import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } fro
 import { measureText } from "./measure";
 import type { PackagesStatus, VariablesStatus } from "../kernel/rpc";
 import { createStore, useStore } from "./store";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
 
 export type DialogRequest =
@@ -586,6 +586,24 @@ export function requestCommandLine(text: string): void {
 
 export function useDoc<T>(selector: (state: DocState) => T): T {
   return useSyncExternalStore(doc.subscribe, () => selector(doc.getState()));
+}
+
+/**
+ * As useDoc, but the value given before is kept while `same` says the new
+ * one is no different: for a part of the document that is replaced more
+ * often than what is read of it changes (the windows, as one is dragged).
+ */
+export function useDocWhere<T>(
+  selector: (state: DocState) => T,
+  same: (before: T, now: T) => boolean,
+): T {
+  const last = useRef<{ value: T } | null>(null);
+  return useSyncExternalStore(doc.subscribe, () => {
+    const value = selector(doc.getState());
+    if (last.current && same(last.current.value, value)) return last.current.value;
+    last.current = { value };
+    return value;
+  });
 }
 
 export function useUi<T>(selector: (state: UiState) => T): T {

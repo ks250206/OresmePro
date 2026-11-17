@@ -4,7 +4,7 @@ import { defaultAxis, type Wave } from "../doc/types";
 import { tracePixels, visibleRange, xExtentOf } from "./decimate";
 import type { MeasureText, Prim } from "./displayList";
 import { axisRange, layoutGraph } from "./layout";
-import { layoutPage, translatePrims } from "./page";
+import { layoutPage, PageGraphCache, translatePrims } from "./page";
 import { toPdf } from "./pdf";
 import { parseRichText } from "./richText";
 import { makeScale } from "./scale";
@@ -1421,6 +1421,37 @@ describe("page layouts", () => {
       "Figure 1",
       "second line",
     ]);
+  });
+
+  it("lays a graph of the page out again only when what it draws changes", () => {
+    const doc = pageDoc();
+    const cache = new PageGraphCache();
+    const page = () => {
+      const state = doc.getState();
+      return layoutPage(state.pages.Layout0!, state, measure, cache);
+    };
+    const graphLayout = () => {
+      const state = doc.getState();
+      return cache.layout("graph0", state.graphs.Graph0!, state, 300, 200, measure);
+    };
+    // The same page as laid out without it.
+    const state = doc.getState();
+    expect(page()).toEqual(layoutPage(state.pages.Layout0!, state, measure));
+    const first = graphLayout();
+    // Another wave, and another graph: this one is as it was.
+    doc.dispatch({ op: "makeWave", name: "other", data: Float64Array.of(5) });
+    doc.dispatch({ op: "display", y: ["other"] });
+    page();
+    expect(graphLayout()).toBe(first);
+    // Its own wave changed: laid out again.
+    doc.dispatch({ op: "setWaveData", name: "a", data: Float64Array.of(1, 3, 9) });
+    page();
+    const second = graphLayout();
+    expect(second).not.toBe(first);
+    // Its own graph changed: laid out again.
+    doc.dispatch({ op: "modifyGraph", graph: "Graph0", props: { magnification: 1.5 } });
+    page();
+    expect(graphLayout()).not.toBe(second);
   });
 
   it("moves every kind of drawing instruction, and leaves the original alone", () => {
