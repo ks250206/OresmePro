@@ -10,6 +10,36 @@ g = op.display(signal)`);
 }
 
 test.describe("graph interaction", () => {
+  test("Ctrl+C puts the front graph on the clipboard as a PNG", async ({ app, page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await sineGraph(app);
+    await app
+      .window("Graph0")
+      .locator("canvas")
+      .click({ position: { x: 200, y: 150 } });
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const [item] = await navigator.clipboard.read();
+          if (!item?.types.includes("image/png")) return null;
+          const bytes = new Uint8Array(await (await item.getType("image/png")).arrayBuffer());
+          // The PNG signature, and a width three times the plot's.
+          return {
+            png: bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47,
+            width: new DataView(bytes.buffer).getUint32(16),
+          };
+        }),
+      )
+      .toMatchObject({ png: true, width: expect.any(Number) });
+    expect((await app.lastEntry()).code).toBe("Graph0 is on the clipboard as an image.");
+  });
+
+  test("Graph › New Graph… opens the New Graph dialog", async ({ app, page }) => {
+    await app.menu("Graph", "New Graph…");
+    await expect(page.getByRole("dialog", { name: "New Graph" })).toBeVisible();
+  });
+
   test("a marquee zooms, Ctrl+A autoscales, and both can be undone", async ({ app, page }) => {
     await sineGraph(app);
     const box = (await app.window("Graph0").boundingBox())!;

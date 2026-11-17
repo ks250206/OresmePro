@@ -31,6 +31,7 @@ import { useEffect, useRef } from "react";
 import { history, kernel, ui, useKernelState, useUi } from "../app/session";
 import { recallList, stepRecall, suggestCompletion } from "../core/history/history";
 import { isCompleteInput } from "../core/history/inputState";
+import { altKeys } from "../editor/altKeys";
 import { editingItems, openEditorMenu, rightClickKeepsSelection } from "../editor/menu";
 
 /** Marks edits made by history recall, so they do not end the recall. */
@@ -242,6 +243,8 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
             const recalled = update.transactions.some((tr) => tr.annotation(fromRecall));
             if ((update.docChanged || update.selectionSet) && !recalled) recall = null;
           }),
+          // Alt+F takes the next word of the suggestion, on a Mac too (Option+F types "ƒ").
+          Prec.high(altKeys([{ code: "KeyF", run: (target) => acceptSuggestion(target, true) }])),
           Prec.high(
             keymap.of([
               {
@@ -274,7 +277,6 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
               { key: "Ctrl-e", run: (target) => acceptSuggestion(target, false) },
               { key: "Ctrl-ArrowRight", run: (target) => acceptSuggestion(target, true) },
               { key: "Alt-ArrowRight", run: (target) => acceptSuggestion(target, true) },
-              { key: "Alt-f", run: (target) => acceptSuggestion(target, true) },
               {
                 key: "Tab",
                 run: (target) => {

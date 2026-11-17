@@ -25,10 +25,11 @@ Differentiate and integrate using the wave's scaling for uniform samples. Supply
 
 [`examples/plugins/electrochem`](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem) in the repository is an example plugin whose Python runs in the plugin sandbox.
 
-| Action     | What it does                                                                                                                 |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `cv_peaks` | Oxidation and reduction peaks of a CV: Epa, Epc, ΔEp, E1/2, ipa/ipc (with optional baselines)                                |
-| `tafel`    | Tafel slope (mV/dec) and exchange current density over a chosen range, with uncertainties                                    |
-| `eis_fit`  | Equivalent-circuit fit of an impedance spectrum (R(RC), R(RQ), Randles): parameters, uncertainties, χ², and fitted Z′ and Z″ |
+| Action        | What it does                                                                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `cv_peaks`    | Oxidation and reduction peaks of a CV: Epa, Epc, ΔEp, E1/2, ipa/ipc (with optional baselines)                                |
+| `tafel`       | Tafel slope (mV/dec) and exchange current density over a chosen range, with uncertainties                                    |
+| `eis_fit`     | Equivalent-circuit fit of an impedance spectrum (R(RC), R(RQ), Randles): parameters, uncertainties, χ², and fitted Z′ and Z″ |
+| `eis_circuit` | The same for any circuit written as text, as impedance.py writes them: `R0-p(R1,CPE1)-W1` (R, C, L, CPE, W, Wo, Ws)          |
 
 It also brings a Nyquist graph template. Install it from **Python › Plugins…**: paste the address above into **Install from GitHub…**, or pick the folder with **Install from Folder…**. From Python, call it as `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})`. The README in that folder describes the inputs, models, and sign conventions.

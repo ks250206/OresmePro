@@ -5,12 +5,13 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { applyLibraryStyle, autoscaleGraph, exportGraph } from "../app/actions";
+import { applyLibraryStyle, autoscaleGraph, copyGraph, exportGraph } from "../app/actions";
 import { measureText } from "../app/measure";
 import { browserLibrary } from "../app/styleLibrary";
 import {
   doc,
   INFO_BAR_HEIGHT,
+  MOD,
   runGui,
   runGuiCoalesced,
   ui,
@@ -1088,6 +1089,7 @@ export function GraphWindow({ name }: { name: string }) {
     if (removals.length > 0) items.push({ separator: true }, ...removals);
     items.push(
       { separator: true },
+      { label: "Copy", shortcut: `${MOD}C`, onSelect: () => copyGraph(name) },
       { label: "Save as PDF", onSelect: () => exportGraph(name, `${name}.pdf`) },
       { label: "Save as SVG", onSelect: () => exportGraph(name, `${name}.svg`) },
       { label: "Save as PNG", onSelect: () => exportGraph(name, `${name}.png`) },

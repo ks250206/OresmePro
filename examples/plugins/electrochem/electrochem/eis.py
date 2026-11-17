@@ -26,6 +26,11 @@ the large ones at low frequency; ``"unit"`` leaves them as they are.
 Resistances, capacitances, Q and σ are fitted as log10 (so they stay
 positive and of any size), n1 between 0.2 and 1. Uncertainties come from
 the Jacobian at the solution, scaled by the residual variance.
+
+``eis_circuit`` fits a circuit written as text instead, such as
+``R0-p(R1,CPE1)-W1`` (see circuit.py for how circuits are written), the
+same way: from a guess made from the shape of the spectrum, or one given,
+and from starts scattered around it.
 """
 
 import numpy as np
@@ -33,6 +38,7 @@ from scipy.optimize import least_squares
 
 from oresme_plugin import PluginError, action, wave
 
+from .circuit import Circuit
 from .common import numbers, same_length
 
 
@@ -125,11 +131,11 @@ def initial_guesses(model, w, Z):
     ]
 
 
-@action("eis_fit")
-def eis_fit(frequency, zre, zim, model="Randles", imaginary="-Z''", weighting="modulus",
-            f_min=None, f_max=None):
-    if model not in MODELS:
-        raise PluginError(f"Unknown model {model!r}; the models are {', '.join(MODELS)}.")
+def read_spectrum(frequency, zre, zim, imaginary, weighting, f_min, f_max, k, what):
+    """The measured impedance, which points are fitted, and their weights.
+
+    Refuses a spectrum with too few usable frequencies for k parameters.
+    """
     if imaginary not in ("-Z''", "Z''"):
         raise PluginError("imaginary is \"-Z''\" (the wave holds −Z″) or \"Z''\".")
     if weighting not in ("modulus", "unit"):
@@ -140,47 +146,57 @@ def eis_fit(frequency, zre, zim, model="Randles", imaginary="-Z''", weighting="m
     same_length((f, frequency.name), (re, zre.name), (im, zim.name))
     # The impedance itself: Z″ negative for a capacitive arc.
     Z_all = re + 1j * (-im if imaginary == "-Z''" else im)
-
     use = np.isfinite(f) & np.isfinite(re) & np.isfinite(im) & (f > 0)
     if f_min is not None:
         use &= f >= float(f_min)
     if f_max is not None:
         use &= f <= float(f_max)
-    names, logs, impedance = MODELS[model]
-    k = len(names)
     N = int(use.sum())
     if 2 * N <= k:
         raise PluginError(
-            f"The fit of {model} has {k} parameters and needs more than {k / 2:g} frequencies; "
+            f"The fit of {what} has {k} parameters and needs more than {k / 2:g} frequencies; "
             f"{N} are usable."
         )
-    w = 2 * np.pi * f[use]
     Z = Z_all[use]
     weight = 1 / np.abs(Z) if weighting == "modulus" else np.ones(N)
     if not np.all(np.isfinite(weight)):
         raise PluginError("|Z| is zero at some frequency: modulus weighting cannot be used.")
+    return f, 2 * np.pi * f[use], Z, weight
 
+
+def least_squares_fit(names, logs, impedance, starts, w, Z, weight):
+    """The best of the fits from each start: parameters, their σ, χ², and warnings."""
     def residuals(u):
-        d = (impedance(from_fitted(u, logs), w) - Z) * weight
-        return np.concatenate([d.real, d.imag])
+        with np.errstate(all="ignore"):
+            d = (impedance(from_fitted(u, logs), w) - Z) * weight
+        d = np.concatenate([d.real, d.imag])
+        # Where the model overflows, a large residual steers the fit away rather than stopping it.
+        return np.where(np.isfinite(d), d, 1e30)
 
-    lower = [LOG_BOUNDS[0] if lg else N_BOUNDS[0] for lg in logs]
-    upper = [LOG_BOUNDS[1] if lg else N_BOUNDS[1] for lg in logs]
+    lower = np.array([LOG_BOUNDS[0] if lg else N_BOUNDS[0] for lg in logs])
+    upper = np.array([LOG_BOUNDS[1] if lg else N_BOUNDS[1] for lg in logs])
     best = None
-    for start in initial_guesses(model, w, Z):
-        u0 = np.array([np.log10(v) if lg else v for v, lg in zip(start, logs)])
-        u0 = np.clip(u0, np.array(lower) + 1e-9, np.array(upper) - 1e-9)
+    for start in starts:
+        with np.errstate(all="ignore"):
+            u0 = np.array([np.log10(v) if lg else v for v, lg in zip(start, logs)], dtype=float)
+        if not np.all(np.isfinite(u0)):
+            continue
+        u0 = np.clip(u0, lower + 1e-9, upper - 1e-9)
         try:
             fit = least_squares(residuals, u0, bounds=(lower, upper), method="trf",
                                 x_scale="jac", ftol=1e-14, xtol=1e-14, gtol=1e-14,
                                 max_nfev=5000)
         except ValueError:
             continue
-        if np.isfinite(fit.cost) and (best is None or fit.cost < best.cost):
+        # A later start must do clearly better: on a tie (two branches that can be swapped),
+        # the fit from the first start, the guess, is kept.
+        if np.isfinite(fit.cost) and (best is None or fit.cost < best.cost * (1 - 1e-9)):
             best = fit
     if best is None:
         raise PluginError("The fit could not start from any initial guess.")
 
+    k = len(names)
+    N = len(w)
     p = from_fitted(best.x, logs)
     chisq = 2 * float(best.cost)
     freedom = 2 * N - k
@@ -197,9 +213,65 @@ def eis_fit(frequency, zre, zim, model="Randles", imaginary="-Z''", weighting="m
             warnings.append(f"{name} is at the bound of what it may be.")
     if not best.success:
         warnings.append(f"The fit did not converge: {best.message}")
+    return {
+        "p": p,
+        "sigma": sigma,
+        "chisq": chisq,
+        "freedom": freedom,
+        "frequencies": N,
+        "warnings": warnings,
+        "converged": bool(best.success),
+        "message": str(best.message),
+    }
 
-    values = dict(zip(names, p.tolist()))
-    params = dict(values)
+
+def fit_outputs(names, impedance, fit, f, zre, zim, imaginary, weighting, extra):
+    """The waves of the fitted curve and the values of a fit, as an action hands them back."""
+    p, sigma, chisq, freedom = fit["p"], fit["sigma"], fit["chisq"], fit["freedom"]
+    fitted = np.full(len(f), np.nan + 0j)
+    good = np.isfinite(f) & (f > 0)
+    with np.errstate(all="ignore"):
+        fitted[good] = impedance(p, 2 * np.pi * f[good])
+    zim_fit = -fitted.imag if imaginary == "-Z''" else fitted.imag
+    return {
+        "waves": {
+            "zre_fit": wave(fitted.real, like=zre),
+            "zim_fit": wave(zim_fit, like=zim),
+        },
+        "values": {
+            **extra["head"],
+            **dict(zip(names, p.tolist())),
+            **{f"{name}_sigma": float(s) for name, s in zip(names, sigma)},
+            **extra["tail"],
+            "chisq": chisq,
+            "chisq_reduced": chisq / freedom,
+            "weighting": weighting,
+            "frequencies": fit["frequencies"],
+            "warnings": fit["warnings"],
+            "result": {
+                "names": list(names),
+                "coef": p.tolist(),
+                "sigma": sigma.tolist(),
+                "chisq": chisq,
+                "points": 2 * fit["frequencies"],
+                "freedom": freedom,
+                "converged": fit["converged"],
+                "reason": " ".join(fit["warnings"]) or fit["message"],
+            },
+        },
+    }
+
+
+@action("eis_fit")
+def eis_fit(frequency, zre, zim, model="Randles", imaginary="-Z''", weighting="modulus",
+            f_min=None, f_max=None):
+    if model not in MODELS:
+        raise PluginError(f"Unknown model {model!r}; the models are {', '.join(MODELS)}.")
+    names, logs, impedance = MODELS[model]
+    f, w, Z, weight = read_spectrum(frequency, zre, zim, imaginary, weighting, f_min, f_max,
+                                    len(names), model)
+    fit = least_squares_fit(names, logs, impedance, initial_guesses(model, w, Z), w, Z, weight)
+    params = dict(zip(names, fit["p"].tolist()))
     # The capacitance a CPE amounts to with R1 in parallel (Hsu & Mansfeld / Brug),
     # and the characteristic frequency of the arc.
     if model == "R(RC)":
@@ -209,36 +281,53 @@ def eis_fit(frequency, zre, zim, model="Randles", imaginary="-Z''", weighting="m
         n = params["n1"]
         c_eff = params["Q1"] ** (1 / n) * params["R1"] ** ((1 - n) / n)
         tau = (params["R1"] * params["Q1"]) ** (1 / n)
-    fitted = np.full(len(f), np.nan + 0j)
-    good = np.isfinite(f) & (f > 0)
-    fitted[good] = impedance(p, 2 * np.pi * f[good])
-    zim_fit = -fitted.imag if imaginary == "-Z''" else fitted.imag
+    return fit_outputs(names, impedance, fit, f, zre, zim, imaginary, weighting, {
+        "head": {"model": model},
+        "tail": {"C_eff": c_eff, "f_char": 1 / (2 * np.pi * tau)},
+    })
 
-    return {
-        "waves": {
-            "zre_fit": wave(fitted.real, like=zre),
-            "zim_fit": wave(zim_fit, like=zim),
-        },
-        "values": {
-            "model": model,
-            **values,
-            **{f"{name}_sigma": float(s) for name, s in zip(names, sigma)},
-            "C_eff": c_eff,
-            "f_char": 1 / (2 * np.pi * tau),
-            "chisq": chisq,
-            "chisq_reduced": chisq / freedom,
-            "weighting": weighting,
-            "frequencies": N,
-            "warnings": warnings,
-            "result": {
-                "names": list(names),
-                "coef": p.tolist(),
-                "sigma": sigma.tolist(),
-                "chisq": chisq,
-                "points": 2 * N,
-                "freedom": freedom,
-                "converged": bool(best.success),
-                "reason": " ".join(warnings) or str(best.message),
-            },
-        },
-    }
+
+#: How many starts besides the guess, scattered around it, the circuit fit tries.
+SCATTERED_STARTS = 15
+
+
+def scattered(guess, logs, count, seed=0):
+    """Starts around a guess: a decade or so either way for log10 parameters, n from 0.6 to 1."""
+    rng = np.random.default_rng(seed)
+    starts = []
+    for _ in range(count):
+        starts.append([
+            v * 10.0 ** rng.normal(0, 0.8) if lg else rng.uniform(0.6, 1.0)
+            for v, lg in zip(guess, logs)
+        ])
+    return starts
+
+
+@action("eis_circuit")
+def eis_circuit(frequency, zre, zim, circuit="R0-p(R1,CPE1)", guess=None, imaginary="-Z''",
+                weighting="modulus", f_min=None, f_max=None):
+    model = Circuit(circuit)
+    names, logs = model.names, model.logs
+    f, w, Z, weight = read_spectrum(frequency, zre, zim, imaginary, weighting, f_min, f_max,
+                                    len(names), circuit)
+    if guess is not None:
+        start = [float(v) for v in guess]
+        if len(start) != len(names):
+            raise PluginError(
+                f"The starting values are {len(start)} numbers; the circuit has {len(names)} "
+                f"parameters: {', '.join(names)}."
+            )
+        for name, value, lg in zip(names, start, logs):
+            if lg and not value > 0:
+                raise PluginError(f"The starting value of {name} must be positive, not {value:g}.")
+            if not lg and not N_BOUNDS[0] <= value <= N_BOUNDS[1]:
+                raise PluginError(f"The starting value of {name} must be between "
+                                  f"{N_BOUNDS[0]:g} and {N_BOUNDS[1]:g}, not {value:g}.")
+    else:
+        start = model.initial_guess(w, Z)
+    starts = [start, *scattered(start, logs, SCATTERED_STARTS)]
+    fit = least_squares_fit(names, logs, model.impedance, starts, w, Z, weight)
+    return fit_outputs(names, model.impedance, fit, f, zre, zim, imaginary, weighting, {
+        "head": {"circuit": circuit, "parameters": list(names)},
+        "tail": {},
+    })

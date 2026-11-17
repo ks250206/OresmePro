@@ -36,6 +36,7 @@ describe("the example plugin electrochem", () => {
       "cv_peaks",
       "tafel",
       "eis_fit",
+      "eis_circuit",
     ]);
     expect(pkg.manifest.python).toEqual({ entry: "electrochem", packages: ["numpy", "scipy"] });
     // Every file it lists, and not the README or the tests beside them.

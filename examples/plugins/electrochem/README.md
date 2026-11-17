@@ -1,11 +1,12 @@
 # electrochem: 電気化学の見本プラグイン
 
-OresmePro のプラグインの見本です。サイクリックボルタモグラム(CV)のピーク、Tafel 解析、電気化学インピーダンス(EIS)の等価回路フィットを、隔離された環境(サンドボックス)の Python で行います。数値計算は合成データで検算してあります([検算](#検算))。
+OresmePro のプラグインの見本です。サイクリックボルタモグラム(CV)のピーク、Tafel 解析、電気化学インピーダンス(EIS)の等価回路フィット(決まったモデルと、文字で書いた任意の回路)を、隔離された環境(サンドボックス)の Python で行います。数値計算は合成データで検算してあります([検算](#検算))。
 
 - [入れ方](#入れ方)
 - [`cv_peaks`: CV のピーク](#cv_peaks-cv-のピーク)
 - [`tafel`: Tafel 勾配と交換電流密度](#tafel-tafel-勾配と交換電流密度)
 - [`eis_fit`: インピーダンスの等価回路フィット](#eis_fit-インピーダンスの等価回路フィット)
+- [`eis_circuit`: 任意の等価回路のフィット](#eis_circuit-任意の等価回路のフィット)
 - [Nyquist 図のグラフテンプレート](#nyquist-図のグラフテンプレート)
 - [EIS フィットのパネル](#eis-フィットのパネル)
 - [English](#english)
@@ -112,10 +113,48 @@ n と σ の初期値をいくつか試し、最もよく合ったものを採�
 
 ### 限界
 
-- 半無限拡散の Warburg だけで、有限長の拡散(短絡・開放)はありません。
+- 半無限拡散の Warburg だけで、有限長の拡散(短絡・開放)はありません。それが要るときは `eis_circuit` で `Wo`・`Ws` を使います。
 - CPE の n が 1 に張り付くときは、`R(RC)` のほうが合っています。
 - 初期値の推定は、円弧が見えるスペクトルを前提にしています。円弧がほとんど見えないときは `f_min`, `f_max` で範囲を絞ってください。
-- インダクタンス(高周波で Z″ > 0)は扱いません。その点は `f_max` で外してください。
+- インダクタンス(高周波で Z″ > 0)は扱いません。その点は `f_max` で外すか、`eis_circuit` で `L` を入れてください。
+
+## `eis_circuit`: 任意の等価回路のフィット
+
+`eis_fit` と同じフィットを、[impedance.py](https://github.com/ECSHackWeek/impedance.py) と同じ書き方の回路で行います。impedance.py は matplotlib と altair を必要とし、アプリに同梱すると約 11 MB 増えるため、回路の部分だけをこのプラグインで実装しています(素子の式は impedance.py と数値的に一致することを確かめてあります)。
+
+```python
+op.invoke("plugin.electrochem.eis_circuit",
+          {"frequency": "f", "zre": "zre", "zim": "zim", "circuit": "R0-p(R1,CPE1)-W1"})
+```
+
+回路の書き方: 直列は `-`、並列は `p(a, b, ...)`(各枝も直列にできます)。素子は種類とラベルで、ラベルは数字か `_` で始めます(`R1`、`R_ct`。`Rct` は不可)。
+
+| 種類       | 素子                  | Z                        | パラメータ                     |
+| ---------- | --------------------- | ------------------------ | ------------------------------ |
+| `R`        | 抵抗                  | R                        | `R1` (Ω)                       |
+| `C`        | キャパシタ            | 1 / (jω C)               | `C1` (F)                       |
+| `L`        | インダクタ            | jω L                     | `L1` (H)                       |
+| `CPE`, `Q` | 定位相要素            | 1 / (Q (jω)^n)           | `Q1` (F·s^(n−1))、`n1`(0.2〜1) |
+| `W`        | Warburg(半無限)       | σ (1 − j) / √ω           | `W1` (Ω·s^(−1/2))              |
+| `Wo`       | Warburg(有限長・開放) | Z0 coth(√(jωτ)) / √(jωτ) | `Wo1_Z0` (Ω)、`Wo1_tau` (s)    |
+| `Ws`       | Warburg(有限長・短絡) | Z0 tanh(√(jωτ)) / √(jωτ) | `Ws1_Z0` (Ω)、`Ws1_tau` (s)    |
+
+例: `R0-p(R1,C1)`(= `R(RC)`)、`R0-p(R1-W1,CPE1)`(= `Randles`)、`R0-p(R1,CPE1)-p(R2,CPE2)`(円弧 2 つ)、`L0-R0-p(R1,CPE1)-Wo1`。
+
+| 引数      | 内容                                                                                               |
+| --------- | -------------------------------------------------------------------------------------------------- |
+| `circuit` | 回路(既定 `R0-p(R1,CPE1)`)                                                                         |
+| `guess`   | 初期値。回路がパラメータを名付ける順に 1 つずつ(`R0-p(R1,CPE1)` なら R0, R1, Q1, n1)。省略時は推定 |
+| その他    | `frequency`, `zre`, `zim`, `imaginary`, `weighting`, `f_min`, `f_max` は `eis_fit` と同じ          |
+
+初期値は回路の形によらずスペクトルから推定します。主の直列にある抵抗で高周波側の切片を、並列の中の抵抗で円弧が覆う Z′ の幅を分け、C・CPE には円弧の頂点の時定数(ω R C = 1)を、Warburg には低周波側の大きさを当てます。C・CPE が複数あるときは、回路で先に書いたものほど時定数を短く(高周波側の円弧に)します。その初期値と、そのまわりに散らした 15 点から始めたフィットのうち最もよく合ったものを採ります。
+
+返す値: `circuit`、`parameters`(パラメータ名の並び)、各パラメータと `_sigma`、`chisq`、`chisq_reduced`、`frequencies`、`warnings`。作る wave は `eis_fit` と同じ `zre_fit`、`zim_fit` です。
+
+### 限界
+
+- 2 つの枝を入れ替えても同じ回路になるとき(`p(R1,CPE1)-p(R2,CPE2)` など)、どちらのラベルがどの円弧になるかは初期値で決まります。先に書いたほうが高周波側の円弧になるよう推定しますが、確実にしたいときは `guess` を与えてください。
+- 素子の多い回路では、データで決まらないパラメータの σ が大きくなったり、境界に張り付いたりします(`warnings` に出ます)。
 
 ## Nyquist 図のグラフテンプレート
 
@@ -138,6 +177,7 @@ op.graph_template("Nyquist").make(zre="zre", zim="zim", zre_fit="f_zre_fit", zim
 - CV: 可逆系の CV(Nernst 式を満たす表面濃度から、半積分の関係で電流を数値的に求めたもの)で、Epa − E0 = 1.109 RT/F = 28.5 mV、E1/2 = E0、ΔEp ≈ 57.4 mV、ipa が Randles–Ševčík 式に 1 % 以内で合うこと。傾いたベースラインに乗った Gauss 形のピーク(2 サイクル目、雑音あり・なし、符号と mV の扱い)。
 - Tafel: Butler–Volmer 式(α = 0.5 / 0.6)から、両方の枝で勾配・j0・α が戻ること。雑音を入れた Tafel 直線で、真の値が報告した σ の 3 倍以内にあること。
 - EIS: 3 つのモデルそれぞれで、雑音なしなら全パラメータが相対 10⁻⁶ 以内で戻り、0.5 % の雑音なら真の値が σ の 4 倍以内にあること、χ²/ν が雑音に見合うこと。
+- EIS の回路: 回路の読み取り(パラメータ名と、書き損じへのエラー)、`R0-p(R1,C1)` などが `R(RC)` などのモデルと同じ Z になること。R・C・L・CPE・W・Wo・Ws を含む 5 つの回路で、推定した初期値から雑音なしのパラメータが相対 10⁻⁵ 以内で戻ること。円弧 2 つの回路に 0.5 % の雑音を入れて真の値が σ の 4 倍以内にあること、初期値を与えても同じ答えになること。
 
 numpy と scipy のある Python で、リポジトリから実行します。
 
@@ -156,6 +196,7 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/electro
 - **`cv_peaks`** (current, potential, cycle, window, anodic_baseline, cathodic_baseline, convention): splits the CV into sweeps where the potential turns, finds the oxidation peak on the positive-going sweep and the reduction peak on the negative-going one (refined by a parabola through the points within three times the noise of the top), with optional linear baselines fitted over given potential ranges. Reports Epa, Epc, ΔEp, E1/2, ipa and ipc (heights above the baseline, positive) and ipa/ipc; makes `peak_E`/`peak_i` markers and, with baselines, a `baseline` wave to plot against the potential.
 - **`tafel`** (current, potential, e_from, e_to, e_eq, area, temperature): least-squares line through log10|j| against η = E − E_eq over a range; reports the Tafel slope (mV/dec, negative on the cathodic branch), the exchange current density j0 (extrapolated to η = 0), the transfer coefficient α = ln(10)RT/(F|b|), with uncertainties from the fit's covariance; makes `abs` (|j|) and `fit` (the line from η = 0 to the end of the range).
 - **`eis_fit`** (frequency, zre, zim, model, imaginary, weighting, f_min, f_max): complex nonlinear least squares (`scipy.optimize.least_squares` on stacked real and imaginary residuals, modulus weighting by default) of `R(RC)` = R0 + R1∥C1, `R(RQ)` = R0 + R1∥CPE, or `Randles` = R0 + CPE∥(R1 + semi-infinite Warburg σ). The imaginary wave holds −Z″ by default (`imaginary="Z''"` for Z″ itself). Initial guesses come from the high-frequency intercept, the arc's apex and the low-frequency Warburg slope; uncertainties from the Jacobian, χ² and reduced χ². Makes `zre_fit`/`zim_fit` at the measured frequencies, in the same sign convention as the input.
+- **`eis_circuit`** (frequency, zre, zim, circuit, guess, imaginary, weighting, f_min, f_max): the same fit for any circuit written as [impedance.py](https://github.com/ECSHackWeek/impedance.py) writes them, implemented here because impedance.py needs matplotlib and altair (about 11 MB more if the app shipped it); its elements give the same Z as impedance.py's. Series is `-`, parallel `p(a, b, ...)`; elements are a kind and a label starting with a digit or `_`: `R` (Ω), `C` (F), `L` (H), `CPE` or `Q` (`Q1`, `n1`), `W` (semi-infinite Warburg σ), `Wo` and `Ws` (finite Warburg, open and short: `Wo1_Z0`, `Wo1_tau`). Starting values are guessed from the spectrum for any circuit (series resistors share the high-frequency intercept, resistors in parallel branches the span of Z′, capacitors and CPEs the arc's time constant, those written first the shorter ones) or given as `guess` in the order of the parameters; the best of fits from the guess and 15 starts scattered around it is kept. Reports `circuit`, `parameters`, each parameter with its `_sigma`, χ² and reduced χ²; makes `zre_fit`/`zim_fit`.
 - **Nyquist graph template** (`templates/nyquist.json`, in the app's export format): slots `zre`, `zim` (data, markers) and `zre_fit`, `zim_fit` (fit, line); axes Z′ (Ω) and −Z″ (Ω); the plot area is 7 cm tall and its width is Plan 1, so an ohm is as long along Z′ as along −Z″ and a semicircle looks like one.
 - **EIS fit panel** (`panels/eis_fit.json`): pick the frequency, Z′ and Z″ waves, the sign of Z″, the model and the weighting, and click **Fit** to call `eis_fit`. Add it with **Add Panels to Experiment**; it calls only the plugin's action, so it is data only.
 

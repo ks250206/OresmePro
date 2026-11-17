@@ -24,6 +24,14 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ### Added
 
+- **Edit › Copy Graph** (⌘C / Ctrl+C with a graph in front, and **Copy** in a graph's menu)
+  puts the graph on the clipboard as a PNG, as Save Graph as PNG draws it.
+- **Graph › New Graph…**, as in the Windows menu.
+- pybaselines comes with the app, like lmfit: `import pybaselines` works offline.
+- The electrochem example plugin fits any equivalent circuit written as text, as impedance.py
+  writes them (`eis_circuit`: `R0-p(R1,CPE1)-W1`, with R, C, L, CPE, W, Wo and Ws), without
+  impedance.py and the matplotlib and altair it needs.
+- Optuna is among the recommended packages of **Python › Packages…**.
 - Errors say what kind of refusal they are: a code (`INVALID_ARGUMENT`, `NOT_FOUND`,
   `ALREADY_EXISTS`, `IN_USE`, `CONFLICT`, `UNSUPPORTED`, `PLUGIN_FAILED`, `INTERNAL`) and
   details (what was not found, which argument, what uses it, at which phase a plugin failed),
@@ -56,6 +64,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 
 ### Changed
 
+- **Python › Packages…** lists every package in Python until **Imported only** is ticked, folds
+  the recommended packages away under **Recommended**, and lets the experiment's own packages be
+  folded away too.
 - The command window names the kind of error (`NotFoundError: No wave named "x".` where it
   said `OresmeError: ...`), and `ValueError`s the Python API raised for bad arguments are
   `InvalidArgumentError`s, which are still `ValueError`s.
@@ -65,6 +76,12 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - An Igor file that cannot be read (not from Igor, damaged, or of a version this reader does
   not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
   for it, where it was `INTERNAL`.
+
+### Fixed
+
+- On a Mac, Shift+Option+F formats a procedure, Option+G goes to a line, and Option+F takes
+  the next word of the command line's suggestion. Option turns those keys into other
+  characters (Ï, ©, ƒ), so they did nothing; they are now matched by the key's place.
 
 ## [0.3.0] - 2026-11-17
 
