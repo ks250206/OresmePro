@@ -15,6 +15,7 @@ On macOS read **Ctrl** as **⌘** and **Alt** as **Option**.
 | **Ctrl+Z** / **Ctrl+Y**     | Undo / Redo (Redo is **⇧⌘Z** on macOS)                                                        |
 | **Ctrl+A**                  | Every axis of the frontmost graph back to automatic; in a page layout, selects every item     |
 | **Ctrl+I**                  | Shows or hides the cursor readout of the frontmost graph                                      |
+| **Ctrl+C**                  | Copies the frontmost graph to the clipboard as a PNG image (selected text is copied as text)  |
 | **Ctrl+C** (Python running) | Stops Python                                                                                  |
 | Right-click the desktop     | The menus of the menu bar                                                                     |
 | Drop files                  | CSV and Excel open the Load Data dialog; Igor, Parquet and HDF5 load at once; `.oresme` opens |

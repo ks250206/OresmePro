@@ -26,14 +26,19 @@ const close = () => ui.set({ dialog: null });
 /** Pyodide's list of the packages its distribution has, built for the browser. */
 export const PYODIDE_PACKAGES_URL = "https://pyodide.org/en/stable/usage/packages-in-pyodide.html";
 
-/** Packages worth having for spectra, fits, impedance and statistics, and where each comes from. */
+/**
+ * Packages worth having for spectra, fits and statistics, and where each
+ * comes from. pybaselines is not here: the app ships it, like lmfit, and it
+ * loads the first time it is imported. Equivalent circuits for impedance are
+ * in the electrochem example plugin rather than impedance.py, which brings
+ * matplotlib and altair with it.
+ */
 export const SUGGESTED: readonly { name: string; from: "Pyodide" | "PyPI"; use: string }[] = [
-  { name: "pybaselines", from: "PyPI", use: "Baselines of spectra: AsLS, arPLS, SNIP and more" },
-  { name: "impedance", from: "PyPI", use: "Equivalent circuits for impedance (EIS)" },
   { name: "statsmodels", from: "Pyodide", use: "Statistical models, regression, time series" },
   { name: "pywavelets", from: "Pyodide", use: "Wavelet transforms and denoising (import pywt)" },
   { name: "uncertainties", from: "Pyodide", use: "Numbers with uncertainties carried through" },
   { name: "emcee", from: "PyPI", use: "MCMC: distributions of fitted parameters" },
+  { name: "optuna", from: "PyPI", use: "Searching parameters by trial: settings, hyperparameters" },
   { name: "iminuit", from: "Pyodide", use: "Minuit minimizer and its error estimates" },
   { name: "pint", from: "PyPI", use: "Physical units and their conversion" },
   { name: "sympy", from: "Pyodide", use: "Symbolic mathematics" },
@@ -145,7 +150,7 @@ export function PackagesDialog() {
   const status = useStore(pythonPackages, (state) => state.status);
   const kernelState = useKernelState();
   const [typed, setTyped] = useState("");
-  const [importedOnly, setImportedOnly] = useState(true);
+  const [importedOnly, setImportedOnly] = useState(false);
   const recorded = new Set(env.packages.map((item) => item.name));
   const ready = kernelState.status !== "unavailable" && kernelState.status !== "failed";
   const pip = (line: string) => {
@@ -175,15 +180,23 @@ export function PackagesDialog() {
           </Button>
         </div>
       ) : null}
-      <div role="region" aria-label="Packages of the experiment" className="flex flex-col gap-1">
-        <div className="flex items-baseline gap-2">
+      <details
+        open
+        role="region"
+        aria-label="Packages of the experiment"
+        className="group/experiment flex flex-col gap-1"
+      >
+        <summary className="flex cursor-default list-none items-baseline gap-2 select-none [&::-webkit-details-marker]:hidden">
+          <span aria-hidden className="w-2 text-muted group-open/experiment:rotate-90">
+            ▸
+          </span>
           <span className="font-semibold">This experiment</span>
           <span className="text-[11px] text-muted">
             {env.packages.length === 0
               ? "uses no packages beyond those Python starts with."
-              : `installed under Pyodide ${env.pyodide ?? "?"}; they are installed again whenever it opens.`}
+              : `${env.packages.length} package${env.packages.length === 1 ? "" : "s"}, installed under Pyodide ${env.pyodide ?? "?"}; they are installed again whenever it opens.`}
           </span>
-        </div>
+        </summary>
         {env.packages.length > 0 ? (
           <div className="max-h-56 overflow-auto rounded border border-line bg-paper">
             <table className="w-full border-separate border-spacing-0 text-left">
@@ -238,7 +251,7 @@ export function PackagesDialog() {
             </Button>
           </div>
         ) : null}
-      </div>
+      </details>
       <div
         role="group"
         aria-label="Install"
@@ -284,26 +297,37 @@ export function PackagesDialog() {
           </a>{" "}
           lists those the distribution has.
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-          {SUGGESTED.map((item) => {
-            const have = recorded.has(normalizePackageName(item.name));
-            return (
-              <div key={item.name} className="flex items-center gap-1.5">
-                <Button
-                  aria-label={`Install ${item.name}`}
-                  disabled={have || !ready}
-                  onClick={() => pip(`%pip install ${item.name}`)}
-                >
-                  {have ? "Installed" : "Install"}
-                </Button>
-                <span className="whitespace-nowrap font-medium">{item.name}</span>
-                <span className="truncate text-[11px] text-muted" title={item.use}>
-                  {item.from} · {item.use}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <details aria-label="Recommended packages" className="group/recommended">
+          <summary className="flex cursor-default list-none items-baseline gap-2 select-none [&::-webkit-details-marker]:hidden">
+            <span aria-hidden className="w-2 text-muted group-open/recommended:rotate-90">
+              ▸
+            </span>
+            <span className="font-semibold">Recommended</span>
+            <span className="text-[11px] text-muted">
+              {SUGGESTED.length} packages for spectra, fits and statistics
+            </span>
+          </summary>
+          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+            {SUGGESTED.map((item) => {
+              const have = recorded.has(normalizePackageName(item.name));
+              return (
+                <div key={item.name} className="flex items-center gap-1.5">
+                  <Button
+                    aria-label={`Install ${item.name}`}
+                    disabled={have || !ready}
+                    onClick={() => pip(`%pip install ${item.name}`)}
+                  >
+                    {have ? "Installed" : "Install"}
+                  </Button>
+                  <span className="whitespace-nowrap font-medium">{item.name}</span>
+                  <span className="truncate text-[11px] text-muted" title={item.use}>
+                    {item.from} · {item.use}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </details>
       </div>
       <div
         role="region"
@@ -357,9 +381,9 @@ export function PackagesDialog() {
         {status ? (
           <div className="text-[11px] text-muted">
             {rows.length} shown. Pre-installed packages load with Python. Bundled ones (SciPy,
-            pandas, scikit-learn, lmfit, ...) come with the app and load the first time they are
-            imported, offline too; the rest of the Pyodide distribution loads from its server when
-            imported.
+            pandas, scikit-learn, lmfit, pybaselines, ...) come with the app and load the first time
+            they are imported, offline too; the rest of the Pyodide distribution loads from its
+            server when imported.
           </div>
         ) : null}
       </div>

@@ -36,7 +36,7 @@ test.describe("the example plugin electrochem", () => {
     await expect(approval).toContainText("plugin.electrochem.eis_fit");
     await expect(approval).toContainText("Python packages: numpy, scipy");
     // The manifest's files only: not the README or the tests next to them.
-    await expect(approval).toContainText("7 files");
+    await expect(approval).toContainText("8 files");
     await approval.getByRole("button", { name: "Install" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });
@@ -134,6 +134,22 @@ test.describe("the example plugin electrochem", () => {
     expect(
       await page.evaluate(() => globalThis.oresme.doc.getState().results.Plugin1!.settings),
     ).toMatchObject({ params: { model: "R(RQ)" } });
+
+    // Any circuit written as text: the Randles circuit again, its parameters in the circuit's order.
+    const circuit = await app.run(
+      'op.invoke("plugin.electrochem.eis_circuit", {"frequency": "eis_f", "zre": "eis_re", "zim": "eis_im", "circuit": "R0-p(R1-W1,CPE1)"})',
+    );
+    expect(circuit.status).not.toBe("error");
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().results)), {
+        timeout: 150_000,
+      })
+      .toEqual(["Plugin0", "Plugin1", "Plugin2"]);
+    const byCircuit = await page.evaluate(() => globalThis.oresme.doc.getState().results.Plugin2!);
+    expect(byCircuit.names).toEqual(["R0", "R1", "W1", "Q1", "n1"]);
+    [TRUE.R0, TRUE.R1, TRUE.sigma, TRUE.Q1, TRUE.n1].forEach((value, at) => {
+      expect(Math.abs(byCircuit.coef[at]! / value - 1)).toBeLessThan(1e-5);
+    });
     await app.menu("Python", "Plugins…");
 
     // Removed, the plugin leaves its result, waves and template; running it again says what is needed.
@@ -165,8 +181,8 @@ test.describe("the example plugin electrochem", () => {
       };
     });
     expect(kept).toEqual({
-      results: ["Plugin0", "Plugin1"],
-      copies: 4,
+      results: ["Plugin0", "Plugin1", "Plugin2"],
+      copies: 6,
       waves: [
         "eis_f",
         "eis_re",
@@ -175,6 +191,8 @@ test.describe("the example plugin electrochem", () => {
         "eis_f_zim_fit",
         "eis_f_zre_fit_1",
         "eis_f_zim_fit_1",
+        "eis_f_zre_fit_2",
+        "eis_f_zim_fit_2",
       ],
       traces: [
         [

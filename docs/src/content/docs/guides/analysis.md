@@ -25,10 +25,11 @@ FFT は等間隔の1次元信号に使います。サンプル間隔 `dx` と X 
 
 リポジトリの [`examples/plugins/electrochem`](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem) は、サンドボックスの Python で動くプラグインの見本です。
 
-| action     | 内容                                                                                              |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| `cv_peaks` | CV の酸化・還元ピーク: Epa、Epc、ΔEp、E1/2、ipa/ipc(ベースラインは任意)                           |
-| `tafel`    | 指定した範囲の Tafel 勾配(mV/dec)と交換電流密度、その不確かさ                                     |
-| `eis_fit`  | インピーダンスの等価回路フィット(R(RC)、R(RQ)、Randles): 係数・不確かさ・χ² と、フィットの Z′・Z″ |
+| action        | 内容                                                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `cv_peaks`    | CV の酸化・還元ピーク: Epa、Epc、ΔEp、E1/2、ipa/ipc(ベースラインは任意)                              |
+| `tafel`       | 指定した範囲の Tafel 勾配(mV/dec)と交換電流密度、その不確かさ                                        |
+| `eis_fit`     | インピーダンスの等価回路フィット(R(RC)、R(RQ)、Randles): 係数・不確かさ・χ² と、フィットの Z′・Z″    |
+| `eis_circuit` | 同じフィットを、impedance.py と同じ書き方の任意の回路で: `R0-p(R1,CPE1)-W1`(R、C、L、CPE、W、Wo、Ws) |
 
 Nyquist 図のグラフテンプレートも付いています。**Python › Plugins…** の **Install from GitHub…** に上のアドレスを入れるか、**Install from Folder…** でそのフォルダを選んで入れます。Python からは `op.invoke("plugin.electrochem.eis_fit", {"frequency": "f", "zre": "zre", "zim": "zim"})` のように呼びます。入力・モデル・符号の約束は、そのフォルダの README にあります。

@@ -334,6 +334,114 @@ def test_eis_frequency_range_and_refusals():
             raise AssertionError(f"no error for {arguments}")
 
 
+# --- EIS: circuits written as text ------------------------------------------------
+
+#: Circuits and their true parameters, in the order the circuit names them.
+CIRCUITS = {
+    "R0-p(R1,C1)": [12.0, 85.0, 2.2e-5],
+    "R0-p(R1-W1,CPE1)": [20.0, 100.0, 50.0, 2e-5, 0.9],
+    "R0-p(R1,CPE1)-p(R2,CPE2)": [5.0, 40.0, 1e-6, 0.92, 300.0, 1e-3, 0.8],
+    "L0-R0-p(R1,CPE1)-Wo1": [2e-6, 10.0, 120.0, 3e-5, 0.88, 80.0, 20.0],
+    "R0-p(R1-Ws1,C1)": [10.0, 100.0, 200.0, 5.0, 1e-5],
+}
+
+
+def circuit_spectrum(text, noise=0.0, seed=5):
+    circuit = electrochem.circuit.Circuit(text)
+    f = np.logspace(5, -2, 71)
+    Z = circuit.impedance(CIRCUITS[text], 2 * np.pi * f)
+    rng = np.random.default_rng(seed)
+    Z = Z.real * (1 + noise * rng.standard_normal(len(f))) + 1j * Z.imag * (
+        1 + noise * rng.standard_normal(len(f)))
+    return f, Z
+
+
+def test_circuits_are_read_and_match_the_models():
+    Circuit = electrochem.circuit.Circuit
+    assert Circuit("R0-p(R1,CPE1)-W1").names == ["R0", "R1", "Q1", "n1", "W1"]
+    assert Circuit(" R_s - p( R_ct , Q_dl ) ").names == ["R_s", "R_ct", "Q_dl", "n_dl"]
+    assert Circuit("L0-p(R1-Wo1,C1)-Ws2").names == [
+        "L0", "R1", "Wo1_Z0", "Wo1_tau", "C1", "Ws2_Z0", "Ws2_tau"]
+    # The fixed models are circuits like any other.
+    w = 2 * np.pi * np.logspace(5, -2, 30)
+    for text, model in (("R0-p(R1,C1)", "R(RC)"), ("R0-p(R1,CPE1)", "R(RQ)")):
+        names, _, impedance = electrochem.eis.MODELS[model]
+        p = [TRUE[model][name] for name in names]
+        assert np.allclose(Circuit(text).impedance(p, w), impedance(p, w), rtol=1e-12), text
+    t = TRUE["Randles"]
+    p = [t["R0"], t["R1"], t["sigma"], t["Q1"], t["n1"]]
+    assert np.allclose(Circuit("R0-p(R1-W1,CPE1)").impedance(p, w),
+                       electrochem.eis.z_randles(list(t.values()), w), rtol=1e-12)
+    for text, message in (
+        ("", "empty"),
+        ("R0-Rct", "does not start with a digit or _"),
+        ("R0-R0", "R0 twice"),
+        ("CPE1-Q1", "Q1 twice"),
+        ("R0-p(R1)", "one branch"),
+        ("R0-p(R1,C1", "missing )"),
+        ("R0-X1", "no element"),
+        ("R0-p(R1,C1))", "unexpected"),
+    ):
+        try:
+            Circuit(text)
+        except PluginError as error:
+            assert message in str(error), (text, message, str(error))
+        else:
+            raise AssertionError(f"no error for {text!r}")
+
+
+def test_eis_circuit_recovers_every_circuit_from_its_own_guess():
+    worst = {}
+    for text, true in CIRCUITS.items():
+        f, Z = circuit_spectrum(text)
+        out = run("eis_circuit", frequency=make("f", f, "Hz"), zre=make("zre", Z.real, "Ω"),
+                  zim=make("zim", -Z.imag, "Ω"), circuit=text)
+        v = out["values"]
+        names = v["parameters"]
+        errors = [abs(v[name] / value - 1) for name, value in zip(names, true)]
+        assert max(errors) < 1e-5, (text, {name: v[name] for name in names})
+        assert v["result"]["converged"], v["result"]
+        assert np.allclose(out["waves"]["zim_fit"].data, -Z.imag, rtol=1e-5)
+        worst[text] = max(errors)
+    REPORT["eis circuits exact"] = ", ".join(f"{t} {e:.0e}" for t, e in worst.items())
+
+
+def test_eis_circuit_with_noise_and_a_guess():
+    text = "R0-p(R1,CPE1)-p(R2,CPE2)"
+    f, Z = circuit_spectrum(text, noise=0.005)
+    true = CIRCUITS[text]
+    out = run("eis_circuit", frequency=make("f", f), zre=make("zre", Z.real),
+              zim=make("zim", Z.imag), circuit=text, imaginary="Z''")
+    v = out["values"]
+    for name, value in zip(v["parameters"], true):
+        assert abs(v[name] - value) < 4 * v[f"{name}_sigma"], (name, v)
+    # Each point's two weighted residuals add up to about noise² (Z′² + Z″² = |Z|²),
+    # over two residuals a point: χ²/ν near noise²/2.
+    assert 0.25 < v["chisq_reduced"] / 0.005**2 < 1, v["chisq_reduced"]
+    REPORT["eis circuit 0.5 % noise"] = (
+        f"{text} worst |err|/σ "
+        f"{max(abs(v[n] - t) / v[n + '_sigma'] for n, t in zip(v['parameters'], true)):.2f}")
+    # Starting values given: the same answer.
+    given = run("eis_circuit", frequency=make("f", f), zre=make("zre", Z.real),
+                zim=make("zim", Z.imag), circuit=text, imaginary="Z''",
+                guess=[4, 50, 2e-6, 0.9, 200, 2e-3, 0.85])["values"]
+    for name in v["parameters"]:
+        close(given[name], v[name], rel=1e-4, what=name)
+    for arguments, message in (
+        ({"guess": [1, 2, 3]}, "the circuit has 7 parameters"),
+        ({"guess": [4, -50, 2e-6, 0.9, 200, 2e-3, 0.85]}, "R1 must be positive"),
+        ({"guess": [4, 50, 2e-6, 1.5, 200, 2e-3, 0.85]}, "n1 must be between"),
+        ({"circuit": "R0-p(R1,C1)", "f_max": 1e-2}, "needs more than"),
+    ):
+        try:
+            run("eis_circuit", frequency=make("f", f), zre=make("zre", Z.real),
+                zim=make("zim", Z.imag), **{"circuit": text, **arguments})
+        except PluginError as error:
+            assert message in str(error), (message, str(error))
+        else:
+            raise AssertionError(f"no error for {arguments}")
+
+
 # --- Running ---------------------------------------------------------------------
 
 

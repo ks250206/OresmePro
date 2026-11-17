@@ -5,18 +5,18 @@
 // downloaded once and checked against the hashes in Pyodide's lock file:
 //
 // - NumPy and IPython, which Python starts with, and
-// - SciPy, pandas, scikit-learn and lmfit, which are loaded the first time
-//   code imports them, pyarrow and h5py, which op.load_parquet and
+// - SciPy, pandas, scikit-learn, lmfit and pybaselines, which are loaded
+//   the first time code imports them, pyarrow and h5py, which op.load_parquet and
 //   op.load_hdf5 load the first time they are called, and micropip, which
 //   op.install (%pip) uses and which puts an experiment's packages in again
 //   offline. They are served by the
 //   app itself so that they work wherever the app does (a network that blocks
 //   the CDN, a pinned copy) and so that the tests need no network.
 //
-// lmfit and two packages it needs are not part of the Pyodide distribution.
-// They are pure Python, so their wheels from PyPI work as they are; they are
-// pinned here by version and hash and entered in the lock file, which is
-// what makes `import lmfit` find them.
+// lmfit and two packages it needs, and pybaselines, are not part of the
+// Pyodide distribution. They are pure Python, so their wheels from PyPI work
+// as they are; they are pinned here by version and hash and entered in the
+// lock file, which is what makes `import lmfit` find them.
 //
 // Every other package of the distribution stays on the CDN: the lock file
 // written here points at it, so `import sympy` still works when online.
@@ -29,7 +29,16 @@ import { fileURLToPath } from "node:url";
 /** Loaded when Python starts: kept by the service worker from the first visit. */
 const STARTUP = ["numpy", "ipython"];
 /** Loaded on first import (or first use, for pyarrow and h5py); "lmfit" brings SciPy with it. */
-const ON_DEMAND = ["scipy", "pandas", "scikit-learn", "lmfit", "pyarrow", "h5py", "micropip"];
+const ON_DEMAND = [
+  "scipy",
+  "pandas",
+  "scikit-learn",
+  "lmfit",
+  "pybaselines",
+  "pyarrow",
+  "h5py",
+  "micropip",
+];
 /** Pure Python wheels from PyPI that the Pyodide distribution does not have. */
 const FROM_PYPI = [
   {
@@ -55,6 +64,14 @@ const FROM_PYPI = [
     sha256: "1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d",
     depends: [],
     imports: ["dill"],
+  },
+  {
+    name: "pybaselines",
+    version: "1.2.1",
+    url: "https://files.pythonhosted.org/packages/3d/66/f044d53935b142d47ce2a65b8c4f51fdb5ca85ee1035fb2b7857971b122e/pybaselines-1.2.1-py3-none-any.whl",
+    sha256: "d8f224a0b5ac4cdcef861bc60533131c37255b4d1193f18a410bc37fe5217c73",
+    depends: ["numpy", "scipy"],
+    imports: ["pybaselines"],
   },
 ];
 const RUNTIME_FILES = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip"];

@@ -132,21 +132,35 @@ function exportDrawing(
     }) as Uint8Array<ArrayBuffer>;
     download(new Blob([pdf], { type: "application/pdf" }), filename);
   } else {
-    // Three times screen resolution for a graph (about 300 dpi for a page),
-    // enough for print at typical sizes.
-    const scale = points === 1 ? 300 / 72 : 3;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(layout.width * scale);
-    canvas.height = Math.round(layout.height * scale);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("No canvas available.");
-    context.scale(scale, scale);
-    drawPrims(context, layout.prims, scale);
-    canvas.toBlob((blob) => {
-      if (blob) download(blob, filename);
-      else showError("Could not export", "The image could not be encoded.");
-    }, "image/png");
+    pngOf(layout, points).then(
+      (blob) => download(blob, filename),
+      (error) => showError("Could not export", error),
+    );
   }
+}
+
+/**
+ * A drawing as PNG: three times screen resolution for a graph (about 300 dpi
+ * for a page), enough for print at typical sizes.
+ */
+function pngOf(
+  layout: { prims: readonly Prim[]; width: number; height: number },
+  points: number,
+): Promise<Blob> {
+  const scale = points === 1 ? 300 / 72 : 3;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(layout.width * scale);
+  canvas.height = Math.round(layout.height * scale);
+  const context = canvas.getContext("2d");
+  if (!context) return Promise.reject(new Error("No canvas available."));
+  context.scale(scale, scale);
+  drawPrims(context, layout.prims, scale);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("The image could not be encoded."))),
+      "image/png",
+    ),
+  );
 }
 
 /** Saves a graph as .pdf, .svg or .png, chosen by the file name. */
@@ -156,6 +170,33 @@ export function exportGraph(name: string, filename: string, cursors = false): vo
   } catch (error) {
     showError("Could not export the graph", error);
   }
+}
+
+/**
+ * Puts a graph on the clipboard as a PNG image, as Save Graph as PNG draws
+ * it, for pasting into a slide or a document. Called from a key or a menu,
+ * so the browser lets the page write: the image is drawn after the write has
+ * begun (Safari allows it only while the gesture lasts).
+ */
+export function copyGraph(name: string): void {
+  if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+    showError(
+      "Could not copy the graph",
+      "This browser cannot put images on the clipboard. Use File › Save Graph as PNG instead.",
+    );
+    return;
+  }
+  let png: Promise<Blob>;
+  try {
+    png = pngOf(exportLayout(name, null, null, false), 0.75);
+  } catch (error) {
+    showError("Could not copy the graph", error);
+    return;
+  }
+  navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(
+    () => note(`${name} is on the clipboard as an image.`),
+    (error: unknown) => showError("Could not copy the graph", error),
+  );
 }
 
 /** Saves a page layout as .pdf (at its paper size), .svg or .png. */

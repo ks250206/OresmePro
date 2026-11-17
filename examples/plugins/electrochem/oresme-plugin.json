@@ -3,7 +3,7 @@
   "name": "electrochem",
   "title": "Electrochemistry",
   "version": "0.1.0",
-  "description": "Cyclic voltammetry peaks (Epa, Epc, ΔEp, E1/2, ipa/ipc), Tafel slopes and exchange current densities, and equivalent-circuit fits of impedance spectra (R(RC), R(RQ), Randles) with a Nyquist graph template. Potentials in V, impedances in Ω, frequencies in Hz.",
+  "description": "Cyclic voltammetry peaks (Epa, Epc, ΔEp, E1/2, ipa/ipc), Tafel slopes and exchange current densities, and equivalent-circuit fits of impedance spectra (R(RC), R(RQ), Randles, or any circuit written as R0-p(R1,CPE1)-W1) with a Nyquist graph template. Potentials in V, impedances in Ω, frequencies in Hz.",
   "license": "MIT",
   "python": {
     "entry": "electrochem",
@@ -15,6 +15,7 @@
     "electrochem/cv.py",
     "electrochem/tafel.py",
     "electrochem/eis.py",
+    "electrochem/circuit.py",
     "templates/nyquist.json",
     "panels/eis_fit.json"
   ],
@@ -135,6 +136,63 @@
           "title": "Model",
           "choices": ["Randles", "R(RQ)", "R(RC)"],
           "default": "Randles"
+        },
+        "imaginary": {
+          "type": "choice",
+          "title": "Imaginary wave holds",
+          "choices": ["-Z''", "Z''"],
+          "default": "-Z''",
+          "description": "-Z'': positive for a capacitive arc, as Nyquist plots show it."
+        },
+        "weighting": {
+          "type": "choice",
+          "title": "Weighting",
+          "choices": ["modulus", "unit"],
+          "default": "modulus",
+          "description": "modulus divides each point's residuals by |Z|."
+        },
+        "f_min": {
+          "type": "number",
+          "title": "Lowest frequency (Hz)",
+          "optional": true,
+          "min": 0
+        },
+        "f_max": {
+          "type": "number",
+          "title": "Highest frequency (Hz)",
+          "optional": true,
+          "min": 0
+        }
+      }
+    },
+    {
+      "name": "eis_circuit",
+      "title": "EIS Circuit Fit",
+      "description": "Fits any equivalent circuit written as text, as impedance.py writes them: elements in series joined by -, in parallel as p(…, …), each a kind and a label starting with a digit or _. Kinds: R (Ω), C (F), L (H), CPE or Q (Q, n), W (semi-infinite Warburg σ), Wo and Ws (finite Warburg, open and short: Z0, τ). R0-p(R1,CPE1)-W1, say, or R0-p(R1,CPE1)-p(R2,CPE2) for two arcs. Starts from a guess made from the spectrum's shape (or the starting values given) and from starts scattered around it, and keeps the best fit. Reports each parameter with its uncertainty and χ², and makes zre_fit and zim_fit at the measured frequencies.",
+      "params": {
+        "frequency": {
+          "type": "wave",
+          "title": "Frequency (Hz)"
+        },
+        "zre": {
+          "type": "wave",
+          "title": "Z′ (Ω)"
+        },
+        "zim": {
+          "type": "wave",
+          "title": "Z″ or −Z″ (Ω)"
+        },
+        "circuit": {
+          "type": "string",
+          "title": "Circuit",
+          "default": "R0-p(R1,CPE1)",
+          "description": "R0-p(R1,CPE1)-W1, say: - for series, p(a, b) for parallel. Parameters are named after their elements: R1, C1, Q1 and n1 for CPE1, W1, Wo1_Z0 and Wo1_tau."
+        },
+        "guess": {
+          "type": "numbers",
+          "title": "Starting values",
+          "optional": true,
+          "description": "One number per parameter, in the order the circuit names them (R0, R1, Q1, n1 for R0-p(R1,CPE1)). Left empty, they are guessed from the spectrum."
         },
         "imaginary": {
           "type": "choice",

@@ -18,10 +18,11 @@ test.describe("Python packages", () => {
       /numpy\s*\d+\.\d+.*pre-installed\s*imported/,
     );
     await expect(dialog).toContainText(/Python 3\.\d+\.\d+ · Pyodide \d+/);
-    await dialog.getByLabel("Imported only").uncheck();
+    // Everything is listed until Imported only is ticked.
+    await expect(dialog.getByLabel("Imported only")).not.toBeChecked();
     await expect(inPython.getByRole("row", { name: "In Python ipython" })).toBeVisible();
     // What the app ships is listed with its version before it is imported.
-    for (const name of ["scipy", "scikit-learn", "lmfit", "pandas"]) {
+    for (const name of ["scipy", "scikit-learn", "lmfit", "pandas", "pybaselines"]) {
       await expect(inPython.getByRole("row", { name: `In Python ${name}` })).toContainText(
         /\d+\.\d+.*bundled · loads on import\s*not loaded yet/,
       );
@@ -32,8 +33,13 @@ test.describe("Python packages", () => {
       /loaded|imported/,
     );
     await dialog.getByLabel("Imported only").check();
+    await expect(inPython.getByRole("row", { name: "In Python scikit-learn" })).toHaveCount(0);
+    // The recommended packages are folded away until asked for.
+    const install = dialog.getByRole("button", { name: "Install uncertainties" });
+    await expect(install).toBeHidden();
+    await dialog.getByText("Recommended", { exact: true }).click();
     // One of the distribution's that the app serves itself, so no network is needed.
-    await dialog.getByRole("button", { name: "Install uncertainties" }).click();
+    await install.click();
     await expect
       .poll(async () =>
         (await app.entries()).some((entry) => entry.code === "%pip install uncertainties"),
@@ -56,6 +62,12 @@ test.describe("Python packages", () => {
     await expect(inPython.getByRole("row", { name: "In Python uncertainties" })).toContainText(
       "this experiment",
     );
+    // What the experiment has folds away, and opens again.
+    const ofExperiment = dialog.getByRole("region", { name: "Packages of the experiment" });
+    await ofExperiment.getByText("This experiment", { exact: true }).click();
+    await expect(dialog.getByRole("row", { name: "Package uncertainties" })).toBeHidden();
+    await ofExperiment.getByText("This experiment", { exact: true }).click();
+    await expect(dialog.getByRole("row", { name: "Package uncertainties" })).toBeVisible();
 
     await expect(page.getByRole("group", { name: "Saving" })).toHaveText(/^Saved \d/);
     await page.reload();
