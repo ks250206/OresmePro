@@ -314,6 +314,25 @@ class ui:
                      primary=primary, disabled=disabled)
 
     @staticmethod
+    def nodes(label, bind, palette, height=None):
+        """Boxes joined at their ports, edited in the window: the graph at ``bind`` is
+        ``{"nodes": [{"id", "kind", "label", "x", "y", "fixed"}], "edges": [{"from": [id,
+        port], "to": [id, port]}]}``. ``palette``: the kinds, made by ``ui.kind``. A node
+        added gets the id of its kind and the least number not taken (``R0``, ``R1``)."""
+        return _part("nodes", label=label, bind=bind, palette=list(palette), height=height)
+
+    @staticmethod
+    def kind(kind, title=None, ports=("a", "b"), color=None, add=None):
+        """A kind of node: its ports are names (on the left and right in turn) or
+        ``(name, side)`` pairs, the side "left", "right", "top" or "bottom". ``add=False``
+        for kinds only the view makes, such as fixed ends."""
+        return {key: value for key, value in {
+            "kind": kind, "title": title,
+            "ports": [list(port) if isinstance(port, tuple) else port for port in ports],
+            "color": color, "add": add,
+        }.items() if value is not None}
+
+    @staticmethod
     def bind(path):
         """An argument of a button's action taken from the state at ``path`` when it is pressed."""
         return {"$bind": path}

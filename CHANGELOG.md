@@ -49,9 +49,22 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   that run one of the plugin's actions change the experiment, recorded and kept as any run. The
   app checks every part and prop before drawing, and draws no HTML or script of the plugin. The
   design is in `docs/design/plugin-views.md`.
-- The example plugin electrochem (0.2.0) has the view **EIS Circuit Fitting**: a circuit and its
-  parameters, drawn on Nyquist and Bode plots at each edit, guessed from the spectrum and fitted
-  with `eis_circuit`, the values found coming back into the table.
+- Plots in views can have **handles** (points, or lines across the plot) that are dragged to
+  move the values of the state they are bound to, by as much (or by the same ratio on a log
+  axis), one drag one undo; and `on_click`, which tells the view where the plot was clicked.
+- Views have a **nodes** part: a diagram of boxes joined at their ports, edited in the window
+  (added from a palette, moved, wired port to port, taken out), its meaning the view's to read.
+- What plugins' editors and views hold is **kept in the experiment** with the plugin's name and
+  version, and saved with it: opened again, they go on from where they were left. It is not
+  undone with the experiment's undo, and a state that cannot be read is left behind.
+- The example plugin electrochem (0.3.0) has the view **EIS Circuit Fitting**: a circuit,
+  written as text or drawn as a diagram (each following the other), and its parameters, drawn
+  on Nyquist and Bode plots at each edit, guessed from the spectrum and fitted with
+  `eis_circuit`, the values found coming back into the table.
+- The example plugin xps (0.3.0) has the view **XPS Quantification**: regions of a survey or of
+  narrow scans, added by clicking the spectrum and moved by dragging their bounds, with their
+  areas over a background and atomic % worked out at each edit (Scofield's RSFs for C, N, O and
+  F 1s when none is given), and Quantify to keep the result.
 - The arguments of plugins' actions can be of type `json` (lists and dicts), as the app's own.
 - `op.invoke(..., replace=True)` makes again, under their names, the waves the last run of the
   same action of the same plugin on the same input waves made (as its result kept them), where
@@ -59,7 +72,7 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   out, the look and axes stay, and waves no longer made are killed if nothing shows them. Waves
   changed or renamed since, and everything else, are left alone, and new names are used. A model
   editor fits this way. A plugin itself still never chooses what it overwrites.
-- The example plugin xps (0.2.0) has the model editor **XPS Peak Fitting**, for fitting
+- The example plugin xps has the model editor **XPS Peak Fitting**, for fitting
   synthetic components with CasaXPS's line shapes and constraints over a Shirley, linear or
   Tougaard background on the spectrum and in a table; `xps_fit` also takes the components as a
   list of dicts with constraints written as in CasaXPS (`"284, 286"`, `"fixed"`, `"A+1.5"`),

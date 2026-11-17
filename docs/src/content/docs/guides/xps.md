@@ -12,7 +12,7 @@ sidebar:
 
 Data Browser でスペクトル(強度の1次元 wave)を選んでから **Analysis → XPS Peak Fitting…** を選ぶと、その wave で開きます。上部で **Spectrum** と **Energy**(XY データなら X の wave、そうでなければ **X scaling**)を選びます。
 
-そのスペクトルを前にフィットしていれば、最後の結果の領域・設定・成分・制約が戻ります。
+ウィンドウの中身(スペクトルごとの領域・設定・成分・制約)は Experiment に保存され、開き直すと残したところから続きます。それがなく、そのスペクトルを前にフィットしていれば、最後の結果の領域・設定・成分・制約が戻ります。
 
 ## スペクトルの上で操作する
 
@@ -106,6 +106,15 @@ op.invoke("plugin.xps.xps_fit", {
 
 `replace=True` を省くと、前の wave に触れず、新しい名前で作ります。
 
+## 定量(XPS Quantification)
+
+**Analysis → XPS Quantification…** は、複数の領域の面積と相対感度係数(RSF)から原子 % を求めるウィンドウです(プラグインの [view](../plugins/#部品で組み立てる画面view))。
+
+- **Spectra** で、サーベイ 1 本か、領域ごとのナロースキャンを選びます(**Add Spectrum** で増やす)。エネルギーが X scaling でないときは、それぞれの **Energy** も選びます(全部に付けるか、どれにも付けないか)
+- スペクトルを押すと、その位置を中心に幅 8 eV の領域が加わります。表で名前・範囲・RSF を書き換え、**Add Row** で行を足します。`C 1s`、`N 1s`、`O 1s`、`F 1s` と名付けた領域は、RSF が空なら Al Kα の Scofield の値(C 1s を 1 とする)が入ります。装置の透過関数や脱出深さは入っていないので、必要なら **KE exponent** を使うか、装置の RSF を書いてください
+- 領域の境はプロット上の縦線で、ドラッグで動かせます(Ctrl+Z で戻せます)。編集するたびに、背景(Settings の **Background**)の上の面積と原子 % が表に出ます。各領域は、その範囲を含む最初のスペクトルから取ります。プロットには **Show** で選んだスペクトルと背景、そのスペクトルにある領域の境が出ます
+- **Quantify** で Action `quantify` を `replace=True` で実行し、背景の wave と結果(`Plugin0` など。係数が各領域の原子 %)を残します。履歴には `op.invoke("plugin.xps.quantify", {...}, replace=True)` と残ります
+
 ## 線形
 
 u = (BE − E)/F、m は %、u > 0 が高結合エネルギー側です(CasaXPS マニュアル 2.3.15 rev 1.3、p. 55 と p. 301)。
@@ -124,7 +133,7 @@ u = (BE − E)/F、m は %、u > 0 が高結合エネルギー側です(CasaXPS 
 
 ## 限界
 
-- 1 つのスペクトルの 1 つの領域をフィットします。サーベイからの定量(複数の領域の面積と RSF からの原子濃度)は、同じプラグインの Action **XPS Quantification**(`quantify`)を使います
+- 1 つのスペクトルの 1 つの領域をフィットします。サーベイからの定量(複数の領域の面積と RSF からの原子濃度)は、上の [XPS Quantification](#定量xps-quantification) を使います
 - 背景はフィットの間は固定です(active Shirley はありません)。不確かさに背景の不確かさは入りません
 
 [プラグイン](../plugins/) · [カーブフィッティング](../curve-fitting/)

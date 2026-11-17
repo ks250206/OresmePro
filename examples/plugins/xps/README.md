@@ -33,6 +33,8 @@ op.invoke("plugin.xps.xps_fit", {
 
 入れると **Analysis › XPS Peak Fitting…** が現れます。スペクトルの上で領域の端と成分をドラッグし、CasaXPS の Components ページのような表(成分ごとに列)で値と制約を書いて、**Fit Components** でフィットします。ウィンドウはアプリが描き、このプラグインは `xps_preview`(編集のたびに描くものを計算する。記録されない)と `xps_fit` を計算するだけです(`oresme-plugin.json` の `editors`)。フィットし直すと、前のフィットが作った wave とグラフ(その後に変えていないもの)を同じ名前で作り直します。使い方は [XPS ピークフィットのガイド](https://ks250206.github.io/OresmePro/docs/guides/xps/) にあります。
 
+**Analysis › XPS Quantification…** は、このプラグインの view `quant`(`xps/quant_view.py`)です。サーベイかナロースキャンを選び、スペクトルを押して領域を足し、その境(縦線)をドラッグして動かすと、背景の上の面積と原子 % がその場で表に出ます。**Quantify** で `quantify` を実行して結果を残します。
+
 ウィンドウは成分を dict のリストで渡します(`xps_fit` の `components` は、次の成分表の文字列でも、このリストでも受け付けます)。
 
 ```python
@@ -181,5 +183,6 @@ uv run --no-project --with numpy --with scipy python -I examples/plugins/xps/tes
 - **`quantify`** (spectra, regions, energies, background, average, energy_axis, photon_energy, shift, ke_exponent): regions `name: from to rsf=…`, each taken from the first spectrum that covers it (a survey or narrow scans), integrated over a background and divided by RSF (and KE^x); reports atomic percentages and makes the backgrounds.
 
 - **XPS Peak Fitting** (`editors` in the manifest): a window the app draws, under **Analysis › XPS Peak Fitting…**, where the region's ends and the components are dragged on the spectrum and their values and constraints written in a table with a column for each, as on CasaXPS's Components page. It calls `xps_preview` (what to draw after each edit; never recorded) and `xps_fit`, which takes the components as a list of dicts too: `{"name", "shape", "position", "fwhm", "area", "rsf", "gauss", "constraints": {"position": "A+1.5", "fwhm": "A", "area": "0, 1e5"}}`, a constraint being `""` (free), limits `"284, 286"`, `"fixed"`, or a tie `"A"`, `"A+1.5"`, `"A*0.5"`, `"A/2"`. Fitting again from it makes the waves and graph of the fit before again under their names, where unchanged since.
+- **XPS Quantification** (the view `quant`, `xps/quant_view.py`; **Analysis › XPS Quantification…**): spectra chosen at the top, regions in a table and as lines on the spectrum, added by clicking it and moved by dragging their bounds; each edit works out the areas and atomic % with `quantify` itself, and **Quantify** runs it to keep the result. A region named `C 1s`, `N 1s`, `O 1s` or `F 1s` without an RSF gets Scofield's (Al Kα, C 1s = 1).
 
 Limits: the background is not refined with the fit; uncertainties leave out the background's; asymmetric tails reaching past the region bias the background; no DS, LF or Voigt shapes yet. `tests/test_xps.py` checks every part on synthetic spectra with known answers.

@@ -86,7 +86,9 @@ def test_manifest_matches_python():
     """Every action of the manifest is registered, and takes exactly the arguments it lists."""
     with open(os.path.join(PLUGIN, "oresme-plugin.json"), encoding="utf-8") as file:
         manifest = json.load(file)
-    assert sorted(ACTIONS) == sorted(item["name"] for item in manifest["actions"])
+    # Views are registered beside the actions, as view:<name>.
+    views = [f"view:{item['name']}" for item in manifest.get("editors", []) if item["kind"] == "view"]
+    assert sorted(ACTIONS) == sorted([item["name"] for item in manifest["actions"]] + views)
     for item in manifest["actions"]:
         signature = inspect.signature(ACTIONS[item["name"]])
         assert list(signature.parameters) == list(item["params"]), item["name"]
@@ -437,6 +439,69 @@ def test_quantify_survey_and_narrow_scans():
     refuses("quantify", "No spectrum covers", spectra=[make("survey", y, x0=be[0], dx=0.1)],
             regions="Si 2p: 95 110")
     refuses("quantify", "not a range", spectra=[make("survey", y)], regions="C 1s: 280")
+
+
+def test_quant_view_works_out_regions_as_they_are_dragged():
+    """The view quant: regions added by a click, dragged by their bounds, and quantified."""
+    be, y = survey()
+    view = ACTIONS["view:quant"]
+    spectrum = make("survey", y, x0=be[0], dx=be[1] - be[0])
+
+    def call(state, event, with_waves=True):
+        paths = json.dumps({"w0": "spectra.0.y"} if with_waves else {})
+        outcome = view(json.dumps(state), json.dumps(event), paths,
+                       **({"w0": spectrum} if with_waves else {}))
+        for role, value in outcome["waves"].items():
+            oresme_plugin._output(role, value)
+        return outcome, json.loads(outcome["values"]["state"]), json.loads(outcome["values"]["ui"])
+
+    _, state, layout = call(None, {"type": "open", "last": None}, with_waves=False)
+    assert state["regions"] == [] and layout["version"] == 1
+    state["spectra"][0]["y"] = "survey"
+    outcome, state, _ = call(state, {"type": "change", "paths": ["spectra.0.y"]})
+    assert "Click the spectrum" in outcome["values"]["message"]
+    assert {"be", "counts"} <= set(outcome["waves"])
+
+    # Added where the spectrum was clicked, then named and moved as the window does.
+    outcome, state, layout = call(state, {"type": "command", "id": "add_region", "x": 286.0})
+    assert state["regions"][0]["low"] == 282.0 and state["regions"][0]["high"] == 290.0
+    plot = next(part for part in _parts(layout["body"]) if part["type"] == "plot")
+    assert [h["bind_x"] for h in plot["handles"]] == ["regions.0.low", "regions.0.high"]
+    state["regions"][0].update(name="C 1s", low=278, high=294)
+    state["regions"] += [{"name": "N 1s", "low": 394, "high": 406, "rsf": 1.8},
+                         {"name": "O 1s", "low": 524, "high": 540}]
+    state["background"], state["average"] = "Linear", 1
+    outcome, state, _ = call(state, {"type": "change", "paths": ["regions"]})
+    # O 1s, given no RSF, takes Scofield's; the at. % are those of the action itself.
+    assert state["regions"][2]["rsf"] == 2.93
+    direct = run("quantify", spectra=[spectrum], regions=state["text"], background="Linear",
+                 average=1)["values"]["regions"]
+    for row, expected in zip(state["regions"], direct):
+        close(row["percent"], expected["percent"], abs_=1e-9, what=row["name"])
+    assert "bg" in outcome["waves"] and state["names"] == ["survey"] and state["energies"] is None
+    button = next(part for part in _parts(layout["body"]) if part.get("action") == "quantify")
+    assert button["args"]["regions"] == {"$bind": "text"}
+
+    # Kept by the action: the window says so, and opened again starts from it.
+    done = {"type": "done", "id": "quantify", "ok": True, "result": "Plugin0", "args": {},
+            "values": {}}
+    _, state, _ = call(state, done)
+    assert "Plugin0" in state["report"]
+    last = {"action": "quantify", "result": "Plugin0", "inputs": {"spectra": ["survey"]},
+            "params": {"regions": state["text"], "background": "Linear", "average": 1}}
+    _, again, _ = call(None, {"type": "open", "last": last}, with_waves=False)
+    assert [row["name"] for row in again["regions"]] == ["C 1s", "N 1s", "O 1s"]
+    assert again["spectra"] == [{"y": "survey", "x": None}] and again["background"] == "Linear"
+
+
+def _parts(node):
+    yield node
+    for child in node.get("children", []):
+        yield from _parts(child)
+    for tab in node.get("tabs", []):
+        yield from _parts(tab["body"])
+    if "body" in node:
+        yield from _parts(node["body"])
 
 
 # --- Running ---------------------------------------------------------------------

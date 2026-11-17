@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { checkView, getPath, readViewJson, setPath, viewNodes } from "./view";
+import { checkView, getPath, readGraph, readViewJson, setPath, viewNodes } from "./view";
 
 /** What a view's Python returns is checked part by part before anything is drawn. */
 describe("plugin views", () => {
@@ -135,6 +135,86 @@ describe("plugin views", () => {
       /at most 200 handles/,
     );
     expect(() => checkView(plot([], { on_click: "a-b" }))).toThrow(/not a handler's name/);
+  });
+
+  it("take a nodes part with its palette, and read the graph it edits leniently", () => {
+    const view = checkView({
+      version: 1,
+      body: {
+        type: "nodes",
+        bind: "diagram",
+        palette: [
+          { kind: "R", title: "Resistor", ports: ["a", "b"] },
+          { kind: "start", ports: [["p", "right"]], add: false, color: "gray" },
+        ],
+      },
+    });
+    expect(view.body).toEqual({
+      type: "nodes",
+      label: "",
+      bind: "diagram",
+      height: 260,
+      palette: [
+        {
+          kind: "R",
+          title: "Resistor",
+          ports: [
+            { name: "a", side: "left" },
+            { name: "b", side: "right" },
+          ],
+          color: null,
+          add: true,
+        },
+        {
+          kind: "start",
+          title: "start",
+          ports: [{ name: "p", side: "right" }],
+          color: "gray",
+          add: false,
+        },
+      ],
+    });
+    const nodes = (palette: unknown) => ({
+      version: 1,
+      body: { type: "nodes", bind: "d", palette },
+    });
+    expect(() => checkView(nodes([]))).toThrow(/1 to 40 kinds/);
+    expect(() => checkView(nodes([{ kind: "R", ports: ["a", "a"] }]))).toThrow(
+      /not a port of its own/,
+    );
+    expect(() => checkView(nodes([{ kind: "R", ports: [["a", "middle"]] }]))).toThrow(/side is/);
+    expect(() =>
+      checkView(
+        nodes([
+          { kind: "R", ports: [] },
+          { kind: "R", ports: [] },
+        ]),
+      ),
+    ).toThrow(/twice/);
+    expect(() => checkView(nodes([{ kind: "<b>", ports: [] }]))).toThrow(/not a kind/);
+
+    const graph = readGraph({
+      nodes: [
+        { id: "R0", kind: "R", x: 10, y: 20 },
+        { id: "R0", kind: "R", x: 0, y: 0 },
+        { id: "start", kind: "start", label: "Start", x: 0, y: 0, fixed: true },
+        { id: "bad id", kind: "R", x: 0, y: 0 },
+        { id: "C1", kind: "C", x: "far" },
+      ],
+      edges: [
+        { from: ["start", "p"], to: ["R0", "a"] },
+        { from: ["R0", "b"], to: ["C1", "a"] },
+        "wire",
+      ],
+    });
+    expect(graph).toEqual({
+      nodes: [
+        { id: "R0", kind: "R", label: "R0", x: 10, y: 20, fixed: false },
+        { id: "start", kind: "start", label: "Start", x: 0, y: 0, fixed: true },
+      ],
+      edges: [{ from: ["start", "p"], to: ["R0", "a"] }],
+    });
+    expect(readGraph("nothing")).toEqual({ nodes: [], edges: [] });
   });
 
   it("read and set values at paths of the state", () => {

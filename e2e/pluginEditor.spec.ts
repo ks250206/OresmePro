@@ -25,7 +25,7 @@ test.describe("a plugin's model editor", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(XPS);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("XPS Peak Fitting 0.2.0");
+    await expect(approval).toContainText("XPS Peak Fitting 0.3.0");
     await expect(approval).toContainText("it calls xps_preview and xps_fit");
     await approval.getByRole("button", { name: "Install" }).click();
     await page

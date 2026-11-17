@@ -12,7 +12,7 @@ In **Python → Plugins…**, choose **Install from GitHub…**, enter `https://
 
 Select a spectrum (a 1-D wave of intensities) in the Data Browser and choose **Analysis → XPS Peak Fitting…**: the window opens on it. At its top, choose the **Spectrum** and the **Energy** (the X wave of XY data, or **X scaling**).
 
-A spectrum fitted before comes back with the region, settings, components and constraints of its last result.
+What the window holds (for each spectrum, the region, settings, components and constraints) is kept in the experiment: opened again, it goes on from where it was left. Without that, a spectrum fitted before comes back with the region, settings, components and constraints of its last result.
 
 ## On the spectrum
 
@@ -106,6 +106,15 @@ op.invoke("plugin.xps.xps_fit", {
 
 Without `replace=True`, the waves before are left alone and new names are used.
 
+## Quantification (XPS Quantification)
+
+**Analysis → XPS Quantification…** is a window that works out atomic % from the areas of regions and their relative sensitivity factors (RSFs). It is a [view](../plugins/#views-built-of-the-apps-parts) of the plugin.
+
+- In **Spectra**, choose a survey, or narrow scans of the regions (**Add Spectrum** adds one). Where the energies are not their X scaling, choose each one's **Energy** too (for all of them, or none)
+- Click the spectrum to add a region 8 eV wide around that place. Name it and set its range and RSF in the table; **Add Row** adds one. A region named `C 1s`, `N 1s`, `O 1s` or `F 1s` with no RSF is given Scofield's for Al Kα (C 1s = 1). They leave out the analyser's transmission and the escape depth: use **KE exponent** for those, or write your instrument's RSFs
+- A region's bounds are the vertical lines on the plot, dragged to move them (Ctrl+Z undoes it). After each edit the table shows its area above the background (**Background** in Settings) and its atomic %. Each region is taken from the first spectrum that covers it; the plot shows the spectrum chosen in **Show**, its background and the bounds of the regions on it
+- **Quantify** runs the action `quantify` with `replace=True`: it keeps the backgrounds as waves and a result (`Plugin0`, say, whose coefficients are the regions' atomic %), recorded as `op.invoke("plugin.xps.quantify", {...}, replace=True)`
+
 ## Line shapes
 
 u = (BE − E)/F, m in %, and u > 0 is the side of higher binding energy (CasaXPS manual 2.3.15 rev 1.3, pp. 55 and 301).
@@ -124,7 +133,7 @@ u = (BE − E)/F, m in %, and u > 0 is the side of higher binding energy (CasaXP
 
 ## Limits
 
-- One region of one spectrum is fitted. Quantification from a survey (atomic concentrations from the areas and RSFs of several regions) is the plugin's action **XPS Quantification** (`quantify`)
+- One region of one spectrum is fitted. Quantification from a survey (atomic concentrations from the areas and RSFs of several regions) is [XPS Quantification](#quantification-xps-quantification) above
 - The background is held while fitting (no active Shirley), and the uncertainties leave out the background's
 
 [Plugins](../plugins/) · [Curve fitting](../curve-fitting/)

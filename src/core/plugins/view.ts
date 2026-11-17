@@ -54,6 +54,13 @@ export type ViewNode =
       onClick: string | null;
     }
   | {
+      type: "nodes";
+      label: string;
+      bind: string;
+      palette: ViewNodeKind[];
+      height: number;
+    }
+  | {
       type: "button";
       label: string;
       on: string | null;
@@ -82,6 +89,42 @@ export interface ViewSeries {
   mode: "lines" | "markers" | "lines+markers";
   color: string | null;
   label: string;
+}
+
+/**
+ * A kind of node a nodes part draws and adds: a box with its ports, the
+ * places edges join it at. Nodes of kinds that cannot be added (add false)
+ * come only from the view: the two ends of a circuit, say.
+ */
+export interface ViewNodeKind {
+  kind: string;
+  title: string;
+  ports: { name: string; side: ViewPortSide }[];
+  color: string | null;
+  add: boolean;
+}
+
+export type ViewPortSide = "left" | "right" | "top" | "bottom";
+
+/** What a nodes part edits, at its bind: nodes where they are, and edges between their ports. */
+export interface ViewGraph {
+  nodes: ViewGraphNode[];
+  edges: ViewGraphEdge[];
+}
+
+export interface ViewGraphNode {
+  id: string;
+  kind: string;
+  label: string;
+  x: number;
+  y: number;
+  /** A node that cannot be taken out. */
+  fixed: boolean;
+}
+
+export interface ViewGraphEdge {
+  from: [string, string];
+  to: [string, string];
 }
 
 /**
@@ -124,6 +167,9 @@ export const VIEW_LIMITS = {
   rows: 2000,
   series: 32,
   handles: 200,
+  kinds: 40,
+  graphNodes: 500,
+  graphEdges: 2000,
   /** The state and the definition, as JSON text. */
   bytes: 1024 * 1024,
 } as const;
@@ -162,7 +208,12 @@ const KEYS: Record<string, readonly string[]> = {
     "on_click",
   ],
   button: ["label", "on", "action", "args", "replace", "primary", "disabled"],
+  nodes: ["label", "bind", "palette", "height"],
 };
+
+const KIND = /^[A-Za-z][A-Za-z0-9_]{0,15}$/;
+const NODE_ID = /^[A-Za-z0-9_]{1,32}$/;
+const SIDES: readonly ViewPortSide[] = ["left", "right", "top", "bottom"];
 
 /** Reads a view's definition, as its Python returned it; refuses all of it if any part is off. */
 export function checkView(raw: unknown): ViewDefinition {
@@ -449,6 +500,64 @@ export function checkView(raw: unknown): ViewDefinition {
           onClick,
         };
       }
+      case "nodes": {
+        if (
+          !Array.isArray(value.palette) ||
+          value.palette.length === 0 ||
+          value.palette.length > VIEW_LIMITS.kinds
+        )
+          throw new PluginError(`A nodes part has 1 to ${VIEW_LIMITS.kinds} kinds in its palette.`);
+        const seen = new Set<string>();
+        const palette = value.palette.map((item): ViewNodeKind => {
+          if (!isRecord(item))
+            throw new PluginError("A kind of node is {kind, title, ports, ...}.");
+          for (const key of Object.keys(item))
+            if (!["kind", "title", "ports", "color", "add"].includes(key))
+              throw new PluginError(`A kind of node has no ${JSON.stringify(key)}.`);
+          const kind = text(item.kind, "A kind of node", 16);
+          if (!KIND.test(kind)) throw new PluginError(`${JSON.stringify(kind)} is not a kind.`);
+          if (seen.has(kind)) throw new PluginError(`The kind ${kind} is in the palette twice.`);
+          seen.add(kind);
+          if (!Array.isArray(item.ports) || item.ports.length > 8)
+            throw new PluginError("A kind of node has at most 8 ports.");
+          const names = new Set<string>();
+          const ports = item.ports.map((port, index) => {
+            const [name, side] = Array.isArray(port)
+              ? port
+              : [port, index % 2 === 0 ? "left" : "right"];
+            const checked = text(name, "A port", 16);
+            if (!KIND.test(checked) || names.has(checked))
+              throw new PluginError(`${JSON.stringify(checked)} is not a port of its own.`);
+            names.add(checked);
+            if (!SIDES.includes(side as ViewPortSide))
+              throw new PluginError("A port's side is left, right, top or bottom.");
+            return { name: checked, side: side as ViewPortSide };
+          });
+          const color =
+            item.color === undefined || item.color === null
+              ? null
+              : text(item.color, "A kind's color", 20);
+          if (color !== null && !COLOR.test(color))
+            throw new PluginError(`${JSON.stringify(color)} is not a color (#rrggbb).`);
+          return {
+            kind,
+            title: text(item.title, "A kind's title", VIEW_LIMITS.label, kind),
+            ports,
+            color,
+            add: flag(item.add, "A kind's add", true),
+          };
+        });
+        const height = number(value.height, "A nodes part's height") ?? 260;
+        if (!(height >= 80 && height <= 1200))
+          throw new PluginError("A nodes part's height is from 80 to 1200.");
+        return {
+          type,
+          label: text(value.label, `${what}'s label`, VIEW_LIMITS.label, ""),
+          bind: path(value.bind, `${what}'s bind`),
+          palette,
+          height,
+        };
+      }
       default: {
         const on =
           value.on === undefined || value.on === null ? null : text(value.on, "A button's on", 64);
@@ -541,4 +650,54 @@ export function* viewNodes(node: ViewNode): Generator<ViewNode> {
     for (const child of node.children) yield* viewNodes(child);
   else if (node.type === "tabs") for (const tab of node.tabs) yield* viewNodes(tab.body);
   else if (node.type === "group") yield* viewNodes(node.body);
+}
+
+/**
+ * The graph at a nodes part's bind, as far as it can be read: nodes with
+ * ids of their own and a place, and edges between ports of nodes that are
+ * there. What cannot be read is left out, not refused: it is the view's state.
+ */
+export function readGraph(value: unknown): ViewGraph {
+  const graph: ViewGraph = { nodes: [], edges: [] };
+  if (!isRecord(value)) return graph;
+  const ids = new Set<string>();
+  const nodes = Array.isArray(value.nodes) ? value.nodes.slice(0, VIEW_LIMITS.graphNodes) : [];
+  for (const item of nodes) {
+    if (!isRecord(item)) continue;
+    const { id, kind, label, x, y, fixed } = item;
+    if (typeof id !== "string" || !NODE_ID.test(id) || ids.has(id)) continue;
+    if (typeof kind !== "string" || !KIND.test(kind)) continue;
+    if (
+      typeof x !== "number" ||
+      !Number.isFinite(x) ||
+      typeof y !== "number" ||
+      !Number.isFinite(y)
+    )
+      continue;
+    ids.add(id);
+    graph.nodes.push({
+      id,
+      kind,
+      label: typeof label === "string" ? label.slice(0, VIEW_LIMITS.label) : id,
+      x,
+      y,
+      fixed: fixed === true,
+    });
+  }
+  const end = (raw: unknown): [string, string] | null =>
+    Array.isArray(raw) &&
+    raw.length === 2 &&
+    typeof raw[0] === "string" &&
+    typeof raw[1] === "string" &&
+    ids.has(raw[0])
+      ? [raw[0], raw[1]]
+      : null;
+  const edges = Array.isArray(value.edges) ? value.edges.slice(0, VIEW_LIMITS.graphEdges) : [];
+  for (const item of edges) {
+    if (!isRecord(item)) continue;
+    const from = end(item.from);
+    const to = end(item.to);
+    if (from && to) graph.edges.push({ from, to });
+  }
+  return graph;
 }

@@ -10,6 +10,7 @@ import type { CheckedResult } from "../core/sandbox/validate";
 import type { PluginRunOutcome } from "./plugins/host";
 import type { InstalledPlugin } from "./plugins/store";
 import { doc, invokeAction, pluginStore, plugins } from "./session";
+import { dropWaiting, keepLater } from "./editorMemory";
 import { createStore, type Store } from "./store";
 import { openTool, type EditorTool } from "./toolWindows";
 
@@ -95,9 +96,6 @@ export const editorTool = (plugin: string, editor: string): EditorTool =>
   `editor:${editorKey(plugin, editor)}`;
 
 const stores = new Map<string, Store<EditorState>>();
-const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** How long an editor has to stay unchanged for what it holds to be kept in the experiment. */
-const SAVE_DELAY = 400;
 
 /** The state of one editor, made when first asked for. */
 export function editorStore(key: string): Store<EditorState> {
@@ -124,14 +122,7 @@ export function editorStore(key: string): Store<EditorState> {
       if (setup === last[0] && kept === last[1] && report === last[2]) return;
       last = [setup, kept, report];
       if (!setup) return;
-      clearTimeout(saveTimers.get(key));
-      saveTimers.set(
-        key,
-        setTimeout(() => {
-          saveTimers.delete(key);
-          keepEditor(key);
-        }, SAVE_DELAY),
-      );
+      keepLater(key, () => keepEditor(key));
     });
     stores.set(key, store);
   }
@@ -168,8 +159,7 @@ function keepEditor(key: string): void {
 
 /** Forgets every editor's window: another experiment was opened. */
 export function forgetEditors(): void {
-  for (const timer of saveTimers.values()) clearTimeout(timer);
-  saveTimers.clear();
+  dropWaiting();
   stores.clear();
 }
 

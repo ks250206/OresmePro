@@ -104,5 +104,57 @@ test.describe("a plugin's view", () => {
         page.evaluate(() => document.querySelector("[aria-label^='Plot of Data']") !== null),
       )
       .toBe(true);
+
+    // The circuit as a diagram: a resistor added, then wired across R0, is the circuit.
+    await win.getByRole("tab", { name: "Diagram" }).click();
+    await expect(win.getByRole("button", { name: "Node CPE1" })).toBeVisible();
+    await win.getByRole("button", { name: "+ R", exact: true }).click();
+    await expect(win.getByRole("button", { name: "Node R2" })).toBeVisible();
+    await expect(win.getByText(/R2 has an end wired to nothing/)).toBeVisible();
+    const wire = async (from: string, to: string) => {
+      const a = (await win.getByRole("button", { name: from, exact: true }).boundingBox())!;
+      const b = (await win.getByRole("button", { name: to, exact: true }).boundingBox())!;
+      await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
+      await page.mouse.up();
+    };
+    await wire("Port a of R2", "Port a of R0");
+    await wire("Port b of R2", "Port b of R0");
+    await expect(win.getByLabel("Circuit", { exact: true })).toHaveValue("p(R0,R2)-p(R1,CPE1)");
+    await expect(win.getByRole("cell", { name: "R2", exact: true })).toBeVisible();
+    // A wire taken out: no longer a circuit, so it says why and the circuit stays.
+    await win
+      .getByRole("button", { name: "Connection from R2.b to R0.b", exact: true })
+      .dispatchEvent("pointerdown", { button: 0 });
+    await win.getByRole("button", { name: "Remove the connection" }).click();
+    await expect(win.getByText(/R2 has an end wired to nothing/)).toBeVisible();
+    await expect(win.getByLabel("Circuit", { exact: true })).toHaveValue("p(R0,R2)-p(R1,CPE1)");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(
+      win.getByRole("button", { name: "Connection from R2.b to R0.b", exact: true }),
+    ).toHaveCount(1);
+
+    // Kept in the experiment: opened after a reload, the window is as it was left.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              globalThis.oresme.doc.getState().editors["electrochem/eis"]?.state as {
+                circuit?: string;
+              }
+            )?.circuit,
+        ),
+      )
+      .toBe("p(R0,R2)-p(R1,CPE1)");
+    await expect(page.getByText(/^Saved/)).toBeVisible({ timeout: 20_000 });
+    await page.reload();
+    await app.menu("Analysis", "EIS Circuit Fitting…");
+    await expect(win.getByLabel("Circuit", { exact: true })).toHaveValue("p(R0,R2)-p(R1,CPE1)", {
+      timeout: 120_000,
+    });
+    await win.getByRole("tab", { name: "Diagram" }).click();
+    await expect(win.getByRole("button", { name: "Node R2" })).toBeVisible();
   });
 });

@@ -27,11 +27,11 @@ test.describe("the example plugin xps", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(XPS);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("XPS Peak Fitting 0.2.0");
+    await expect(approval).toContainText("XPS Peak Fitting 0.3.0");
     await expect(approval).toContainText("plugin.xps.xps_fit");
     await expect(approval).toContainText("plugin.xps.quantify");
     await expect(approval).toContainText("Python packages: numpy, scipy");
-    await expect(approval).toContainText("6 files");
+    await expect(approval).toContainText("7 files");
     await approval.getByRole("button", { name: "Install" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });

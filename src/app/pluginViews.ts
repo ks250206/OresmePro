@@ -12,6 +12,7 @@ import {
 import type { CheckedResult } from "../core/sandbox/validate";
 import type { PluginRunOutcome } from "./plugins/host";
 import { doc, invokeAction, pluginStore, plugins } from "./session";
+import { dropWaiting, keepLater } from "./editorMemory";
 import { createStore, type Store } from "./store";
 
 /**
@@ -68,9 +69,6 @@ const stores = new Map<string, Store<ViewWindowState>>();
 const runners = new Map<string, Runner>();
 /** The state as it was when a handle started to be dragged, by view. */
 const dragStarts = new Map<string, unknown>();
-const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** How long a view's state has to stay unchanged to be kept in the experiment. */
-const SAVE_DELAY = 400;
 
 export function viewStore(key: string): Store<ViewWindowState> {
   let store = stores.get(key);
@@ -91,23 +89,12 @@ export function viewStore(key: string): Store<ViewWindowState> {
       const { state } = made.get();
       if (state === last) return;
       last = state;
-      if (state !== null && state !== undefined) remember(key);
+      if (state !== null && state !== undefined) keepLater(key, () => keepState(key));
     });
     store = made;
     stores.set(key, store);
   }
   return store;
-}
-
-function remember(key: string): void {
-  clearTimeout(saveTimers.get(key));
-  saveTimers.set(
-    key,
-    setTimeout(() => {
-      saveTimers.delete(key);
-      keepState(key);
-    }, SAVE_DELAY),
-  );
 }
 
 /** Puts a view's state into the experiment, with the version of the plugin that made it. */
@@ -137,8 +124,7 @@ function savedState(key: string): JsonValue {
 
 /** Forgets every view's window: another experiment was opened. */
 export function forgetViews(): void {
-  for (const timer of saveTimers.values()) clearTimeout(timer);
-  saveTimers.clear();
+  dropWaiting();
   stores.clear();
   runners.clear();
   dragStarts.clear();

@@ -2,7 +2,8 @@
 
 Built only of the application's parts (see docs/design/plugin-views.md):
 the spectrum's waves and the circuit at the top; Nyquist and Bode plots of
-the data and of the circuit with the parameters as they stand; the
+the data and of the circuit with the parameters as they stand, and the
+circuit as a diagram to draw it with (wired to it both ways); the
 parameters as a table, to edit; Guess, which starts them from the spectrum,
 and Fit, which runs the action eis_circuit (recorded in the history, kept
 among the results, and made again in place each time) and puts what it
@@ -16,6 +17,7 @@ import numpy as np
 from oresme_plugin import PluginError, ui, view, wave
 
 from .circuit import Circuit
+from .diagram import END, KINDS, START, circuit_of, diagram_of, same_circuit
 from .eis import read_spectrum
 
 #: Circuits offered as you type one.
@@ -26,13 +28,19 @@ CIRCUITS = (
     "R0-p(R1-Wo1,CPE1)",
     "R0-p(R1,CPE1)-p(R2,CPE2)",
 )
+#: What the circuit diagram is drawn with: the elements, and its two fixed ends.
+PALETTE = [ui.kind(kind, title) for kind, title in KINDS] + [
+    ui.kind(START, "Start", ports=[("p", "right")], color="#69717d", add=False),
+    ui.kind(END, "End", ports=[("p", "left")], color="#69717d", add=False),
+]
 #: Points of the circuit's curves, spread over the spectrum's frequencies (logarithmically).
 CURVE_POINTS = 200
 
 
 def _fresh():
     return {"frequency": None, "zre": None, "zim": None, "imaginary": "-Z''",
-            "circuit": "R0-p(R1,CPE1)", "params": [], "guess": None, "report": ""}
+            "circuit": "R0-p(R1,CPE1)", "params": [], "guess": None, "report": "",
+            "diagram": None}
 
 
 def _restored(last):
@@ -87,14 +95,34 @@ def eis_view(state, event, waves):
     if kind == "open" or not isinstance(state, dict):
         state = _opened(event)
     message = None
+    edited = set(event.get("paths") or [])
+
+    # The diagram drawn: the circuit it draws, once it draws one.
+    if any(path.split(".")[0] == "diagram" for path in edited):
+        try:
+            drawn = circuit_of(state.get("diagram"))
+        except PluginError as error:
+            message = f"{error} The circuit stays {state.get('circuit')}."
+        else:
+            if not same_circuit(drawn, state.get("circuit")):
+                state["circuit"] = drawn
+                edited.add("circuit")
 
     try:
         model = Circuit(state.get("circuit") or "")
     except PluginError as error:
         model, message = None, str(error)
     if model is not None:
+        # The circuit written: drawn again, unless the diagram already draws it.
+        typed = "circuit" in (event.get("paths") or [])
+        if kind == "open" or typed or not isinstance(state.get("diagram"), dict):
+            try:
+                current = same_circuit(circuit_of(state.get("diagram")), state["circuit"])
+            except PluginError:
+                current = False
+            if not current:
+                state["diagram"] = diagram_of(model)
         # Values edited by hand are the user's: their uncertainties no longer apply.
-        edited = set(event.get("paths") or [])
         state["params"] = _rows(model, state.get("params") or [])
         for index, row in enumerate(state["params"]):
             if f"params.{index}.value" in edited or "circuit" in edited:
@@ -192,6 +220,7 @@ def eis_view(state, event, waves):
                     ui.plot(data_and_model("f", "phase", "Phase"), x_label="Frequency (Hz)",
                             y_label="−Phase (°)", x_log=True, height=150),
                 )),
+                ("Diagram", ui.nodes("Circuit diagram", "diagram", PALETTE, height=330)),
             ),
             ui.column(
                 ui.table("params", [

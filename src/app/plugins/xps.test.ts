@@ -58,7 +58,7 @@ function runFit(doc: Doc, params: Record<string, unknown>): Record<string, unkno
   runtime._load(
     "/repo/examples/plugins/xps",
     "xps",
-    JSON.stringify(["quantify", "xps_fit", "xps_preview"]),
+    JSON.stringify(["quantify", "view:quant", "xps_fit", "xps_preview"]),
   );
   const inputs = { spectrum: sandboxWave(doc.getState().waves.c1s!) };
   const outcome = runtime._run("xps_fit", inputs, JSON.stringify(params));
@@ -110,7 +110,11 @@ describe("the example plugin xps", () => {
       "quantify",
     ]);
     // Its model editor is checked against those actions when it is installed.
-    expect(pkg.manifest.editors.map((editor) => editor.title)).toEqual(["XPS Peak Fitting"]);
+    expect(pkg.manifest.editors.map((editor) => [editor.kind, editor.title])).toEqual([
+      // A view, whose window its Python builds out of the app's parts.
+      ["view", "XPS Quantification"],
+      ["spectrum-fit", "XPS Peak Fitting"],
+    ]);
     expect(pkg.manifest.python).toEqual({ entry: "xps", packages: ["numpy", "scipy"] });
     expect([...pkg.files.keys()].sort()).toEqual(pkg.manifest.files.map((f) => f.path).sort());
     expect(pkg.files.has("README.md")).toBe(false);

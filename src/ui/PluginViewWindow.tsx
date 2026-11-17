@@ -18,6 +18,7 @@ import { getPath, type ViewChoice, type ViewNode } from "../core/plugins/view";
 import { makeScale, type Scale } from "../core/plot/scale";
 import { linearTicks, logTicks } from "../core/plot/ticks";
 import { Button, Checkbox, Select, TextInput } from "./controls";
+import { ViewNodes } from "./ViewNodes";
 
 /**
  * The window of a plugin's view (docs/design/plugin-views.md): the parts its
@@ -68,6 +69,15 @@ export function PluginViewWindow({ viewKey }: { viewKey: string }) {
       onPointerDown={(event) => {
         if (!(event.target as HTMLElement).closest("input, select, textarea"))
           event.currentTarget.focus({ preventScroll: true });
+      }}
+      onClickCapture={(event) => {
+        // A button that goes, or goes grey, when pressed (a row's ×) leaves the focus to
+        // the page, and Ctrl+Z to the experiment: it comes back to the window.
+        const root = event.currentTarget;
+        requestAnimationFrame(() => {
+          if (document.activeElement === document.body && root.isConnected)
+            root.focus({ preventScroll: true });
+        });
       }}
       onKeyDown={(event) => {
         const typing =
@@ -162,6 +172,8 @@ function Part({ viewKey, node }: { viewKey: string; node: ViewNode }): ReactNode
       return <Plot viewKey={viewKey} node={node} />;
     case "button":
       return <ViewButton viewKey={viewKey} node={node} />;
+    case "nodes":
+      return <ViewNodes viewKey={viewKey} node={node} />;
     default:
       return <Field viewKey={viewKey} node={node} />;
   }
