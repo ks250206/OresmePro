@@ -110,6 +110,36 @@
       "value": true
     },
     {
+      "kind": "text",
+      "name": "about_groups",
+      "label": "To draw groups (crystal structures, say) apart, choose a wave that names the group of each point. Each group gets a marker and a color of its own: those listed below, in the order the groups first appear, or else in turn.",
+      "inline": false
+    },
+    {
+      "kind": "wave",
+      "name": "group",
+      "label": "Group",
+      "inline": false,
+      "value": null,
+      "dims": 1,
+      "filter": "",
+      "text": true
+    },
+    {
+      "kind": "string",
+      "name": "group_markers",
+      "label": "Group markers",
+      "inline": false,
+      "value": ""
+    },
+    {
+      "kind": "string",
+      "name": "group_colors",
+      "label": "Group colors",
+      "inline": false,
+      "value": ""
+    },
+    {
       "kind": "button",
       "name": "draw",
       "label": "Draw",
@@ -128,7 +158,10 @@
         "marker": { "$control": "marker" },
         "marker_color": { "$control": "marker_color" },
         "marker_size": { "$control": "marker_size" },
-        "marker_fill": { "$control": "marker_fill" }
+        "marker_fill": { "$control": "marker_fill" },
+        "group": { "$control": "group" },
+        "group_markers": { "$control": "group_markers" },
+        "group_colors": { "$control": "group_colors" }
       }
     }
   ]

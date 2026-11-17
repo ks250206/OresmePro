@@ -50,6 +50,8 @@ export interface ParamSpec {
   max?: number;
   /** For waves and numbers: the exact number of items. */
   length?: number;
+  /** For wave and waves: text waves may be chosen too, not only numeric ones. */
+  text?: boolean;
 }
 
 export interface ActionSpec {

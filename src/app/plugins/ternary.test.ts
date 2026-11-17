@@ -54,11 +54,15 @@ beforeAll(async () => {
 /** Runs the action as sandboxWorker.js does, and returns its message to the app. */
 function runAction(doc: Doc, params: Record<string, unknown> = {}): Record<string, unknown> {
   const state = doc.getState();
+  // The waves go in as inputs, by role: A, B, C, and the group if there is one.
+  const { group, ...rest } = params;
+  const named: Record<string, string> = { a: "a", b: "b", c: "c" };
+  if (typeof group === "string") named.group = group;
   const inputs = Object.fromEntries(
-    ["a", "b", "c"].map((name) => [name, sandboxWave(state.waves[name]!)]),
+    Object.entries(named).map(([role, name]) => [role, sandboxWave(state.waves[name]!)]),
   );
   const runtime = pyodide.pyimport("oresme_plugin");
-  const outcome = runtime._run("ternary", inputs, JSON.stringify(params));
+  const outcome = runtime._run("ternary", inputs, JSON.stringify(rest));
   const result = outcome.toJs({ dict_converter: Object.fromEntries }) as {
     waves: Record<string, { dtype: string; data?: Uint8Array | ArrayBuffer; text?: unknown }>;
     values: string;
@@ -110,6 +114,7 @@ function make(doc: Doc, params: Record<string, unknown> = {}): string {
         a: { type: "wave" },
         b: { type: "wave" },
         c: { type: "wave" },
+        group: { type: "wave", optional: true, text: true },
       },
     } as never,
     { a: "a", b: "b", c: "c", ...params } as never,
@@ -262,6 +267,62 @@ describe("the example plugin ternary", () => {
     expect(() => make(compositions(), { marker: "star" })).toThrow(/marker is one of/);
     expect(() => make(compositions(), { marker_size: 0 })).toThrow(/more than 0/);
     expect(() => make(compositions(), { marker_color: "not a color" })).toThrow(/color/i);
+  });
+
+  it("draws each group named in a text wave with a marker and a color of its own", () => {
+    const doc = compositions();
+    doc.dispatch({
+      op: "makeWave",
+      name: "phase",
+      text: ["Li6PS5Cl", "Li3PS4", "Li6PS5Cl", ""],
+    });
+    const name = make(doc, {
+      group: "phase",
+      group_markers: "circle, square",
+      group_colors: "red, blue",
+      marker_size: 6,
+    });
+    const state = doc.getState();
+    const graph = state.graphs[name]!;
+    const points = graph.traces.filter((trace) => /^a_g\d_y$/.test(trace.y));
+    expect(points.map((trace) => [trace.y, trace.marker, trace.color, trace.markerSize])).toEqual([
+      ["a_g0_y", "circle", "#ff0000", 6],
+      ["a_g1_y", "square", "#0000ff", 6],
+    ]);
+    // Points 0 and 2 are Li6PS5Cl, point 1 Li3PS4; point 3 is in no group, and left out.
+    expect([...state.waves.a_g0_x!.data]).toEqual([expect.closeTo(0.5), expect.closeTo(0)]);
+    expect([...state.waves.a_g1_y!.data]).toEqual([expect.closeTo(HEIGHT)]);
+    expect(graph.traces.map((trace) => trace.y)).not.toContain("a_y");
+    expect(graph.annotations.map((item) => item.text)).toEqual([
+      "\\s(a_g0_y) Li6PS5Cl\n\\s(a_g1_y) Li3PS4",
+    ]);
+    const layout = layoutGraph(graph, state.waves, 600, 600, measure);
+    const shown = texts(layout.prims).map((prim) => prim.text);
+    expect(shown).toContain("Li6PS5Cl");
+    expect(shown).toContain("Li3PS4");
+  });
+
+  it("takes numbers as groups too, and gives groups not listed markers and colors in turn", () => {
+    const doc = compositions();
+    doc.dispatch({ op: "makeWave", name: "kind", data: Float64Array.of(2, 1, 2, NaN) });
+    const name = make(doc, { group: "kind", group_colors: "green" });
+    const graph = doc.getState().graphs[name]!;
+    const points = graph.traces.filter((trace) => /^a_g\d_y$/.test(trace.y));
+    expect(points.map((trace) => [trace.marker, trace.color])).toEqual([
+      ["circle", "#009900"],
+      ["square", "#1f77b4"],
+    ]);
+    expect(graph.annotations.map((item) => item.text)).toEqual(["\\s(a_g0_y) 2\n\\s(a_g1_y) 1"]);
+  });
+
+  it("refuses a group of another length, and a group marker it does not know", () => {
+    const doc = compositions();
+    doc.dispatch({ op: "makeWave", name: "short", text: ["x", "y"] });
+    doc.dispatch({ op: "makeWave", name: "phase", text: ["x", "y", "x", "y"] });
+    expect(() => make(doc, { group: "short" })).toThrow(/needs as many/);
+    expect(() => make(doc, { group: "phase", group_markers: "circle, star" })).toThrow(
+      /not 'star'/,
+    );
   });
 
   it("refuses names that are not three", () => {

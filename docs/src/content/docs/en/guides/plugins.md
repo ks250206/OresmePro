@@ -72,6 +72,7 @@ Put an `oresme-plugin.json` in a folder.
 
 - List every file of the package in `files`; files not listed are not part of it
 - Argument types are those of `op.action` (`wave`, `waves`, `number`, `integer`, `numbers`, `string`, `boolean`, `choice`). Actions are declared here so they can be shown and checked before any code runs
+- A `wave` or `waves` argument takes numeric waves. With `"text": true` it takes text waves too (sample names or crystal structures, say). A text wave given to an argument without it is refused before anything runs
 - In Python, register a function for each action
 
 ```python
@@ -85,7 +86,7 @@ def scale(y, factor=2.0):
     }
 ```
 
-Wave arguments arrive as `Wave` objects (`.data` is a read-only NumPy array; `.x`, `.dx`, `.unit` and others are there too). Put `names`, `coef`, and `sigma` under `result` in `values` to keep an analysis result.
+Wave arguments arrive as `Wave` objects (`.data` is a read-only NumPy array; `.x`, `.dx`, `.unit` and others are there too). A text wave's `.data` is a 1-D array of `str`, and its `.is_text` is `True`. Put `names`, `coef`, and `sigma` under `result` in `values` to keep an analysis result.
 
 A list of strings (or a NumPy array of them) given to `wave(...)` makes a text wave: the labels of text markers, say.
 

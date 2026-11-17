@@ -44,9 +44,32 @@ export interface PluginHostOptions {
   createSandbox?: (packages: readonly string[]) => Promise<Sandbox>;
 }
 
-/** A wave as the sandbox is given it: copies of its numbers, never the document's own arrays. */
+/**
+ * A wave as the sandbox is given it: copies of its numbers or its text, never
+ * the document's own arrays.
+ */
 export function sandboxWave(wave: Wave): SandboxWave {
-  if (wave.text) throw new DocError(`${wave.name} is a text wave; plugins take numbers.`);
+  const scaling = {
+    x0: wave.x0,
+    dx: wave.dx,
+    xUnit: wave.xUnit,
+    y0: wave.y0,
+    dy: wave.dy,
+    yUnit: wave.yUnit,
+    unit: wave.unit,
+    note: wave.note,
+  };
+  if (wave.text) {
+    return {
+      name: wave.name,
+      dtype: "text",
+      shape: [wave.text.length],
+      data: new ArrayBuffer(0),
+      text: [...wave.text],
+      imag: null,
+      ...scaling,
+    };
+  }
   const dtype: SandboxDtype =
     wave.type === "complex128" ? "float64" : wave.type === "complex64" ? "float32" : wave.type;
   const copy = (array: ArrayBufferView) =>
@@ -57,14 +80,7 @@ export function sandboxWave(wave: Wave): SandboxWave {
     shape: [...wave.shape],
     data: copy(wave.data),
     imag: wave.imag ? copy(wave.imag) : null,
-    x0: wave.x0,
-    dx: wave.dx,
-    xUnit: wave.xUnit,
-    y0: wave.y0,
-    dy: wave.dy,
-    yUnit: wave.yUnit,
-    unit: wave.unit,
-    note: wave.note,
+    ...scaling,
   };
 }
 
@@ -160,15 +176,23 @@ export class PluginHost {
     const named = waveArgs(action, args);
     const inputs: Record<string, SandboxWave | SandboxWave[]> = {};
     const revisions = new Map<string, number>();
-    const take = (name: string): SandboxWave => {
+    const take = (name: string, param: string): SandboxWave => {
       const key = name.replace(/^root:/, "");
       const wave = before.waves[key]!;
+      if (wave.text && !action.params[param]!.text) {
+        const title = action.params[param]!.title ?? param;
+        throw new PluginError(
+          `${key} is a text wave; ${title} takes numeric waves.`,
+          "INVALID_ARGUMENT",
+          { field: param },
+        );
+      }
       revisions.set(key, wave.rev);
       (writer as { read?: (name: string) => void } | null)?.read?.(key);
       return sandboxWave(wave);
     };
     for (const [key, value] of Object.entries(named)) {
-      inputs[key] = Array.isArray(value) ? value.map(take) : take(value);
+      inputs[key] = Array.isArray(value) ? value.map((name) => take(name, key)) : take(value, key);
     }
     const params: Record<string, JsonValue> = {};
     for (const [key, value] of Object.entries(args)) if (!(key in named)) params[key] = value;

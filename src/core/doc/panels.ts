@@ -294,8 +294,9 @@ const KIND_PROPS: Record<ControlKind, Record<string, Check>> = {
     value: orNull((value, what) => checkPath(value, what)),
     dims: orNull(dims),
     filter: text,
+    text: bool,
   },
-  list: { value: waveNames, dims: orNull(dims), filter: text, multiple: bool },
+  list: { value: waveNames, dims: orNull(dims), filter: text, text: bool, multiple: bool },
   plot: { traces: plotTraces, live: bool },
   button: { action: actionId, version: orNull(version), args },
 };
@@ -373,9 +374,9 @@ export function newControl(kind: ControlKind, name: string): PanelControl {
     case "choice":
       return { ...base, kind, value: null, options: [] };
     case "wave":
-      return { ...base, kind, value: null, dims: null, filter: "" };
+      return { ...base, kind, value: null, dims: null, filter: "", text: false };
     case "list":
-      return { ...base, kind, value: [], dims: null, filter: "", multiple: true };
+      return { ...base, kind, value: [], dims: null, filter: "", text: false, multiple: true };
     case "plot":
       return { ...base, kind, traces: [], live: false };
     case "button":
@@ -933,7 +934,16 @@ export function resolveButton(
     if (entries.some(([, item]) => item === undefined)) return undefined;
     return Object.fromEntries(entries) as JsonValue;
   };
+  /** Arguments bound to a wave picker with no wave chosen: left out if the action can do without. */
+  const unchosen = new Map<string, PanelControl>();
   for (const [name, value] of Object.entries(control.args)) {
+    if (isControlRef(value)) {
+      const source = panel.controls.find((item) => item.name === value.$control);
+      if (source?.kind === "wave" && source.value === null) {
+        unchosen.set(name, source);
+        continue;
+      }
+    }
     const resolved = resolve(value, name);
     if (resolved === undefined) {
       failed.add(name);
@@ -946,8 +956,16 @@ export function resolveButton(
     }
   }
   const catalog = options.catalog;
+  const spec =
+    catalog && catalog.length > 0
+      ? findAction(catalog, control.action, control.version ?? undefined)
+      : undefined;
+  for (const [name, source] of unchosen) {
+    if (spec?.params[name]?.optional) continue;
+    problems.push(`Choose a wave for ${shown(source)}.`);
+    failed.add(name);
+  }
   if (catalog && catalog.length > 0) {
-    const spec = findAction(catalog, control.action, control.version ?? undefined);
     if (!spec) {
       const plugin = /^plugin\.([a-z][a-z0-9_]*)\./.exec(control.action)?.[1];
       problems.push(
@@ -993,14 +1011,17 @@ export function matchesFilter(name: string, filter: string): boolean {
   return new RegExp(`^${pattern}$`, "i").test(name);
 }
 
-/** The waves a wave picker offers: numeric ones of its dimensions that pass its filter. */
+/**
+ * The waves a wave picker offers: numeric ones (and text ones, if it lists
+ * them) of its dimensions that pass its filter.
+ */
 export function pickerWaves(
   state: Pick<DocState, "waves" | "waveOrder">,
-  control: { readonly dims: number | null; readonly filter: string },
+  control: { readonly dims: number | null; readonly filter: string; readonly text?: boolean },
 ): string[] {
   return state.waveOrder.filter((name) => {
     const wave = state.waves[name];
-    if (!wave || wave.text) return false;
+    if (!wave || (wave.text && !control.text)) return false;
     if (control.dims !== null && wave.shape.length !== control.dims) return false;
     return matchesFilter(name, control.filter);
   });
@@ -1020,7 +1041,7 @@ export function controlForParam(
   const given = param.default;
   switch (param.type) {
     case "wave":
-      return { kind: "wave", props: { label } };
+      return { kind: "wave", props: param.text ? { label, text: true } : { label } };
     case "number":
     case "integer": {
       const props: Record<string, unknown> = { label };
@@ -1050,7 +1071,7 @@ export function controlForParam(
       return { kind: "choice", props };
     }
     case "waves":
-      return { kind: "list", props: { label } };
+      return { kind: "list", props: param.text ? { label, text: true } : { label } };
     case "numbers":
     // A template's samples: rows of waves, which no one control holds.
     case "samples":

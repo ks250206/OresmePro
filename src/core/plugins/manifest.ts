@@ -158,6 +158,15 @@ function param(value: unknown, where: string): ParamSpec {
     }
     spec[key] = value[key];
   }
+  if (value.text !== undefined) {
+    if (type !== "wave" && type !== "waves") {
+      throw new PluginError(`${where} is not a wave, so it cannot take text waves.`);
+    }
+    if (typeof value.text !== "boolean") {
+      throw new PluginError(`The text of ${where} is not true or false.`);
+    }
+    if (value.text) spec.text = true;
+  }
   return spec;
 }
 

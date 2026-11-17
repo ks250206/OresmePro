@@ -21,7 +21,7 @@ test.describe("the example plugin ternary", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(TERNARY);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("Ternary Diagram 0.2.0");
+    await expect(approval).toContainText("Ternary Diagram 0.3.0");
     await approval.getByRole("button", { name: "Install" }).click();
     const dialog = page.getByRole("dialog", { name: "Plugins" });
     await expect(
@@ -73,5 +73,40 @@ test.describe("the example plugin ternary", () => {
       .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().graphs)))
       .toEqual(["Ternary0", "Ternary1"]);
     await expect(panel.getByRole("alert")).toHaveCount(0);
+
+    // A text wave goes into the sandbox as the group, and each group is drawn on its own.
+    // The graphs drawn so far are closed, so that they do not cover the panel.
+    await app.run(
+      [
+        'op.make("phase", ["glass", "crystal", "glass"])',
+        'op.close_window("Ternary0")',
+        'op.close_window("Ternary1")',
+      ].join("\n"),
+    );
+    await panel.getByRole("combobox", { name: "Group", exact: true }).selectOption("phase");
+    await panel.getByLabel("Group markers").fill("circle, square");
+    await panel.getByLabel("Group markers").press("Enter");
+    await panel.getByLabel("Group colors").fill("red, blue");
+    await panel.getByLabel("Group colors").press("Enter");
+    await panel.getByRole("button", { name: "Draw", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => Object.keys(globalThis.oresme.doc.getState().graphs)))
+      .toEqual(["Ternary0", "Ternary1", "Ternary2"]);
+    await expect(panel.getByRole("alert")).toHaveCount(0);
+    const grouped = await page.evaluate(() => {
+      const graph = globalThis.oresme.doc.getState().graphs.Ternary2!;
+      return {
+        points: graph.traces
+          .filter((trace) => /_g\d+_y$/.test(trace.y))
+          .map((trace) => [trace.y, trace.marker, trace.color]),
+        legend: graph.annotations.map((item) => item.text),
+      };
+    });
+    expect(grouped.points).toHaveLength(2);
+    expect(grouped.points.map(([, marker, color]) => [marker, color])).toEqual([
+      ["circle", "#ff0000"],
+      ["square", "#0000ff"],
+    ]);
+    expect(grouped.legend[0]).toMatch(/\\s\(\S+_g0_y\) glass\n\\s\(\S+_g1_y\) crystal/);
   });
 });

@@ -33,6 +33,13 @@ LABELS = "#606060"
 POINTS = "#4a90d9"
 #: The shapes a trace's markers take (MARKER_SHAPES in the app).
 MARKERS = ("circle", "square", "triangle", "diamond", "cross", "plus")
+#: The colors groups take in turn when they are not given.
+PALETTE = (
+    "#d62728", "#1f77b4", "#2ca02c", "#ff7f0e", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+)
+#: Groups at most: each is a trace and two waves, and a run returns at most 64 waves.
+MAX_GROUPS = 20
 
 
 def position(a, b, c):
@@ -107,6 +114,45 @@ def names_of(text):
     return names
 
 
+def listed(text):
+    """Items separated by commas, without the spaces around them; none for empty text."""
+    return [item.strip() for item in str(text).split(",")] if str(text).strip() else []
+
+
+def labels_of(group):
+    """The group of each point as text: a text wave's values, or a numeric wave's numbers.
+
+    A point whose group is empty (or NaN) is in none.
+    """
+    if group.is_text:
+        return [str(value).strip() for value in group.data]
+    return ["" if not np.isfinite(value) else f"{value:g}" for value in np.asarray(group.data, float)]
+
+
+def groups_of(labels):
+    """The groups, in the order they first appear."""
+    seen = []
+    for label in labels:
+        if label and label not in seen:
+            seen.append(label)
+    return seen
+
+
+def styles_of(count, markers, colors):
+    """The marker and color of each of ``count`` groups: those listed, then the rest in turn."""
+    markers, colors = listed(markers), listed(colors)
+    for item in markers:
+        if item not in MARKERS:
+            raise PluginError(f"A group marker is one of: {', '.join(MARKERS)}; not {item!r}.")
+    return [
+        (
+            markers[i] if i < len(markers) else MARKERS[i % len(MARKERS)],
+            colors[i] if i < len(colors) and colors[i] else PALETTE[i % len(PALETTE)],
+        )
+        for i in range(count)
+    ]
+
+
 @action("ternary")
 def ternary(
     a,
@@ -121,9 +167,14 @@ def ternary(
     marker_color=POINTS,
     marker_size=4.0,
     marker_fill=True,
+    group=None,
+    group_markers="",
+    group_colors="",
 ):
     if not (len(a) == len(b) == len(c)):
         raise PluginError(f"A, B and C have {len(a)}, {len(b)} and {len(c)} points; they need as many.")
+    if group is not None and (group.data.ndim != 1 or len(group) != len(a)):
+        raise PluginError(f"The group has {len(group)} points; it needs as many as A, B and C ({len(a)}).")
     if not 1 <= step <= 50:
         raise PluginError("The grid step is between 1 and 50 %.")
     if marker not in MARKERS:
@@ -185,18 +236,25 @@ def ternary(
             "color": "#000000",
         }
     )
-    point_trace = {
-        "y": "y",
-        "x": "x",
-        "mode": "markers",
-        "marker": marker,
-        "marker_size": float(marker_size),
-        "marker_fill": bool(marker_fill),
-        "color": color,
-    }
-    if legend:
-        point_trace["legend"] = str(legend)
-    traces.append(point_trace)
+    look = {"mode": "markers", "marker_size": float(marker_size), "marker_fill": bool(marker_fill)}
+    if group is None:
+        point_trace = {"y": "y", "x": "x", **look, "marker": marker, "color": color}
+        if legend:
+            point_trace["legend"] = str(legend)
+        traces.append(point_trace)
+        groups = []
+    else:
+        # A trace for each group, with a marker and a color of its own, listed in the legend.
+        labels = np.array(labels_of(group), dtype=object)
+        groups = groups_of(labels)
+        if len(groups) > MAX_GROUPS:
+            raise PluginError(f"The group has {len(groups)} groups; a diagram can show {MAX_GROUPS}.")
+        for i, (name, (shape, tint)) in enumerate(zip(groups, styles_of(len(groups), group_markers, group_colors))):
+            members = labels == name
+            waves[f"g{i}_x"], waves[f"g{i}_y"] = wave(x[members]), wave(y[members])
+            traces.append(
+                {"y": f"g{i}_y", "x": f"g{i}_x", **look, "marker": shape, "color": tint, "legend": name}
+            )
 
     hidden = {"line": False, "ticks": "none", "labels": "off", "mirror": "off", "grid": "off"}
     graph = {
@@ -215,7 +273,12 @@ def ternary(
             "margin_top": 4,
             "margin_bottom": 4,
         },
-        "annotations": [{"kind": "legend", "anchor": "RT"}] if legend else [],
+        "annotations": [{"kind": "legend", "anchor": "RT"}] if legend or groups else [],
     }
-    inside = int(np.count_nonzero(np.isfinite(x)))
-    return {"waves": waves, "values": {"points": inside}, "graph": graph}
+    drawn = np.isfinite(x)
+    if group is not None:
+        drawn &= labels != ""
+    values = {"points": int(np.count_nonzero(drawn))}
+    if group is not None:
+        values["groups"] = groups
+    return {"waves": waves, "values": values, "graph": graph}

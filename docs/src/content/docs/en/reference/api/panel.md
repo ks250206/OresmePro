@@ -135,26 +135,27 @@ A menu of ``options`` (texts or numbers); it starts at the first unless ``value`
 ### `Panel.wave`
 
 ```python
-wave(name, label=None, *, value=None, dims=None, filter=None, inline=None, **style)
+wave(name, label=None, *, value=None, dims=None, filter=None, text=None, inline=None, **style)
 ```
 
 A wave picker: its value is the name of the wave chosen.
 
 ``dims`` lists only waves of that many dimensions; ``filter`` only
 those whose names contain it, or match it as a pattern with ``*``
-(``"*_I"``). The picker follows the wave when it is renamed; when
-the wave is killed, the name stays and is shown as missing.
+(``"*_I"``). It lists numeric waves; ``text=True`` lists text waves
+too. The picker follows the wave when it is renamed; when the wave
+is killed, the name stays and is shown as missing.
 
 ### `Panel.list`
 
 ```python
-list(name, label=None, *, value=None, dims=None, filter=None, multiple=None, inline=None, **style)
+list(name, label=None, *, value=None, dims=None, filter=None, text=None, multiple=None, inline=None, **style)
 ```
 
 A list of waves to select from: its value is the list of the names selected.
 
-``dims`` and ``filter`` choose the waves listed, as a wave picker's
-do; ``multiple=False`` lets only one be selected. A button passes
+``dims``, ``filter`` and ``text`` choose the waves listed, as a wave
+picker's do; ``multiple=False`` lets only one be selected. A button passes
 the names to an argument that takes several waves. The list follows
 its waves when they are renamed; a killed wave stays selected and is
 shown as missing.

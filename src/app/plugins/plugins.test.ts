@@ -22,7 +22,11 @@ const manifest = (change: Record<string, unknown> = {}) => ({
     {
       name: "scale",
       title: "Scale",
-      params: { y: { type: "wave" }, factor: { type: "number", default: 2 } },
+      params: {
+        y: { type: "wave" },
+        factor: { type: "number", default: 2 },
+        labels: { type: "wave", text: true, optional: true },
+      },
     },
   ],
   contributes: { styles: ["styles/paper.json"] },
@@ -349,6 +353,30 @@ describe("running a plugin's action", () => {
     expect(fake.sandbox.isDestroyed).toBe(true);
     await expect(host.run("plugin.electrochem.scale", { y: "signal" })).rejects.toThrow(
       /turned off/,
+    );
+  });
+
+  it("hands over a text wave only to an argument that takes them", async () => {
+    const { doc, host, fake } = await setUp();
+    doc.dispatch({ op: "makeWave", name: "names", text: ["a", "b", "c"] });
+    const refused = host.run("plugin.electrochem.scale", { y: "names" });
+    await expect(refused).rejects.toThrow("names is a text wave; y takes numeric waves.");
+    await expect(refused).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      details: { field: "y" },
+    });
+    expect(fake.runs).toEqual([]);
+
+    await host.run("plugin.electrochem.scale", { y: "signal", labels: "names" });
+    expect(fake.runs[0]!.inputs.labels).toMatchObject({
+      name: "names",
+      dtype: "text",
+      shape: [3],
+      text: ["a", "b", "c"],
+    });
+    // A copy, not the document's own list.
+    expect((fake.runs[0]!.inputs.labels as { text: string[] }).text).not.toBe(
+      doc.getState().waves.names!.text,
     );
   });
 
