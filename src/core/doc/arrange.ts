@@ -175,7 +175,9 @@ export type Arrangement =
 
 function itemNames(value: unknown): string[] {
   if (!Array.isArray(value) || !value.every((name) => typeof name === "string")) {
-    throw new DocError("items must be a list of item names.");
+    throw new DocError("items must be a list of item names.", "INVALID_ARGUMENT", {
+      field: "items",
+    });
   }
   return [...new Set(value as string[])];
 }
@@ -230,7 +232,11 @@ export function checkArrangement(request: Readonly<Record<string, unknown>>): Ar
       const gap = request.gap ?? GRID_GAP;
       const gaps = Array.isArray(gap) ? gap : [gap, gap];
       if (gaps.length !== 2) {
-        throw new DocError("gap must be a number, or two: between columns and between rows.");
+        throw new DocError(
+          "gap must be a number, or two: between columns and between rows.",
+          "INVALID_ARGUMENT",
+          { field: "gap" },
+        );
       }
       return {
         action,

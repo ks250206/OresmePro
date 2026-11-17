@@ -15,7 +15,8 @@ export interface KernelHooks {
   stream(name: "stdout" | "stderr", text: string): void;
   /** A MIME bundle (JSON) for an expression result or display() call. */
   display(bundleJson: string): void;
-  error(name: string, message: string, traceback: string): void;
+  /** `info` is the JSON `{code, details}` of a refusal (an OresmeError), or "". */
+  error(name: string, message: string, traceback: string, info: string): void;
   /** The registered actions (JSON), once Python is up and again whenever they change. */
   actions?(catalogJson: string): void;
 }
@@ -75,8 +76,8 @@ export async function bootPython(
     },
     stream: (name: "stdout" | "stderr", text: string) => hooks.stream(name, text),
     display: (bundleJson: string) => hooks.display(bundleJson),
-    error: (name: string, message: string, traceback: string) =>
-      hooks.error(name, message, traceback),
+    error: (name: string, message: string, traceback: string, info?: string) =>
+      hooks.error(name, message, traceback, info ?? ""),
     // What Python is busy with besides the user's code (loading a package); "" when done.
     progress: (message: string) => onProgress(message),
   });

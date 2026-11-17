@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   applyLibraryStyle,
   arrangeItems,
@@ -77,6 +77,8 @@ import {
   Checkbox,
   Dialog,
   Field,
+  focusInvalidField,
+  InvalidFieldContext,
   MarkupButtons,
   MarkupHelp,
   NameList,
@@ -760,7 +762,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
           />
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-2 pt-5">
-          <Field label="Mode">
+          <Field label="Mode" name="mode">
             <Select
               aria-label="Mode"
               value={current.mode}
@@ -771,10 +773,10 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
               ))}
             </Select>
           </Field>
-          <Field label="Color">
+          <Field label="Color" name="color">
             <ColorField value={current.color} onChange={(color) => set({ color })} />
           </Field>
-          <Field label="Line size">
+          <Field label="Line size" name="lineSize">
             <TextInput
               aria-label="Line size"
               aria-invalid={parsedLine === null}
@@ -795,7 +797,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
               ))}
             </Select>
           </Field>
-          <Field label="Marker">
+          <Field label="Marker" name="marker">
             <Select
               aria-label="Marker"
               disabled={!hasMarkers}
@@ -832,7 +834,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
             onChange={(xError) => set({ xError })}
           />
           {complexWaves[base.y]?.imag ? (
-            <Field label="Complex part">
+            <Field label="Complex part" name="part">
               <Select
                 aria-label="Complex part"
                 value={current.part}
@@ -845,7 +847,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
               <span className="text-muted">of each value</span>
             </Field>
           ) : null}
-          <Field label="Fill">
+          <Field label="Fill" name="fill">
             <Select
               aria-label="Fill"
               value={current.fill}
@@ -883,7 +885,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
               onChange={(event) => setOffsets({ ...offsets, y: event.target.value })}
             />
           </Field>
-          <Field label="Color by">
+          <Field label="Color by" name="colorWave">
             <Select
               aria-label="Color by"
               className="min-w-0 flex-1"
@@ -904,7 +906,7 @@ function ModifyTraceDialog({ graph: graphName, trace }: { graph: string; trace?:
               />
             ) : null}
           </Field>
-          <Field label="Text markers">
+          <Field label="Text markers" name="textMarker">
             <Select
               aria-label="Text markers"
               className="min-w-0 flex-1"
@@ -1085,7 +1087,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           New Axis…
         </Button>
       </Field>
-      <Field label="Label">
+      <Field label="Label" name="label">
         <TextInput
           ref={labelField}
           aria-label="Label"
@@ -1109,7 +1111,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           disabled={current.label === null}
         />
       </div>
-      <Field label="Label font" group>
+      <Field label="Label font" name="labelSize" group>
         <TextInput
           aria-label="Label size"
           aria-invalid={labelSizeInvalid}
@@ -1137,7 +1139,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         />
         <span className="text-muted">°</span>
       </Field>
-      <Field label="Show labels">
+      <Field label="Show labels" name="labels">
         <Select
           aria-label="Show labels"
           value={current.labels}
@@ -1196,7 +1198,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           onChange={(event) => set({ reverse: event.target.checked })}
         />
       </Field>
-      <Field label="Ticks">
+      <Field label="Ticks" name="ticks">
         <Select
           aria-label="Ticks"
           value={current.ticks}
@@ -1222,7 +1224,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           onChange={(event) => setStep(event.target.value)}
         />
       </Field>
-      <Field label="Tick labels">
+      <Field label="Tick labels" name="tickFormat">
         <Select
           aria-label="Tick labels"
           value={current.tickFormat ?? ""}
@@ -1244,7 +1246,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           onChange={(event) => setTickSize(event.target.value)}
         />
       </Field>
-      <Field label="Mirror">
+      <Field label="Mirror" name="mirror">
         <Select
           aria-label="Mirror"
           value={current.mirror}
@@ -1256,7 +1258,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
         </Select>
         <span className="text-muted">axis on the opposite side</span>
       </Field>
-      <Field label="Grid">
+      <Field label="Grid" name="grid">
         <Select
           aria-label="Grid"
           value={current.grid}
@@ -1267,7 +1269,7 @@ function ModifyAxisDialog({ graph: graphName, axis: initial }: { graph: string; 
           ))}
         </Select>
       </Field>
-      <Field label="Draw between">
+      <Field label="Draw between" name="span">
         <TextInput
           aria-label="Span start"
           aria-invalid={spanInvalid}
@@ -1311,7 +1313,7 @@ function AddAxisDialog({ graph }: { graph: string }) {
         }
       }}
     >
-      <Field label="Name">
+      <Field label="Name" name="name">
         <TextInput
           aria-label="Axis name"
           className="w-28"
@@ -1319,7 +1321,7 @@ function AddAxisDialog({ graph }: { graph: string }) {
           onChange={(event) => setName(event.target.value)}
         />
       </Field>
-      <Field label="Side">
+      <Field label="Side" name="side">
         <Select aria-label="Side" value={side} onChange={(event) => setSide(event.target.value)}>
           {AXIS_SIDES.map((value) => (
             <option key={value}>{value}</option>
@@ -1365,7 +1367,7 @@ function ModifyImageDialog({
       submitDisabled={Boolean(invalid) || Object.keys(props).length === 0}
       onSubmit={() => submit({ op: "modifyImage", graph: graphName, image: imageName, props })}
     >
-      <Field label="Color table">
+      <Field label="Color table" name="colorTable">
         <ColorTableSelect
           value={current.colorTable}
           onChange={(colorTable) =>
@@ -1448,7 +1450,7 @@ function ModifyContourDialog({
         submit({ op: "modifyContour", graph: graphName, contour: contourName, props })
       }
     >
-      <Field label="Levels">
+      <Field label="Levels" name="levels">
         <TextInput
           aria-label="Levels"
           aria-invalid={levelsInvalid}
@@ -1486,7 +1488,7 @@ function ModifyContourDialog({
           />
         ) : null}
       </Field>
-      <Field label="Line size">
+      <Field label="Line size" name="lineSize">
         <TextInput
           aria-label="Line size"
           aria-invalid={size === null}
@@ -1600,7 +1602,7 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
       }
       onSubmit={() => submit({ op: "modifyGraph", graph: graphName, props })}
     >
-      <Field label="Font">
+      <Field label="Font" name="fontFamily">
         <Select
           aria-label="Font"
           value={family}
@@ -1617,7 +1619,7 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
           ))}
         </Select>
       </Field>
-      <Field label="Font size">
+      <Field label="Font size" name="fontSize">
         <TextInput
           aria-label="Font size"
           aria-invalid={fontSize === null}
@@ -1686,7 +1688,7 @@ function ModifyGraphDialog({ graph: graphName }: { graph: string }) {
         </div>
       </div>
       <div className="border-t border-line pt-2">
-        <Field label="Magnification">
+        <Field label="Magnification" name="magnification">
           <Select
             aria-label="Magnification"
             value={String(magnification)}
@@ -1766,7 +1768,7 @@ function ModifyDrawingDialog({ graph, drawing }: { graph: string; drawing: strin
             className="selectable resize-none rounded border border-line bg-paper p-1.5 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
           />
           <MarkupButtons field={field} value={current.text} onChange={(text) => set({ text })} />
-          <Field label="Size">
+          <Field label="Size" name="textSize">
             <TextInput
               aria-label="Text size"
               aria-invalid={textSizeBad}
@@ -1779,11 +1781,11 @@ function ModifyDrawingDialog({ graph, drawing }: { graph: string; drawing: strin
           </Field>
         </>
       ) : null}
-      <Field label="Color">
+      <Field label="Color" name="color">
         <ColorField value={current.color} onChange={(color) => set({ color })} />
       </Field>
       {isText ? null : (
-        <Field label="Line">
+        <Field label="Line" name="lineSize">
           <TextInput
             aria-label="Line size"
             aria-invalid={parsedLine === null}
@@ -1804,7 +1806,7 @@ function ModifyDrawingDialog({ graph, drawing }: { graph: string; drawing: strin
         </Field>
       )}
       {isLine ? (
-        <Field label="Arrowheads">
+        <Field label="Arrowheads" name="arrow">
           <Select
             aria-label="Arrowheads"
             value={current.arrow}
@@ -1856,7 +1858,7 @@ function ModifyDrawingDialog({ graph, drawing }: { graph: string; drawing: strin
           ) : null}
         </Field>
       ) : null}
-      <Field label="Layer">
+      <Field label="Layer" name="layer">
         <Select
           aria-label="Layer"
           value={current.layer}
@@ -2174,17 +2176,23 @@ function WaveScalingDialog({ wave: name }: { wave: string }) {
         {input("x0", "X start", "w-24", x0 === null)}
         {input("dx", "X step", "w-24", dx === null || dx === 0)}
       </Field>
-      <Field label="X unit">{input("xUnit", "X unit", "w-20")}</Field>
+      <Field label="X unit" name="xUnit">
+        {input("xUnit", "X unit", "w-20")}
+      </Field>
       {twoD ? (
         <>
           <Field label="Y start, step">
             {input("y0", "Y start", "w-24", y0 === null)}
             {input("dy", "Y step", "w-24", dy === null || dy === 0)}
           </Field>
-          <Field label="Y unit">{input("yUnit", "Y unit", "w-20")}</Field>
+          <Field label="Y unit" name="yUnit">
+            {input("yUnit", "Y unit", "w-20")}
+          </Field>
         </>
       ) : null}
-      <Field label="Data unit">{input("unit", "Data unit", "w-20")}</Field>
+      <Field label="Data unit" name="unit">
+        {input("unit", "Data unit", "w-20")}
+      </Field>
     </Dialog>
   );
 }
@@ -2771,7 +2779,7 @@ function TimeZoneDialog() {
         </Select>
       </Field>
       {choice === "other" ? (
-        <Field label="Zone name">
+        <Field label="Zone name" name="zone">
           <TextInput
             aria-label="Zone name"
             aria-invalid={name.trim() !== "" && !valid}
@@ -3659,11 +3667,40 @@ function renderDialog(dialog: DialogRequest) {
 export function DialogHost() {
   const dialog = useUi((state) => state.dialog);
   const alert = useUi((state) => state.alert);
+  const invalidField = useUi((state) => state.invalidField);
+  const key = dialog ? JSON.stringify(dialog) : null;
+  // The mark is for the dialog that is open: closing it, or opening another, takes it away.
+  useEffect(
+    () => () => {
+      if (ui.get().invalidField !== null) ui.set({ invalidField: null });
+    },
+    [key],
+  );
   return (
     <>
-      {dialog ? <div key={JSON.stringify(dialog)}>{renderDialog(dialog)}</div> : null}
+      {dialog ? (
+        <div
+          key={key}
+          // Changing anything in the dialog takes the mark away: it was about the value refused.
+          onInput={() => {
+            if (ui.get().invalidField !== null) ui.set({ invalidField: null });
+          }}
+        >
+          <InvalidFieldContext.Provider value={invalidField}>
+            {renderDialog(dialog)}
+          </InvalidFieldContext.Provider>
+        </div>
+      ) : null}
       {alert ? (
-        <Dialog title={alert.title} width={380} onClose={() => ui.set({ alert: null })}>
+        <Dialog
+          title={alert.title}
+          width={380}
+          onClose={() => {
+            ui.set({ alert: null });
+            // Back in the dialog, at the row to put right.
+            requestAnimationFrame(() => focusInvalidField());
+          }}
+        >
           <p role="alert" className="selectable m-0 whitespace-pre-wrap leading-relaxed">
             {alert.message}
           </p>

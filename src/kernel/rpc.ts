@@ -335,7 +335,15 @@ export function handleRpc(
           name: params.graph,
         });
       const cursor = graph.cursors[params.cursor as "A" | "B"];
-      if (!cursor) throw new DocError(`Cursor ${String(params.cursor)} is not on ${graph.name}.`);
+      if (!cursor)
+        throw new DocError(
+          `Cursor ${String(params.cursor)} is not on ${graph.name}.`,
+          "NOT_FOUND",
+          {
+            kind: "cursor",
+            name: String(params.cursor),
+          },
+        );
       const trace = graph.traces.find((item) => item.name === cursor.trace);
       const position = trace ? tracePosition(trace, state.waves) : null;
       if (!position) throw new DocError(`Cursor ${String(params.cursor)} has lost its trace.`);
@@ -359,7 +367,9 @@ export function handleRpc(
       }
       const filename = typeof params.filename === "string" ? params.filename : "";
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
-        throw new DocError("The file name must end in .pdf, .svg or .png.");
+        throw new DocError("The file name must end in .pdf, .svg or .png.", "UNSUPPORTED", {
+          field: "filename",
+        });
       }
       outsideBlock("Saving a graph");
       context.exportGraph(params.name, filename, params.cursors === true);
@@ -440,7 +450,9 @@ export function handleRpc(
       }
       const filename = typeof params.filename === "string" ? params.filename : "";
       if (!/\.(pdf|svg|png)$/i.test(filename)) {
-        throw new DocError("The file name must end in .pdf, .svg or .png.");
+        throw new DocError("The file name must end in .pdf, .svg or .png.", "UNSUPPORTED", {
+          field: "filename",
+        });
       }
       outsideBlock("Saving a page layout");
       context.exportPage(params.name, filename);
@@ -653,7 +665,7 @@ export function handleRpc(
       };
     }
     default:
-      throw new DocError(`Unknown request ${JSON.stringify(method)}.`);
+      throw new DocError(`Unknown request ${JSON.stringify(method)}.`, "UNSUPPORTED", { method });
   }
 }
 

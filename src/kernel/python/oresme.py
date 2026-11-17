@@ -4145,24 +4145,34 @@ def _prepare_action(id, args, version=None):
     if args is None:
         args = {}
     if not isinstance(args, dict):
-        raise OresmeError(f"The arguments of {found.id} are a dict of name: value, not {args!r}.")
+        raise InvalidArgumentError(f"The arguments of {found.id} are a dict of name: value, not {args!r}.")
     for name in args:
         if name not in found.params:
             taken = ", ".join(found.params) or "nothing"
-            raise OresmeError(f"{found.id} takes no argument {name!r}. It takes: {taken}.")
+            raise InvalidArgumentError(
+                f"{found.id} takes no argument {name!r}. It takes: {taken}.", details={"field": name}
+            )
     missing = [name for name, spec in found.params.items() if not spec["optional"] and name not in args]
     if missing:
-        raise OresmeError(f"{found.id} needs {', '.join(repr(name) for name in missing)}.")
-    given = {
-        name: _check_value(found.params[name], value, f"{found.id}: {name}")
-        for name, value in args.items()
-    }
+        raise InvalidArgumentError(
+            f"{found.id} needs {', '.join(repr(name) for name in missing)}.",
+            details={"field": missing[0], "missing": missing},
+        )
+    given = {}
+    for name, value in args.items():
+        try:
+            given[name] = _check_value(found.params[name], value, f"{found.id}: {name}")
+        except OresmeError as error:
+            # Which argument it is, for a dialog to point at.
+            raise _with_field(error, name) from None
     passed = {}
     for name, value in given.items():
         arg = found.params[name].get("arg", name)
         if arg in passed:
             other = next(item for item in given if found.params[item].get("arg", item) == arg)
-            raise OresmeError(f"{found.id}: give {other!r} or {name!r}, not both.")
+            raise InvalidArgumentError(
+                f"{found.id}: give {other!r} or {name!r}, not both.", details={"field": name}
+            )
         passed[arg] = value
     # Only now, with every argument right, are the waves looked up.
     for name, value in given.items():
@@ -4172,9 +4182,18 @@ def _prepare_action(id, args, version=None):
         try:
             resolved = wave(value) if kind == "wave" else [wave(item) for item in value]
         except OresmeError as error:
-            raise OresmeError(f"{found.id}: {name}: {error}") from None
+            raise _with_field(error, name, f"{found.id}: {name}: {error}") from None
         passed[found.params[name].get("arg", name)] = resolved
     return found, given, passed
+
+
+def _with_field(error, field, message=None):
+    """The same refusal, saying which argument (``details["field"]``) it is about."""
+    return type(error)(
+        str(error) if message is None else message,
+        code=error.code,
+        details={**error.details, "field": field},
+    )
 
 
 def invoke(id, args=None, *, version=None):

@@ -477,6 +477,7 @@ export function checkPanel(value: unknown): Pick<PanelSpec, "title" | "controls"
   if (version !== undefined && version !== PANEL_FILE_VERSION) {
     throw new DocError(
       `This panel is of a later version (${JSON.stringify(version)}) than this app reads.`,
+      "UNSUPPORTED",
     );
   }
   if (name !== undefined) checkName(name, "panel");
@@ -632,7 +633,11 @@ export function applyPanelCommand(state: DocState, command: PanelCommand): Comma
       const name =
         command.name === undefined ? uniqueName(kind, taken) : checkName(command.name, "control");
       if (taken(name)) {
-        throw new DocError(`${panel.name} already has a control named ${JSON.stringify(name)}.`);
+        throw new DocError(
+          `${panel.name} already has a control named ${JSON.stringify(name)}.`,
+          "ALREADY_EXISTS",
+          { kind: "control", name },
+        );
       }
       const control = changeControl(newControl(kind, name), propsOf(command.props ?? {}, "props"));
       return {
@@ -654,6 +659,8 @@ export function applyPanelCommand(state: DocState, command: PanelCommand): Comma
         if (panel.controls.some((item) => item.name === newName)) {
           throw new DocError(
             `${panel.name} already has a control named ${JSON.stringify(newName)}.`,
+            "ALREADY_EXISTS",
+            { kind: "control", name: newName },
           );
         }
         // Buttons that pass its value go on passing it under its new name.
@@ -675,7 +682,7 @@ export function applyPanelCommand(state: DocState, command: PanelCommand): Comma
       const panel = requirePanel(state, command.panel);
       const control = requireControl(panel, command.control);
       if (typeof command.to !== "number" || !Number.isInteger(command.to)) {
-        throw new DocError("to must be a whole number.");
+        throw new DocError("to must be a whole number.", "INVALID_ARGUMENT", { field: "to" });
       }
       const rest = panel.controls.filter((item) => item !== control);
       const to = Math.max(0, Math.min(rest.length, command.to));

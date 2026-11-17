@@ -1,4 +1,4 @@
-import { validateArgs, type ActionArgs, type ActionSpec, type JsonValue } from "../../core/actions";
+import { argProblems, type ActionArgs, type ActionSpec, type JsonValue } from "../../core/actions";
 import type { Doc, DocWriter } from "../../core/doc/doc";
 import type { ResultSource } from "../../core/doc/results";
 import { DocError, type DocState, type Wave } from "../../core/doc/types";
@@ -145,10 +145,17 @@ export class PluginHost {
     const spec = this.catalog().find((item) => item.id === id)!;
     const read = (): DocState => (writer ? writer.getState() : this.options.doc.getState());
     const before = read();
-    const problems = validateArgs(spec, args, {
+    const problems = argProblems(spec, args, {
       waveExists: (name) => Object.hasOwn(before.waves, name),
     });
-    if (problems.length > 0) throw new PluginError(problems.join(" "), "INVALID_ARGUMENT");
+    if (problems.length > 0) {
+      const field = problems[0]!.field;
+      throw new PluginError(
+        problems.map((problem) => problem.message).join(" "),
+        "INVALID_ARGUMENT",
+        field === null ? {} : { field },
+      );
+    }
 
     const named = waveArgs(action, args);
     const inputs: Record<string, SandboxWave | SandboxWave[]> = {};

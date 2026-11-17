@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { buttonKey, panelRuntime, pressButton } from "./panels";
-import { emptyDoc } from "../core/doc/types";
+import { CancelledError, DocError, emptyDoc } from "../core/doc/types";
 import { doc, kernel } from "./session";
 
 /** A promise to settle from the test, as the call of an action that is running. */
@@ -55,8 +55,10 @@ describe("pressing a panel's button", () => {
 
   it("keeps what went wrong by the button and leaves the values as they are", async () => {
     setUp();
-    vi.spyOn(kernel, "invoke").mockRejectedValue(
-      new Error("OresmeError: core.smooth: n must be at least 1, not 0."),
+    const invoke = vi.spyOn(kernel, "invoke").mockRejectedValue(
+      new DocError("core.smooth: n must be at least 1, not 0.", "INVALID_ARGUMENT", {
+        field: "n",
+      }),
     );
     await pressButton("p", "go");
     expect(panelRuntime.get().errors[buttonKey("p", "go")]).toBe(
@@ -64,6 +66,11 @@ describe("pressing a panel's button", () => {
     );
     expect(panelRuntime.get().busy).toEqual({});
     expect(doc.getState().panels.p!.controls[0]).toMatchObject({ value: 3 });
+
+    // Stopped is not something that went wrong: nothing is kept for it.
+    invoke.mockRejectedValue(new CancelledError("Interrupted."));
+    await pressButton("p", "go");
+    expect(panelRuntime.get().errors[buttonKey("p", "go")]).toBeUndefined();
   });
 
   it("calls nothing when a value is missing, and says which", async () => {

@@ -124,4 +124,49 @@ The argument types are `wave`, `waves`, `number`, `integer`, `numbers`, `string`
 
 An action called from the interface appears in the history as the equivalent Python, such as `op.fit("gauss", op.wave("signal"))`. The buttons of a panel call actions too ([Panels](../panels/)).
 
-[Using the API](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/)
+## Tell errors apart
+
+When the app refuses a request, the exception carries a code for the kind of refusal (`error.code`) and details of what it is about (`error.details`). Tell errors apart with `except` and the code instead of reading the message. The codes are part of the API: changing or removing one is a breaking change.
+
+| Code               | Class                  | When                                              | `details`                                               | What to do                   |
+| ------------------ | ---------------------- | ------------------------------------------------- | ------------------------------------------------------- | ---------------------------- |
+| `INVALID_ARGUMENT` | `InvalidArgumentError` | A value, name or argument that is not allowed     | `field`: the argument or property                       | Correct that value           |
+| `NOT_FOUND`        | `NotFoundError`        | Something asked for by name is not there          | `kind`, `name` (and `field` when passed as an argument) | Check the name               |
+| `ALREADY_EXISTS`   | `AlreadyExistsError`   | The name is taken                                 | `kind`, `name`                                          | Use another name             |
+| `IN_USE`           | `InUseError`           | It cannot be removed while other things use it    | `kind`, `name`, `users`                                 | Remove it from `users` first |
+| `CONFLICT`         | `ConflictError`        | A wave a step was computed from changed meanwhile | —                                                       | Run it again                 |
+| `UNSUPPORTED`      | `UnsupportedError`     | A file, format or package the app cannot handle   | —                                                       | Use another format           |
+| `PLUGIN_FAILED`    | `PluginFailedError`    | A plugin failed                                   | `phase`: where it failed (see below)                    | Look at `phase`              |
+| `INTERNAL`         | `InternalError`        | A fault of the app itself                         | —                                                       | Report it as a bug           |
+
+```python
+try:
+    op.invoke("core.smooth", {"wave": "signal", "n": 0})
+except op.InvalidArgumentError as error:
+    print(error.details["field"])  # 'n'
+except op.ConflictError:
+    pass  # a wave it read changed: calling it again may work
+```
+
+`InvalidArgumentError` is also a `ValueError` and `NotFoundError` a `LookupError`, so code that catches those keeps working. Errors from NumPy, SciPy and Python itself arrive as they are.
+
+In the interface, the command window names the kind of error (`NotFoundError: No wave named "x".`). In a dialog or a plugin action's form, the field `details.field` names turns red until its value is changed.
+
+### Stopped runs
+
+A run stopped with **Python → Interrupt**, or by restarting Python while it ran, is recorded as stopped, not failed: its mark is ■, not red. Inside Python it is still a `KeyboardInterrupt`. Stopping a template run leaves the samples it had not finished as `cancelled`. A plugin stopped while it runs (turned off, say) is stopped too.
+
+### Plugin failures
+
+A plugin that fails raises `PluginFailedError`, and `details["phase"]` says where it failed. The history shows it with the phase, as `PluginFailedError (timeout): ...`, and so does the action's form.
+
+| `phase`          | Meaning                                 |
+| ---------------- | --------------------------------------- |
+| `start`          | Its sandbox did not start               |
+| `load`           | Its code did not load                   |
+| `run`            | The action raised an error              |
+| `timeout`        | It did not finish in time               |
+| `stopped`        | It was stopped (taken as a stopped run) |
+| `invalid_output` | It returned what the app cannot take    |
+
+[Using the API](../../reference/) · [Procedure](../../reference/api/procedure/) · [atomic](../../reference/api/global/#atomic) · [Actions API](../../reference/api/actions/) · [Errors](../../reference/api/errors/)

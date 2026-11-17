@@ -1,4 +1,6 @@
 import {
+  createContext,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -60,33 +62,62 @@ export function Checkbox({
 }
 
 /**
+ * The argument or property the last refusal was about (`details.field` of
+ * the error): the {@link Field} of that name, if there is one, is marked.
+ */
+export const InvalidFieldContext = createContext<string | null>(null);
+
+/**
  * A labelled row in a dialog form. With `group`, the row holds several
  * controls that each have a label of their own (two checkboxes, say): the
  * caption then names the group instead of becoming part of the first
  * control's name.
+ *
+ * `name` is what the row sets, as a command or an action calls it
+ * ("lineSize"): when a refusal is about it, the row is marked, in red.
  */
 export function Field({
   label,
   group,
+  name,
   children,
 }: {
   label: string;
   group?: boolean;
+  name?: string;
   children: ReactNode;
 }) {
-  const caption = <span className="w-24 shrink-0 text-right text-muted">{label}</span>;
+  const invalidField = useContext(InvalidFieldContext);
+  const invalid = name !== undefined && invalidField === name;
+  const caption = (
+    <span className={`w-24 shrink-0 text-right ${invalid ? "text-danger" : "text-muted"}`}>
+      {label}
+    </span>
+  );
   const content = <span className="flex min-w-0 flex-1 items-center gap-2">{children}</span>;
+  const marks = invalid
+    ? { "data-invalid": "", className: "field-invalid flex items-center gap-2" }
+    : { className: "flex items-center gap-2" };
   return group ? (
-    <div role="group" aria-label={label} className="flex items-center gap-2">
+    <div role="group" aria-label={label} {...marks}>
       {caption}
       {content}
     </div>
   ) : (
-    <label className="flex items-center gap-2">
+    <label {...marks}>
       {caption}
       {content}
     </label>
   );
+}
+
+/** Focuses the first control of the row a refusal marked, for the user to put right. */
+export function focusInvalidField(root: ParentNode = document): void {
+  root
+    .querySelector<HTMLElement>(
+      "[data-invalid] input, [data-invalid] select, [data-invalid] textarea, [data-invalid] [tabindex]",
+    )
+    ?.focus();
 }
 
 /** A modal dialog with Igor's "Do It" / "Cancel" footer. */

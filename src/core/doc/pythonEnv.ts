@@ -121,7 +121,11 @@ export function withoutPackages(env: PythonEnv, names: readonly string[]): Pytho
   const gone = new Set(names.map(normalizePackageName));
   for (const name of gone) {
     if (!env.packages.some((item) => item.name === name)) {
-      throw new DocError(`The experiment does not use a package named ${JSON.stringify(name)}.`);
+      throw new DocError(
+        `The experiment does not use a package named ${JSON.stringify(name)}.`,
+        "NOT_FOUND",
+        { kind: "package", name },
+      );
     }
   }
   const requested = env.packages

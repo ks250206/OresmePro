@@ -328,6 +328,8 @@ export function sampleWaves(
     if (!slots.includes(slot)) {
       throw new DocError(
         `The template has no slot ${JSON.stringify(slot)}. Its slots: ${slots.join(", ")}.`,
+        "NOT_FOUND",
+        { kind: "slot", name: slot },
       );
     }
     // An empty slot that is not needed leaves its part out (no error bars, say).

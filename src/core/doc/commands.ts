@@ -433,6 +433,8 @@ export function checkName(name: unknown, what: string): string {
   if (typeof name !== "string" || !NAME_PATTERN.test(name) || name.length > 255) {
     throw new DocError(
       `${JSON.stringify(name)} is not a valid ${what} name. Names start with a letter and contain only letters, digits and "_".`,
+      "INVALID_ARGUMENT",
+      { field: "name", kind: what },
     );
   }
   return name;
@@ -443,7 +445,11 @@ export function checkName(name: unknown, what: string): string {
  * "root:". Folders are separated by ":", as in Igor.
  */
 export function checkPath(path: unknown, what: string): string {
-  if (typeof path !== "string") throw new DocError(`A ${what} name must be text.`);
+  if (typeof path !== "string")
+    throw new DocError(`A ${what} name must be text.`, "INVALID_ARGUMENT", {
+      field: "name",
+      kind: what,
+    });
   const relative = path.startsWith("root:") ? path.slice(5) : path;
   for (const part of relative.split(":")) checkName(part, what);
   return relative;
@@ -776,7 +782,8 @@ function contentOf(command: {
   }
   if (!isWaveData(command.data)) throw new DocError("Missing wave data.");
   const given = command.imag;
-  if (given !== undefined && !isWaveData(given)) throw new DocError("imag must be numbers.");
+  if (given !== undefined && !isWaveData(given))
+    throw new DocError("imag must be numbers.", "INVALID_ARGUMENT", { field: "imag" });
   const type =
     command.type === undefined
       ? typeOfData(command.data, given !== undefined)
@@ -1017,14 +1024,19 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   fillColor: (value) => (value === null ? null : normalizeColor(value)),
   fillOpacity: (value) => {
     const opacity = finite(value, "fillOpacity");
-    if (opacity < 0 || opacity > 1) throw new DocError("fillOpacity must be between 0 and 1.");
+    if (opacity < 0 || opacity > 1)
+      throw new DocError("fillOpacity must be between 0 and 1.", "INVALID_ARGUMENT", {
+        field: "fillOpacity",
+      });
     return opacity;
   },
   xOffset: (value) => finite(value, "xOffset"),
   yOffset: (value) => finite(value, "yOffset"),
   colorWave: (value) => {
     if (value === null || typeof value === "string") return value;
-    throw new DocError("colorWave must be a wave name or null.");
+    throw new DocError("colorWave must be a wave name or null.", "INVALID_ARGUMENT", {
+      field: "colorWave",
+    });
   },
   colorTable: (value) => oneOf(value, COLOR_TABLES, "colorTable"),
   colorMin: (value) => (value === null ? null : finite(value, "colorMin")),
@@ -1032,14 +1044,18 @@ const TRACE_VALIDATORS: { [K in keyof TraceStyle]: (value: unknown) => TraceStyl
   part: (value) => oneOf(value, COMPLEX_PARTS, "part"),
   textMarker: (value) => {
     if (value === null || typeof value === "string") return value;
-    throw new DocError("textMarker must be a wave name or null.");
+    throw new DocError("textMarker must be a wave name or null.", "INVALID_ARGUMENT", {
+      field: "textMarker",
+    });
   },
   textAnchor: (value) => oneOf(value, ANCHORS, "textAnchor"),
   textSize: (value) => (value === null ? null : fontSize(value, "textSize")),
   textRotation: (value) => {
     const degrees = finite(value, "textRotation");
     if (degrees < -360 || degrees > 360) {
-      throw new DocError("textRotation must be between -360 and 360 degrees.");
+      throw new DocError("textRotation must be between -360 and 360 degrees.", "INVALID_ARGUMENT", {
+        field: "textRotation",
+      });
     }
     return degrees;
   },
@@ -1059,14 +1075,22 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
   {
     label: (value) => {
       if (value === null || typeof value === "string") return value;
-      throw new DocError("label must be text, or null for the automatic label.");
+      throw new DocError(
+        "label must be text, or null for the automatic label.",
+        "INVALID_ARGUMENT",
+        { field: "label" },
+      );
     },
     labelSize: (value) => (value === null ? null : fontSize(value, "labelSize")),
     labelStyle: (value) => oneOf(value, LABEL_STYLES, "labelStyle"),
     labelRotation: (value) => {
       const degrees = finite(value, "labelRotation");
       if (degrees < -360 || degrees > 360) {
-        throw new DocError("labelRotation must be between -360 and 360 degrees.");
+        throw new DocError(
+          "labelRotation must be between -360 and 360 degrees.",
+          "INVALID_ARGUMENT",
+          { field: "labelRotation" },
+        );
       }
       return degrees;
     },
@@ -1087,6 +1111,8 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
       if (typeof value === "string" && isTickFormat(value)) return value;
       throw new DocError(
         'tickFormat must be a format such as ".2f", "e", ".1e", "g", ",.0f" or "%", or null.',
+        "INVALID_ARGUMENT",
+        { field: "tickFormat" },
       );
     },
     span: (value) => {
@@ -1095,7 +1121,11 @@ const AXIS_VALIDATORS: { [K in Exclude<keyof AxisSpec, "side">]: (value: unknown
         const hi = finite(value[1], "span");
         if (lo >= 0 && hi <= 1 && hi - lo >= 0.02) return [lo, hi];
       }
-      throw new DocError("span must be (low, high) with 0 <= low < high <= 1.");
+      throw new DocError(
+        "span must be (low, high) with 0 <= low < high <= 1.",
+        "INVALID_ARGUMENT",
+        { field: "span" },
+      );
     },
   };
 
@@ -1116,7 +1146,8 @@ function margin(value: unknown, what: string): number | null {
 const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyle[K] } = {
   fontSize: (value) => fontSize(value, "fontSize"),
   fontFamily: (value) => {
-    if (typeof value !== "string" || !value.trim()) throw new DocError("fontFamily must be text.");
+    if (typeof value !== "string" || !value.trim())
+      throw new DocError("fontFamily must be text.", "INVALID_ARGUMENT", { field: "fontFamily" });
     return value;
   },
   showInfo: (value) => bool(value, "showInfo"),
@@ -1129,6 +1160,8 @@ const GRAPH_VALIDATORS: { [K in keyof GraphStyle]: (value: unknown) => GraphStyl
     if (factor < MIN_MAGNIFICATION - 1e-9 || factor > MAX_MAGNIFICATION + 1e-9) {
       throw new DocError(
         `magnification must be between ${MIN_MAGNIFICATION} and ${MAX_MAGNIFICATION} (1 is none).`,
+        "INVALID_ARGUMENT",
+        { field: "magnification" },
       );
     }
     return factor;
@@ -1167,6 +1200,8 @@ export function checkPlotDimension(value: unknown, what: string): PlotDimension 
     if (key !== "mode" && !keys[mode].includes(key)) {
       throw new DocError(
         `A ${mode} ${what} has no property ${JSON.stringify(key)}. It takes: ${["mode", ...keys[mode]].join(", ")}.`,
+        "INVALID_ARGUMENT",
+        { field: key },
       );
     }
   }
@@ -1380,7 +1415,9 @@ export function checkStyle(value: unknown): StyleSpec {
       size: (item): FigureSize => {
         const size = validateProps<FigureSize>(propsOf(item, "size"), SIZE_VALIDATORS, "size");
         if (size.width === undefined || size.height === undefined) {
-          throw new DocError("size needs both width and height.");
+          throw new DocError("size needs both width and height.", "INVALID_ARGUMENT", {
+            field: "size",
+          });
         }
         return { width: size.width, height: size.height };
       },
@@ -1410,7 +1447,11 @@ export function checkStyle(value: unknown): StyleSpec {
       },
       traces: (item) => {
         if (!Array.isArray(item) || item.length > 1000) {
-          throw new DocError("traces must be a list of trace properties, one for each trace.");
+          throw new DocError(
+            "traces must be a list of trace properties, one for each trace.",
+            "INVALID_ARGUMENT",
+            { field: "traces" },
+          );
         }
         // An empty entry is a place in the cycle that leaves its trace alone.
         return item.map((entry: unknown) =>
@@ -1483,7 +1524,11 @@ const CONTOUR_VALIDATORS: { [K in keyof ContourProps]: (value: unknown) => Conto
     if (Array.isArray(value) && value.length > 0 && value.length <= 200) {
       return value.map((level) => finite(level, "A contour level"));
     }
-    throw new DocError("levels must be a count from 1 to 200, or a list of level values.");
+    throw new DocError(
+      "levels must be a count from 1 to 200, or a list of level values.",
+      "INVALID_ARGUMENT",
+      { field: "levels" },
+    );
   },
   color: normalizeColor,
   lineSize: (value) => positive(value, "lineSize"),
@@ -1498,7 +1543,8 @@ const ANNOTATION_VALIDATORS: {
   [K in keyof AnnotationProps]: (value: unknown) => AnnotationProps[K];
 } = {
   text: (value) => {
-    if (typeof value !== "string") throw new DocError("text must be text.");
+    if (typeof value !== "string")
+      throw new DocError("text must be text.", "INVALID_ARGUMENT", { field: "text" });
     return value;
   },
   anchor: (value) => oneOf(value, ANCHORS, "anchor"),
@@ -1526,11 +1572,13 @@ const ITEM_VALIDATORS: { [K in keyof ItemProps]: (value: unknown) => ItemProps[K
   h: (value) => Math.max(40, positive(value, "h")),
   size: (value) => {
     const size = positive(value, "size");
-    if (size < 4 || size > 200) throw new DocError("size must be between 4 and 200.");
+    if (size < 4 || size > 200)
+      throw new DocError("size must be between 4 and 200.", "INVALID_ARGUMENT", { field: "size" });
     return size;
   },
   text: (value) => {
-    if (typeof value !== "string") throw new DocError("text must be text.");
+    if (typeof value !== "string")
+      throw new DocError("text must be text.", "INVALID_ARGUMENT", { field: "text" });
     return value;
   },
 };
@@ -1662,6 +1710,8 @@ export function checkGraphTemplate(value: unknown): GraphTemplate {
     if (!axis) {
       throw new DocError(
         `The template has no axis named ${JSON.stringify(name)}. Axes: ${axes.map((item) => item.name).join(", ")}.`,
+        "NOT_FOUND",
+        { kind: "axis", name },
       );
     }
     if (isVerticalSide(axis.side) !== vertical) {
@@ -1905,7 +1955,11 @@ type DrawingProps = Omit<DrawingSpec, "name" | "kind">;
 const DRAWING_VALIDATORS: { [K in keyof DrawingProps]: (value: unknown) => DrawingProps[K] } = {
   points: (value) => {
     if (!Array.isArray(value) || value.length > 2000) {
-      throw new DocError("points must be a list of numbers: x0, y0, x1, y1, ...");
+      throw new DocError(
+        "points must be a list of numbers: x0, y0, x1, y1, ...",
+        "INVALID_ARGUMENT",
+        { field: "points" },
+      );
     }
     return value.map((item) => finite(item, "A point"));
   },
@@ -1915,14 +1969,20 @@ const DRAWING_VALIDATORS: { [K in keyof DrawingProps]: (value: unknown) => Drawi
   color: normalizeColor,
   lineSize: (value) => {
     const size = finite(value, "lineSize");
-    if (size < 0 || size > 50) throw new DocError("lineSize must be between 0 and 50.");
+    if (size < 0 || size > 50)
+      throw new DocError("lineSize must be between 0 and 50.", "INVALID_ARGUMENT", {
+        field: "lineSize",
+      });
     return size;
   },
   lineStyle: (value) => oneOf(value, LINE_STYLES, "lineStyle"),
   fill: (value) => (value === null ? null : normalizeColor(value)),
   fillOpacity: (value) => {
     const opacity = finite(value, "fillOpacity");
-    if (opacity < 0 || opacity > 1) throw new DocError("fillOpacity must be between 0 and 1.");
+    if (opacity < 0 || opacity > 1)
+      throw new DocError("fillOpacity must be between 0 and 1.", "INVALID_ARGUMENT", {
+        field: "fillOpacity",
+      });
     return opacity;
   },
   arrow: (value) => oneOf(value, ARROW_ENDS, "arrow"),
@@ -1990,6 +2050,8 @@ function validateProps<T>(
     if (!validate) {
       throw new DocError(
         `Unknown ${what} property ${JSON.stringify(key)}. Known properties: ${Object.keys(validators).join(", ")}.`,
+        "INVALID_ARGUMENT",
+        { field: key },
       );
     }
     (result as Record<string, unknown>)[key] = validate(value);
@@ -2415,7 +2477,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!Number.isInteger(at) || at < 0 || (inserting ? at > length : at >= length)) {
         throw new DocError(`Point ${at} is out of range.`);
       }
-      if (!Number.isInteger(count) || count < 1) throw new DocError("count must be at least 1.");
+      if (!Number.isInteger(count) || count < 1)
+        throw new DocError("count must be at least 1.", "INVALID_ARGUMENT", { field: "count" });
       const end = inserting ? at : Math.min(length, at + count);
       if (wave.text) {
         // Built by concatenation: a spread into splice() fails for very large counts.
@@ -2699,7 +2762,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       const graph = requireGraph(state, command.graph);
       const name = checkName(command.name, "axis");
       if (name in graph.axes) {
-        throw new DocError(`${graph.name} already has an axis named ${JSON.stringify(name)}.`);
+        throw new DocError(
+          `${graph.name} already has an axis named ${JSON.stringify(name)}.`,
+          "ALREADY_EXISTS",
+          { kind: "axis", name },
+        );
       }
       const plain = defaultAxis(oneOf(command.side, AXIS_SIDES, "side"));
       const style = graph.style === null ? undefined : state.styles[graph.style];
@@ -3034,7 +3101,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         {
           digits: (value) => {
             if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 17) {
-              throw new DocError("digits must be a whole number from 1 to 17.");
+              throw new DocError(
+                "digits must be a whole number from 1 to 17.",
+                "INVALID_ARGUMENT",
+                { field: "digits" },
+              );
             }
             return value;
           },
@@ -3056,6 +3127,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       if (!isTimeZone(command.zone)) {
         throw new DocError(
           `${JSON.stringify(command.zone)} is not a time zone. Use "UTC", "local" or a name such as "Asia/Tokyo".`,
+          "INVALID_ARGUMENT",
+          { field: "zone" },
         );
       }
       return { state: { ...state, timeZone: command.zone }, result: null };
@@ -3183,7 +3256,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         );
       }
       if (command.code !== undefined && typeof command.code !== "string") {
-        throw new DocError("code must be text.");
+        throw new DocError("code must be text.", "INVALID_ARGUMENT", { field: "code" });
       }
       const procedure: ProcedureSpec = {
         name,
@@ -3208,7 +3281,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           name: command.name,
         });
       if (command.code !== undefined && typeof command.code !== "string") {
-        throw new DocError("code must be text.");
+        throw new DocError("code must be text.", "INVALID_ARGUMENT", { field: "code" });
       }
       const next: ProcedureSpec = {
         ...procedure,
@@ -3246,7 +3319,7 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         );
       }
       if (command.text !== undefined && typeof command.text !== "string") {
-        throw new DocError("text must be text.");
+        throw new DocError("text must be text.", "INVALID_ARGUMENT", { field: "text" });
       }
       return {
         state: {
@@ -3264,7 +3337,8 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
           kind: "note",
           name: command.name,
         });
-      if (typeof command.text !== "string") throw new DocError("text must be text.");
+      if (typeof command.text !== "string")
+        throw new DocError("text must be text.", "INVALID_ARGUMENT", { field: "text" });
       if (command.text === note.text) return { state, result: null };
       return {
         state: {
@@ -3461,7 +3535,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     case "applyStyle": {
       requireStyle(state, command.style);
       if (!Array.isArray(command.graphs))
-        throw new DocError("graphs must be a list of graph names.");
+        throw new DocError("graphs must be a list of graph names.", "INVALID_ARGUMENT", {
+          field: "graphs",
+        });
       let next = state;
       for (const name of new Set<string>(command.graphs)) {
         next = withStyle(next, requireGraph(next, name), command.style);
@@ -3478,7 +3554,9 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       requireGraph(state, command.graph);
       const fixed = command.fixed ?? [];
       if (!Array.isArray(fixed) || fixed.some((axis) => typeof axis !== "string")) {
-        throw new DocError("fixed must be a list of axis names.");
+        throw new DocError("fixed must be a list of axis names.", "INVALID_ARGUMENT", {
+          field: "fixed",
+        });
       }
       // Checked like a template given as data, which also puts it in the usual order.
       const template = checkGraphTemplate(captureTemplate(state, command.graph, fixed));
@@ -3571,7 +3649,10 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
     }
     case "setAttributes": {
       const target = command.target;
-      if (typeof target !== "string") throw new DocError("target must be a wave or a data folder.");
+      if (typeof target !== "string")
+        throw new DocError("target must be a wave or a data folder.", "INVALID_ARGUMENT", {
+          field: "target",
+        });
       if (isFolderKey(target)) {
         if (!state.folders.includes(target.slice(0, -1))) {
           throw new DocError(
@@ -3584,7 +3665,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
         requireWave(state, target);
       }
       if (typeof command.values !== "object" || command.values === null) {
-        throw new DocError("values must be a dict of attribute names and values.");
+        throw new DocError(
+          "values must be a dict of attribute names and values.",
+          "INVALID_ARGUMENT",
+          { field: "values" },
+        );
       }
       const key = isFolderKey(target) ? target : requireWave(state, target).name;
       const next: Record<string, number | string> = { ...state.attributes[key] };
@@ -3600,9 +3685,11 @@ export function applyCommand(state: DocState, command: Command): CommandOutcome 
       return { state: { ...state, attributes }, result: null };
     }
     case "recordPackages": {
-      if (!Array.isArray(command.packages)) throw new DocError("packages must be a list.");
+      if (!Array.isArray(command.packages))
+        throw new DocError("packages must be a list.", "INVALID_ARGUMENT", { field: "packages" });
       const packages = command.packages.map(checkPackage);
-      if (typeof command.pyodide !== "string") throw new DocError("pyodide must be a version.");
+      if (typeof command.pyodide !== "string")
+        throw new DocError("pyodide must be a version.", "INVALID_ARGUMENT", { field: "pyodide" });
       return {
         state: { ...state, python: withPackages(state.python, packages, command.pyodide) },
         result: null,

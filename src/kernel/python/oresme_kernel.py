@@ -87,7 +87,18 @@ class _Shell(InteractiveShell):
 
     def _showtraceback(self, etype, evalue, stb):
         name = getattr(etype, "__name__", str(etype))
-        _oresme_js.error(name, str(evalue), "\n".join(stb))
+        _oresme_js.error(name, str(evalue), "\n".join(stb), _error_info(evalue))
+
+
+def _error_info(error):
+    """The code and details of a refusal, as JSON for the application ("" for other errors)."""
+    if not isinstance(error, oresme.OresmeError):
+        return ""
+    try:
+        return json.dumps({"code": error.code, "details": dict(error.details)}, allow_nan=False)
+    except (TypeError, ValueError):
+        # Details that cannot be written as JSON are left out, not the code.
+        return json.dumps({"code": error.code, "details": {}})
 
 
 # Pyodide replaces time.sleep with a version that runs the event loop while it
@@ -399,7 +410,7 @@ async def execute(code):
             _sync(_oresme_packages.report)
             _sync(_report_variables)
     except asyncio.CancelledError:
-        _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
+        _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt", "")
         return False
     finally:
         _current_task = None
@@ -425,7 +436,7 @@ def _report(error):
         text = f"{name}: {error}"
     else:
         text = "".join(traceback.format_exception(error))
-    _oresme_js.error(name, str(error), text)
+    _oresme_js.error(name, str(error), text, _error_info(error))
 
 
 # The checked call that run_action makes: (action, keyword arguments).
@@ -471,7 +482,7 @@ async def run_action():
         finally:
             _sync(_push)
     except (asyncio.CancelledError, KeyboardInterrupt):
-        _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt")
+        _oresme_js.error("KeyboardInterrupt", "", "KeyboardInterrupt", "")
         return None
     except Exception as error:
         _report(error)

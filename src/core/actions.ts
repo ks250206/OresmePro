@@ -188,23 +188,36 @@ export function validateArgs(
   args: unknown,
   options: ValidateOptions = {},
 ): string[] {
+  return argProblems(spec, args, options).map((problem) => problem.message);
+}
+
+/** As {@link validateArgs}, with the argument each problem is about (null for the call as a whole). */
+export function argProblems(
+  spec: ActionSpec,
+  args: unknown,
+  options: ValidateOptions = {},
+): { field: string | null; message: string }[] {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
-    return [`The arguments of ${spec.id} are an object of name: value.`];
+    return [{ field: null, message: `The arguments of ${spec.id} are an object of name: value.` }];
   }
-  const problems: string[] = [];
+  const problems: { field: string | null; message: string }[] = [];
   const given = args as Record<string, unknown>;
   for (const name of Object.keys(given)) {
     if (!Object.hasOwn(spec.params, name)) {
-      problems.push(`${spec.id} takes no argument ${JSON.stringify(name)}.`);
+      problems.push({
+        field: name,
+        message: `${spec.id} takes no argument ${JSON.stringify(name)}.`,
+      });
     }
   }
   for (const [name, param] of Object.entries(spec.params)) {
     if (!Object.hasOwn(given, name)) {
-      if (!param.optional) problems.push(`${spec.id} needs ${JSON.stringify(name)}.`);
+      if (!param.optional)
+        problems.push({ field: name, message: `${spec.id} needs ${JSON.stringify(name)}.` });
       continue;
     }
     const problem = checkValue(param, given[name], `${spec.id}: ${name}`, options);
-    if (problem) problems.push(problem);
+    if (problem) problems.push({ field: name, message: problem });
   }
   return problems;
 }

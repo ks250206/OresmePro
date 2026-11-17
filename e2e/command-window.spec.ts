@@ -103,7 +103,11 @@ test.describe("running Python", () => {
   };
 
   test("Ctrl+C interrupts a busy loop and a sleeping loop", async ({ app }) => {
-    expect(await interrupted(app, "while True: pass")).toMatchObject({ status: "error" });
+    // Stopped, not failed: marked as such, not in red.
+    expect(await interrupted(app, "while True: pass")).toMatchObject({ status: "cancelled" });
+    await expect(
+      app.page.getByRole("log", { name: "Command history" }).getByRole("img", { name: "Stopped" }),
+    ).toHaveCount(1);
     const sleeping = await interrupted(app, "import time\nwhile True: time.sleep(0.01)");
     expect(sleeping.output).toContain("KeyboardInterrupt");
     // Python is still usable afterwards.
@@ -120,7 +124,7 @@ test.describe("running Python", () => {
       app,
       "try:\n    while True: pass\nexcept KeyboardInterrupt:\n    print('caught')\nwhile True: pass",
     );
-    expect(swallowed.status).toBe("error");
+    expect(swallowed.status).toBe("cancelled");
     expect(swallowed.output).toContain("caught");
     expect(swallowed.output).toContain("KeyboardInterrupt");
     // Nothing is left over to hit what runs next, even well after the last repeat.
@@ -139,13 +143,13 @@ test.describe("running Python", () => {
       globalThis.oresme.kernel.interruptExecution();
     });
     await app.idle();
-    expect((await app.lastEntry()).status).toBe("error");
+    expect((await app.lastEntry()).status).toBe("cancelled");
     expect((await app.run("print('next')")).output).toBe("next\n");
   });
 
   test("Ctrl+C cancels code waiting on await", async ({ app }) => {
     const entry = await interrupted(app, "import asyncio\nwhile True: await asyncio.sleep(0.05)");
-    expect(entry.status).toBe("error");
+    expect(entry.status).toBe("cancelled");
     expect((await app.run("print('alive')")).output).toBe("alive\n");
   });
 
@@ -178,6 +182,9 @@ test.describe("running Python", () => {
     await expect(page.getByText("interrupt again to restart Python")).toBeVisible();
     await page.evaluate(() => globalThis.oresme.kernel.interruptExecution());
     await expect(page.getByText("Python ready")).toBeVisible({ timeout: 60_000 });
+    // What was running was stopped on purpose, not failed.
+    const stopped = (await app.entries()).find((entry) => entry.code.startsWith("big = "));
+    expect(stopped?.status).toBe("cancelled");
     const doc = await app.doc();
     expect(doc.order).toEqual(["kept"]);
     expect(Object.keys(doc.graphs)).toEqual(["Graph0"]);

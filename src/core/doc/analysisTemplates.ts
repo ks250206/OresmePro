@@ -269,7 +269,14 @@ export function checkSampleInputs(
   const inputs: Record<string, string> = {};
   for (const key of Object.keys(value)) {
     if (!template.inputs.some((input) => input.name === key)) {
-      throw new DocError(`${where}: the template has no input ${JSON.stringify(key)}.`);
+      throw new DocError(
+        `${where}: the template has no input ${JSON.stringify(key)}.`,
+        "NOT_FOUND",
+        {
+          kind: "input",
+          name: key,
+        },
+      );
     }
   }
   for (const input of template.inputs) {

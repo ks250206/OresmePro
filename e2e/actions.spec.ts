@@ -35,10 +35,19 @@ test.describe("actions", () => {
     const error = await page.evaluate(() =>
       globalThis.oresme.kernel.invoke("core.smooth", { wave: "w", n: "five" }).then(
         () => null,
-        (reason: Error) => reason.message,
+        (reason: Error & { code?: string; details?: unknown }) => ({
+          message: reason.message,
+          code: reason.code,
+          details: reason.details,
+        }),
       ),
     );
-    expect(error).toBe("InvalidArgumentError: core.smooth: n must be a number, not 'five'.");
+    // What kind of refusal it is, and which argument, come with it from Python.
+    expect(error).toEqual({
+      message: "core.smooth: n must be a number, not 'five'.",
+      code: "INVALID_ARGUMENT",
+      details: { field: "n" },
+    });
     const entry = await app.lastEntry();
     expect(entry.code).toBe('op.invoke("core.smooth", {"wave": "w", "n": "five"})');
     expect(entry.status).toBe("error");

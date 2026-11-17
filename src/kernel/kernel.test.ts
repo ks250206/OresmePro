@@ -26,6 +26,8 @@ let kernel: PythonKernel;
 let stdout = "";
 let stderr = "";
 let errors: string[] = [];
+/** The code and details of each error reported, as the kernel sends them ("" for none). */
+let errorInfos: string[] = [];
 let displays: Record<string, string>[] = [];
 let runCount = 0;
 const exported: string[] = [];
@@ -100,7 +102,10 @@ beforeAll(async () => {
       else stderr += text;
     },
     display: (json) => displays.push(JSON.parse(json) as Record<string, string>),
-    error: (name, message) => errors.push(`${name}: ${message}`),
+    error: (name, message, _traceback, info) => {
+      errors.push(`${name}: ${message}`);
+      errorInfos.push(info);
+    },
     actions: (json) => catalogs.push(JSON.parse(json) as ActionSpec[]),
   });
 }, 180_000);
@@ -3170,6 +3175,7 @@ async function invoke(
   stdout = "";
   stderr = "";
   errors = [];
+  errorInfos = [];
   runCount += 1;
   let code: string | null = null;
   const reply = await kernel.invoke(action, version, JSON.stringify(args), (text) => {
@@ -3406,6 +3412,29 @@ describe("actions", () => {
     expect(stdout).toBe("Wave True\n4.0\n");
     expect(await run('op.invoke("core.smooth", {"wave": "actSig", "n": "7"})')).toBe(false);
     expect(errors.join("\n")).toMatch(/n must be a number/);
+  });
+
+  it("says which argument a refused call is about, as code and details the app can read", async () => {
+    const info = () => JSON.parse(errorInfos.at(-1)!) as unknown;
+    expect((await invoke("core.smooth", { wave: "actSig", n: "five" })).ok).toBe(false);
+    expect(errors).toEqual(["InvalidArgumentError: core.smooth: n must be a number, not 'five'."]);
+    expect(info()).toEqual({ code: "INVALID_ARGUMENT", details: { field: "n" } });
+    expect((await invoke("core.smooth", { wave: "actSig", width: 3 })).ok).toBe(false);
+    expect(info()).toEqual({ code: "INVALID_ARGUMENT", details: { field: "width" } });
+    expect((await invoke("core.smooth", {})).ok).toBe(false);
+    expect(info()).toEqual({
+      code: "INVALID_ARGUMENT",
+      details: { field: "wave", missing: ["wave"] },
+    });
+    // A wave that is not there is not found, and the argument says where it was asked for.
+    expect((await invoke("core.smooth", { wave: "nothing_here" })).ok).toBe(false);
+    expect(info()).toEqual({
+      code: "NOT_FOUND",
+      details: { kind: "wave", name: "nothing_here", field: "wave" },
+    });
+    // Errors that are not refusals send no code.
+    expect(await run("1 / 0")).toBe(false);
+    expect(errorInfos.at(-1)).toBe("");
   });
 
   it("writes waves, lists and numbers as Python in the call it records", async () => {
