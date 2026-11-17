@@ -193,7 +193,7 @@ def eis_view(state, event, waves):
 ```
 
 - ハンドラは、画面のイベントのたびに `(state, event, waves)` で呼ばれます。`state` はアプリが持ち、毎回渡す値で、ハンドラ自身は何も覚えません。`waves` は、画面の `ui.wave` で選ばれた wave の**コピー**だけです(キーはその部品の `bind`)
-- `event` は `open`(`last`: このプラグインが最後に残した結果)、`change`(`paths`: 変わった道筋。元に戻したときは `"*"`)、`command`(`id`: `ui.button(on=...)`)、`done`(`ui.button(action=...)` の実行が終わった: `ok`、`values`、`result`、`error`)
+- `event` は `open`(`last`: このプラグインが最後に残した結果)、`change`(`paths`: 変わった道筋。元に戻したときは `"*"`)、`command`(`id`: `ui.button(on=...)`)、`done`(`ui.button(action=...)` の実行が終わった: `args`(実行した引数。今の画面への結果か確かめるため)、`ok`、`values`、`result`、`error`)。ハンドラが状態の中で wave を選んだとき(`open` で前の結果から戻したときなど)は、アプリがその wave を付けて続けて `change` を送ります
 - 返す `state`・`ui`・`message` を省くと前のまま、`waves` はその返事で描く配列だけ(Experiment には入りません)。`bind` は状態の中の道筋(`params.2.value`)で、入力した値はすぐ状態に入り、ハンドラにはまとめて伝わります。ウィンドウの中の編集は Ctrl+Z で戻せます
 - Experiment を変えるのは `ui.button(action=...)` だけです。そのプラグインの action を、`args` の値(`ui.bind(道筋)` は押したときの状態の値)で実行し、履歴に `op.invoke(...)` として残ります。`replace=True` なら上の上書きの規則で実行します
 - 部品は `ui.view`、`column`、`row`、`split`、`tabs`、`group`、`text`、`number`、`string`、`choice`、`checkbox`、`wave`、`table`(`ui.col` で列)、`plot`(`ui.series` で系列。`x_log`、`y_log`、`equal`、`x_reverse`)、`button` です。アプリは知らない部品や props があると全体を断り、理由を表示します

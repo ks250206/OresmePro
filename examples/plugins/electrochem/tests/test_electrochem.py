@@ -488,8 +488,14 @@ def test_eis_view_draws_guesses_and_takes_a_fit_back():
     _, state, _ = call(state, {"type": "change", "paths": ["circuit"]})
     fit = run("eis_circuit", frequency=given["w0"], zre=given["w1"], zim=given["w2"],
               circuit=state["circuit"], guess=state["guess"])
-    done = {"type": "done", "id": "eis_circuit", "ok": True, "result": "Plugin0",
+    args = {key: state[key] for key in ("frequency", "zre", "zim", "circuit", "imaginary", "guess")}
+    done = {"type": "done", "id": "eis_circuit", "ok": True, "result": "Plugin0", "args": args,
             "values": oresme_plugin._plain(fit["values"])}
+    # Had a value been changed while it was fitted, the values found would not go into the table.
+    edited = json.loads(json.dumps(state))
+    edited["params"][0]["value"] = 12.0
+    outcome, kept, _ = call(edited, done)
+    assert kept["params"][0]["value"] == 12.0 and "changed while it was fitted" in outcome["values"]["message"]
     _, state, _ = call(state, done)
     for row, value in zip(state["params"], truth):
         close(row["value"], value, rel=1e-6, what=row["name"])

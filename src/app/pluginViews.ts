@@ -41,6 +41,8 @@ type Pending = { type: "change"; paths: Set<string> } | { type: "command"; id: s
 interface DoneEvent {
   type: "done";
   id: string;
+  /** The arguments the action ran with: a view checks them against what it shows now. */
+  args: ActionArgs;
   ok: boolean;
   values: JsonValue;
   result: string | null;
@@ -50,8 +52,12 @@ interface DoneEvent {
 interface Runner {
   queue: Pending[];
   running: boolean;
-  /** Values set while an event was out, to put back over the state it returns. */
-  edits: Map<string, unknown>;
+  /**
+   * What was done to the state while an event was out, in order, to do again
+   * over the state it returns: a value set at a path, or the whole state put
+   * back (an undo or a redo).
+   */
+  edits: ({ path: string; value: unknown } | { whole: unknown })[];
 }
 
 const LIMIT = 100;
@@ -79,7 +85,7 @@ export function viewStore(key: string): Store<ViewWindowState> {
 function runnerOf(key: string): Runner {
   let runner = runners.get(key);
   if (!runner) {
-    runner = { queue: [], running: false, edits: new Map() };
+    runner = { queue: [], running: false, edits: [] };
     runners.set(key, runner);
   }
   return runner;
@@ -126,13 +132,13 @@ export function openView(key: string): void {
   void send(key, { type: "open", last: lastResult(split(key)[0]) });
 }
 
-function enqueue(key: string, event: Pending): void {
+function enqueue(key: string, event: Pending, start = true): void {
   const runner = runnerOf(key);
   const last = runner.queue.at(-1);
   if (event.type === "change" && last?.type === "change") {
     for (const path of event.paths) last.paths.add(path);
   } else runner.queue.push(event);
-  void drain(key);
+  if (start) void drain(key);
 }
 
 async function drain(key: string): Promise<void> {
@@ -154,16 +160,19 @@ async function send(key: string, event: unknown): Promise<void> {
   const store = viewStore(key);
   const [plugin, view] = split(key);
   runner.running = true;
-  runner.edits.clear();
+  runner.edits = [];
   store.set({ busy: true });
   try {
     const { state, ui } = store.get();
-    const outcome = await plugins.runView(plugin, view, {
-      state,
-      event,
-      waves: chosenWaves(ui, state),
-    });
+    const sent = chosenWaves(ui, state);
+    const outcome = await plugins.runView(plugin, view, { state, event, waves: sent });
     takeIn(store, runner, outcome);
+    // Waves the view chose itself (a view opened again, restoring its choices) were not sent
+    // with this event: it is told of them, and given them, with the next.
+    const now = store.get();
+    const chosen = chosenWaves(now.ui, now.state);
+    const unsent = Object.keys(chosen).filter((path) => sent[path] !== chosen[path]);
+    if (unsent.length > 0) enqueue(key, { type: "change", paths: new Set(unsent) }, false);
   } catch (error) {
     store.set({ error: error instanceof Error ? error.message : String(error) });
   } finally {
@@ -180,8 +189,9 @@ function takeIn(store: Store<ViewWindowState>, runner: Runner, outcome: CheckedR
     values.state === null || values.state === undefined
       ? now.state
       : readViewJson(values.state, "state");
-  // What was entered while the view worked stays: it goes to the view next.
-  for (const [path, value] of runner.edits) state = setPath(state, path, value);
+  // What was done while the view worked stays, in order: it goes to the view next.
+  for (const edit of runner.edits)
+    state = "whole" in edit ? edit.whole : setPath(state, edit.path, edit.value);
   const ui =
     values.ui === null || values.ui === undefined
       ? now.ui
@@ -210,7 +220,7 @@ export function setValue(key: string, path: string, value: unknown): void {
     future: [],
   });
   const runner = runnerOf(key);
-  if (runner.running) runner.edits.set(path, value);
+  if (runner.running) runner.edits.push({ path, value });
   enqueue(key, { type: "change", paths: new Set([path]) });
 }
 
@@ -224,6 +234,8 @@ export function undoView(key: string): void {
   const { state, past, future } = store.get();
   if (past.length === 0) return;
   store.set({ state: past.at(-1), past: past.slice(0, -1), future: [state, ...future] });
+  const runner = runnerOf(key);
+  if (runner.running) runner.edits.push({ whole: past.at(-1) });
   enqueue(key, { type: "change", paths: new Set(["*"]) });
 }
 
@@ -232,6 +244,8 @@ export function redoView(key: string): void {
   const { state, past, future } = store.get();
   if (future.length === 0) return;
   store.set({ state: future[0], past: [...past, state], future: future.slice(1) });
+  const runner = runnerOf(key);
+  if (runner.running) runner.edits.push({ whole: future[0] });
   enqueue(key, { type: "change", paths: new Set(["*"]) });
 }
 
@@ -265,6 +279,7 @@ export async function press(
     done = {
       type: "done",
       id: node.action!,
+      args,
       ok: true,
       values: outcome.values,
       result: outcome.result,
@@ -276,6 +291,7 @@ export async function press(
     done = {
       type: "done",
       id: node.action!,
+      args,
       ok: false,
       values: null,
       result: null,

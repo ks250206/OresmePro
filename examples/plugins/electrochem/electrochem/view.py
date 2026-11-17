@@ -106,7 +106,18 @@ def eis_view(state, event, waves):
                     row["value"], row["sigma"] = float(value), None
 
     if kind == "done" and event.get("id") == "eis_circuit":
-        if event.get("ok"):
+        # The fit is of what was shown when Fit was pressed. If the waves, the circuit or the
+        # values were changed since, its values are not this table's: the result keeps them.
+        args = event.get("args") or {}
+        now = {key: state.get(key) for key in ("frequency", "zre", "zim", "circuit", "imaginary")}
+        current = [row["value"] for row in state.get("params", [])]
+        stale = any(args.get(key) != value for key, value in now.items()) or (
+            args.get("guess") is not None and args.get("guess") != current
+        )
+        if event.get("ok") and stale:
+            message = (f"The circuit or its spectrum changed while it was fitted, so the values "
+                       f"found were not put in the table; {event.get('result')} keeps them.")
+        elif event.get("ok"):
             values = event.get("values") or {}
             for row in state["params"]:
                 if isinstance(values.get(row["name"]), (int, float)):

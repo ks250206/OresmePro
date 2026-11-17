@@ -156,7 +156,9 @@ def view(name):
     those chosen in the window's ``ui.wave`` parts, by the path they are bound
     to. ``event`` is ``{"type": "open", "last": ...}``, ``{"type": "change",
     "paths": [...]}``, ``{"type": "command", "id": ...}`` or ``{"type":
-    "done", "id": ..., "ok": ..., "values": ..., "result": ..., "error": ...}``.
+    "done", "id": ..., "args": ..., "ok": ..., "values": ..., "result": ...,
+    "error": ...}`` (``args``: what the action ran with, to check that a result is
+    for what the view shows now).
     See docs/design/plugin-views.md.
     """
     def register(function):

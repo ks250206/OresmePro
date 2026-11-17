@@ -97,5 +97,12 @@ test.describe("a plugin's view", () => {
     await app.menu("Analysis", "EIS Circuit Fitting…");
     await expect(win.getByLabel("Frequency (Hz)")).toHaveValue("freq", { timeout: 120_000 });
     await expect.poll(async () => Number(await value(2).inputValue())).toBeCloseTo(100, 0);
+    // Given the waves it restored, it draws them and can fit again.
+    await expect(win.getByRole("button", { name: "Fit", exact: true })).toBeEnabled();
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.querySelector("[aria-label^='Plot of Data']") !== null),
+      )
+      .toBe(true);
   });
 });
