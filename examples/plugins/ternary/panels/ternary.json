@@ -78,6 +78,38 @@
       "value": ""
     },
     {
+      "kind": "choice",
+      "name": "marker",
+      "label": "Marker",
+      "inline": false,
+      "value": "square",
+      "options": ["circle", "square", "triangle", "diamond", "cross", "plus"]
+    },
+    {
+      "kind": "string",
+      "name": "marker_color",
+      "label": "Marker color",
+      "inline": false,
+      "value": "#4a90d9"
+    },
+    {
+      "kind": "number",
+      "name": "marker_size",
+      "label": "Marker size",
+      "inline": false,
+      "value": 4,
+      "min": 0.5,
+      "max": 50,
+      "step": 1
+    },
+    {
+      "kind": "checkbox",
+      "name": "marker_fill",
+      "label": "Filled markers",
+      "inline": true,
+      "value": true
+    },
+    {
       "kind": "button",
       "name": "draw",
       "label": "Draw",
@@ -92,7 +124,11 @@
         "step": { "$control": "step" },
         "grid": { "$control": "grid" },
         "ticks": { "$control": "ticks" },
-        "legend": { "$control": "legend" }
+        "legend": { "$control": "legend" },
+        "marker": { "$control": "marker" },
+        "marker_color": { "$control": "marker_color" },
+        "marker_size": { "$control": "marker_size" },
+        "marker_fill": { "$control": "marker_fill" }
       }
     }
   ]

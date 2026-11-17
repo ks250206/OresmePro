@@ -41,6 +41,9 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
   and later write them in place of version 5 for a wave whose name or a dimension label is
   longer than 31 bytes; the long name is kept. Versions 6 and 8, Igor's undocumented format
   for waves of 2 GB or more, are refused with a reason.
+- The example plugin ternary (0.2.0) draws its points with the marker shape, color, size and
+  fill asked for (`marker`, `marker_color`, `marker_size`, `marker_fill`), in the action and
+  in its panel.
 
 ### Changed
 
