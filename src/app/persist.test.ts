@@ -441,6 +441,46 @@ describe("autosave shared by several tabs", () => {
   });
 });
 
+describe("autosave of wave data", () => {
+  it("writes a wave's numbers again only when they change, not its note", async () => {
+    const a = await open("A");
+    const writes: string[] = [];
+    store.hook = (_tab, op, name) => {
+      if (op === "write" && name.endsWith(".npy")) writes.push(name);
+    };
+    make(a.doc, "a", [1, 2]);
+    await settle();
+    expect(writes).toHaveLength(1);
+
+    a.doc.dispatch({ op: "setWaveMeta", name: "a", note: "calibrated", unit: "V" });
+    a.doc.dispatch({ op: "setWaveScale", name: "a", x0: 5, dx: 2 });
+    a.doc.dispatch({ op: "renameWave", name: "a", newName: "b" });
+    await settle();
+    expect(writes).toHaveLength(1);
+    const reloaded = (await reload()).doc.getState().waves.b!;
+    expect([Array.from(reloaded.data), reloaded.note, reloaded.x0]).toEqual([
+      [1, 2],
+      "calibrated",
+      5,
+    ]);
+
+    a.doc.dispatch({ op: "setWaveData", name: "b", data: new Float64Array([3, 4]) });
+    await settle();
+    expect(values((await reload()).doc, "b")).toEqual([3, 4]);
+  });
+
+  it("writes again the numbers that undo brings back after their file was removed", async () => {
+    const a = await open("A");
+    make(a.doc, "a", [1]);
+    await settle();
+    make(a.doc, "a", [2]);
+    await settle();
+    a.doc.undo();
+    await settle();
+    expect(values((await reload()).doc, "a")).toEqual([1]);
+  });
+});
+
 describe("autosave after a failed write", () => {
   it("writes what a failed save did not, without waiting for another change", async () => {
     const a = await open("A");

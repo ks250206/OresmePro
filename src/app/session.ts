@@ -24,7 +24,7 @@ import { browserLocks, MemoryPluginStorage, OpfsPluginStorage, PluginStore } fro
 import { measureText } from "./measure";
 import type { PackagesStatus, VariablesStatus } from "../kernel/rpc";
 import { createStore, useStore } from "./store";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { browserLibrary, templateLibrary, type Library } from "./styleLibrary";
 
 export type DialogRequest =
@@ -221,6 +221,10 @@ export async function startExperiment(): Promise<void> {
   }
   // Plugins belong to the browser, not the experiment; a failure to read them stops nothing.
   void pluginStore.load().catch(() => {});
+  // A tab that does not save its experiment asks before it closes with changes of its own.
+  window.addEventListener("beforeunload", (event) => {
+    if (experiment.unsavedHere()) event.preventDefault();
+  });
   await experiment.start();
 }
 
@@ -429,6 +433,27 @@ export function subscribeCatalog(listener: () => void): () => void {
 }
 
 /**
+ * The plugins' runs started from the app's windows (panels, dialogs, a
+ * view's buttons), which Interrupt stops as it stops Python. Runs Python
+ * asked for are Python's (see KernelClient), stopped with it.
+ */
+export const pluginRuns = createStore<{ running: number }>({ running: 0 });
+const pluginControllers = new Set<AbortController>();
+
+/**
+ * Interrupt, as the menu, Ctrl+C and the status bar ask: stops the plugins'
+ * runs started from the windows, and interrupts Python if it is running.
+ */
+export function interruptAll(): void {
+  for (const controller of pluginControllers) controller.abort();
+  if (kernel.getState().status === "busy") kernel.interruptExecution();
+}
+
+/** Whether there is anything for Interrupt to stop. */
+export const somethingRunning = (): boolean =>
+  kernel.getState().status === "busy" || pluginRuns.get().running > 0;
+
+/**
  * Calls an action by id, as panels and the Plugins dialog do. The app's own
  * and the procedures' go to Python; a plugin's goes to its sandbox, with the
  * call recorded in the history as the Python that does the same.
@@ -443,8 +468,11 @@ export async function invokeAction(
   flushEchoes();
   const startedAt = Date.now();
   const entry = history.add("gui", invokeCode(id, args, undefined, options), "running", startedAt);
+  const controller = new AbortController();
+  pluginControllers.add(controller);
+  pluginRuns.set({ running: pluginControllers.size });
   try {
-    const outcome = await plugins.run(id, args, null, options);
+    const outcome = await plugins.run(id, args, null, { ...options, signal: controller.signal });
     if (outcome.log)
       history.appendOutput(entry, { kind: "stream", name: "stdout", text: outcome.log });
     const made = Object.values(outcome.waves);
@@ -463,6 +491,9 @@ export async function invokeAction(
       durationMs: Date.now() - startedAt,
     });
     throw failure.cancelled ? new CancelledError(failure.output.message) : error;
+  } finally {
+    pluginControllers.delete(controller);
+    pluginRuns.set({ running: pluginControllers.size });
   }
 }
 
@@ -582,6 +613,24 @@ export function requestCommandLine(text: string): void {
 
 export function useDoc<T>(selector: (state: DocState) => T): T {
   return useSyncExternalStore(doc.subscribe, () => selector(doc.getState()));
+}
+
+/**
+ * As useDoc, but the value given before is kept while `same` says the new
+ * one is no different: for a part of the document that is replaced more
+ * often than what is read of it changes (the windows, as one is dragged).
+ */
+export function useDocWhere<T>(
+  selector: (state: DocState) => T,
+  same: (before: T, now: T) => boolean,
+): T {
+  const last = useRef<{ value: T } | null>(null);
+  return useSyncExternalStore(doc.subscribe, () => {
+    const value = selector(doc.getState());
+    if (last.current && same(last.current.value, value)) return last.current.value;
+    last.current = { value };
+    return value;
+  });
 }
 
 export function useUi<T>(selector: (state: UiState) => T): T {

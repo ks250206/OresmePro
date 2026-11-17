@@ -28,7 +28,15 @@ import {
 } from "@codemirror/view";
 import { classHighlighter } from "@lezer/highlight";
 import { useEffect, useRef } from "react";
-import { history, kernel, ui, useKernelState, useUi } from "../app/session";
+import {
+  history,
+  interruptAll,
+  kernel,
+  somethingRunning,
+  ui,
+  useKernelState,
+  useUi,
+} from "../app/session";
 import { recallList, stepRecall, suggestCompletion } from "../core/history/history";
 import { isCompleteInput } from "../core/history/inputState";
 import { altKeys } from "../editor/altKeys";
@@ -303,8 +311,8 @@ export function CommandLine({ onOpenSearch }: CommandLineProps) {
                 run: (target) => {
                   // With a selection this is Copy; otherwise it interrupts, as in a shell.
                   if (!target.state.selection.main.empty) return false;
-                  if (kernel.getState().status !== "busy") return false;
-                  kernel.interruptExecution();
+                  if (!somethingRunning()) return false;
+                  interruptAll();
                   return true;
                 },
               },

@@ -1,4 +1,4 @@
-import { DocError } from "./types";
+import { DocError } from "./errors";
 
 /*
  * The Python packages an experiment uses beyond those Python starts with:

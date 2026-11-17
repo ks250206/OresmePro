@@ -13,7 +13,7 @@ import { echoPython } from "../core/doc/echo";
 import { PAGE_SIZES } from "../core/doc/types";
 import { drawPrims } from "../core/plot/canvas";
 import type { Rect } from "../core/plot/displayList";
-import { layoutPage } from "../core/plot/page";
+import { layoutPage, PageGraphCache } from "../core/plot/page";
 import { Button, Select } from "./controls";
 import { keepFocus, openContextMenu } from "./Menu";
 
@@ -99,9 +99,12 @@ export function LayoutWindow({ name }: { name: string }) {
     [name],
   );
 
+  // Laid out again as any graph or wave changes, but each graph of the page only when its own do.
+  const [graphCache] = useState(() => new PageGraphCache());
   const layout = useMemo(
-    () => (page ? layoutPage(page, { graphs, waves, timeZone: zone }, measureText) : null),
-    [page, graphs, waves, zone],
+    () =>
+      page ? layoutPage(page, { graphs, waves, timeZone: zone }, measureText, graphCache) : null,
+    [page, graphs, waves, zone, graphCache],
   );
   // Items removed since they were selected (by Python, or by undo) drop out.
   const selected = useMemo(

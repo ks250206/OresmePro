@@ -1,4 +1,10 @@
-import { useMemo, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  memo,
+  useMemo,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { setEditing, usePanelRuntime } from "../app/panels";
 import { doc, runGui, TITLE_BAR_HEIGHT, ui, useDoc } from "../app/session";
 import { openWindows, type WindowState } from "../core/doc/types";
@@ -244,6 +250,18 @@ function windowTitle(window: WindowState, names: readonly string[]): string {
 }
 
 /**
+ * What is in each kind of window, drawn again only when what it shows
+ * changes (each follows its own part of the document), not when the desktop
+ * is: a window dragged or brought to the front redraws its frame alone.
+ */
+const Graph = memo(GraphWindow);
+const Table = memo(TableWindow);
+const Layout = memo(LayoutWindow);
+const Panel = memo(PanelWindow);
+const Note = memo(NoteWindow);
+const Procedure = memo(ProcedureWindow);
+
+/**
  * Whether a right click lands on the desktop itself: windows have context
  * menus of their own, and text and fields keep the browser's.
  */
@@ -322,17 +340,17 @@ export function Desktop({ menus }: { menus: readonly MenuDefinition[] }) {
             locked={graph ? fixedSides(graph) : undefined}
           >
             {window.kind === "graph" ? (
-              <GraphWindow name={window.name} />
+              <Graph name={window.name} />
             ) : window.kind === "table" ? (
-              <TableWindow name={window.name} />
+              <Table name={window.name} />
             ) : window.kind === "page" ? (
-              <LayoutWindow name={window.name} />
+              <Layout name={window.name} />
             ) : window.kind === "panel" ? (
-              <PanelWindow name={window.name} />
+              <Panel name={window.name} />
             ) : window.kind === "note" ? (
-              <NoteWindow name={window.name} />
+              <Note name={window.name} />
             ) : (
-              <ProcedureWindow name={window.name} />
+              <Procedure name={window.name} />
             )}
           </WindowFrame>
         );

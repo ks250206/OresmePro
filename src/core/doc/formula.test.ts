@@ -287,6 +287,35 @@ describe("setting formulas", () => {
     expect(R.unit).toBe("Ohm");
   });
 
+  it("is not computed again when only an input's note or unit changes, or its own", () => {
+    const doc = docWith({ a: [1, 2] });
+    doc.dispatch({ op: "setFormula", name: "b", expr: "a * 2" });
+    doc.dispatch({ op: "setFormula", name: "c", expr: "b + 1" });
+    const before = doc.getState().waves;
+    doc.dispatch({ op: "setWaveMeta", name: "a", note: "raw", unit: "V" });
+    doc.dispatch({ op: "setWaveMeta", name: "b", note: "doubled" });
+    const after = doc.getState().waves;
+    expect(after.a!.rev).not.toBe(before.a!.rev);
+    expect(after.b!.data).toBe(before.b!.data);
+    expect(after.c!.data).toBe(before.c!.data);
+    expect(after.b!.note).toBe("doubled");
+    expect([status(doc, "b").status, status(doc, "c").status]).toEqual(["ok", "ok"]);
+
+    // What the values come from still counts: its numbers, and its scaling (b's no longer matches).
+    doc.dispatch({ op: "setWaveData", name: "a", data: values(5, 6) });
+    expect([...doc.getState().waves.c!.data]).toEqual([11, 13]);
+    doc.dispatch({ op: "setWaveScale", name: "a", x0: 3 });
+    expect(status(doc, "b").status).toBe("error");
+  });
+
+  it("keeps a manual formula out of date when only the note changed since", () => {
+    const doc = docWith({ a: [1, 2] });
+    doc.dispatch({ op: "setFormula", name: "b", expr: "a * 2", auto: false });
+    doc.dispatch({ op: "setWaveData", name: "a", data: values(3, 4) });
+    doc.dispatch({ op: "setWaveMeta", name: "a", note: "later" });
+    expect(status(doc, "b").status).toBe("stale");
+  });
+
   it("refuses a cycle and changes nothing", () => {
     const doc = docWith({ V: [1, 2] });
     doc.dispatch({ op: "setFormula", name: "A", expr: "V + 1" });

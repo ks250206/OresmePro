@@ -199,6 +199,51 @@ describe("KernelClient actions", () => {
     expect(history.getEntries().at(-1)!.status).toBe("cancelled");
   });
 
+  it("stops the plugins' runs Python waits on when it is interrupted or restarted", () => {
+    const signals: AbortSignal[] = [];
+    const invokePlugin: NonNullable<KernelOptions["invokePlugin"]> = (
+      _action,
+      _args,
+      _writer,
+      options,
+    ) => {
+      signals.push(options.signal!);
+      // The plugin is still at work.
+      return new Promise(() => {});
+    };
+    const kernel = new KernelClient({
+      doc: new Doc(),
+      history: new History(),
+      files: new FileStore(),
+      indexURL: "/pyodide/",
+      invokePlugin,
+    } as unknown as KernelOptions);
+    kernel.start();
+    const worker = FakeWorker.last!;
+    worker.reply({ type: "ready" });
+    kernel.execute('op.invoke("plugin.lab.slow", {})');
+    const id = (worker.sent.at(-1) as { id: number }).id;
+    worker.reply({ type: "started", id });
+    const ask = () =>
+      worker.reply({
+        type: "rpc",
+        execId: id,
+        method: "invokePlugin",
+        paramsJson: JSON.stringify({ action: "plugin.lab.slow", args: {} }),
+        data: null,
+        buffer: new SharedArrayBuffer(4096),
+      });
+    ask();
+    expect(signals[0]!.aborted).toBe(false);
+    // Python waits on the plugin and cannot hear the interrupt: the plugin is stopped.
+    kernel.interruptExecution();
+    expect(signals[0]!.aborted).toBe(true);
+    ask();
+    // Nothing of a run still going when Python is restarted is to be kept.
+    kernel.restart();
+    expect(signals[1]!.aborted).toBe(true);
+  });
+
   it("rejects calls that Python will never answer", async () => {
     const { kernel, worker } = client();
     worker.reply({ type: "ready" });

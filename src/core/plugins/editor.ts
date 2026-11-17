@@ -1,5 +1,6 @@
 import type { ParamSpec } from "../actions";
-import { PluginError, type PluginAction } from "./manifest";
+import { PluginError } from "./errors";
+import type { PluginAction } from "./manifest";
 
 /**
  * A model editor a plugin describes in its manifest ("editors"): a window,

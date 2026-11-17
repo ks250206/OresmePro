@@ -106,7 +106,7 @@ These act on the frontmost page layout: adding graphs and text, aligning the ite
 
 | Item                                   | Does                                                                           | Python / note       |
 | -------------------------------------- | ------------------------------------------------------------------------------ | ------------------- |
-| Interrupt                              | Stops Python (**Ctrl+C**); again restarts it                                   |                     |
+| Interrupt                              | Stops Python and the plugins running (**Ctrl+C**); again restarts Python       |                     |
 | Restart Python                         | Restarts Python; waves, graphs and tables stay                                 |                     |
 | Variables                              | Your Python variables; drop those picked (`del`)                               |                     |
 | Procedure Browser                      | The procedures and the classes and functions in them; click to go to one       |                     |

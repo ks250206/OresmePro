@@ -4,6 +4,7 @@ import {
   clickPlot,
   dragHandle,
   endHandleDrag,
+  followWaves,
   openView,
   press,
   redoView,
@@ -62,6 +63,7 @@ export function PluginViewWindow({ viewKey }: { viewKey: string }) {
   const message = useView(viewKey, (state) => state.message);
   const busy = useView(viewKey, (state) => state.busy);
   useEffect(() => openView(viewKey), [viewKey]);
+  useEffect(() => followWaves(viewKey), [viewKey]);
   return (
     <div
       className="flex h-full flex-col outline-none"

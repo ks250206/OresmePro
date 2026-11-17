@@ -481,7 +481,8 @@ _data_cache = {}
 
 def _wave_data(name):
     cached = _data_cache.get(name)
-    info, array = _call("waveData", {"name": name, "rev": cached[0] if cached else None})
+    # The app sends the numbers only if they are not those cached (a new note does not).
+    info, array = _call("waveData", {"name": name, "values": cached[0] if cached else None})
     if "text" in info:
         array = np.array(info["text"], dtype=str)
     elif array is None:
@@ -497,7 +498,7 @@ def _wave_data(name):
     array.flags.writeable = False
     if len(_data_cache) > 64:
         _data_cache.clear()
-    _data_cache[name] = (info["rev"], array)
+    _data_cache[name] = (info.get("values"), array)
     return array
 
 

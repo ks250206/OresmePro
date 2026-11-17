@@ -15,9 +15,8 @@ import {
   placeWindow,
   uniqueName,
   windowTaken,
-  type Command,
-  type CommandOutcome,
-} from "./commands";
+} from "./commandSupport";
+import type { Command, CommandOutcome } from "./commandTypes";
 import { dict, withEntry, type Dict } from "./dict";
 import {
   AUTO_SIZE,

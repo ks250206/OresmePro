@@ -1,4 +1,5 @@
 import type { Doc } from "../core/doc/doc";
+import { valuesId } from "../core/doc/values";
 import type { FileStore } from "../core/files/files";
 import type { History, HistoryEntry } from "../core/history/history";
 import {
@@ -11,7 +12,7 @@ import { encodeNpy } from "../core/io/npy";
 
 /**
  * Keeps the experiment in the browser's Origin Private File System so it
- * survives reloads. Wave data is written only when a wave changes.
+ * survives reloads. Wave data is written only when a wave's values change.
  *
  * Every tab of the app shares one directory. `experiment.json` and
  * `files.json` are indexes; the data they point to sits in files named after
@@ -398,7 +399,7 @@ export function autosave(
   let dirtyDoc = false;
   let dirtyHistory = false;
   let dirtyFiles = false;
-  /** Wave revision -> file already written for it. */
+  /** Wave values (see valuesId) -> the file already written for them. */
   const written = new Map<number, string>();
   /** File version -> where it was written. */
   const writtenFiles = new Map<number, string>();
@@ -430,19 +431,21 @@ export function autosave(
     const live = new Set<string>();
     for (const wave of Object.values(state.waves)) {
       if (wave.text) continue;
-      let file = written.get(wave.rev);
+      // By the values, not `rev`: editing a wave's note does not write its numbers again.
+      const values = valuesId(wave);
+      let file = written.get(values);
       if (!file) {
-        file = `${PREFIX.wave}${session}-${wave.rev}.npy`;
+        file = `${PREFIX.wave}${session}-${values}.npy`;
         await writeFile(dir, file, encodeNpy(wave.data, wave.shape, wave.type, wave.imag));
-        written.set(wave.rev, file);
+        written.set(values, file);
       }
       live.add(file);
     }
-    const saved = describeExperiment(state, (wave) => written.get(wave.rev)!);
+    const saved = describeExperiment(state, (wave) => written.get(valuesId(wave))!);
     // The index is written after the data it points to, then stale data is removed.
     await writeIndex(dir, INDEX.wave, JSON.stringify(saved));
     await collect(dir, "wave", live, session, locks);
-    for (const [rev, file] of written) if (!live.has(file)) written.delete(rev);
+    for (const [values, file] of written) if (!live.has(file)) written.delete(values);
   };
 
   const saveFiles = async (dir: StorageDirectory) => {

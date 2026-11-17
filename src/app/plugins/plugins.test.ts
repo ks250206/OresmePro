@@ -425,6 +425,26 @@ describe("running a plugin's action", () => {
     expect(set.doc.getState().waves.signal_scaled).toBeUndefined();
   });
 
+  it("keeps nothing of a run stopped while it ran, and says it was stopped", async () => {
+    const controller = new AbortController();
+    const set = await setUp((request) => {
+      expect(request.signal).toBe(controller.signal);
+      controller.abort();
+    });
+    const run = set.host.run("plugin.electrochem.scale", { y: "signal" }, null, {
+      signal: controller.signal,
+    });
+    await expect(run).rejects.toMatchObject({ details: { phase: "stopped" } });
+    expect(set.doc.getState().waves.signal_scaled).toBeUndefined();
+    // Stopped before it began, it does not start.
+    await expect(
+      set.host.run("plugin.electrochem.scale", { y: "signal" }, null, {
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ details: { phase: "stopped" } });
+    expect(set.fake.runs).toHaveLength(1);
+  });
+
   it("takes a wave named from root, and keeps its result under the wave's own name", async () => {
     const { doc, host } = await setUp();
     doc.dispatch({ op: "makeWave", name: "signal_scaled", data: new Float64Array([0]) });

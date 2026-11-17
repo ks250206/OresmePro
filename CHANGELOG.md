@@ -135,12 +135,35 @@ Changes waiting for the next release go under **Unreleased** as they are merged.
 - An Igor file that cannot be read (not from Igor, damaged, or of a version this reader does
   not know) is refused as `UNSUPPORTED`, and `op.load_igor` raises `op.UnsupportedError`
   for it, where it was `INTERNAL`.
+- Saving the experiment as a .oresme file, and opening one, compresses and decompresses the
+  large files in workers: the page goes on answering meanwhile. Load Data reads a workbook once,
+  where it read it to show it and again to load it.
+- Dragging or sizing a window draws again its frame alone, not every window's contents and
+  the menus. A page layout lays out again only the graphs that a change touches, not every
+  graph on the page at any change to any wave.
+- Editing a wave's note or unit, or its scaling or name, no longer writes its numbers to the
+  browser's storage again or sends them to Python again; editing its note or unit no longer
+  computes again the formulas made from it, or its own.
 
 ### Fixed
 
 - On a Mac, Shift+Option+F formats a procedure, Option+G goes to a line, and Option+F takes
   the next word of the command line's suggestion. Option turns those keys into other
   characters (Ï, ©, ƒ), so they did nothing; they are now matched by the key's place.
+- **Interrupt** stops the plugins' runs started from windows (a panel, a dialog, a view's
+  button), which the status bar shows while they run; before, nothing stopped them. A plugin
+  that Python called stops when Python is interrupted (Python, waiting on it, could not hear
+  the interrupt) or restarted, and what it was making no longer goes into the experiment
+  after Python is gone.
+- A tab that does not save its experiment (another tab does) no longer drops what was changed in
+  it without a word when another experiment is opened in it: it asks first, and offers to save
+  here, then open, to save a copy as a file, or to leave without the changes. Closing it with
+  such changes asks too. Moving and sizing windows does not count as a change.
+- A plugin's view follows its data: while its window is open, a wave it was given that changes
+  (from Python or a table, say) or is killed is told to it as a `change`, as if it had been
+  chosen again, rather than staying drawn as it was until the next edit in the window.
+- Load Data no longer stalls on a large file: telling its dialog from the one before it
+  turned the file's bytes into text, some 12 characters a byte, again at every redraw.
 
 ## [0.3.0] - 2026-11-17
 

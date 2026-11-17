@@ -1,5 +1,13 @@
 import { revertExperiment } from "../app/actions";
-import { experiment, kernel, useExperimentState, useKernelState, useUi } from "../app/session";
+import {
+  experiment,
+  interruptAll,
+  pluginRuns,
+  useExperimentState,
+  useKernelState,
+  useUi,
+} from "../app/session";
+import { useStore } from "../app/store";
 
 const DOT: Record<string, string> = {
   ready: "bg-[#2da44e]",
@@ -94,6 +102,7 @@ function SaveStatus() {
 export function StatusBar() {
   const state = useKernelState();
   const readout = useUi((ui) => ui.readout);
+  const plugins = useStore(pluginRuns, (runs) => runs.running);
   return (
     <footer className="flex h-[22px] shrink-0 items-center gap-3 border-t border-line bg-chrome px-2 text-[11.5px]">
       <span className="flex min-w-0 items-center gap-1.5" role="status" aria-live="polite">
@@ -106,9 +115,15 @@ export function StatusBar() {
           {state.input !== null ? "Python is waiting for input in the command line" : state.message}
         </span>
       </span>
-      {state.status === "busy" ? (
-        <button type="button" className={buttonClass} onClick={() => kernel.interruptExecution()}>
-          {state.interrupting ? "Restart Python" : "Interrupt"}{" "}
+      {state.status !== "busy" && plugins > 0 ? (
+        <span className="flex items-center gap-1.5" role="status">
+          <span className="spinner" aria-hidden />
+          {plugins === 1 ? "A plugin is running" : `${plugins} plugins are running`}
+        </span>
+      ) : null}
+      {state.status === "busy" || plugins > 0 ? (
+        <button type="button" className={buttonClass} onClick={interruptAll}>
+          {state.status === "busy" && state.interrupting ? "Restart Python" : "Interrupt"}{" "}
           <span className="text-muted">Ctrl+C</span>
         </button>
       ) : null}

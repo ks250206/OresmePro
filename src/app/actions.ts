@@ -22,7 +22,7 @@ import {
 } from "../core/doc/types";
 import { fromOutside } from "../core/doc/pythonEnv";
 import { sourcePath } from "../core/files/files";
-import { unzipExperiment, zipExperiment } from "../core/io/experiment";
+import { unzipExperimentAsync, zipExperimentAsync } from "../core/io/experiment";
 import { importPython, planImport, type ImportSettings } from "../core/io/importData";
 import { isIgorFile, planIgorImport } from "../core/io/igorImport";
 import { PYTHON_FORMATS, pythonLoader } from "../core/io/pythonFormats";
@@ -389,6 +389,8 @@ export async function switchExperiment(id: string): Promise<void> {
 
 /** Goes to another of the browser's experiments without saving this one again. */
 export function leaveFor(id: string): void {
+  // Leaving was decided: the page is not to ask again as it unloads.
+  experiment.discardHere();
   location.hash = `#e=${id}`;
   location.reload();
 }
@@ -464,14 +466,18 @@ export function saveExperiment(): void {
   ui.set({ dialog: { kind: "saveExperiment" } });
 }
 
-/** Hands the user the experiment as one .oresme file named `filename`. */
-export function saveExperimentAs(filename: string): boolean {
+/**
+ * Hands the user the experiment as one .oresme file named `filename`. The
+ * large files are compressed in workers: the page goes on answering, and the
+ * experiment is saved as it was when asked.
+ */
+export async function saveExperimentAs(filename: string): Promise<boolean> {
   try {
-    const bytes = zipExperiment(
+    const bytes = (await zipExperimentAsync(
       doc.getState(),
       history.getEntries(),
       files.list(),
-    ) as Uint8Array<ArrayBuffer>;
+    )) as Uint8Array<ArrayBuffer>;
     download(new Blob([bytes], { type: "application/zip" }), filename);
     return true;
   } catch (error) {
@@ -488,7 +494,7 @@ export function openExperiment(): void {
 
 async function openExperimentFile(file: File): Promise<void> {
   try {
-    const opened = unzipExperiment(new Uint8Array(await file.arrayBuffer()));
+    const opened = await unzipExperimentAsync(new Uint8Array(await file.arrayBuffer()));
     const current = doc.getState();
     const hasWork =
       current.waveOrder.length > 0 || current.windows.length > 0 || files.list().length > 0;

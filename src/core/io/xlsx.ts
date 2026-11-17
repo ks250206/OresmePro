@@ -215,8 +215,24 @@ function tableOf(rows: string[][]): string[][] {
   return table.map((cells) => cells.filter((_, column) => used[column]));
 }
 
-/** The sheets of a workbook, in order, leaving out those with no cells. */
+/** The workbooks read, by their bytes: Load Data reads one to show it, then to load it. */
+const read = new WeakMap<Uint8Array, Sheet[]>();
+
+/**
+ * The sheets of a workbook, in order, leaving out those with no cells. The
+ * same bytes are read once: what they gave is given again (and is not to be
+ * changed).
+ */
 export function readXlsx(bytes: Uint8Array): Sheet[] {
+  let sheets = read.get(bytes);
+  if (!sheets) {
+    sheets = parseXlsx(bytes);
+    read.set(bytes, sheets);
+  }
+  return sheets;
+}
+
+function parseXlsx(bytes: Uint8Array): Sheet[] {
   let files: Record<string, Uint8Array>;
   try {
     files = unzipSync(bytes, {

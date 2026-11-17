@@ -45,7 +45,8 @@ import { importPanels, newPanel } from "./app/panels";
 import { docsUrl, GITHUB_URL, openLink } from "./app/links";
 import { importProcedures } from "./app/procedures";
 import { windowListItems } from "./app/windowMenu";
-import { frontWindow } from "./core/doc/types";
+import { useStore } from "./app/store";
+import { frontWindow, type WindowState } from "./core/doc/types";
 import { ruffFiles } from "./editor/loadRuff";
 import { editorRedo, editorUndo, focusedEditor } from "./editor/menu";
 import {
@@ -66,7 +67,10 @@ import {
   showError,
   startExperiment,
   ui,
+  interruptAll,
+  pluginRuns,
   useDoc,
+  useDocWhere,
   useExperimentInfo,
   useKernelState,
   useUi,
@@ -114,8 +118,22 @@ function Splitter({
   );
 }
 
+/** Whether two lists of windows are the same to the menus: which, of what kind, open or not, in what order. */
+const sameWindowList = (a: readonly WindowState[], b: readonly WindowState[]) =>
+  a.length === b.length &&
+  a.every(
+    (window, index) =>
+      window.name === b[index]!.name &&
+      window.kind === b[index]!.kind &&
+      window.hidden === b[index]!.hidden,
+  );
+
 function useMenus(): MenuDefinition[] {
-  const windows = useDoc((state) => state.windows);
+  // Moving or sizing a window changes nothing in the menus, and does not draw them again.
+  const windows = useDocWhere((state) => state.windows, sameWindowList);
+  // The Edit menu's Undo and Redo follow the undo stack.
+  useDoc(() => doc.canUndo);
+  useDoc(() => doc.canRedo);
   const graphs = useDoc((state) => state.graphs);
   const pages = useDoc((state) => state.pages);
   const hasFormulas = useDoc((state) =>
@@ -138,6 +156,7 @@ function useMenus(): MenuDefinition[] {
   const showCommand = useUi((state) => state.showCommand);
   const selected = useUi((state) => state.selectedWaves);
   const kernelState = useKernelState();
+  const pluginsRunning = useStore(pluginRuns, (runs) => runs.running);
   const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
   // The actions of the plugins turned on, each opening its form in a window of its own.
   const pluginActions: MenuItem[] = installed
@@ -418,8 +437,8 @@ function useMenus(): MenuDefinition[] {
         {
           label: kernelState.interrupting ? "Interrupt Again (Restarts Python)" : "Interrupt",
           shortcut: "Ctrl+C",
-          disabled: kernelState.status !== "busy",
-          onSelect: () => kernel.interruptExecution(),
+          disabled: kernelState.status !== "busy" && pluginsRunning === 0,
+          onSelect: interruptAll,
         },
         { label: "Restart Python", onSelect: () => kernel.restart() },
         { separator: true },
@@ -554,8 +573,6 @@ export function App() {
   const showCommand = useUi((state) => state.showCommand);
   const browserWidth = useUi((state) => state.browserWidth);
   const commandHeight = useUi((state) => state.commandHeight);
-  // Re-render the Edit menu's enabled state as the undo stack changes.
-  useDoc((state) => state);
   const experimentName = useExperimentInfo().name;
   useEffect(() => {
     document.title = `${experimentName} — OresmePro`;
