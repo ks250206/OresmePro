@@ -38,6 +38,10 @@ describe("the example plugin electrochem", () => {
       "eis_fit",
       "eis_circuit",
     ]);
+    // A view, whose window its Python builds out of the app's parts.
+    expect(pkg.manifest.editors.map((editor) => [editor.kind, editor.name])).toEqual([
+      ["view", "eis"],
+    ]);
     expect(pkg.manifest.python).toEqual({ entry: "electrochem", packages: ["numpy", "scipy"] });
     // Every file it lists, and not the README or the tests beside them.
     expect([...pkg.files.keys()].sort()).toEqual(pkg.manifest.files.map((f) => f.path).sort());

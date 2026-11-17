@@ -63,7 +63,9 @@ def test_manifest_matches_python():
     """Every action of the manifest is registered, and takes exactly the arguments it lists."""
     with open(os.path.join(PLUGIN, "oresme-plugin.json"), encoding="utf-8") as file:
         manifest = json.load(file)
-    assert sorted(ACTIONS) == sorted(item["name"] for item in manifest["actions"])
+    # Views are registered beside the actions, as view:<name>.
+    views = [f"view:{item['name']}" for item in manifest.get("editors", []) if item["kind"] == "view"]
+    assert sorted(ACTIONS) == sorted([item["name"] for item in manifest["actions"]] + views)
     for item in manifest["actions"]:
         signature = inspect.signature(ACTIONS[item["name"]])
         assert list(signature.parameters) == list(item["params"]), item["name"]
@@ -443,6 +445,73 @@ def test_eis_circuit_with_noise_and_a_guess():
 
 
 # --- Running ---------------------------------------------------------------------
+
+
+def test_eis_view_draws_guesses_and_takes_a_fit_back():
+    Circuit = electrochem.circuit.Circuit
+    """The view eis: it guesses from the spectrum, draws the circuit, and takes in what eis_circuit found."""
+    view = ACTIONS["view:eis"]
+    f = np.logspace(-1, 5, 60)
+    truth = np.array([10.0, 100.0, 1e-5, 0.9])
+    Z = Circuit("R0-p(R1,CPE1)").impedance(truth, 2 * np.pi * f)
+    paths = json.dumps({"w0": "frequency", "w1": "zre", "w2": "zim"})
+    given = {"w0": make("f", f), "w1": make("re", Z.real), "w2": make("im", -Z.imag)}
+
+    def call(state, event, with_waves=True):
+        outcome = view(json.dumps(state), json.dumps(event), paths if with_waves else "{}",
+                       **(given if with_waves else {}))
+        for role, value in outcome["waves"].items():
+            oresme_plugin._output(role, value)
+        return outcome, json.loads(outcome["values"]["state"]), json.loads(outcome["values"]["ui"])
+
+    outcome, state, layout = call(None, {"type": "open", "last": None}, with_waves=False)
+    assert layout["version"] == 1 and outcome["waves"] == {}
+    assert state["circuit"] == "R0-p(R1,CPE1)" and state["params"][0]["value"] is None
+
+    state.update(frequency="f", zre="re", zim="im")
+    outcome, state, _ = call(state, {"type": "change", "paths": ["frequency", "zre", "zim"]})
+    assert [row["name"] for row in state["params"]] == ["R0", "R1", "Q1", "n1"]
+    assert all(row["value"] is not None for row in state["params"]) and state["guess"]
+    assert {"data_re", "data_im", "model_re", "model_im", "model_mod"} <= set(outcome["waves"])
+
+    # An edited value is drawn as it is; a circuit changed keeps the values of the same names.
+    state["params"][0]["value"] = 50.0
+    outcome, state, _ = call(state, {"type": "change", "paths": ["params.0.value"]})
+    assert abs(outcome["waves"]["model_re"].data[-1] - 50.0) < 1.0
+    state["circuit"] = "R0-p(R1,C1)"
+    outcome, state, _ = call(state, {"type": "change", "paths": ["circuit"]})
+    assert [row["name"] for row in state["params"]] == ["R0", "R1", "C1"]
+    assert state["params"][0]["value"] == 50.0
+
+    # Fitted with eis_circuit: the values found go into the table, with their σ.
+    state["circuit"] = "R0-p(R1,CPE1)"
+    _, state, _ = call(state, {"type": "change", "paths": ["circuit"]})
+    fit = run("eis_circuit", frequency=given["w0"], zre=given["w1"], zim=given["w2"],
+              circuit=state["circuit"], guess=state["guess"])
+    args = {key: state[key] for key in ("frequency", "zre", "zim", "circuit", "imaginary", "guess")}
+    done = {"type": "done", "id": "eis_circuit", "ok": True, "result": "Plugin0", "args": args,
+            "values": oresme_plugin._plain(fit["values"])}
+    # Had a value been changed while it was fitted, the values found would not go into the table.
+    edited = json.loads(json.dumps(state))
+    edited["params"][0]["value"] = 12.0
+    outcome, kept, _ = call(edited, done)
+    assert kept["params"][0]["value"] == 12.0 and "changed while it was fitted" in outcome["values"]["message"]
+    _, state, _ = call(state, done)
+    for row, value in zip(state["params"], truth):
+        close(row["value"], value, rel=1e-6, what=row["name"])
+    assert "Plugin0" in state["report"]
+    # A circuit that cannot be read is said, and nothing breaks.
+    state["circuit"] = "R0-p(R1"
+    outcome, _, _ = call(state, {"type": "change", "paths": ["circuit"]})
+    assert outcome["values"]["message"]
+
+    # Opened again, it starts from the last fit kept.
+    last = {"action": "eis_circuit", "result": "Plugin0",
+            "inputs": {"frequency": "f", "zre": "re", "zim": "im"},
+            "params": {"circuit": "R0-p(R1,CPE1)"}, "names": ["R0", "R1", "Q1", "n1"],
+            "coef": truth.tolist(), "sigma": [0.0] * 4}
+    _, state, _ = call(None, {"type": "open", "last": last}, with_waves=False)
+    assert state["frequency"] == "f" and state["params"][1]["value"] == 100.0
 
 
 def run_all():

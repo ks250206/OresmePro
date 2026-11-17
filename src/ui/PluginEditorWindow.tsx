@@ -10,6 +10,7 @@ import {
   editSetup,
   editorStore,
   findEditor,
+  findEditorSpec,
   interpolate,
   redo,
   removeItem,
@@ -29,6 +30,7 @@ import type { EditorField } from "../core/plugins/editor";
 import { makeScale, type Scale } from "../core/plot/scale";
 import { linearTicks } from "../core/plot/ticks";
 import { Button, Checkbox, Select, TextInput } from "./controls";
+import { PluginViewWindow } from "./PluginViewWindow";
 
 /**
  * A plugin's model editor: a window the app draws from the plugin's
@@ -66,6 +68,16 @@ const useEditor = <T,>(key: string, selector: (state: EditorState) => T): T =>
 
 export function PluginEditorWindow({ tool }: { tool: string }) {
   const key = tool.slice("editor:".length);
+  const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the plugins installed stand for the editor
+  const found = useMemo(() => findEditorSpec(key), [key, installed]);
+  // A view's window is built by its Python out of the app's parts.
+  if (typeof found !== "string" && found.spec.kind === "view")
+    return <PluginViewWindow viewKey={key} />;
+  return <SpectrumFitWindow editorKey={key} />;
+}
+
+function SpectrumFitWindow({ editorKey: key }: { editorKey: string }) {
   const installed = useSyncExternalStore(pluginStore.subscribe, pluginStore.list);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the plugins installed stand for the editor
   const context = useMemo(() => findEditor(key), [key, installed]);

@@ -155,7 +155,7 @@ return {
 ```
 
 - `preview` と `fit` は、そのプラグインの Action の名前です。どちらも同じ引数を取ります: `data`(データの `wave`)、`x`(X の `wave`、省略可)、`range`(長さ 2 の `numbers`。プロット上の破線をドラッグして動かします)、`items.param`(`json`。項目のリスト)、`settings`(Settings タブに並ぶ、普通の値の引数)
-- `kind` は画面の種類です。今あるのは `"spectrum-fit"`(データ・範囲・背景の上の項目)だけで、知らない種類のエディタを持つプラグインは入れられません
+- `kind` は画面の種類です。`"spectrum-fit"`(データ・範囲・背景の上の項目)と、下の `"view"` があり、知らない種類のエディタを持つプラグインは入れられません
 - 項目(items)は A, B, C … と文字が付き、表では項目ごとに列が並びます。`fields` の `type` は `"number"`(既定)か `"text"`、`"constraint": true` の欄にはその下に制約の行が付きます
 - `drag` は、プロット上のドラッグでどの欄がどう変わるかの決まりです。アプリはこの決まりどおりに動かすだけで、欄の意味は知りません。`x`: 頂上の四角を落とした X にする欄。`height`: 四角を上下に動かしたとき変わる欄で、`"proportional"` なら新旧の高さの比を掛け(面積のように高さに比例する量)、`"value"` なら高さそのもの(高さは preview が返す頂上と背景の差)。`width`: ◇ で変わる欄で、`"full"` なら ◇ の間の距離(FWHM)、`"half"` なら中心から ◇ までの距離。`scale` に挙げた欄には新旧の幅の比を掛けます(幅に比例して面積が増える形で高さを保つため)
 - 項目は `{"<key>": 値, …, "constraints": {"<key>": "制約の文字列"}}` として渡ります。既定値のままの欄(`drag` が変える欄以外)は省くので、プラグインは欄がないときにその既定値を使います。制約の文字列の意味はプラグインが決めます。ただし、文字列の中で単独の大文字は項目を指すとみなし、項目を消したときにアプリが付け替えます
@@ -163,8 +163,43 @@ return {
 - `fit` は普通の Action の実行として履歴と解析結果に残ります。`values` の `items`(項目ごとの求まった数値)を表に戻し、`report`(`columns`、`rows`、`lines`、`warnings`)を Report タブに出します。`coef` を書くと、再び開いたときに、残った結果の係数(`A_position` など)から値を読み戻します
 - ウィンドウのフィットは `replace=True` で実行します(下)
 
+### 部品で組み立てる画面(view)
+
+`spectrum-fit` が決まった形の画面なのに対し、`kind: "view"` のエディタは、画面の構成も操作への応答もプラグインの Python が決めます。描くのはアプリの部品(並べ方、タブ、入力欄、wave の選択、編集できる表、プロット、ボタン)だけで、プラグインの HTML や JavaScript は動きません。設計は [docs/design/plugin-views.md](https://github.com/ks250206/OresmePro/blob/main/docs/design/plugin-views.md) にあります。
+
+```json
+"editors": [{"kind": "view", "name": "eis", "title": "EIS Circuit Fitting"}]
+```
+
+```python
+from oresme_plugin import ui, view, wave
+
+@view("eis")
+def eis_view(state, event, waves):
+    if event["type"] == "open":
+        state = {"frequency": None, "circuit": "R0-p(R1,CPE1)", "params": []}
+    ...
+    return {
+        "state": state,
+        "ui": ui.view(
+            ui.row(ui.wave("Frequency (Hz)", "frequency"), ui.string("Circuit", "circuit")),
+            ui.split(ui.plot([ui.series("im", "re", mode="markers")], equal=True),
+                     ui.table("params", [ui.col("name", editable=False), ui.col("value", type="number")])),
+            ui.button("Fit", action="eis_circuit", args={"circuit": ui.bind("circuit")}, replace=True),
+        ),
+        "waves": {"re": wave(...), "im": wave(...)},
+        "message": None,
+    }
+```
+
+- ハンドラは、画面のイベントのたびに `(state, event, waves)` で呼ばれます。`state` はアプリが持ち、毎回渡す値で、ハンドラ自身は何も覚えません。`waves` は、画面の `ui.wave` で選ばれた wave の**コピー**だけです(キーはその部品の `bind`)
+- `event` は `open`(`last`: このプラグインが最後に残した結果)、`change`(`paths`: 変わった道筋。元に戻したときは `"*"`)、`command`(`id`: `ui.button(on=...)`)、`done`(`ui.button(action=...)` の実行が終わった: `args`(実行した引数。今の画面への結果か確かめるため)、`ok`、`values`、`result`、`error`)。ハンドラが状態の中で wave を選んだとき(`open` で前の結果から戻したときなど)は、アプリがその wave を付けて続けて `change` を送ります
+- 返す `state`・`ui`・`message` を省くと前のまま、`waves` はその返事で描く配列だけ(Experiment には入りません)。`bind` は状態の中の道筋(`params.2.value`)で、入力した値はすぐ状態に入り、ハンドラにはまとめて伝わります。ウィンドウの中の編集は Ctrl+Z で戻せます
+- Experiment を変えるのは `ui.button(action=...)` だけです。そのプラグインの action を、`args` の値(`ui.bind(道筋)` は押したときの状態の値)で実行し、履歴に `op.invoke(...)` として残ります。`replace=True` なら上の上書きの規則で実行します
+- 部品は `ui.view`、`column`、`row`、`split`、`tabs`、`group`、`text`、`number`、`string`、`choice`、`checkbox`、`wave`、`table`(`ui.col` で列)、`plot`(`ui.series` で系列。`x_log`、`y_log`、`equal`、`x_reverse`)、`button` です。アプリは知らない部品や props があると全体を断り、理由を表示します
+
 見本として、次のプラグインを置いています。
 
-- 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
+- 電気化学の解析(CV のピーク、Tafel、インピーダンスの等価回路フィット): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)。view **EIS Circuit Fitting** で、回路とパラメータを編集しながら Nyquist・Bode 図を見て、フィットできます
 - 3元相図: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary)。枠、グリッド、目盛りの数値、頂点の名前を、普通のトレースと文字マーカーで描き、グラフとして返します
 - XPS のピークフィット(CasaXPS のような領域・Shirley/Tougaard 背景・GL/SGL/LA の線形・成分間の制約、RSF による定量): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps)。モデル編集ウィンドウ **XPS Peak Fitting** を持ちます([使い方](../xps/))。結合エネルギーの軸を反転し、残差を上に並べたグラフを返します

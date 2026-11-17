@@ -155,7 +155,7 @@ A plugin can declare, under `editors`, a window for building a model of peaks or
 ```
 
 - `preview` and `fit` name two of the plugin's actions, which take the same arguments: `data` (the data, a `wave`), `x` (X values, a `wave`, optional), `range` (`numbers` of length 2, dragged on the plot as dashed lines), `items.param` (`json`, the list of items) and `settings` (plain arguments, set in the Settings tab)
-- `kind` is which window it is. The only one so far is `"spectrum-fit"` (items on a background, over a range of data); a plugin with an editor of a kind the app does not know is not installed
+- `kind` is which window it is: `"spectrum-fit"` (items on a background, over a range of data) or `"view"` (below); a plugin with an editor of a kind the app does not know is not installed
 - Items are lettered A, B, C …, a column each in the table. A field's `type` is `"number"` (the default) or `"text"`; `"constraint": true` gives it a row for its constraint
 - `drag` says what dragging on the plot does to the fields; the app follows it and knows nothing of what they mean. `x`: the field set to the X where the square at an item's top is dropped. `height`: the field moving that square up and down changes: `"proportional"` multiplies it by the new height over the old (an area, which grows with the height), `"value"` sets it to the height (the top above the background, as the preview gives it). `width`: the field the ◇ change: `"full"` is the distance between them (a FWHM), `"half"` from the item's X to one of them; the fields in `scale` are multiplied by the new width over the old (to keep the height of a shape whose area grows with its width)
 - Each item is passed as `{"<key>": value, …, "constraints": {"<key>": "text"}}`. A field at its default (other than those `drag` changes) is left out, so a plugin takes a missing field as its default. What a constraint means is the plugin's, except that a capital letter standing alone names an item, which the app renames when an item is taken out
@@ -163,8 +163,43 @@ A plugin can declare, under `editors`, a window for building a model of peaks or
 - `fit` is an ordinary run of an action, kept in the history and among the results. The `items` of its `values` (each item's numbers found) go back into the table, and its `report` (`columns`, `rows`, `lines`, `warnings`) into the Report tab. With `coef`, an editor opened again reads the values back from the coefficients of the result kept (`A_position`, say)
 - The window fits with `replace=True` (below)
 
+### Views built of the app's parts
+
+Where `spectrum-fit` is a window of a fixed layout, an editor of `kind: "view"` has its window and its answers to what is done in it decided by the plugin's Python. Only the app's own parts are drawn (layouts, tabs, fields, wave choices, editable tables, plots, buttons); none of the plugin's HTML or JavaScript runs. The design is in [docs/design/plugin-views.md](https://github.com/ks250206/OresmePro/blob/main/docs/design/plugin-views.md).
+
+```json
+"editors": [{"kind": "view", "name": "eis", "title": "EIS Circuit Fitting"}]
+```
+
+```python
+from oresme_plugin import ui, view, wave
+
+@view("eis")
+def eis_view(state, event, waves):
+    if event["type"] == "open":
+        state = {"frequency": None, "circuit": "R0-p(R1,CPE1)", "params": []}
+    ...
+    return {
+        "state": state,
+        "ui": ui.view(
+            ui.row(ui.wave("Frequency (Hz)", "frequency"), ui.string("Circuit", "circuit")),
+            ui.split(ui.plot([ui.series("im", "re", mode="markers")], equal=True),
+                     ui.table("params", [ui.col("name", editable=False), ui.col("value", type="number")])),
+            ui.button("Fit", action="eis_circuit", args={"circuit": ui.bind("circuit")}, replace=True),
+        ),
+        "waves": {"re": wave(...), "im": wave(...)},
+        "message": None,
+    }
+```
+
+- The handler is called with `(state, event, waves)` for each event of the window. `state` is kept by the app and given each time; the handler remembers nothing. `waves` are **copies** of the waves chosen in the window's `ui.wave` parts, by their `bind`, and nothing else
+- `event` is `open` (`last`: the last result this plugin kept), `change` (`paths`: what changed; `"*"` after an undo), `command` (`id`: a `ui.button(on=...)`) or `done` (a `ui.button(action=...)` run ended: `args`, what it ran with, to check the result is for what is shown now; `ok`, `values`, `result`, `error`). When the handler chooses waves in the state itself (restoring them on `open`, say), the app sends a `change` next, with those waves
+- `state`, `ui` and `message` left out stay as they were; `waves` are the arrays this answer draws (they do not go into the experiment). A `bind` is a path of the state (`params.2.value`): what is entered goes into the state at once and to the handler in turn. Ctrl+Z undoes edits in the window
+- Only a `ui.button(action=...)` changes the experiment: it runs one of the plugin's actions with its `args` (`ui.bind(path)` is the state's value when pressed), recorded as `op.invoke(...)`, with the rule above when `replace=True`
+- The parts are `ui.view`, `column`, `row`, `split`, `tabs`, `group`, `text`, `number`, `string`, `choice`, `checkbox`, `wave`, `table` (columns by `ui.col`), `plot` (series by `ui.series`; `x_log`, `y_log`, `equal`, `x_reverse`) and `button`. The app refuses a view with a part or prop it does not know, and says why
+
 Example plugins:
 
-- Electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem)
+- Electrochemistry (cyclic voltammetry peaks, Tafel slopes, impedance equivalent-circuit fits): [examples/plugins/electrochem](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/electrochem). Its view **EIS Circuit Fitting** edits a circuit and its parameters on Nyquist and Bode plots and fits them
 - Ternary diagrams: [examples/plugins/ternary](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/ternary). The frame, grid, tick labels and corner names are ordinary traces and text markers, returned as a graph
 - XPS peak fitting in the way of CasaXPS (a region, a Shirley or Tougaard background, GL/SGL/LA line shapes, constraints between components, quantification with RSFs): [examples/plugins/xps](https://github.com/ks250206/OresmePro/tree/main/examples/plugins/xps). It has the model editor **XPS Peak Fitting** ([how to use it](../xps/)) and returns a graph with a reversed binding energy axis and the residual above

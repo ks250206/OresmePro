@@ -32,11 +32,11 @@ test.describe("the example plugin electrochem", () => {
     await app.menu("Python", "Plugins…");
     await page.getByLabel("Plugin folder").setInputFiles(ELECTROCHEM);
     const approval = page.getByRole("dialog", { name: "Install Plugin" });
-    await expect(approval).toContainText("Electrochemistry 0.1.0");
+    await expect(approval).toContainText("Electrochemistry 0.2.0");
     await expect(approval).toContainText("plugin.electrochem.eis_fit");
     await expect(approval).toContainText("Python packages: numpy, scipy");
     // The manifest's files only: not the README or the tests next to them.
-    await expect(approval).toContainText("8 files");
+    await expect(approval).toContainText("9 files");
     await approval.getByRole("button", { name: "Install" }).click();
 
     const dialog = page.getByRole("dialog", { name: "Plugins" });
@@ -166,7 +166,7 @@ test.describe("the example plugin electrochem", () => {
     expect(rerun.status).toBe("error");
     expect(rerun.output).toContain("No installed plugin has the action plugin.electrochem.eis_fit");
     expect(rerun.output).toContain(
-      "This result was made by the plugin electrochem 0.1.0 from local:electrochem",
+      "This result was made by the plugin electrochem 0.2.0 from local:electrochem",
     );
     const kept = await page.evaluate(() => {
       const state = globalThis.oresme.doc.getState();

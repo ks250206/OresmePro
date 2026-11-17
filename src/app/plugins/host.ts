@@ -300,6 +300,46 @@ export class PluginHost {
     return writer ? apply(writer) : this.options.doc.transact(apply);
   }
 
+  /**
+   * Calls a plugin's view with an event (see docs/design/plugin-views.md):
+   * the state, the event, and copies of the waves the view's wave parts have
+   * chosen, by the paths they are bound to. Nothing of what comes back goes
+   * into the experiment; the caller checks it (src/core/plugins/view.ts).
+   */
+  async runView(
+    pluginName: string,
+    view: string,
+    request: { state: unknown; event: unknown; waves: Record<string, string> },
+  ): Promise<CheckedResult> {
+    const plugin = this.options.store.find(pluginName);
+    if (!plugin) throw new PluginError(`No installed plugin is named ${pluginName}.`, "NOT_FOUND");
+    if (!plugin.enabled)
+      throw new PluginError(`The plugin ${plugin.manifest.title} is turned off.`);
+    if (!plugin.manifest.editors.some((editor) => editor.kind === "view" && editor.name === view))
+      throw new PluginError(`${plugin.manifest.title} has no view ${view}.`, "NOT_FOUND");
+    const state = this.options.doc.getState();
+    const inputs: Record<string, SandboxWave> = {};
+    const paths: Record<string, string> = {};
+    Object.entries(request.waves).forEach(([path, name], index) => {
+      const wave = Object.hasOwn(state.waves, name) ? state.waves[name] : undefined;
+      // Only numeric waves that are there; one chosen and gone since is left out.
+      if (!wave || wave.text) return;
+      inputs[`w${index}`] = sandboxWave(wave);
+      paths[`w${index}`] = path;
+    });
+    const sandbox = await this.sandbox(plugin);
+    return sandbox.run({
+      action: `view:${view}`,
+      inputs,
+      params: {
+        state: JSON.stringify(request.state ?? null),
+        event: JSON.stringify(request.event),
+        paths: JSON.stringify(paths),
+      },
+      timeoutMs: Math.min(this.options.timeoutMs ?? PREVIEW_TIMEOUT_MS, PREVIEW_TIMEOUT_MS),
+    });
+  }
+
   /** Stops a plugin's sandbox, if it has one. */
   stop(name: string): void {
     const sandbox = this.sandboxes.get(name);
@@ -353,7 +393,13 @@ export class PluginHost {
         key: manifest.name,
         files: given,
         entry: manifest.python.entry,
-        actions: manifest.actions.map((action) => action.name),
+        // Its views are registered beside its actions, as view:<name>.
+        actions: [
+          ...manifest.actions.map((action) => action.name),
+          ...manifest.editors
+            .filter((editor) => editor.kind === "view")
+            .map((editor) => `view:${editor.name}`),
+        ],
       });
       return sandbox;
     } catch (error) {

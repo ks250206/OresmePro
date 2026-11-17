@@ -496,6 +496,16 @@ describe("previews and runs that replace what the last run made", () => {
     expect(first.waves).toEqual({ scaled: "mine_scaled_1" });
   });
 
+  it("leaves a wave renamed since alone, though its result follows it", async () => {
+    const { doc, host } = await setUp();
+    const first = await host.run(id, { y: "signal" });
+    doc.dispatch({ op: "renameWave", name: "signal_scaled", newName: "saved_fit" });
+    expect(doc.getState().results[first.result!]!.outputs).toEqual({ scaled: "saved_fit" });
+    const again = await host.run(id, { y: "signal", factor: 5 }, null, { replace: true });
+    expect(again.waves).toEqual({ scaled: "signal_scaled" });
+    expect([...doc.getState().waves.saved_fit!.data]).toEqual([2, 4, 6]);
+  });
+
   it("updates the graph its last run made, and drops what it no longer makes", async () => {
     const { doc, host } = await setUp();
     const first = await host.run(id, { y: "signal", parts: 2 });

@@ -57,7 +57,7 @@ import sys
 
 import numpy as np
 
-__all__ = ["action", "wave", "Wave", "PluginError"]
+__all__ = ["action", "view", "ui", "wave", "Wave", "PluginError"]
 
 _ACTIONS = {}
 
@@ -141,6 +141,167 @@ def action(name):
         return function
 
     return register
+
+
+def view(name):
+    """Register a function as the view ``name`` (an editor of kind "view" in the manifest).
+
+    The function is called with ``(state, event, waves)`` for each event of
+    the view's window and returns a dict of ``state`` (plain values, kept by
+    the application and given back each time), ``ui`` (what the window shows,
+    built with ``ui``), ``waves`` (arrays the plots draw, by role; they do not
+    go into the experiment) and ``message`` (shown at the bottom of the window).
+    Leaving out ``state``, ``ui`` or ``message`` keeps the one before (a
+    ``message`` of None takes it away); ``waves`` are those of this answer only. ``waves`` given to it are copies of
+    those chosen in the window's ``ui.wave`` parts, by the path they are bound
+    to. ``event`` is ``{"type": "open", "last": ...}``, ``{"type": "change",
+    "paths": [...]}``, ``{"type": "command", "id": ...}`` or ``{"type":
+    "done", "id": ..., "args": ..., "ok": ..., "values": ..., "result": ...,
+    "error": ...}`` (``args``: what the action ran with, to check that a result is
+    for what the view shows now).
+    See docs/design/plugin-views.md.
+    """
+    def register(function):
+        if not isinstance(name, str) or not name.replace("_", "").isalnum():
+            raise ValueError(f"A view name is letters, digits and underscores: {name!r}")
+        key = f"view:{name}"
+        if key in _ACTIONS:
+            raise ValueError(f"The view {name!r} is registered twice.")
+
+        def run(state, event, paths, **waves):
+            bound = json.loads(paths)
+            given = {bound[key_]: value for key_, value in waves.items() if key_ in bound}
+            outcome = function(json.loads(state), json.loads(event), given)
+            if outcome is None:
+                outcome = {}
+            if not isinstance(outcome, dict):
+                raise PluginError("A view returns a dict with 'state', 'ui', 'waves' and 'message'.")
+            unknown = set(outcome) - {"state", "ui", "waves", "message"}
+            if unknown:
+                raise PluginError(f"A view returns only 'state', 'ui', 'waves' and 'message', not {sorted(unknown)}.")
+
+            def text(key_):
+                if key_ not in outcome:
+                    return None
+                return json.dumps(_plain(outcome[key_]), allow_nan=False)
+
+            # A message left out keeps the one shown; None (or "") takes it away.
+            message = None
+            if "message" in outcome:
+                message = "" if outcome["message"] is None else str(outcome["message"])
+            return {
+                "waves": outcome.get("waves") or {},
+                "values": {"state": text("state"), "ui": text("ui"), "message": message},
+            }
+
+        _ACTIONS[key] = run
+        return function
+
+    return register
+
+
+def _part(type_, **props):
+    """A part of a view, leaving out what is None (the application's default)."""
+    return {"type": type_, **{key: value for key, value in props.items() if value is not None}}
+
+
+class ui:
+    """The parts a view is built of; each makes a plain dict (see docs/design/plugin-views.md).
+
+    ``bind`` is a path of the state, dotted (``"params.2.value"``): the part
+    shows the value there and puts what is entered there.
+    """
+
+    @staticmethod
+    def view(*parts, gap=None):
+        body = parts[0] if len(parts) == 1 else _part("column", children=list(parts), gap=gap)
+        return {"version": 1, "body": body}
+
+    @staticmethod
+    def column(*children, gap=None):
+        return _part("column", children=list(children), gap=gap)
+
+    @staticmethod
+    def row(*children, gap=None):
+        return _part("row", children=list(children), gap=gap)
+
+    @staticmethod
+    def split(first, second, direction="horizontal", ratio=None):
+        return _part("split", children=[first, second], direction=direction, ratio=ratio)
+
+    @staticmethod
+    def tabs(*tabs):
+        """Tabs from (title, part) pairs, in order."""
+        return _part("tabs", tabs=[{"title": title, "body": body} for title, body in tabs])
+
+    @staticmethod
+    def group(title, body):
+        return _part("group", title=title, body=body)
+
+    @staticmethod
+    def text(text, tone=None, mono=None):
+        return _part("text", text=str(text), tone=tone, mono=mono)
+
+    @staticmethod
+    def number(label, bind, min=None, max=None, step=None, unit=None):
+        return _part("number", label=label, bind=bind, min=min, max=max, step=step, unit=unit)
+
+    @staticmethod
+    def string(label, bind, placeholder=None, suggestions=None):
+        return _part("string", label=label, bind=bind, placeholder=placeholder,
+                     suggestions=None if suggestions is None else list(suggestions))
+
+    @staticmethod
+    def choice(label, bind, choices):
+        """``choices``: values, or (title, value) pairs."""
+        return _part("choice", label=label, bind=bind,
+                     choices=[list(item) if isinstance(item, tuple) else item for item in choices])
+
+    @staticmethod
+    def checkbox(label, bind):
+        return _part("checkbox", label=label, bind=bind)
+
+    @staticmethod
+    def wave(label, bind, optional=None):
+        """A choice of a 1-D numeric wave; the view is given a copy of the one chosen."""
+        return _part("wave", label=label, bind=bind, optional=optional)
+
+    @staticmethod
+    def table(bind, columns, add=None, remove=None):
+        """A table of the list of dicts at ``bind``, one row each, with ``columns`` made by ``ui.col``."""
+        return _part("table", bind=bind, columns=list(columns), add=add, remove=remove)
+
+    @staticmethod
+    def col(key, title=None, type=None, choices=None, editable=None, width=None):
+        """A column of a table: ``type`` is "text", "number", "checkbox" or "choice"."""
+        return {key_: value for key_, value in {
+            "key": key, "title": title, "type": type,
+            "choices": None if choices is None else [list(c) if isinstance(c, tuple) else c for c in choices],
+            "editable": editable, "width": width,
+        }.items() if value is not None}
+
+    @staticmethod
+    def plot(series, x_label=None, y_label=None, x_log=None, y_log=None, equal=None,
+             x_reverse=None, height=None):
+        return _part("plot", series=list(series), x_label=x_label, y_label=y_label, x_log=x_log,
+                     y_log=y_log, equal=equal, x_reverse=x_reverse, height=height)
+
+    @staticmethod
+    def series(y, x=None, mode=None, color=None, label=None):
+        """Arrays the view returned, by role: ``y`` against ``x`` (or the point numbers)."""
+        return {key: value for key, value in {
+            "x": x, "y": y, "mode": mode, "color": color, "label": label}.items() if value is not None}
+
+    @staticmethod
+    def button(label, on=None, action=None, args=None, replace=None, primary=None, disabled=None):
+        """Calls the view with a command (``on``), or runs one of the plugin's actions (``action``)."""
+        return _part("button", label=label, on=on, action=action, args=args, replace=replace,
+                     primary=primary, disabled=disabled)
+
+    @staticmethod
+    def bind(path):
+        """An argument of a button's action taken from the state at ``path`` when it is pressed."""
+        return {"$bind": path}
 
 
 # --- Used by the sandbox, not by plugins ------------------------------------------

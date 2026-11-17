@@ -1,7 +1,10 @@
 import type { ActionArgs, JsonValue, ParamSpec } from "../core/actions";
 import type { AnalysisResult } from "../core/doc/results";
 import type { DocState } from "../core/doc/types";
-import type { EditorSpec } from "../core/plugins/editor";
+import type {
+  EditorSpec as AnyEditorSpec,
+  SpectrumFitSpec as EditorSpec,
+} from "../core/plugins/editor";
 import { pluginActionId, type PluginAction } from "../core/plugins/manifest";
 import type { CheckedResult } from "../core/sandbox/validate";
 import type { PluginRunOutcome } from "./plugins/host";
@@ -123,14 +126,25 @@ export interface EditorContext {
   fit: PluginAction;
 }
 
-/** The installed plugin and the editor a key names, or why it cannot be used. */
-export function findEditor(key: string): EditorContext | string {
+/** The installed plugin and the editor (of any kind) a key names, or why it cannot be used. */
+export function findEditorSpec(
+  key: string,
+): { plugin: InstalledPlugin; spec: AnyEditorSpec } | string {
   const [pluginName, editorName] = key.split("/");
   const plugin = pluginStore.list().find((item) => item.manifest.name === pluginName);
   if (!plugin) return "The plugin of this editor is not installed.";
   if (!plugin.enabled) return `${plugin.manifest.title} is turned off.`;
   const spec = plugin.manifest.editors.find((item) => item.name === editorName);
   if (!spec) return `${plugin.manifest.title} has no editor ${editorName}.`;
+  return { plugin, spec };
+}
+
+/** The spectrum-fit editor a key names, with its actions, or why it cannot be used. */
+export function findEditor(key: string): EditorContext | string {
+  const found = findEditorSpec(key);
+  if (typeof found === "string") return found;
+  const { plugin, spec } = found;
+  if (spec.kind !== "spectrum-fit") return `${spec.title} is not a spectrum-fit editor.`;
   const action = (name: string) => plugin.manifest.actions.find((item) => item.name === name)!;
   return { key, plugin, spec, preview: action(spec.preview), fit: action(spec.fit) };
 }
@@ -674,7 +688,11 @@ export async function runFit(context: EditorContext): Promise<void> {
     const values = isObject(outcome.values) ? outcome.values : {};
     const found = Array.isArray(values.items) ? values.items : [];
     const now = store.get().setup;
-    const base = now && now.data === setup.data ? now : setup;
+    // The values found are for the model that was sent. If it was changed while it was fitted
+    // (an item taken out, say), they are not put into the table, where they could land on the
+    // wrong items: the result keeps them.
+    const changed = now !== null && now !== setup;
+    const base = changed ? now : setup;
     const numbers = new Set(
       context.spec.items.fields
         .filter((field) => field.kind === "number")
@@ -682,7 +700,7 @@ export async function runFit(context: EditorContext): Promise<void> {
     );
     const items = base.items.map((item, index) => {
       const row = found[index];
-      if (!isObject(row) || index >= setup.items.length) return item;
+      if (changed || !isObject(row) || index >= setup.items.length) return item;
       const fitted = Object.fromEntries(
         Object.entries(row).filter(([key, value]) => numbers.has(key) && typeof value === "number"),
       ) as Record<string, number>;
@@ -692,9 +710,15 @@ export async function runFit(context: EditorContext): Promise<void> {
     const texts = (value: unknown) =>
       Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
     store.set({
-      setup: { ...base, items },
-      past: [...store.get().past, base].slice(-LIMIT),
-      future: [],
+      ...(changed
+        ? {
+            error: `The ${context.spec.items.title.toLowerCase()}s were changed while they were fitted, so the values found were not put in the table; ${outcome.result ?? "the result"} keeps them. Fit again.`,
+          }
+        : {
+            setup: { ...base, items },
+            past: [...store.get().past, base].slice(-LIMIT),
+            future: [],
+          }),
       busy: false,
       report: report
         ? {

@@ -2,7 +2,7 @@
   "manifestVersion": 1,
   "name": "electrochem",
   "title": "Electrochemistry",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cyclic voltammetry peaks (Epa, Epc, ΔEp, E1/2, ipa/ipc), Tafel slopes and exchange current densities, and equivalent-circuit fits of impedance spectra (R(RC), R(RQ), Randles, or any circuit written as R0-p(R1,CPE1)-W1) with a Nyquist graph template. Potentials in V, impedances in Ω, frequencies in Hz.",
   "license": "MIT",
   "python": {
@@ -17,7 +17,8 @@
     "electrochem/eis.py",
     "electrochem/circuit.py",
     "templates/nyquist.json",
-    "panels/eis_fit.json"
+    "panels/eis_fit.json",
+    "electrochem/view.py"
   ],
   "actions": [
     {
@@ -221,6 +222,14 @@
           "min": 0
         }
       }
+    }
+  ],
+  "editors": [
+    {
+      "kind": "view",
+      "name": "eis",
+      "title": "EIS Circuit Fitting",
+      "description": "An equivalent circuit written as text, its parameters in a table, and Nyquist and Bode plots of the spectrum and the circuit, drawn again at each edit and fitted with eis_circuit."
     }
   ],
   "contributes": {
